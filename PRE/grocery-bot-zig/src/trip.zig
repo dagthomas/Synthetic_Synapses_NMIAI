@@ -321,8 +321,13 @@ pub fn planBestTrip(
 
 pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool) u64 {
     if (cost == 0) return std.math.maxInt(u64);
-    var value: u32 = @as(u32, ac) * 10 + @as(u32, pc) * 3;
-    if (completes_order) value += 25;
+    // Active items are worth much more than preview items
+    // Each active item = 1 point + contributes to order completion (+5 bonus)
+    var value: u32 = @as(u32, ac) * 20 + @as(u32, pc) * 3;
+    // Massive bonus for completing the order (triggers +5 score bonus in-game)
+    if (completes_order) value += 80;
+    // Small bonus per item count
     value += @as(u32, count) * 2;
+    // Score = value-per-cost (efficiency metric)
     return @as(u64, value) * 10000 / @as(u64, cost);
 }

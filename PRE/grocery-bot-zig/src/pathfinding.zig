@@ -96,7 +96,7 @@ pub fn bfs(state: *const GameState, start: Pos, target: Pos, bot_id: u8, bot_pos
             const cell = state.grid[ny][nx];
             const is_target = (nx == @as(u16, @intCast(target.x)) and ny == @as(u16, @intCast(target.y)));
             if (!is_target and (cell == .wall or cell == .shelf)) continue;
-            if (cur.dist < 2) {
+            if (cur.dist == 0) {
                 var blocked = false;
                 for (0..state.bot_count) |bi| {
                     if (bi == bot_id) continue;

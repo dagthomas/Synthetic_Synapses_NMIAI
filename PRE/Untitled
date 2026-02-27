@@ -1,0 +1,1 @@
+ "X:\KODE\AINM\PRE\grocery-bot-zig" && ./zig-out/bin/grocery-bot.exe "wss://game.ainm.no/ws
