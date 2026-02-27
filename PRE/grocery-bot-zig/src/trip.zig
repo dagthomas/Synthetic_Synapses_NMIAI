@@ -188,10 +188,10 @@ pub fn planBestTrip(
 
     if (cand_count == 0) return null;
 
-    const n: u8 = @min(cand_count, 10);
+    const n: u8 = @min(cand_count, 16);
 
     // Pre-compute BFS distance maps from each candidate's adj position
-    var cand_dm: [10]DistMap = undefined;
+    var cand_dm: [16]DistMap = undefined;
     for (0..n) |i| {
         pathfinding.bfsDistMap(state, cands[i].adj, &cand_dm[i]);
     }
@@ -207,7 +207,7 @@ pub fn planBestTrip(
         const pc: u8 = if (cands[a].is_active) 0 else 1;
         if (ac == 0 and active_remaining > 0) continue;
         const completes = ac >= active_remaining and active_remaining > 0;
-        const score = tripScore(cost, ac, pc, 1, completes);
+        const score = tripScore(cost, ac, pc, 1, completes, rounds_left);
         if (best == null or score > best_score) {
             best = .{ .items = undefined, .adjs = undefined, .item_count = 1, .total_cost = cost, .active_count = ac, .preview_count = pc, .completes_order = completes };
             best.?.items[0] = cands[a].item_idx;
@@ -239,7 +239,7 @@ pub fn planBestTrip(
             const completes = ac >= active_remaining and active_remaining > 0;
 
             if (cost_ab + 4 <= rounds_left) {
-                const score = tripScore(cost_ab, ac, pc, 2, completes);
+                const score = tripScore(cost_ab, ac, pc, 2, completes, rounds_left);
                 if (best == null or score > best_score) {
                     const adj_b = pathfinding.findBestAdj(state, state.items[cands[b].item_idx].pos, &cand_dm[a]) orelse cands[b].adj;
                     best = .{ .items = undefined, .adjs = undefined, .item_count = 2, .total_cost = cost_ab, .active_count = ac, .preview_count = pc, .completes_order = completes };
@@ -251,7 +251,7 @@ pub fn planBestTrip(
                 }
             }
             if (cost_ba + 4 <= rounds_left) {
-                const score = tripScore(cost_ba, ac, pc, 2, completes);
+                const score = tripScore(cost_ba, ac, pc, 2, completes, rounds_left);
                 if (best == null or score > best_score) {
                     const adj_a = pathfinding.findBestAdj(state, state.items[cands[a].item_idx].pos, &cand_dm[b]) orelse cands[a].adj;
                     best = .{ .items = undefined, .adjs = undefined, .item_count = 2, .total_cost = cost_ba, .active_count = ac, .preview_count = pc, .completes_order = completes };
@@ -268,7 +268,7 @@ pub fn planBestTrip(
     if (slots_free < 3) return best;
 
     // Evaluate 3-item trips
-    const n3 = @min(n, 8);
+    const n3 = @min(n, 10);
     for (0..n3) |a| {
         for (a + 1..n3) |b| {
             for (b + 1..n3) |c| {
@@ -298,7 +298,7 @@ pub fn planBestTrip(
                         @as(u32, cands[p2].dist_from_drop);
 
                     if (cost + 5 > rounds_left) continue;
-                    const score = tripScore(cost, ac, pc, 3, completes);
+                    const score = tripScore(cost, ac, pc, 3, completes, rounds_left);
                     if (best == null or score > best_score) {
                         const adj1 = pathfinding.findBestAdj(state, state.items[cands[p1].item_idx].pos, &cand_dm[p0]) orelse cands[p1].adj;
                         const adj2 = pathfinding.findBestAdj(state, state.items[cands[p2].item_idx].pos, &cand_dm[p1]) orelse cands[p2].adj;
@@ -319,15 +319,20 @@ pub fn planBestTrip(
     return best;
 }
 
-pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool) u64 {
+pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, rounds_left: u32) u64 {
     if (cost == 0) return std.math.maxInt(u64);
     // Active items are worth much more than preview items
-    // Each active item = 1 point + contributes to order completion (+5 bonus)
     var value: u32 = @as(u32, ac) * 20 + @as(u32, pc) * 3;
     // Massive bonus for completing the order (triggers +5 score bonus in-game)
     if (completes_order) value += 80;
+    // Extra bonus for completion in endgame (every point matters)
+    if (completes_order and rounds_left < 60) value += 20;
     // Small bonus per item count
     value += @as(u32, count) * 2;
+    // Penalize trips that use >50% of remaining time when under 60 rounds
+    if (rounds_left < 60 and cost * 2 > rounds_left) {
+        value = value / 2;
+    }
     // Score = value-per-cost (efficiency metric)
     return @as(u64, value) * 10000 / @as(u64, cost);
 }

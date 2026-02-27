@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(\"C:/Users/dagth/zig15/zig-x86_64-windows-0.15.2/zig.exe\" build:*)",
+      "Bash(do echo:*)"
+    ]
+  }
+}

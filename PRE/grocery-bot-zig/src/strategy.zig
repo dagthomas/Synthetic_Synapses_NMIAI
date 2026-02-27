@@ -42,6 +42,7 @@ pub const PersistentBot = struct {
     rounds_on_order: u16,
     last_dir: ?Dir,
     escape_rounds: u8,
+    pickup_fail_count: u8,
 };
 
 var pbots: [MAX_BOTS]PersistentBot = undefined;
@@ -81,6 +82,7 @@ pub fn initPbots() void {
         pbots[i].rounds_on_order = 0;
         pbots[i].last_dir = null;
         pbots[i].escape_rounds = 0;
+        pbots[i].pickup_fail_count = 0;
     }
     blacklist_count = 0;
     last_score = 0;
@@ -137,7 +139,8 @@ var blacklist_count: u16 = 0;
 fn isBlacklisted(adj_pos: Pos, item_pos: Pos) bool {
     _ = adj_pos;
     _ = item_pos;
-    // Blacklist is tracked but not used for filtering currently
+    // Kept disabled: failed pickups are timing-related, not permanently bad positions
+    // Enabling this caused regression (44 vs typical 50-75)
     return false;
 }
 
@@ -337,7 +340,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         if (!has_any_active) bots_with_preview_only += 1;
     }
     // Max bots allowed to carry preview items: half the fleet for 5+ bots
-    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else 1;
+    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else @as(u8, @intCast(state.bot_count)) / 3;
 
     // ── Fix 6: Track score changes for diagnostic logging ──
     if (state.score != last_score) {
@@ -347,11 +350,17 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         rounds_since_score_change += 1;
     }
 
+    // Periodically clear blacklist so stale entries don't permanently block valid positions
+    if (state.round > 0 and state.round % 50 == 0 and blacklist_count > 0) {
+        std.debug.print("R{d} Clearing {d} blacklist entries\n", .{ state.round, blacklist_count });
+        blacklist_count = 0;
+    }
+
     // ── Detect 1-round action offset ──────────────────────────────────
-    // Offset appears mid-game unpredictably. False positives are catastrophic (score 35 vs 96).
-    // Skip first 30 rounds (bots crowded, collisions cause false mismatches).
-    // Require 5+ moving bots with 4+ mismatches for 3 consecutive rounds.
-    if (expected_count > 0 and state.round >= 30 and !offset_detected) {
+    // Offset appears mid-game unpredictably. False positives are catastrophic.
+    // Skip first 15 rounds (bots crowded initially).
+    // Require 3+ moving bots with 67%+ mismatch ratio for 2 consecutive rounds.
+    if (expected_count > 0 and state.round >= 15 and !offset_detected) {
         var moving_mismatches: u8 = 0;
         var moving_count: u8 = 0;
         const check_count = @min(expected_count, state.bot_count);
@@ -363,15 +372,17 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 }
             }
         }
-        if (moving_count >= 5 and moving_mismatches >= 4) {
+        // Require >=67% mismatch ratio AND at least 3 mismatches
+        if (moving_count >= 3 and moving_mismatches >= 3 and moving_mismatches * 3 >= moving_count * 2) {
             offset_check_mismatches += 1;
         } else {
             if (offset_check_mismatches > 0) offset_check_mismatches -|= 1;
         }
         offset_check_rounds += 1;
-        if (offset_check_mismatches >= 3) {
+        if (offset_check_mismatches >= 2) {
             offset_detected = true;
-            std.debug.print("R{d} OFFSET MODE ENABLED ({d}/{d} moving mismatches)\n", .{ state.round, moving_mismatches, moving_count });
+            blacklist_count = 0;
+            std.debug.print("R{d} OFFSET MODE ENABLED ({d}/{d} moving mismatches), blacklist cleared\n", .{ state.round, moving_mismatches, moving_count });
         }
     }
 
@@ -491,14 +502,22 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
         if (pb.escape_rounds > 0) pb.escape_rounds -= 1;
 
-        // Detect failed pickups (diagnostic only, NOT used for offset detection)
+        // Detect failed pickups — after 2 consecutive fails, invalidate trip to try different path
         if (pb.last_tried_pickup) {
             if (bot.inv_len == pb.last_inv_len) {
-                std.debug.print("R{d} Bot{d} pickup FAILED at ({d},{d}) -> item ({d},{d}) inv={d}\n", .{
+                pb.pickup_fail_count += 1;
+                std.debug.print("R{d} Bot{d} pickup FAILED at ({d},{d}) -> item ({d},{d}) inv={d} fails={d}\n", .{
                     state.round, bot.id, pb.last_pickup_pos.x, pb.last_pickup_pos.y,
-                    pb.last_pickup_item_pos.x, pb.last_pickup_item_pos.y, bot.inv_len,
+                    pb.last_pickup_item_pos.x, pb.last_pickup_item_pos.y, bot.inv_len, pb.pickup_fail_count,
                 });
                 addBlacklist(pb.last_pickup_pos, pb.last_pickup_item_pos);
+                // After 2 consecutive fails, reset trip so bot picks a different path/adj cell
+                if (pb.pickup_fail_count >= 2) {
+                    pb.has_trip = false;
+                    pb.pickup_fail_count = 0;
+                }
+            } else {
+                pb.pickup_fail_count = 0; // Successful pickup resets counter
             }
             pb.last_tried_pickup = false;
         }
@@ -548,7 +567,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
     // ── Dropoff priority: rank delivering bots by distance ──────────────
     // Computed BEFORE orchestrator so it can exclude priority-delivering bots from assignment.
-    const MAX_DROPOFF_ACTIVE: u8 = if (state.bot_count >= 6) 3 else if (state.bot_count > 1) 2 else 1;
+    const MAX_DROPOFF_ACTIVE: u8 = if (state.bot_count > 1) @as(u8, @intCast(state.bot_count)) / 2 else 1;
     var dropoff_priority: [MAX_BOTS]bool = undefined;
     @memset(dropoff_priority[0..state.bot_count], false);
     if (state.bot_count > 1) {
@@ -679,12 +698,13 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // Record active assignments per bot
         @memcpy(orch_active_assigned[0..state.bot_count], bot_assigned[0..state.bot_count]);
 
-        // ── Phase 2: Assign preview items to empty idle bots ──────────
-        // Severely limited to prevent dead inventory buildup.
-        // With many bots, at most 1 bot picks preview.
+        // ── Phase 2: Assign preview items to idle bots ────────────────
+        // When all active items are picked, aggressively assign preview — these become
+        // the next order's active items. No risk of permanent dead inventory.
+        const all_active_covered_orch = pick_remaining.count == 0;
         var total_preview_assigned: u8 = 0;
-        const max_orch_preview: u8 = if (state.bot_count <= 2) 4 else if (state.bot_count <= 4) 2 else @min(preview.count, state.bot_count / 2);
-        if (preview.count > 0 and bots_with_preview_only < max_preview_carriers) {
+        const max_orch_preview: u8 = if (all_active_covered_orch) preview.count else if (state.bot_count <= 2) 4 else if (state.bot_count <= 4) 2 else 2;
+        if (preview.count > 0 and (all_active_covered_orch or bots_with_preview_only < max_preview_carriers)) {
             var prev_track: [16]TypeTrack = undefined;
             var prev_track_len: u8 = 0;
             {
@@ -720,8 +740,20 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                         for (0..state.bot_count) |bk| {
                             if (pbots[bk].delivering) continue;
                             if (orch_active_assigned[bk] > 0) continue;
-                            // Allow preview bots to fill inventory up to INV_CAP
+                            // Skip bots carrying active items — they need to deliver, not pick preview
+                            var bk_has_active = false;
+                            {
+                                var check_a = active_orig;
+                                for (0..state.bots[bk].inv_len) |inv_i| {
+                                    if (check_a.contains(state.bots[bk].inv[inv_i])) {
+                                        bk_has_active = true;
+                                        check_a.remove(state.bots[bk].inv[inv_i]);
+                                    }
+                                }
+                            }
+                            if (bk_has_active) continue;
                             const prev_free = if (INV_CAP > state.bots[bk].inv_len) INV_CAP - state.bots[bk].inv_len else 0;
+                            if (prev_free == 0) continue;
                             if (bot_assigned[bk] >= prev_free) continue;
                             const adj = pathfinding.findBestAdj(state, state.items[ii].pos, &all_dm_bot[bk]) orelse continue;
                             const d = all_dm_bot[bk][@intCast(adj.y)][@intCast(adj.x)];
@@ -783,11 +815,14 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         var bot_preview = preview_orig;
         for (0..bot.inv_len) |ii| bot_preview.remove(bot.inv[ii]);
 
-        // Preview strategy: only allow limited bots to pick preview items.
-        // With many bots, preview items clog inventory and prevent active picking.
-        // drop_off only removes matching items, so dead inventory is permanent!
-        const allow_preview_for_bot = (orch_active_assigned[bi] == 0) and bot.inv_len == 0 and
-            (state.bot_count <= 2 or bots_with_preview_only < max_preview_carriers);
+        // Preview strategy: allow preview picking only for bots with NO active items to deliver.
+        // Preview items become the next order — safe to pick. But picking preview MUST NOT
+        // delay active order delivery. Only truly idle bots (nothing active) should pick preview.
+        const all_active_covered = pick_remaining.count == 0;
+        const allow_preview_for_bot = (orch_active_assigned[bi] == 0) and
+            !has_active and // KEY: never preview if this bot has active items to deliver
+            (bot.inv_len < INV_CAP) and
+            (state.bot_count <= 2 or all_active_covered or bots_with_preview_only < max_preview_carriers);
 
         // Re-validate trip against current needs
         if (pb.has_trip and pb.trip_pos < pb.trip_count) {
@@ -869,6 +904,11 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                     pending_is_move[bi] = true;
                     continue;
                 }
+                // escapeDir returned null — emit wait instead of falling through
+                try writer.print("{{\"bot\":{d},\"action\":\"wait\"}}", .{bot.id});
+                pending_is_move[bi] = false;
+                pending_dirs[bi] = null;
+                continue;
             } else {
                 continue;
             }
@@ -889,8 +929,9 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 if (pass == 0) {
                     if (!pick_remaining.contains(item.item_type)) continue;
                 } else {
-                    if (!allow_preview_for_bot) continue;
                     if (!bot_preview.contains(item.item_type)) continue;
+                    // Only allow preview pickup for bots explicitly allowed (no active items)
+                    if (!allow_preview_for_bot) continue;
                 }
 
                 try writer.print("{{\"bot\":{d},\"action\":\"pick_up\",\"item_id\":\"{s}\"}}", .{ bot.id, item.idStr() });
@@ -898,8 +939,11 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 pb.last_pickup_pos = bpos;
                 pb.last_pickup_item_pos = item.pos;
                 pb.last_inv_len = bot.inv_len;
-                pick_remaining.remove(item.item_type);
-                preview.remove(item.item_type);
+                if (pass == 0) {
+                    pick_remaining.remove(item.item_type);
+                } else {
+                    preview.remove(item.item_type);
+                }
                 claimed[ii] = @intCast(bi);
                 pending_is_move[bi] = false;
                 pending_dirs[bi] = null;
@@ -946,6 +990,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             pb.delivering = true;
             pb.has_trip = false;
         }
+        // (Delay delivery for preview fill-up removed — caused dead inventory cascade)
         // Far bots with few items: stop delivering, go pick preview instead
         if (far_with_few and pb.delivering) {
             pb.delivering = false;
@@ -1036,7 +1081,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
 
         // ─── 6. Plan new trip ──────────────────────────────────────
-        if (effective_slots > 0 and (!pb.delivering or !dropoff_priority[bi])) {
+        if (effective_slots > 0 and (!pb.delivering or !dropoff_priority[bi] or (all_active_covered and !has_active))) {
             const t = trip_mod.planBestTrip(state, dm_bot, &dm_drop, &pick_remaining, &bot_preview, &claimed, bi, @intCast(effective_slots), allow_preview_for_bot, rounds_left);
             if (t) |tp| {
                 pb.has_trip = true;
@@ -1107,19 +1152,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             };
         }
 
-        // ─── 8. Has active items but couldn't deliver yet → go to dropoff ──
-        if (bot.inv_len > 0 and has_active and !bpos.eql(state.dropoff)) {
-            const res = pathfinding.bfs(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
-            if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
-                try writeMove(writer, bot.id, d);
-                updateBotPos(&bot_positions[bi], d);
-                pending_dirs[bi] = d;
-                pending_is_move[bi] = true;
-                continue;
-            };
-        }
-
-        // ─── 8b. Not delivering → pre-position ─────
+        // ─── 8. Not delivering → pre-position ─────
         if (!has_active and bot.inv_len == 0) {
             // Pre-position near items that are still needed (active first, then preview).
             // This puts idle bots in useful positions for quick pickups.
