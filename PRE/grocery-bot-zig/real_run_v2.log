@@ -1,0 +1,37 @@
+Connecting to game.ainm.no:443 (TLS=true)
+Sending handshake (443 bytes)...
+Server response:
+HTTP/1.1 101 Switching Protocols
+sec-websocket-accept: cJVKeqB9BccgAZwAkc+egbJKuRg=
+date: Fri, 27 Feb 2026 13:51:39 GMT
+server: Google Frontend
+traceparent: 00-73ab729fcb4102058b38cab7a3e583fe-1cea0d855c520911-01
+x-cloud-trace-context: 73ab729fcb4102058b38cab7a3e583fe/2083492644042967313;o=1
+Via: 1.1 google
+Upgrade: websocket
+Connection: Upgrade
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+
+
+WebSocket handshake OK!
+R0: 12x10 grid, 1 bots, 16 items, dropoff (1,8)
+R0/300 Score:0
+R0 Score:0 items_on_map=16 stuck=false osc=0
+R25 Score:3 items_on_map=16 stuck=false osc=0
+R50/300 Score:11
+R50 Score:11 items_on_map=16 stuck=false osc=1
+Parse error: error.SyntaxError
+R75 Score:11 items_on_map=16 stuck=false osc=0
+R99 Bot0 oscillating at (1,1) osc_count=5
+R100/300 Score:11
+R100 Score:11 items_on_map=16 stuck=false osc=5
+R125 Score:17 items_on_map=16 stuck=false osc=0
+R150/300 Score:17
+R150 Score:17 items_on_map=16 stuck=false osc=1
+R175 Score:17 items_on_map=16 stuck=false osc=1
+R186 Bot0 oscillating at (4,1) osc_count=5
+R200/300 Score:17
+R200 Score:17 items_on_map=16 stuck=false osc=2
+R207 Bot0 oscillating at (4,1) osc_count=5
+Parse error: error.SyntaxError
+Recv error: error.ReadFailed

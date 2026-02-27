@@ -1,0 +1,26 @@
+Connecting to localhost:9898 (TLS=false)
+Sending handshake (148 bytes)...
+Server response:
+HTTP/1.1 101 Switching Protocols
+Date: Fri, 27 Feb 2026 13:12:45 GMT
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: Bcy6r7h373QzjbRRCQc2TRHzzo8=
+Server: Python/3.12 websockets/15.0.1
+
+
+WebSocket handshake OK!
+R0: 12x10 grid, 1 bots, 20 items, dropoff (1,8)
+R0/300 Score:0
+R0 Score:0 items_on_map=20 stuck=false
+R50/300 Score:11
+R50 Score:11 items_on_map=11 stuck=false
+R100/300 Score:28
+R100 Score:28 items_on_map=6 stuck=false
+R150/300 Score:36
+R150 Score:36 items_on_map=1 stuck=false
+R200/300 Score:45
+R200 Score:45 items_on_map=0 stuck=true
+R250/300 Score:45
+R250 Score:45 items_on_map=0 stuck=true
+Game over! Score: 45, Rounds: 300

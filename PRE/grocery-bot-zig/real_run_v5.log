@@ -1,0 +1,55 @@
+Connecting to game.ainm.no:443 (TLS=true)
+Sending handshake (443 bytes)...
+Server response:
+HTTP/1.1 101 Switching Protocols
+sec-websocket-accept: YwzBblJJIMhjQj3vF2jJHaHlzlA=
+date: Fri, 27 Feb 2026 14:23:13 GMT
+server: Google Frontend
+traceparent: 00-2c52c7e3921a01cce9b917cbd48cacfb-63b2b55660c3c8b8-01
+x-cloud-trace-context: 2c52c7e3921a01cce9b917cbd48cacfb/7184003738204620984;o=1
+Via: 1.1 google
+Upgrade: websocket
+Connection: Upgrade
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+
+
+WebSocket handshake OK!
+R0: 12x10 grid, 1 bots, 16 items, dropoff (1,8)
+R0/300 Score:0
+R0 Score:0 items_on_map=16 stuck=false osc=0
+R25 Score:3 items_on_map=16 stuck=false osc=0
+R50/300 Score:11
+R50 Score:11 items_on_map=16 stuck=false osc=0
+R75 Score:26 items_on_map=16 stuck=false osc=0
+R100/300 Score:34
+R100 Score:34 items_on_map=16 stuck=false osc=0
+R125 Score:37 items_on_map=16 stuck=false osc=5
+R129 Bot0 osc reset at (1,8) osc=10
+R138 Bot0 osc reset at (1,8) osc=20
+R147 Bot0 osc reset at (1,8) osc=30
+R150/300 Score:37
+R150 Score:37 items_on_map=16 stuck=false osc=33
+R156 Bot0 osc reset at (1,8) osc=40
+R165 Bot0 osc reset at (1,8) osc=50
+R174 Bot0 osc reset at (1,8) osc=60
+R175 Score:37 items_on_map=16 stuck=false osc=61
+R183 Bot0 osc reset at (1,8) osc=70
+R192 Bot0 osc reset at (1,8) osc=80
+R200/300 Score:37
+R200 Score:37 items_on_map=16 stuck=false osc=88
+R201 Bot0 osc reset at (1,8) osc=90
+R210 Bot0 osc reset at (1,8) osc=100
+R219 Bot0 osc reset at (1,8) osc=110
+R225 Score:37 items_on_map=16 stuck=false osc=116
+R228 Bot0 osc reset at (1,8) osc=120
+R237 Bot0 osc reset at (1,8) osc=130
+R246 Bot0 osc reset at (1,8) osc=140
+R250/300 Score:37
+R250 Score:37 items_on_map=16 stuck=false osc=144
+R255 Bot0 osc reset at (1,8) osc=150
+R264 Bot0 osc reset at (1,8) osc=160
+R273 Bot0 osc reset at (1,8) osc=170
+R275 Score:37 items_on_map=16 stuck=false osc=172
+R282 Bot0 osc reset at (1,8) osc=180
+R291 Bot0 osc reset at (1,8) osc=190
+Game over! Score: 37, Rounds: 300

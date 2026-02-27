@@ -1,0 +1,31 @@
+Connecting to game.ainm.no:443 (TLS=true)
+Sending handshake (443 bytes)...
+Server response:
+HTTP/1.1 101 Switching Protocols
+sec-websocket-accept: Zv03TI00rjPLCHsf/ktBI/p2MNQ=
+date: Fri, 27 Feb 2026 13:33:54 GMT
+server: Google Frontend
+x-cloud-trace-context: ffa193e83a06d674af381a58086a7da6/16141831759126961272
+traceparent: 00-ffa193e83a06d674af381a58086a7da6-e0034e763ae19c78-00
+Via: 1.1 google
+Upgrade: websocket
+Connection: Upgrade
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+
+
+WebSocket handshake OK!
+R0: 12x10 grid, 1 bots, 16 items, dropoff (1,8)
+R0/300 Score:0
+R0 Score:0 items_on_map=16 stuck=false
+R50/300 Score:11
+R50 Score:11 items_on_map=16 stuck=false
+R100/300 Score:35
+R100 Score:35 items_on_map=16 stuck=false
+R150/300 Score:44
+R150 Score:44 items_on_map=16 stuck=false
+R200/300 Score:44
+R200 Score:44 items_on_map=16 stuck=false
+Parse error: error.SyntaxError
+R250/300 Score:44
+R250 Score:44 items_on_map=16 stuck=false
+Game over! Score: 45, Rounds: 300

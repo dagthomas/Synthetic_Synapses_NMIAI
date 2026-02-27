@@ -1,0 +1,57 @@
+Connecting to game.ainm.no:443 (TLS=true)
+Sending handshake (443 bytes)...
+Server response:
+HTTP/1.1 101 Switching Protocols
+sec-websocket-accept: 9p4mA8sA36Wcxnk/G02U0dB2EIY=
+date: Fri, 27 Feb 2026 14:39:25 GMT
+server: Google Frontend
+traceparent: 00-305881c08c98c66c23c15c45a8f8520e-6f206a8faf154876-01
+x-cloud-trace-context: 305881c08c98c66c23c15c45a8f8520e/8007517302815017078;o=1
+Via: 1.1 google
+Upgrade: websocket
+Connection: Upgrade
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+
+
+WebSocket handshake OK!
+R0: 12x10 grid, 1 bots, 16 items, dropoff (1,8)
+R0/300 Score:0
+R0 Score:0 items_on_map=16 stuck=false osc=0
+R25 Score:3 items_on_map=16 stuck=false osc=0
+Blacklisted pickup: adj (3,7) -> item (3,6), total=1
+Blacklisted pickup: adj (5,7) -> item (5,6), total=2
+Blacklisted pickup: adj (4,6) -> item (5,6), total=3
+R50/300 Score:11
+R50 Score:11 items_on_map=16 stuck=false osc=0
+Blacklisted pickup: adj (5,5) -> item (5,6), total=4
+Blacklisted pickup: adj (7,5) -> item (7,4), total=5
+Blacklisted pickup: adj (8,4) -> item (7,4), total=6
+Blacklisted pickup: adj (8,3) -> item (9,3), total=7
+Blacklisted pickup: adj (8,2) -> item (7,2), total=8
+R75 Score:11 items_on_map=16 stuck=false osc=0
+R100/300 Score:18
+R100 Score:18 items_on_map=16 stuck=false osc=0
+R118 Bot0 osc reset at (1,7) osc=10
+R125 Score:18 items_on_map=16 stuck=false osc=2
+R133 Bot0 osc reset at (1,7) osc=10
+R148 Bot0 osc reset at (1,7) osc=10
+R150/300 Score:18
+R150 Score:18 items_on_map=16 stuck=false osc=2
+R163 Bot0 osc reset at (1,7) osc=10
+R175 Score:18 items_on_map=16 stuck=false osc=7
+R178 Bot0 osc reset at (1,7) osc=10
+R193 Bot0 osc reset at (1,7) osc=10
+R200/300 Score:18
+R200 Score:18 items_on_map=16 stuck=false osc=2
+R208 Bot0 osc reset at (1,7) osc=10
+R223 Bot0 osc reset at (1,7) osc=10
+R225 Score:18 items_on_map=16 stuck=false osc=2
+R238 Bot0 osc reset at (1,7) osc=10
+R250/300 Score:18
+R250 Score:18 items_on_map=16 stuck=false osc=7
+R253 Bot0 osc reset at (1,7) osc=10
+R268 Bot0 osc reset at (1,7) osc=10
+R275 Score:18 items_on_map=16 stuck=false osc=2
+R283 Bot0 osc reset at (1,7) osc=10
+R298 Bot0 osc reset at (1,7) osc=10
+Game over! Score: 18, Rounds: 300

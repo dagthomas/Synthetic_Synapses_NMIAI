@@ -1,0 +1,328 @@
+const std = @import("std");
+const types = @import("types.zig");
+const pathfinding = @import("pathfinding.zig");
+
+const Pos = types.Pos;
+const ItemType = types.ItemType;
+const GameState = types.GameState;
+const NeedList = types.NeedList;
+const DistMap = types.DistMap;
+const MAX_ITEMS = types.MAX_ITEMS;
+const INV_CAP = types.INV_CAP;
+const UNREACHABLE = types.UNREACHABLE;
+
+// ── Trip Planning (Mini-TSP) ──────────────────────────────────────────
+pub const Candidate = struct {
+    item_idx: u16,
+    adj: Pos,
+    is_active: bool,
+    dist_from_bot: u16,
+    dist_from_drop: u16,
+};
+
+pub const TripPlan = struct {
+    items: [INV_CAP]u16,
+    adjs: [INV_CAP]Pos,
+    item_count: u8,
+    total_cost: u32,
+    active_count: u8,
+    preview_count: u8,
+    completes_order: bool,
+};
+
+pub fn planBestTrip(
+    state: *const GameState,
+    dm_bot: *const DistMap,
+    dm_drop: *const DistMap,
+    bot_active: *const NeedList,
+    bot_preview: *const NeedList,
+    claimed: *const [MAX_ITEMS]i8,
+    bi: usize,
+    slots_free: u8,
+    allow_preview: bool,
+    rounds_left: u32,
+) ?TripPlan {
+    const active_remaining = bot_active.count;
+
+    var cands: [32]Candidate = undefined;
+    var cand_count: u8 = 0;
+
+    var need_active_filled: [16]u8 = undefined;
+    var need_active_types: [16]ItemType = undefined;
+    var need_active_len: u8 = 0;
+    var need_preview_filled: [16]u8 = undefined;
+    var need_preview_types: [16]ItemType = undefined;
+    var need_preview_len: u8 = 0;
+
+    for (0..bot_active.count) |i| {
+        var found = false;
+        for (0..need_active_len) |j| {
+            if (need_active_types[j].eql(bot_active.types[i])) {
+                need_active_filled[j] += 1;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            need_active_types[need_active_len] = bot_active.types[i];
+            need_active_filled[need_active_len] = 1;
+            need_active_len += 1;
+        }
+    }
+    for (0..bot_preview.count) |i| {
+        var found = false;
+        for (0..need_preview_len) |j| {
+            if (need_preview_types[j].eql(bot_preview.types[i])) {
+                need_preview_filled[j] += 1;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            need_preview_types[need_preview_len] = bot_preview.types[i];
+            need_preview_filled[need_preview_len] = 1;
+            need_preview_len += 1;
+        }
+    }
+
+    var active_needed: [16]u8 = undefined;
+    @memcpy(active_needed[0..need_active_len], need_active_filled[0..need_active_len]);
+    var preview_needed: [16]u8 = undefined;
+    @memcpy(preview_needed[0..need_preview_len], need_preview_filled[0..need_preview_len]);
+
+    const TempCand = struct { ii: u16, dist: u16, is_active: bool, adj: Pos, d_back: u16 };
+    var all_cands: [64]TempCand = undefined;
+    var all_count: u8 = 0;
+
+    for (0..state.item_count) |ii| {
+        if (all_count >= 64) break;
+        if (claimed[ii] >= 0 and claimed[ii] != @as(i8, @intCast(bi))) continue;
+        const item = &state.items[ii];
+
+        var is_active_item = false;
+        for (0..need_active_len) |j| {
+            if (need_active_types[j].eql(item.item_type) and active_needed[j] > 0) {
+                is_active_item = true;
+                break;
+            }
+        }
+        var is_preview_item = false;
+        if (!is_active_item and allow_preview) {
+            for (0..need_preview_len) |j| {
+                if (need_preview_types[j].eql(item.item_type) and preview_needed[j] > 0) {
+                    is_preview_item = true;
+                    break;
+                }
+            }
+        }
+        if (!is_active_item and !is_preview_item) continue;
+
+        const adj = pathfinding.findBestAdj(state, item.pos, dm_bot) orelse continue;
+        const ux: u16 = @intCast(adj.x);
+        const uy: u16 = @intCast(adj.y);
+        const d_to = dm_bot[uy][ux];
+        if (d_to >= UNREACHABLE) continue;
+        const d_back = dm_drop[uy][ux];
+
+        all_cands[all_count] = .{ .ii = @intCast(ii), .dist = d_to, .is_active = is_active_item, .adj = adj, .d_back = d_back };
+        all_count += 1;
+    }
+
+    // Sort all candidates by distance
+    for (0..all_count) |i| {
+        var min_j = i;
+        for (i + 1..all_count) |j| {
+            if (all_cands[j].dist < all_cands[min_j].dist) min_j = j;
+        }
+        if (min_j != i) {
+            const tmp = all_cands[i];
+            all_cands[i] = all_cands[min_j];
+            all_cands[min_j] = tmp;
+        }
+    }
+
+    // Pick closest items per type-slot
+    var sel_active_used: [16]u8 = undefined;
+    @memset(sel_active_used[0..need_active_len], 0);
+    var sel_preview_used: [16]u8 = undefined;
+    @memset(sel_preview_used[0..need_preview_len], 0);
+
+    for (0..all_count) |i| {
+        if (cand_count >= 16) break;
+        const tc = &all_cands[i];
+        const item = &state.items[tc.ii];
+
+        if (tc.is_active) {
+            var slot_idx: ?usize = null;
+            for (0..need_active_len) |j| {
+                if (need_active_types[j].eql(item.item_type) and sel_active_used[j] < active_needed[j]) {
+                    slot_idx = j;
+                    break;
+                }
+            }
+            if (slot_idx) |si| {
+                sel_active_used[si] += 1;
+            } else continue;
+        } else {
+            var slot_idx: ?usize = null;
+            for (0..need_preview_len) |j| {
+                if (need_preview_types[j].eql(item.item_type) and sel_preview_used[j] < preview_needed[j]) {
+                    slot_idx = j;
+                    break;
+                }
+            }
+            if (slot_idx) |si| {
+                sel_preview_used[si] += 1;
+            } else continue;
+        }
+
+        cands[cand_count] = .{
+            .item_idx = tc.ii,
+            .adj = tc.adj,
+            .is_active = tc.is_active,
+            .dist_from_bot = tc.dist,
+            .dist_from_drop = tc.d_back,
+        };
+        cand_count += 1;
+    }
+
+    if (cand_count == 0) return null;
+
+    const n: u8 = @min(cand_count, 10);
+
+    // Pre-compute BFS distance maps from each candidate's adj position
+    var cand_dm: [10]DistMap = undefined;
+    for (0..n) |i| {
+        pathfinding.bfsDistMap(state, cands[i].adj, &cand_dm[i]);
+    }
+
+    var best: ?TripPlan = null;
+    var best_score: u64 = 0;
+
+    // Evaluate single-item trips
+    for (0..n) |a| {
+        const cost = @as(u32, cands[a].dist_from_bot) + @as(u32, cands[a].dist_from_drop);
+        if (cost + 3 > rounds_left) continue;
+        const ac: u8 = if (cands[a].is_active) 1 else 0;
+        const pc: u8 = if (cands[a].is_active) 0 else 1;
+        if (ac == 0 and active_remaining > 0) continue;
+        const completes = ac >= active_remaining and active_remaining > 0;
+        const score = tripScore(cost, ac, pc, 1, completes);
+        if (best == null or score > best_score) {
+            best = .{ .items = undefined, .adjs = undefined, .item_count = 1, .total_cost = cost, .active_count = ac, .preview_count = pc, .completes_order = completes };
+            best.?.items[0] = cands[a].item_idx;
+            best.?.adjs[0] = cands[a].adj;
+            best_score = score;
+        }
+    }
+
+    if (slots_free < 2) return best;
+
+    // Evaluate 2-item trips
+    for (0..n) |a| {
+        for (a + 1..n) |b| {
+            if (!cands[a].is_active and !cands[b].is_active and !allow_preview) continue;
+
+            const ab_ux: u16 = @intCast(cands[b].adj.x);
+            const ab_uy: u16 = @intCast(cands[b].adj.y);
+            const ab_dist = @as(u32, cand_dm[a][ab_uy][ab_ux]);
+            const ba_ux: u16 = @intCast(cands[a].adj.x);
+            const ba_uy: u16 = @intCast(cands[a].adj.y);
+            const ba_dist = @as(u32, cand_dm[b][ba_uy][ba_ux]);
+
+            const cost_ab = @as(u32, cands[a].dist_from_bot) + ab_dist + @as(u32, cands[b].dist_from_drop);
+            const cost_ba = @as(u32, cands[b].dist_from_bot) + ba_dist + @as(u32, cands[a].dist_from_drop);
+
+            const ac: u8 = (if (cands[a].is_active) @as(u8, 1) else 0) + (if (cands[b].is_active) @as(u8, 1) else 0);
+            const pc: u8 = 2 - ac;
+            if (ac == 0 and active_remaining > 0) continue;
+            const completes = ac >= active_remaining and active_remaining > 0;
+
+            if (cost_ab + 4 <= rounds_left) {
+                const score = tripScore(cost_ab, ac, pc, 2, completes);
+                if (best == null or score > best_score) {
+                    const adj_b = pathfinding.findBestAdj(state, state.items[cands[b].item_idx].pos, &cand_dm[a]) orelse cands[b].adj;
+                    best = .{ .items = undefined, .adjs = undefined, .item_count = 2, .total_cost = cost_ab, .active_count = ac, .preview_count = pc, .completes_order = completes };
+                    best.?.items[0] = cands[a].item_idx;
+                    best.?.items[1] = cands[b].item_idx;
+                    best.?.adjs[0] = cands[a].adj;
+                    best.?.adjs[1] = adj_b;
+                    best_score = score;
+                }
+            }
+            if (cost_ba + 4 <= rounds_left) {
+                const score = tripScore(cost_ba, ac, pc, 2, completes);
+                if (best == null or score > best_score) {
+                    const adj_a = pathfinding.findBestAdj(state, state.items[cands[a].item_idx].pos, &cand_dm[b]) orelse cands[a].adj;
+                    best = .{ .items = undefined, .adjs = undefined, .item_count = 2, .total_cost = cost_ba, .active_count = ac, .preview_count = pc, .completes_order = completes };
+                    best.?.items[0] = cands[b].item_idx;
+                    best.?.items[1] = cands[a].item_idx;
+                    best.?.adjs[0] = cands[b].adj;
+                    best.?.adjs[1] = adj_a;
+                    best_score = score;
+                }
+            }
+        }
+    }
+
+    if (slots_free < 3) return best;
+
+    // Evaluate 3-item trips
+    const n3 = @min(n, 8);
+    for (0..n3) |a| {
+        for (a + 1..n3) |b| {
+            for (b + 1..n3) |c| {
+                const items3 = [3]u8{ @intCast(a), @intCast(b), @intCast(c) };
+                const perms = [6][3]u8{
+                    .{ 0, 1, 2 }, .{ 0, 2, 1 }, .{ 1, 0, 2 },
+                    .{ 1, 2, 0 }, .{ 2, 0, 1 }, .{ 2, 1, 0 },
+                };
+                const ac: u8 = (if (cands[a].is_active) @as(u8, 1) else 0) +
+                    (if (cands[b].is_active) @as(u8, 1) else 0) +
+                    (if (cands[c].is_active) @as(u8, 1) else 0);
+                const pc: u8 = 3 - ac;
+                const completes = ac >= active_remaining and active_remaining > 0;
+                if (ac == 0 and active_remaining > 0) continue;
+
+                for (perms) |perm| {
+                    const p0 = items3[perm[0]];
+                    const p1 = items3[perm[1]];
+                    const p2 = items3[perm[2]];
+                    const d01_ux: u16 = @intCast(cands[p1].adj.x);
+                    const d01_uy: u16 = @intCast(cands[p1].adj.y);
+                    const d12_ux: u16 = @intCast(cands[p2].adj.x);
+                    const d12_uy: u16 = @intCast(cands[p2].adj.y);
+                    const cost = @as(u32, cands[p0].dist_from_bot) +
+                        @as(u32, cand_dm[p0][d01_uy][d01_ux]) +
+                        @as(u32, cand_dm[p1][d12_uy][d12_ux]) +
+                        @as(u32, cands[p2].dist_from_drop);
+
+                    if (cost + 5 > rounds_left) continue;
+                    const score = tripScore(cost, ac, pc, 3, completes);
+                    if (best == null or score > best_score) {
+                        const adj1 = pathfinding.findBestAdj(state, state.items[cands[p1].item_idx].pos, &cand_dm[p0]) orelse cands[p1].adj;
+                        const adj2 = pathfinding.findBestAdj(state, state.items[cands[p2].item_idx].pos, &cand_dm[p1]) orelse cands[p2].adj;
+                        best = .{ .items = undefined, .adjs = undefined, .item_count = 3, .total_cost = cost, .active_count = ac, .preview_count = pc, .completes_order = completes };
+                        best.?.items[0] = cands[p0].item_idx;
+                        best.?.items[1] = cands[p1].item_idx;
+                        best.?.items[2] = cands[p2].item_idx;
+                        best.?.adjs[0] = cands[p0].adj;
+                        best.?.adjs[1] = adj1;
+                        best.?.adjs[2] = adj2;
+                        best_score = score;
+                    }
+                }
+            }
+        }
+    }
+
+    return best;
+}
+
+pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool) u64 {
+    if (cost == 0) return std.math.maxInt(u64);
+    var value: u32 = @as(u32, ac) * 10 + @as(u32, pc) * 3;
+    if (completes_order) value += 25;
+    value += @as(u32, count) * 2;
+    return @as(u64, value) * 10000 / @as(u64, cost);
+}

@@ -1,0 +1,40 @@
+Connecting to game.ainm.no:443 (TLS=true)
+Sending handshake (443 bytes)...
+Server response:
+HTTP/1.1 101 Switching Protocols
+sec-websocket-accept: hdgxUJmfXlD1GCLyHKP/yk20RAk=
+date: Fri, 27 Feb 2026 14:09:59 GMT
+server: Google Frontend
+x-cloud-trace-context: c221e35238e13ea0dbe385bdd17500a4/6752118160873443390
+traceparent: 00-c221e35238e13ea0dbe385bdd17500a4-5db457b16c53503e-00
+Via: 1.1 google
+Upgrade: websocket
+Connection: Upgrade
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+
+
+WebSocket handshake OK!
+R0: 12x10 grid, 1 bots, 16 items, dropoff (1,8)
+R0/300 Score:0
+R0 Score:0 items_on_map=16 stuck=false osc=0
+R25 Score:3 items_on_map=16 stuck=false osc=0
+R50/300 Score:11
+R50 Score:11 items_on_map=16 stuck=false osc=0
+R75 Score:27 items_on_map=16 stuck=false osc=0
+R100/300 Score:35
+R100 Score:35 items_on_map=16 stuck=false osc=0
+R125 Score:37 items_on_map=16 stuck=false osc=0
+R150/300 Score:53
+R150 Score:53 items_on_map=16 stuck=false osc=1
+R175 Score:61 items_on_map=16 stuck=false osc=7
+R194 Bot0 osc reset at (1,5) osc=10
+R200/300 Score:64
+R200 Score:64 items_on_map=16 stuck=false osc=6
+R225 Score:64 items_on_map=16 stuck=false osc=0
+R250/300 Score:71
+R250 Score:71 items_on_map=16 stuck=false osc=0
+R266 Bot0 osc reset at (4,7) osc=10
+R275 Score:71 items_on_map=16 stuck=false osc=9
+R276 Bot0 osc reset at (4,7) osc=10
+R286 Bot0 osc reset at (4,7) osc=10
+Game over! Score: 71, Rounds: 300
