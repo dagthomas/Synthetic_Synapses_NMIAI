@@ -103,7 +103,7 @@ def make_game_state(rnd, max_rounds, w, h, walls, shelves, bots, items, orders, 
     # Include shelf positions as walls (shelves are always impassable)
     wall_list = [[x, y] for (x, y) in sorted(walls | shelves)]
     item_list = [{"id": it["id"], "type": it["type"], "position": it["position"]}
-                 for it in items if not it["picked"]]
+                 for it in items]
     bot_list = [{"id": b["id"], "position": b["position"], "inventory": list(b["inventory"])}
                 for b in bots]
     order_list = [{"id": o["id"], "items_required": o["items_required"],
@@ -134,8 +134,9 @@ def is_walkable(x, y, w, h, walls, shelves):
     return True
 
 
-async def run_game(websocket, cfg):
-    seed = random.randint(0, 999999)
+async def run_game(websocket, cfg, seed=None):
+    if seed is None:
+        seed = random.randint(0, 999999)
     random.seed(seed)
     print(f"Seed: {seed}")
     w, h, walls, shelves, drop_off, spawn, items, item_types = build_map(cfg)
@@ -146,8 +147,7 @@ async def run_game(websocket, cfg):
     def get_available_counts():
         counts = {}
         for it in items:
-            if not it["picked"]:
-                counts[it["type"]] = counts.get(it["type"], 0) + 1
+            counts[it["type"]] = counts.get(it["type"], 0) + 1
         return counts
 
     # Initialize bots at spawn
@@ -243,12 +243,12 @@ async def run_game(websocket, cfg):
                 item_id = act.get("item_id")
                 if item_id and len(bot["inventory"]) < INV_CAP:
                     for it in items:
-                        if it["id"] == item_id and not it["picked"]:
+                        if it["id"] == item_id:
                             ix, iy = it["position"]
                             mdist = abs(bx - ix) + abs(by - iy)
                             if mdist == 1:
                                 bot["inventory"].append(it["type"])
-                                it["picked"] = True
+                                # Items stay on shelves permanently (never deplete)
                                 if rnd < 10 or rnd % 50 == 0:
                                     print(f"  R{rnd} Bot{bid}: picked up {it['type']} ({item_id})")
                             break
@@ -336,8 +336,7 @@ async def run_game(websocket, cfg):
             prev_str = f"Preview: {preview_order['items_required']}" if preview_order else "No preview"
             avail_types = {}
             for it in items:
-                if not it["picked"]:
-                    avail_types[it["type"]] = avail_types.get(it["type"], 0) + 1
+                avail_types[it["type"]] = avail_types.get(it["type"], 0) + 1
             print(f"R{rnd} | Score:{score} | {bot_info}")
             print(f"  {act_str}")
             print(f"  {prev_str}")
@@ -370,13 +369,14 @@ async def run_game(websocket, cfg):
 
 async def handler(websocket):
     print("Bot connected!")
-    await run_game(websocket, active_cfg)
+    await run_game(websocket, active_cfg, active_seed)
     print("Game finished.")
 
 
-async def main_server(port, cfg):
-    global active_cfg
+async def main_server(port, cfg, seed=None):
+    global active_cfg, active_seed
     active_cfg = cfg
+    active_seed = seed
     print(f"Starting sim server on ws://localhost:{port}")
     print(f"Config: {cfg['w']}x{cfg['h']}, {cfg['bots']} bots, {cfg['types']} item types")
     print(f"Connect your bot: grocery-bot ws://localhost:{port}")
@@ -386,9 +386,12 @@ async def main_server(port, cfg):
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 9999
-    diff = sys.argv[2] if len(sys.argv) > 2 else "easy"
-    if diff not in CONFIGS:
-        print(f"Unknown difficulty: {diff}. Use: easy, medium, hard, expert")
-        sys.exit(1)
-    asyncio.run(main_server(port, CONFIGS[diff]))
+    import argparse
+    parser = argparse.ArgumentParser(description="Grocery bot sim server")
+    parser.add_argument("port", nargs="?", type=int, default=9999)
+    parser.add_argument("difficulty", nargs="?", default="easy",
+                        choices=list(CONFIGS.keys()))
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for reproducible games")
+    args = parser.parse_args()
+    asyncio.run(main_server(args.port, CONFIGS[args.difficulty], args.seed))
