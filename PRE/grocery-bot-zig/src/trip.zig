@@ -41,6 +41,7 @@ pub fn planBestTrip(
     slots_free: u8,
     allow_preview: bool,
     rounds_left: u32,
+    bot_count: u8,
 ) ?TripPlan {
     const active_remaining = bot_active.count;
 
@@ -128,11 +129,25 @@ pub fn planBestTrip(
         all_count += 1;
     }
 
-    // Sort all candidates by distance
+    // Sort candidates: single-bot uses weighted cost (bot_dist*2 + drop_dist) for better round-trip selection;
+    // multi-bot uses pure bot distance (simpler, avoids routing regressions with many bots)
     for (0..all_count) |i| {
         var min_j = i;
         for (i + 1..all_count) |j| {
-            if (all_cands[j].dist < all_cands[min_j].dist) min_j = j;
+            if (bot_count <= 1) {
+                const cost_j = @as(u32, all_cands[j].dist) + @as(u32, all_cands[j].d_back);
+                const cost_min = @as(u32, all_cands[min_j].dist) + @as(u32, all_cands[min_j].d_back);
+                if (cost_j < cost_min) min_j = j;
+            } else if (bot_count >= 8) {
+                // Large multi-bot (Expert): sort by round-trip cost (pick + return to dropoff)
+                // Prefers items close to both bot AND dropoff for faster order cycling
+                const cost_j = @as(u32, all_cands[j].dist) + @as(u32, all_cands[j].d_back);
+                const cost_min = @as(u32, all_cands[min_j].dist) + @as(u32, all_cands[min_j].d_back);
+                if (cost_j < cost_min) min_j = j;
+            } else {
+                // Small multi-bot (Medium/Hard): sort by pure bot distance
+                if (all_cands[j].dist < all_cands[min_j].dist) min_j = j;
+            }
         }
         if (min_j != i) {
             const tmp = all_cands[i];
@@ -331,6 +346,9 @@ pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, ro
     if (completes_order and rounds_left < 60) value += 20;
     // Small bonus per item count
     value += @as(u32, count) * 2;
+    // Preview items in completing trips auto-deliver at dropoff, saving a full round-trip
+    // Each preview item saved ~10 rounds of pick + deliver on the next order
+    if (completes_order and pc > 0) value += @as(u32, pc) * 150;
     // Penalize trips that use >50% of remaining time when under 60 rounds
     if (rounds_left < 60 and cost * 2 > rounds_left) {
         value = value / 2;

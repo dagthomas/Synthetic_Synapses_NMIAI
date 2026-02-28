@@ -340,7 +340,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         if (!has_any_active) bots_with_preview_only += 1;
     }
     // Max bots allowed to carry preview items: limit to reduce dead inventory risk
-    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else 1;
+    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else if (state.bot_count >= 8) 3 else if (state.bot_count >= 5) 2 else 1;
 
     // ── Fix 6: Track score changes for diagnostic logging ──
     if (state.score != last_score) {
@@ -479,8 +479,9 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
         pb.last_pos = bot.pos;
 
-        // Stall reset (same position for 8+ rounds)
-        if (pb.stall_count > 8) {
+        // Stall reset (multi-bot: 5 rounds, single-bot: 6 rounds)
+        const stall_limit: u16 = if (state.bot_count >= 5) 5 else 6;
+        if (pb.stall_count > stall_limit) {
             pb.has_trip = false;
             pb.delivering = false;
             pb.stall_count = 0;
@@ -601,6 +602,9 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             dropoff_priority[delivering_bots[i].bi] = true;
         }
         for (0..state.bot_count) |bi| {
+            // Only auto-grant priority to bots that are actually delivering
+            // Non-delivering bots near dropoff should still get orchestrator assignments
+            if (!pbots[bi].delivering) continue;
             const d = pathfinding.distFromMap(&dm_drop, eff_pos[bi]);
             if (d <= 1) dropoff_priority[bi] = true;
         }
@@ -665,7 +669,12 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                         if (bot_assigned[bk] >= free_slots) continue;
 
                         const adj = pathfinding.findBestAdj(state, state.items[ii].pos, &all_dm_bot[bk]) orelse continue;
-                        const d = all_dm_bot[bk][@intCast(adj.y)][@intCast(adj.x)];
+                        const raw_d = all_dm_bot[bk][@intCast(adj.y)][@intCast(adj.x)];
+                        // Concentration bonus: prefer bots that already have assignments
+                        // to create multi-item trips, reducing delivery trips to dropoff
+                        // Only for 3-bot (medium) — larger maps don't benefit from concentration
+                        const conc_bonus: u16 = if (bot_assigned[bk] > 0 and state.bot_count == 3) 5 else 0;
+                        const d = if (raw_d > conc_bonus) raw_d - conc_bonus else 0;
                         if (d < best_dist) {
                             best_dist = d;
                             best_item = @intCast(ii);
@@ -936,8 +945,11 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                     if (!pick_remaining.contains(item.item_type)) continue;
                 } else {
                     if (!bot_preview.contains(item.item_type)) continue;
-                    // Only allow preview pickup for bots explicitly allowed (no active items)
-                    if (!allow_preview_for_bot) continue;
+                    // Allow preview pickup for:
+                    // a) Idle bots explicitly allowed (no active items), OR
+                    // b) Delivering bots when all active items are covered (preview auto-delivers at dropoff)
+                    const delivering_preview_ok = pb.delivering and state.bot_count >= 5 and bot.inv_len < INV_CAP and pick_remaining.count <= 2 and rounds_left > 30;
+                    if (!allow_preview_for_bot and !delivering_preview_ok) continue;
                 }
 
                 try writer.print("{{\"bot\":{d},\"action\":\"pick_up\",\"item_id\":\"{s}\"}}", .{ bot.id, item.idStr() });
@@ -1017,9 +1029,13 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
         // ─── 4. Delivering → go to dropoff (with opportunistic detour) ──
         if (pb.delivering and has_active) {
-            // Opportunistic detour: pick up active items on the way to dropoff (single-bot)
-            if (state.bot_count <= 1 and effective_slots > 0 and !endgame and dist_to_drop > 2 and pick_remaining.count > 0) {
-                const max_extra: u32 = 5;
+            // Opportunistic detour: pick up active items on the way to dropoff
+            // Single-bot: generous detour (max 5 extra). Multi-bot: 1, or 3 if would complete order.
+            const base_detour: u32 = if (state.bot_count <= 1) 5 else 1;
+            if (effective_slots > 0 and !endgame and dist_to_drop > 2 and pick_remaining.count > 0) {
+                // Would picking the last remaining item complete the order?
+                const completing_detour = state.bot_count > 1 and pick_remaining.count == 1;
+                const max_extra: u32 = if (completing_detour) 4 else base_detour;
                 var best_det_ii: ?u16 = null;
                 var best_det_adj: Pos = undefined;
                 var best_det_extra: u32 = max_extra;
@@ -1128,9 +1144,11 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         if (effective_slots > 0 and (!pb.delivering or !dropoff_priority[bi] or (all_active_covered and !has_active))) {
             // Allow preview in completing trips (single-bot): if remaining active items fit in our slots,
             // adding preview items lets them auto-deliver when order completes at dropoff
+            // Allow preview in completing trips (single-bot only): if remaining active items fit in our slots,
+            // adding preview items lets them auto-deliver when order completes at dropoff
             const completing_possible = state.bot_count <= 1 and pick_remaining.count > 0 and pick_remaining.count <= effective_slots;
             const allow_preview_in_trip = allow_preview_for_bot or completing_possible;
-            const t = trip_mod.planBestTrip(state, dm_bot, &dm_drop, &pick_remaining, &bot_preview, &claimed, bi, @intCast(effective_slots), allow_preview_in_trip, rounds_left);
+            const t = trip_mod.planBestTrip(state, dm_bot, &dm_drop, &pick_remaining, &bot_preview, &claimed, bi, @intCast(effective_slots), allow_preview_in_trip, rounds_left, @intCast(state.bot_count));
             if (t) |tp| {
                 pb.has_trip = true;
                 pb.trip_count = tp.item_count;
