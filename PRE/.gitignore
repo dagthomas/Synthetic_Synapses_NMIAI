@@ -1,1 +1,7 @@
 /grocery-bot-zig/.zig-cache
+/grocery-bot-zig/replay/node_modules
+/grocery-bot-zig/replay/app/node_modules
+/grocery-bot-zig/replay/app/build
+/grocery-bot-zig/replay/app/.svelte-kit
+/grocery-bot-gpu/_pycache
+/grocery-bot-gpu/__pycache__

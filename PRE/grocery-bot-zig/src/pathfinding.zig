@@ -143,6 +143,50 @@ pub fn safeGreedyDir(state: *const GameState, from: Pos, to: Pos) ?Dir {
     return null;
 }
 
+// ── Pre-computed distance maps (walls never change) ──────────────────
+// BFS from every walkable cell, computed once at round 0.
+// Eliminates ~27 BFS per round → O(1) distance lookups.
+var all_precomputed: [MAX_H][MAX_W]DistMap = undefined;
+var precomputed_valid: [MAX_H][MAX_W]bool = [_][MAX_W]bool{[_]bool{false} ** MAX_W} ** MAX_H;
+var precompute_done: bool = false;
+
+pub fn precomputeAllDistances(state: *const GameState) void {
+    const w = state.width;
+    const h = state.height;
+    var count: u16 = 0;
+    for (0..h) |y| {
+        for (0..w) |x| {
+            const cell = state.grid[y][x];
+            if (cell == .floor or cell == .dropoff) {
+                bfsDistMap(state, .{ .x = @intCast(x), .y = @intCast(y) }, &all_precomputed[y][x]);
+                precomputed_valid[y][x] = true;
+                count += 1;
+            } else {
+                precomputed_valid[y][x] = false;
+            }
+        }
+    }
+    precompute_done = true;
+    std.debug.print("Pre-computed BFS from {d} walkable cells\n", .{count});
+}
+
+/// Get pre-computed distance map for a position. Falls back to runtime BFS if not pre-computed.
+pub fn getPrecomputedDm(state: *const GameState, pos: Pos) *const DistMap {
+    if (pos.x >= 0 and pos.y >= 0 and pos.x < state.width and pos.y < state.height) {
+        const ux: u16 = @intCast(pos.x);
+        const uy: u16 = @intCast(pos.y);
+        if (precomputed_valid[uy][ux]) {
+            return &all_precomputed[uy][ux];
+        }
+    }
+    // Fallback: compute at runtime (shouldn't happen for walkable cells)
+    return &all_precomputed[0][0]; // Return dummy; caller should check
+}
+
+pub fn resetPrecompute() void {
+    precompute_done = false;
+}
+
 // ── Find best adjacent floor cell to an item ──────────────────────────
 pub fn findBestAdj(state: *const GameState, item_pos: Pos, dm: *const DistMap) ?Pos {
     const offsets = [4][2]i16{ .{ 0, -1 }, .{ 0, 1 }, .{ -1, 0 }, .{ 1, 0 } };

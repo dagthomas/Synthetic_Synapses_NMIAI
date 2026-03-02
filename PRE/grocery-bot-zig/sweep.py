@@ -1,11 +1,20 @@
 #!/usr/bin/env python
 """Sweep runner: runs bot vs sim_server across many seeds, reports statistics.
 Usage: python sweep.py [difficulty] [--seeds N] [--port PORT]
+       python sweep.py expert --seeds 40 --no-record   # skip DB recording
 """
-import subprocess, sys, os, re, time, statistics, argparse, threading
+import subprocess, sys, os, re, time, statistics, argparse, threading, glob
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_EXE = os.path.join(SCRIPT_DIR, "zig-out", "bin", "grocery-bot.exe")
+
+def get_bot_exe(difficulty):
+    """Get difficulty-specific executable if available, else fall back to generic."""
+    specific = os.path.join(SCRIPT_DIR, "zig-out", "bin", f"grocery-bot-{difficulty}.exe")
+    if os.path.exists(specific):
+        return specific
+    return BOT_EXE
+DEFAULT_DB = "postgres://grocery:grocery123@localhost:5433/grocery_bot"
 
 
 def drain_pipe(pipe, lines):
@@ -15,8 +24,10 @@ def drain_pipe(pipe, lines):
     pipe.close()
 
 
-def run_one(difficulty, seed, port):
+def run_one(difficulty, seed, port, bot_exe=None):
     """Run a single game with given seed. Returns (score, orders_completed) or None on failure."""
+    if bot_exe is None:
+        bot_exe = get_bot_exe(difficulty)
     srv = subprocess.Popen(
         [sys.executable, "-u", "sim_server.py", str(port), difficulty, "--seed", str(seed)],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -30,7 +41,7 @@ def run_one(difficulty, seed, port):
     time.sleep(0.5)
 
     bot = subprocess.Popen(
-        [BOT_EXE, f"ws://localhost:{port}"],
+        [bot_exe, f"ws://localhost:{port}"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         cwd=SCRIPT_DIR,
     )
@@ -68,16 +79,44 @@ def run_one(difficulty, seed, port):
     return None
 
 
+def try_record(difficulty, seed, port, db_url):
+    """Try to record a game to PostgreSQL. Returns (score, orders) or None."""
+    try:
+        import asyncio
+        sys.path.insert(0, os.path.join(SCRIPT_DIR, "replay"))
+        from recorder import record_single
+        score = asyncio.run(record_single(port + 100, difficulty, seed, db_url))
+        return score
+    except Exception as e:
+        print(f"    [record failed: {e}]")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sweep runner for grocery bot")
     parser.add_argument("difficulty", nargs="?", default="medium",
                         choices=["easy", "medium", "hard", "expert"])
     parser.add_argument("--seeds", type=int, default=50, help="Number of seeds to test")
     parser.add_argument("--port", type=int, default=9880, help="Base port")
+    parser.add_argument("--no-record", action="store_true", help="Skip DB recording")
+    parser.add_argument("--db", default=DEFAULT_DB, help="PostgreSQL URL")
     args = parser.parse_args()
 
+    # Check if recording is available
+    recording = not args.no_record
+    if recording:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(args.db)
+            conn.close()
+            print(f"Recording to PostgreSQL: {args.db}")
+        except Exception as e:
+            print(f"DB not available ({e}), running without recording")
+            recording = False
+
+    bot_exe = get_bot_exe(args.difficulty)
     print(f"Sweeping {args.seeds} seeds on {args.difficulty} (port {args.port})")
-    print(f"Bot: {BOT_EXE}")
+    print(f"Bot: {bot_exe}")
     print()
 
     scores = []
@@ -85,16 +124,43 @@ def main():
     failures = 0
 
     for i in range(args.seeds):
-        seed = 1000 + i  # Deterministic seed sequence
-        result = run_one(args.difficulty, seed, args.port)
-        if result is None:
-            failures += 1
-            print(f"  Seed {seed}: FAILED")
+        seed = 7001 + i  # Competition server seed sequence
+
+        if recording:
+            # Use recorder (also saves to DB)
+            try:
+                import asyncio
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, "replay"))
+                from recorder import record_single
+                s = asyncio.run(record_single(args.port, args.difficulty, seed, args.db))
+                if s and s > 0:
+                    scores.append(s)
+                    orders.append(0)  # recorder prints orders separately
+                else:
+                    failures += 1
+                    print(f"  Seed {seed}: FAILED")
+            except Exception as e:
+                # Fallback to non-recording run
+                print(f"    [record error: {e}, falling back]")
+                result = run_one(args.difficulty, seed, args.port)
+                if result is None:
+                    failures += 1
+                    print(f"  Seed {seed}: FAILED")
+                else:
+                    s, o = result
+                    scores.append(s)
+                    orders.append(o)
+                    print(f"  Seed {seed}: score={s}, orders={o}")
         else:
-            s, o = result
-            scores.append(s)
-            orders.append(o)
-            print(f"  Seed {seed}: score={s}, orders={o}")
+            result = run_one(args.difficulty, seed, args.port)
+            if result is None:
+                failures += 1
+                print(f"  Seed {seed}: FAILED")
+            else:
+                s, o = result
+                scores.append(s)
+                orders.append(o)
+                print(f"  Seed {seed}: score={s}, orders={o}")
 
     print()
     print(f"{'='*50}")
@@ -111,11 +177,29 @@ def main():
         print(f"  Max:    {max(scores)}")
         print(f"  P25:    {p25}")
         print(f"  P75:    {p75}")
-        print(f"  Orders: mean={statistics.mean(orders):.1f}, total={sum(orders)}")
+        if any(o > 0 for o in orders):
+            print(f"  Orders: mean={statistics.mean(orders):.1f}, total={sum(orders)}")
     if failures:
         print(f"  Failures: {failures}")
     print(f"{'='*50}")
 
 
+def cleanup_game_logs(max_keep=15):
+    """Remove old game_log_*.jsonl files, keeping only the most recent max_keep."""
+    logs = glob.glob(os.path.join(SCRIPT_DIR, "game_log_*.jsonl"))
+    if len(logs) <= max_keep:
+        return
+    logs.sort(key=os.path.getmtime, reverse=True)
+    for old in logs[max_keep:]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    removed = len(logs) - max_keep
+    if removed > 0:
+        print(f"Cleaned up {removed} old game log files (keeping {max_keep})")
+
+
 if __name__ == "__main__":
     main()
+    cleanup_game_logs()

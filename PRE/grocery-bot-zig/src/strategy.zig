@@ -1,7 +1,12 @@
 const std = @import("std");
+const config = @import("config");
 const types = @import("types.zig");
 const pathfinding = @import("pathfinding.zig");
 const trip_mod = @import("trip.zig");
+
+// Compile-time difficulty: .auto means runtime detection, otherwise locked to specific difficulty
+const Difficulty = config.Difficulty;
+const DIFFICULTY = config.difficulty;
 
 const Pos = types.Pos;
 const Dir = types.Dir;
@@ -15,6 +20,7 @@ const DistMap = types.DistMap;
 const MAX_BOTS = types.MAX_BOTS;
 const MAX_ITEMS = types.MAX_ITEMS;
 const MAX_H = types.MAX_H;
+const MAX_W = types.MAX_W;
 const INV_CAP = types.INV_CAP;
 const UNREACHABLE = types.UNREACHABLE;
 
@@ -87,6 +93,7 @@ pub fn initPbots() void {
     blacklist_count = 0;
     last_score = 0;
     rounds_since_score_change = 0;
+    pathfinding.resetPrecompute();
     offset_detected = false;
     offset_check_mismatches = 0;
     offset_check_rounds = 0;
@@ -223,12 +230,24 @@ fn escapeDir(state: *const GameState, pos: Pos, pb: *const PersistentBot, bot_id
         for (0..pb.pos_hist_len) |i| {
             if (pb.pos_hist[i].eql(new_pos)) score -= 3;
         }
-        // Prefer moving toward center of map
-        const cx = @as(i16, @intCast(state.width / 2));
-        const cy = @as(i16, @intCast(state.height / 2));
-        const cur_dist = @abs(pos.x - cx) + @abs(pos.y - cy);
-        const new_dist = @abs(nx - cx) + @abs(ny - cy);
-        if (new_dist < cur_dist) score += 2;
+        // Prefer moving toward nearest horizontal corridor (where bots can pass)
+        // Corridors: y=1 (top), y=mid_y (middle), y=h-2 (bottom)
+        const mid_y = @as(i16, @intCast(state.height / 2));
+        const corr_top: i16 = 1;
+        const corr_bot: i16 = @as(i16, @intCast(state.height)) - 2;
+        const cur_corr = @min(@min(@abs(pos.y - corr_top), @abs(pos.y - mid_y)), @abs(pos.y - corr_bot));
+        const new_corr = @min(@min(@abs(ny - corr_top), @abs(ny - mid_y)), @abs(ny - corr_bot));
+        if (new_corr < cur_corr) score += 5; // Strong preference for corridor
+        if (new_corr > cur_corr) score -= 2; // Avoid going deeper into aisle
+        // Avoid crowded areas: prefer directions with fewer nearby bots
+        if (state.bot_count >= 5) {
+            var nearby: i16 = 0;
+            for (0..state.bot_count) |bk| {
+                if (bk == bot_id) continue;
+                if (@abs(bot_positions[bk].x - nx) + @abs(bot_positions[bk].y - ny) <= 3) nearby += 1;
+            }
+            score -= nearby * 2;
+        }
         if (score > best_score) { best_score = score; best_dir = d; }
     }
     return best_dir;
@@ -311,6 +330,11 @@ fn advanceTrip(pb: *PersistentBot, state: *const GameState, picked_item: *const 
 pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     if (!pbots_initialized) initPbots();
 
+    // Pre-compute all BFS distance maps once at game start (walls never change)
+    if (state.round == 0) {
+        pathfinding.precomputeAllDistances(state);
+    }
+
     const needs = buildNeeds(state);
     const active_orig = needs.active;
     const preview_orig = needs.preview;
@@ -324,6 +348,20 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     }
     var preview = needs.preview;
     const rounds_left = if (state.max_rounds > state.round) state.max_rounds - state.round else 0;
+
+    // Detect auto-delivery completion: active order exists but ALL items already delivered
+    // This happens when auto-delivery at dropoff fills the entire new order but no bot
+    // issues drop_off to trigger the +5 completion bonus
+    const order_auto_complete = blk: {
+        var has_active_order = false;
+        for (0..state.order_count) |oi| {
+            if (state.orders[oi].is_active and !state.orders[oi].complete) {
+                has_active_order = true;
+                break;
+            }
+        }
+        break :blk has_active_order and active_orig.count == 0;
+    };
 
     // Count bots carrying ONLY preview items (dead inventory) to limit preview picking
     var bots_with_preview_only: u8 = 0;
@@ -340,6 +378,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         if (!has_any_active) bots_with_preview_only += 1;
     }
     // Max bots allowed to carry preview items: limit to reduce dead inventory risk
+    // CRITICAL: increasing this causes catastrophic dead-inv in Expert (10 bots)
     const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else if (state.bot_count >= 8) 3 else if (state.bot_count >= 5) 2 else 1;
 
     // ── Fix 6: Track score changes for diagnostic logging ──
@@ -417,9 +456,8 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
     }
 
-    // ── Distance from dropoff (computed BEFORE order_stuck for Fix 2 reachability) ──
-    var dm_drop: DistMap = undefined;
-    pathfinding.bfsDistMap(state, state.dropoff, &dm_drop);
+    // ── Distance from dropoff (pre-computed at round 0, walls never change) ──
+    var dm_drop: DistMap = pathfinding.getPrecomputedDm(state, state.dropoff).*;
 
     // ── Detect stuck order (Fix 2: add reachability check) ──
     var order_stuck = false;
@@ -455,6 +493,8 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     // Track orchestrator assignments per bot (hoisted for use in per-bot loop)
     var orch_active_assigned: [MAX_BOTS]u8 = undefined;
     @memset(orch_active_assigned[0..state.bot_count], 0);
+    var orch_preview_assigned: [MAX_BOTS]u8 = undefined;
+    @memset(orch_preview_assigned[0..state.bot_count], 0);
 
     const current_active_order_idx = state.active_order_idx;
 
@@ -479,9 +519,33 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
         pb.last_pos = bot.pos;
 
-        // Stall reset (multi-bot: 5 rounds, single-bot: 6 rounds)
-        const stall_limit: u16 = if (state.bot_count >= 5) 5 else 6;
-        if (pb.stall_count > stall_limit) {
+        // Fast head-on deadlock detection (2 rounds instead of 6)
+        // When two bots are adjacent and both stalled, they're in a corridor deadlock.
+        // Higher-ID bot yields (escapes to nearest corridor) — lower-ID bot has movement priority.
+        if (pb.stall_count >= 2 and pb.stall_count < 6 and state.bot_count > 1 and pb.escape_rounds == 0) {
+            for (0..state.bot_count) |bk| {
+                if (bk == bi) continue;
+                if (pbots[bk].stall_count < 2) continue;
+                const mdist = @abs(bot.pos.x - state.bots[bk].pos.x) + @abs(bot.pos.y - state.bots[bk].pos.y);
+                if (mdist == 1) {
+                    // Adjacent stalled bots → head-on deadlock
+                    if (bi > bk) {
+                        // Higher ID yields: escape to nearest corridor
+                        pb.escape_rounds = 3;
+                        pb.has_trip = false;
+                        pb.stall_count = 0;
+                        std.debug.print("R{d} Bot{d} FAST-YIELD to Bot{d} at ({d},{d})\n", .{ state.round, bot.id, state.bots[bk].id, bot.pos.x, bot.pos.y });
+                    } else {
+                        // Lower ID keeps priority — just reset stall so it retries
+                        pb.stall_count = 0;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Stall reset (same position for 6+ rounds — faster recovery than 8)
+        if (pb.stall_count > 6) {
             pb.has_trip = false;
             pb.delivering = false;
             pb.stall_count = 0;
@@ -536,11 +600,14 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         pb.rounds_on_order +|= 1;
 
         // Force reset after being stuck on same order too long
-        if (pb.rounds_on_order > 30 and pb.rounds_on_order % 15 == 0) {
+        // Trigger escape to physically break deadlocks — just resetting trip plans
+        // causes bot to immediately re-plan the same failed route
+        if (pb.rounds_on_order > 25 and pb.rounds_on_order % 12 == 0) {
             pb.has_trip = false;
             pb.delivering = false;
             pb.osc_count = 0;
-            std.debug.print("R{d} Bot{d} stuck-order reset (rounds_on_order={d})\n", .{ state.round, bot.id, pb.rounds_on_order });
+            pb.escape_rounds = 3;
+            std.debug.print("R{d} Bot{d} stuck-order ESCAPE (rounds_on_order={d})\n", .{ state.round, bot.id, pb.rounds_on_order });
         }
 
         // Validate persistent trip: do all remaining items still exist?
@@ -560,10 +627,10 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
     }
 
-    // ── Pre-compute BFS distance maps for all bots (from effective positions) ──
+    // ── Distance maps for all bots (pre-computed lookups, O(1) per bot) ──
     var all_dm_bot: [MAX_BOTS]DistMap = undefined;
     for (0..state.bot_count) |bi| {
-        pathfinding.bfsDistMap(state, eff_pos[bi], &all_dm_bot[bi]);
+        all_dm_bot[bi] = pathfinding.getPrecomputedDm(state, eff_pos[bi]).*;
     }
 
     // ── Dropoff priority: rank delivering bots by distance ──────────────
@@ -651,6 +718,16 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             }
         }
 
+        // Max active pickers: limit how many bots get active item assignments
+        // Concentrates items on fewer bots → fewer delivery trips → less dropoff congestion
+        const max_pickers: u8 = switch (DIFFICULTY) {
+            .easy => state.bot_count,
+            .medium => state.bot_count,
+            .hard => 4,
+            .expert => 8,
+            .auto => if (state.bot_count >= 8) 8 else if (state.bot_count >= 5) 3 else state.bot_count,
+        };
+
         // Greedily assign: for each type, find closest (bot, item) pair
         for (0..type_track_len) |ti| {
             while (type_track[ti].assigned < type_track[ti].needed) {
@@ -667,14 +744,34 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                         if (pbots[bk].delivering and dropoff_priority[bk]) continue;
                         const free_slots = if (INV_CAP > state.bots[bk].inv_len) INV_CAP - state.bots[bk].inv_len else 0;
                         if (bot_assigned[bk] >= free_slots) continue;
+                        // Don't assign to a new bot if we've hit the picker limit
+                        if (bot_assigned[bk] == 0) {
+                            var unique_pickers: u8 = 0;
+                            for (0..state.bot_count) |bp| {
+                                if (bot_assigned[bp] > 0) unique_pickers += 1;
+                            }
+                            if (unique_pickers >= max_pickers) continue;
+                        }
 
                         const adj = pathfinding.findBestAdj(state, state.items[ii].pos, &all_dm_bot[bk]) orelse continue;
                         const raw_d = all_dm_bot[bk][@intCast(adj.y)][@intCast(adj.x)];
+                        const d_back = dm_drop[@intCast(adj.y)][@intCast(adj.x)];
+                        // Orchestrator cost: per-difficulty strategy
+                        const use_roundtrip = switch (DIFFICULTY) {
+                            .easy => false, // Single bot: pure pickup distance
+                            .medium => true, // Round-trip cost reduces total cycle time
+                            .hard => true,
+                            .expert => false, // Too many bots: pure distance works better
+                            .auto => state.bot_count > 1 and state.bot_count < 8,
+                        };
+                        const trip_cost: u16 = if (use_roundtrip and d_back < UNREACHABLE) raw_d + d_back else raw_d;
                         // Concentration bonus: prefer bots that already have assignments
-                        // to create multi-item trips, reducing delivery trips to dropoff
-                        // Only for 3-bot (medium) — larger maps don't benefit from concentration
-                        const conc_bonus: u16 = if (bot_assigned[bk] > 0 and state.bot_count == 3) 5 else 0;
-                        const d = if (raw_d > conc_bonus) raw_d - conc_bonus else 0;
+                        const conc_bonus: u16 = switch (DIFFICULTY) {
+                            .medium => if (bot_assigned[bk] > 0) 8 else 0,
+                            .auto => if (bot_assigned[bk] > 0 and state.bot_count == 3) 8 else 0,
+                            else => 0,
+                        };
+                        const d = if (trip_cost > conc_bonus) trip_cost - conc_bonus else 0;
                         if (d < best_dist) {
                             best_dist = d;
                             best_item = @intCast(ii);
@@ -691,8 +788,9 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             }
 
             // Block excess unclaimed instances of fully-covered types
-            // For 8+ bots, DON'T block — let idle bots act as backup pickers
-            if (type_track[ti].assigned >= type_track[ti].needed and state.bot_count < 8) {
+            // Prevents duplicate type picking which creates dead inventory when orders change
+            // Only for <=3 bots — larger bot counts benefit from backup pickers
+            if (type_track[ti].assigned >= type_track[ti].needed and state.bot_count <= 3) {
                 for (0..state.item_count) |ii| {
                     if (claimed[ii] >= 0) continue;
                     if (state.items[ii].item_type.eql(type_track[ti].t)) {
@@ -710,7 +808,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // the next order's active items. No risk of permanent dead inventory.
         const all_active_covered_orch = pick_remaining.count == 0;
         var total_preview_assigned: u8 = 0;
-        const max_orch_preview: u8 = if (all_active_covered_orch) preview.count else if (state.bot_count <= 2) 4 else if (state.bot_count <= 4) 2 else 2;
+        const max_orch_preview: u8 = if (all_active_covered_orch) preview.count else if (state.bot_count <= 2) 4 else if (state.bot_count <= 4) 2 else if (state.bot_count >= 8) 4 else 2;
         if (preview.count > 0 and (all_active_covered_orch or bots_with_preview_only < max_preview_carriers)) {
             var prev_track: [16]TypeTrack = undefined;
             var prev_track_len: u8 = 0;
@@ -777,6 +875,23 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                     bot_assigned[best_bot] += 1;
                     prev_track[ti].assigned += 1;
                     total_preview_assigned += 1;
+                    orch_preview_assigned[best_bot] += 1;
+                }
+            }
+
+            // Block excess preview instances to prevent duplicate type picking
+            // Prevents multiple bots from picking same preview type → dead inventory
+            // Only for <=3 bots — larger counts benefit from backup preview pickers
+            if (state.bot_count <= 3) {
+                for (0..prev_track_len) |ti| {
+                    if (prev_track[ti].assigned >= prev_track[ti].needed) {
+                        for (0..state.item_count) |ii| {
+                            if (claimed[ii] >= 0) continue;
+                            if (state.items[ii].item_type.eql(prev_track[ti].t)) {
+                                claimed[ii] = @intCast(MAX_BOTS);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -830,11 +945,15 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // Small multi-bot (2-4): preview freely when active covered (no congestion risk)
         // Large multi-bot (5+): cap preview carriers even when covered to avoid mass dead-inventory
         const max_preview_covered: u8 = if (state.bot_count <= 4) state.bot_count else @as(u8, @intCast(state.bot_count)) / 2;
+        // Safe preview: allow beyond carrier limit when bot is near dropoff AND order is far from completion.
+        // Near dropoff → fast delivery. Many items remaining → order won't cycle soon. Low dead-inv risk.
+        const dist_to_drop_bot = pathfinding.distFromMap(&dm_drop, bpos);
+        const safe_preview = state.bot_count >= 5 and pick_remaining.count >= 3 and dist_to_drop_bot <= 10 and orch_active_assigned[bi] == 0;
         const allow_preview_for_bot = !has_active and
             (bot.inv_len < INV_CAP) and
             (if (state.bot_count <= 1) all_active_covered
             else if (state.bot_count <= 4) (all_active_covered or (orch_active_assigned[bi] == 0 and bots_with_preview_only < max_preview_carriers))
-            else (orch_active_assigned[bi] == 0 and bots_with_preview_only < (if (all_active_covered) max_preview_covered else max_preview_carriers)));
+            else (orch_active_assigned[bi] == 0 and (bots_with_preview_only < (if (all_active_covered) max_preview_covered else max_preview_carriers) or safe_preview)));
 
         // Re-validate trip against current needs
         if (pb.has_trip and pb.trip_pos < pb.trip_count) {
@@ -858,6 +977,18 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             if (!trip_still_valid) {
                 pb.has_trip = false;
             }
+        }
+
+        // ─── 0. Auto-delivery completion: order fully satisfied but not completed ──
+        // When auto-delivery fills ALL items of the new active order, no bot has has_active=true
+        // because active needs are empty. But drop_off still triggers the completion check (+5).
+        if (order_auto_complete and bpos.eql(state.dropoff) and bot.inv_len > 0) {
+            try writer.print("{{\"bot\":{d},\"action\":\"drop_off\"}}", .{bot.id});
+            pb.has_trip = false;
+            pb.delivering = false;
+            pending_is_move[bi] = false;
+            pending_dirs[bi] = null;
+            continue;
         }
 
         // ─── 1. At dropoff → drop off ───────────────────────────────
@@ -947,8 +1078,13 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                     if (!bot_preview.contains(item.item_type)) continue;
                     // Allow preview pickup for:
                     // a) Idle bots explicitly allowed (no active items), OR
-                    // b) Delivering bots when all active items are covered (preview auto-delivers at dropoff)
-                    const delivering_preview_ok = pb.delivering and state.bot_count >= 5 and bot.inv_len < INV_CAP and pick_remaining.count <= 2 and rounds_left > 30;
+                    // b) Delivering bots (5+ bots) when active items nearly covered (preview auto-delivers at dropoff)
+                    // Allow preview pickup during delivery when:
+                    // a) 5+ bots and order nearly done (pick_remaining <= 2) [original], OR
+                    // b) <5 bots when order guaranteed to complete (pick_remaining == 0)
+                    const delivering_preview_ok = pb.delivering and bot.inv_len < INV_CAP and rounds_left > 30 and
+                        ((state.bot_count >= 5 and pick_remaining.count <= 2) or
+                         (state.bot_count < 5 and pick_remaining.count == 0));
                     if (!allow_preview_for_bot and !delivering_preview_ok) continue;
                 }
 
@@ -996,7 +1132,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         const effective_slots = if (INV_CAP > bot.inv_len) INV_CAP - bot.inv_len else 0;
 
         const dist_to_drop = pathfinding.distFromMap(&dm_drop, bpos);
-        const endgame = rounds_left <= dist_to_drop + 3;
+        const endgame = rounds_left <= dist_to_drop + @as(u16, bot.inv_len) + 1;
 
         // With many bots, don't rush to deliver with 1 item if far from dropoff
         // Let closer bots handle delivery while far bots pick preview items
@@ -1018,6 +1154,20 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             pb.delivering = false;
         }
 
+        // Endgame yielding: bots that can't reach dropoff in time should get out of the way
+        // so bots that CAN deliver aren't blocked in corridors
+        if (state.bot_count > 1 and rounds_left <= 15 and dist_to_drop > rounds_left and !bpos.eql(state.dropoff)) {
+            // This bot can't deliver in time — flee from dropoff to clear paths
+            const flee_dir = fleeDropoff(state, bpos, @intCast(bi), &bot_positions);
+            if (flee_dir) |d| {
+                try writeMove(writer, bot.id, d);
+                updateBotPos(&bot_positions[bi], d);
+                pending_dirs[bi] = d;
+                pending_is_move[bi] = true;
+                continue;
+            }
+        }
+
         // Diagnostic logging when score stalls
         if (rounds_since_score_change >= 10 and state.round % 5 == 0) {
             std.debug.print("R{d} STALL Bot{d} pos=({d},{d}) eff=({d},{d}) inv={d} has_active={any} delivering={any} eff_slots={d} trip={any} stuck={any} order_rds={d}\n", .{
@@ -1029,13 +1179,29 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
         // ─── 4. Delivering → go to dropoff (with opportunistic detour) ──
         if (pb.delivering and has_active) {
+            // Graduated delivery: when many closer bots are already delivering,
+            // be more willing to detour and pick items on the way to dropoff.
+            // This staggers arrivals and reduces dropoff congestion.
+            const delivery_rank: u8 = blk: {
+                if (state.bot_count < 5) break :blk 0;
+                var closer: u8 = 0;
+                for (0..state.bot_count) |bk| {
+                    if (bk == bi) continue;
+                    if (!pbots[bk].delivering) continue;
+                    const bk_dist = pathfinding.distFromMap(&dm_drop, bot_positions[bk]);
+                    if (bk_dist < dist_to_drop) closer += 1;
+                }
+                break :blk closer;
+            };
             // Opportunistic detour: pick up active items on the way to dropoff
-            // Single-bot: generous detour (max 5 extra). Multi-bot: 1, or 3 if would complete order.
-            const base_detour: u32 = if (state.bot_count <= 1) 5 else 1;
-            if (effective_slots > 0 and !endgame and dist_to_drop > 2 and pick_remaining.count > 0) {
+            // Single-bot: generous detour (max 5 extra). Multi-bot: 1 normally, 3 when queued.
+            const base_detour: u32 = if (state.bot_count <= 1) 5
+                else if (delivery_rank >= 2) 3  // More detour tolerance when queued behind other deliverers
+                else 1;
+            if (effective_slots > 0 and !endgame and dist_to_drop > 2) {
                 // Would picking the last remaining item complete the order?
-                const completing_detour = state.bot_count > 1 and pick_remaining.count == 1;
-                const max_extra: u32 = if (completing_detour) 4 else base_detour;
+                const completing_detour = pick_remaining.count == 1;
+                const max_extra: u32 = if (completing_detour) @as(u32, if (state.bot_count <= 1) 8 else 4) else base_detour;
                 var best_det_ii: ?u16 = null;
                 var best_det_adj: Pos = undefined;
                 var best_det_extra: u32 = max_extra;
@@ -1055,6 +1221,31 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                         best_det_extra = extra;
                         best_det_ii = @intCast(ii);
                         best_det_adj = adj;
+                    }
+                }
+                // Preview detour: when all active items are picked (order completes on delivery),
+                // grab a preview item on the way to dropoff for free auto-delivery
+                // Helps single-bot and small multi-bot (< 5); hurts 5+ bots (delivery congestion)
+                if (best_det_ii == null and pick_remaining.count == 0 and state.bot_count <= 5) {
+                    // Zero-cost detours for 5 bots (extra=0 only); 1-step for 2-4 bots; generous for single
+                    const prev_max_extra: u32 = if (state.bot_count <= 1) 4 else if (state.bot_count >= 5) 1 else 2;
+                    for (0..state.item_count) |ii| {
+                        if (claimed[ii] >= 0 and claimed[ii] != @as(i8, @intCast(bi))) continue;
+                        if (!bot_preview.contains(state.items[ii].item_type)) continue;
+                        const adj = pathfinding.findBestAdj(state, state.items[ii].pos, dm_bot) orelse continue;
+                        const ux: u16 = @intCast(adj.x);
+                        const uy: u16 = @intCast(adj.y);
+                        const d_to = dm_bot[uy][ux];
+                        if (d_to >= UNREACHABLE) continue;
+                        const d_bk = dm_drop[uy][ux];
+                        if (d_bk >= UNREACHABLE) continue;
+                        const via = @as(u32, d_to) + @as(u32, d_bk);
+                        const extra = if (via > dist_to_drop) via - dist_to_drop else 0;
+                        if (extra < prev_max_extra and (best_det_ii == null or extra < best_det_extra)) {
+                            best_det_extra = extra;
+                            best_det_ii = @intCast(ii);
+                            best_det_adj = adj;
+                        }
                     }
                 }
                 if (best_det_ii) |det_ii| {
@@ -1142,13 +1333,24 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
         // ─── 6. Plan new trip ──────────────────────────────────────
         if (effective_slots > 0 and (!pb.delivering or !dropoff_priority[bi] or (all_active_covered and !has_active))) {
-            // Allow preview in completing trips (single-bot): if remaining active items fit in our slots,
-            // adding preview items lets them auto-deliver when order completes at dropoff
+            // Endgame trip size reduction: smaller trips complete faster in late game
+            const trip_slots: u8 = switch (DIFFICULTY) {
+                .expert => if (rounds_left < 20) @min(effective_slots, 1)
+                    else if (rounds_left < 40) @min(effective_slots, 2)
+                    else effective_slots,
+                .hard => if (rounds_left < 20) @min(effective_slots, 1)
+                    else if (rounds_left < 40) @min(effective_slots, 2)
+                    else effective_slots,
+                .auto => if (state.bot_count >= 5 and rounds_left < 20) @min(effective_slots, 1)
+                    else if (state.bot_count >= 5 and rounds_left < 40) @min(effective_slots, 2)
+                    else effective_slots,
+                else => effective_slots,
+            };
             // Allow preview in completing trips (single-bot only): if remaining active items fit in our slots,
             // adding preview items lets them auto-deliver when order completes at dropoff
-            const completing_possible = state.bot_count <= 1 and pick_remaining.count > 0 and pick_remaining.count <= effective_slots;
+            const completing_possible = state.bot_count <= 1 and pick_remaining.count > 0 and pick_remaining.count <= trip_slots;
             const allow_preview_in_trip = allow_preview_for_bot or completing_possible;
-            const t = trip_mod.planBestTrip(state, dm_bot, &dm_drop, &pick_remaining, &bot_preview, &claimed, bi, @intCast(effective_slots), allow_preview_in_trip, rounds_left, @intCast(state.bot_count));
+            const t = trip_mod.planBestTrip(state, dm_bot, &dm_drop, &pick_remaining, &bot_preview, &claimed, bi, @intCast(trip_slots), allow_preview_in_trip, rounds_left, @intCast(state.bot_count));
             if (t) |tp| {
                 pb.has_trip = true;
                 pb.trip_count = tp.item_count;
@@ -1236,14 +1438,30 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 prev_target_count += 1;
             }
             // Then: preview items
-            for (0..state.item_count) |ii| {
-                if (prev_target_count >= 16) break;
-                if (!preview_orig.contains(state.items[ii].item_type)) continue;
-                const adj = pathfinding.findBestAdj(state, state.items[ii].pos, dm_bot) orelse continue;
-                const d = dm_bot[@intCast(adj.y)][@intCast(adj.x)];
-                if (d >= UNREACHABLE) continue;
-                prev_targets[prev_target_count] = .{ .adj = adj, .dist = d };
-                prev_target_count += 1;
+            // For 8+ bots: prioritize orchestrator-assigned items (bots pre-position for next order)
+            if (state.bot_count >= 8) {
+                for (0..state.item_count) |ii| {
+                    if (prev_target_count >= 16) break;
+                    if (!preview_orig.contains(state.items[ii].item_type)) continue;
+                    if (claimed[ii] >= 0 and claimed[ii] != @as(i8, @intCast(bi))) continue;
+                    const adj = pathfinding.findBestAdj(state, state.items[ii].pos, dm_bot) orelse continue;
+                    const d = dm_bot[@intCast(adj.y)][@intCast(adj.x)];
+                    if (d >= UNREACHABLE) continue;
+                    prev_targets[prev_target_count] = .{ .adj = adj, .dist = d };
+                    prev_target_count += 1;
+                }
+            }
+            // Fallback or default: any preview items
+            if (prev_target_count == 0) {
+                for (0..state.item_count) |ii| {
+                    if (prev_target_count >= 16) break;
+                    if (!preview_orig.contains(state.items[ii].item_type)) continue;
+                    const adj = pathfinding.findBestAdj(state, state.items[ii].pos, dm_bot) orelse continue;
+                    const d = dm_bot[@intCast(adj.y)][@intCast(adj.x)];
+                    if (d >= UNREACHABLE) continue;
+                    prev_targets[prev_target_count] = .{ .adj = adj, .dist = d };
+                    prev_target_count += 1;
+                }
             }
             if (prev_target_count > 0) {
                 // Sort by distance
@@ -1281,9 +1499,38 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             // Fallback: if no preview targets, stay put (don't waste rounds going to a corner)
         }
         // Dead inventory bots (inv>0, !has_active):
-        // If inventory matches preview, position near dropoff for auto-delivery.
-        // Limit campers near dropoff to avoid congestion blocking active deliveries.
+        // Priority 1: if free slots exist and active items need picking, go pick them!
+        // Priority 2: if preview match, camp near dropoff for auto-delivery
+        // Priority 3: CLEAR CORRIDORS — move to map edges so delivering bots can pass
         if (!has_active and bot.inv_len > 0) {
+            // Dead-inv bots with free slots should actively seek active items
+            if (effective_slots > 0 and pick_remaining.count > 0) {
+                var best_active_adj: ?Pos = null;
+                var best_active_dist: u16 = UNREACHABLE;
+                for (0..state.item_count) |ii| {
+                    if (claimed[ii] >= 0 and claimed[ii] != @as(i8, @intCast(bi))) continue;
+                    if (!pick_remaining.contains(state.items[ii].item_type)) continue;
+                    const adj = pathfinding.findBestAdj(state, state.items[ii].pos, dm_bot) orelse continue;
+                    const d = dm_bot[@intCast(adj.y)][@intCast(adj.x)];
+                    if (d < best_active_dist) {
+                        best_active_dist = d;
+                        best_active_adj = adj;
+                    }
+                }
+                if (best_active_adj) |target| {
+                    if (!bpos.eql(target)) {
+                        const res = pathfinding.bfs(state, bpos, target, @intCast(bi), &bot_positions);
+                        if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
+                            try writeMove(writer, bot.id, d);
+                            updateBotPos(&bot_positions[bi], d);
+                            pending_dirs[bi] = d;
+                            pending_is_move[bi] = true;
+                            continue;
+                        };
+                    }
+                }
+            }
+
             var has_preview_match = false;
             for (0..bot.inv_len) |ii| {
                 if (preview_orig.contains(bot.inv[ii])) { has_preview_match = true; break; }
@@ -1301,15 +1548,19 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             const can_camp = campers_near_drop < max_campers;
 
             if (has_preview_match and can_camp) {
-                // Items match preview → position near dropoff (within 3, not ON it)
-                if (dd_dist > 3) {
+                // Rush to dropoff when order nearly complete (auto-delivery exploit)
+                const rush_to_dropoff = pick_remaining.count <= 2;
+                const target_dist: u16 = if (rush_to_dropoff) 0 else 3;
+                if (dd_dist > target_dist) {
                     const res = pathfinding.bfs(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
-                        try writeMove(writer, bot.id, d);
-                        updateBotPos(&bot_positions[bi], d);
-                        pending_dirs[bi] = d;
-                        pending_is_move[bi] = true;
-                        continue;
+                        if (!rush_to_dropoff or !bpos.eql(state.dropoff)) {
+                            try writeMove(writer, bot.id, d);
+                            updateBotPos(&bot_positions[bi], d);
+                            pending_dirs[bi] = d;
+                            pending_is_move[bi] = true;
+                            continue;
+                        }
                     };
                 }
             } else if (dd_dist <= 2) {
@@ -1322,8 +1573,21 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                     pending_is_move[bi] = true;
                     continue;
                 }
+            } else if (effective_slots == 0 and state.bot_count >= 5) {
+                // Full dead-inv bots: CLEAR CORRIDORS by moving to spawn corner (w-2, h-2)
+                // These bots are pure blockers — get them out of the way so delivering bots can pass
+                const spawn = Pos{ .x = @as(i16, @intCast(state.width)) - 2, .y = @as(i16, @intCast(state.height)) - 2 };
+                if (!bpos.eql(spawn)) {
+                    const res = pathfinding.bfs(state, bpos, spawn, @intCast(bi), &bot_positions);
+                    if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
+                        try writeMove(writer, bot.id, d);
+                        updateBotPos(&bot_positions[bi], d);
+                        pending_dirs[bi] = d;
+                        pending_is_move[bi] = true;
+                        continue;
+                    };
+                }
             }
-            // Otherwise: stay put (don't approach if over camper limit)
         }
 
         // ─── 9. Wait ────────────────────────────────────────────────

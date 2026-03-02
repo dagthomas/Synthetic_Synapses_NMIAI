@@ -139,11 +139,16 @@ fn runLive(url: []const u8) !void {
     var last_responded_round: i32 = -1;
     var desync_counter: u8 = 0;
 
-    const log_file = std.fs.cwd().createFile("game_log.jsonl", .{}) catch |err| {
-        std.debug.print("Warning: Could not create game_log.jsonl: {any}\n", .{err});
+    // Create timestamped log file for each game
+    var log_name_buf: [64]u8 = undefined;
+    const epoch = std.time.timestamp();
+    const log_name = std.fmt.bufPrint(&log_name_buf, "game_log_{d}.jsonl", .{epoch}) catch "game_log.jsonl";
+    const log_file = std.fs.cwd().createFile(log_name, .{}) catch |err| {
+        std.debug.print("Warning: Could not create {s}: {any}\n", .{ log_name, err });
         return;
     };
     defer log_file.close();
+    std.debug.print("Logging to: {s}\n", .{log_name});
 
     while (true) {
         const data = client.recvMessage() catch |err| {
@@ -166,7 +171,7 @@ fn runLive(url: []const u8) !void {
             strategy.expected_count = 0;
         }
 
-        if (state.round % 50 == 0) std.debug.print("R{d}/{d} Score:{d}\n", .{ state.round, state.max_rounds, state.score });
+        std.debug.print("R{d}/{d} Score:{d}\n", .{ state.round, state.max_rounds, state.score });
 
         // Detect round gap (timeout caused server to advance without our response)
         const current_round: i32 = @intCast(state.round);
@@ -187,10 +192,12 @@ fn runLive(url: []const u8) !void {
                     mismatches += 1;
                 }
             }
-            const threshold: u8 = if (state.bot_count <= 1) 1 else (state.bot_count * 6 / 10) + 1;
+            // Aggressive detection: even 1 mismatch counts (was 60%+1 threshold)
+            const threshold: u8 = 1;
             if (mismatches >= threshold) {
                 desync_counter += 1;
-                if (desync_counter >= 3) {
+                // Trigger after 2 consecutive rounds (was 3)
+                if (desync_counter >= 2) {
                     std.debug.print("R{d} POSITION DESYNC: {d}/{d} mismatches for {d} rounds, re-syncing\n", .{ state.round, mismatches, check_count, desync_counter });
                     _ = strategy.decideActions(&state, &action_buf) catch {};
                     strategy.expected_count = 0;
@@ -199,7 +206,7 @@ fn runLive(url: []const u8) !void {
                     continue;
                 }
             } else {
-                if (desync_counter > 0) desync_counter -|= 1;
+                desync_counter = 0; // Reset immediately on clean round (was gradual decay)
             }
         }
 
@@ -211,12 +218,19 @@ fn runLive(url: []const u8) !void {
         log_file.writeAll(response) catch {};
         log_file.writeAll("\n") catch {};
 
+        // Small delay to ensure server is ready to receive our response
+        // Without this, our response may arrive while server is still processing
+        // the previous round, causing 1-round action offset
+        std.Thread.sleep(15 * std.time.ns_per_ms);
+
         client.sendMessage(response) catch |err| {
             std.debug.print("Send error: {any}\n", .{err});
             break;
         };
         last_responded_round = current_round;
     }
+
+    std.debug.print("GAME_OVER Score:{d} Rounds:{d}\n", .{ state.score, state.round });
 }
 
 // ── Main ───────────────────────────────────────────────────────────────

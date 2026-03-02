@@ -50,6 +50,8 @@ def build_map(cfg):
 
     for ax in aisle_starts:
         for y in shelf_rows_top + shelf_rows_bot:
+            walls.add((ax - 1, y))    # left aisle wall (matches production layout)
+            walls.add((ax + 3, y))    # right aisle wall
             shelves.add((ax, y))      # left shelf
             shelves.add((ax + 2, y))  # right shelf
 

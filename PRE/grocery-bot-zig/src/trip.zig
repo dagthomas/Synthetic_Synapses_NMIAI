@@ -1,6 +1,10 @@
 const std = @import("std");
+const config = @import("config");
 const types = @import("types.zig");
 const pathfinding = @import("pathfinding.zig");
+
+const Difficulty = config.Difficulty;
+const DIFFICULTY = config.difficulty;
 
 const Pos = types.Pos;
 const ItemType = types.ItemType;
@@ -129,23 +133,22 @@ pub fn planBestTrip(
         all_count += 1;
     }
 
-    // Sort candidates: single-bot uses weighted cost (bot_dist*2 + drop_dist) for better round-trip selection;
-    // multi-bot uses pure bot distance (simpler, avoids routing regressions with many bots)
+    // Sort candidates by per-difficulty strategy
+    const use_roundtrip_sort = switch (DIFFICULTY) {
+        .easy => true, // Single bot: round-trip cost
+        .medium => false, // Pure bot distance (orchestrator handles round-trip)
+        .hard => false,
+        .expert => true, // Round-trip cost for faster order cycling
+        .auto => bot_count <= 1 or bot_count >= 8,
+    };
     for (0..all_count) |i| {
         var min_j = i;
         for (i + 1..all_count) |j| {
-            if (bot_count <= 1) {
-                const cost_j = @as(u32, all_cands[j].dist) + @as(u32, all_cands[j].d_back);
-                const cost_min = @as(u32, all_cands[min_j].dist) + @as(u32, all_cands[min_j].d_back);
-                if (cost_j < cost_min) min_j = j;
-            } else if (bot_count >= 8) {
-                // Large multi-bot (Expert): sort by round-trip cost (pick + return to dropoff)
-                // Prefers items close to both bot AND dropoff for faster order cycling
+            if (use_roundtrip_sort) {
                 const cost_j = @as(u32, all_cands[j].dist) + @as(u32, all_cands[j].d_back);
                 const cost_min = @as(u32, all_cands[min_j].dist) + @as(u32, all_cands[min_j].d_back);
                 if (cost_j < cost_min) min_j = j;
             } else {
-                // Small multi-bot (Medium/Hard): sort by pure bot distance
                 if (all_cands[j].dist < all_cands[min_j].dist) min_j = j;
             }
         }
@@ -167,10 +170,14 @@ pub fn planBestTrip(
         const tc = &all_cands[i];
         const item = &state.items[tc.ii];
 
+        // Multi-bot: allow +1 extra candidate per type for congestion alternatives
+        // Single-bot: exact counts only to prevent duplicate type picking
+        const extra: u8 = if (bot_count > 1) 1 else 0;
+
         if (tc.is_active) {
             var slot_idx: ?usize = null;
             for (0..need_active_len) |j| {
-                if (need_active_types[j].eql(item.item_type) and sel_active_used[j] < active_needed[j]) {
+                if (need_active_types[j].eql(item.item_type) and sel_active_used[j] < active_needed[j] + extra) {
                     slot_idx = j;
                     break;
                 }
@@ -181,7 +188,7 @@ pub fn planBestTrip(
         } else {
             var slot_idx: ?usize = null;
             for (0..need_preview_len) |j| {
-                if (need_preview_types[j].eql(item.item_type) and sel_preview_used[j] < preview_needed[j]) {
+                if (need_preview_types[j].eql(item.item_type) and sel_preview_used[j] < preview_needed[j] + extra) {
                     slot_idx = j;
                     break;
                 }
@@ -205,10 +212,10 @@ pub fn planBestTrip(
 
     const n: u8 = @min(cand_count, 16);
 
-    // Pre-compute BFS distance maps from each candidate's adj position
+    // Distance maps from each candidate's adj position (pre-computed lookups)
     var cand_dm: [16]DistMap = undefined;
     for (0..n) |i| {
-        pathfinding.bfsDistMap(state, cands[i].adj, &cand_dm[i]);
+        cand_dm[i] = pathfinding.getPrecomputedDm(state, cands[i].adj).*;
     }
 
     var best: ?TripPlan = null;
@@ -238,6 +245,15 @@ pub fn planBestTrip(
         for (a + 1..n) |b| {
             if (!cands[a].is_active and !cands[b].is_active and !allow_preview) continue;
 
+            // Real type counting: prevents duplicate-type trips from getting inflated scores
+            const pair = [2]u16{ cands[a].item_idx, cands[b].item_idx };
+            const real2 = countRealTypes(state, &pair, bot_active, bot_preview, allow_preview);
+            const ac = real2.ac;
+            const pc = real2.pc;
+            if (ac + pc < 2) continue; // Skip trips with useless duplicate items
+            if (ac == 0 and active_remaining > 0) continue;
+            const completes = ac >= active_remaining and active_remaining > 0;
+
             const ab_ux: u16 = @intCast(cands[b].adj.x);
             const ab_uy: u16 = @intCast(cands[b].adj.y);
             const ab_dist = @as(u32, cand_dm[a][ab_uy][ab_ux]);
@@ -247,11 +263,6 @@ pub fn planBestTrip(
 
             const cost_ab = @as(u32, cands[a].dist_from_bot) + ab_dist + @as(u32, cands[b].dist_from_drop);
             const cost_ba = @as(u32, cands[b].dist_from_bot) + ba_dist + @as(u32, cands[a].dist_from_drop);
-
-            const ac: u8 = (if (cands[a].is_active) @as(u8, 1) else 0) + (if (cands[b].is_active) @as(u8, 1) else 0);
-            const pc: u8 = 2 - ac;
-            if (ac == 0 and active_remaining > 0) continue;
-            const completes = ac >= active_remaining and active_remaining > 0;
 
             if (cost_ab + 4 <= rounds_left) {
                 const score = tripScore(cost_ab, ac, pc, 2, completes, rounds_left);
@@ -283,21 +294,24 @@ pub fn planBestTrip(
     if (slots_free < 3) return best;
 
     // Evaluate 3-item trips
-    const n3 = @min(n, 10);
+    const n3 = @min(n, 12);
     for (0..n3) |a| {
         for (a + 1..n3) |b| {
             for (b + 1..n3) |c| {
+                // Real type counting: prevents duplicate-type trips
+                const triple = [3]u16{ cands[a].item_idx, cands[b].item_idx, cands[c].item_idx };
+                const real3 = countRealTypes(state, &triple, bot_active, bot_preview, allow_preview);
+                const ac = real3.ac;
+                const pc = real3.pc;
+                if (ac + pc < 3) continue; // Skip trips with useless duplicate items
+                if (ac == 0 and active_remaining > 0) continue;
+                const completes = ac >= active_remaining and active_remaining > 0;
+
                 const items3 = [3]u8{ @intCast(a), @intCast(b), @intCast(c) };
                 const perms = [6][3]u8{
                     .{ 0, 1, 2 }, .{ 0, 2, 1 }, .{ 1, 0, 2 },
                     .{ 1, 2, 0 }, .{ 2, 0, 1 }, .{ 2, 1, 0 },
                 };
-                const ac: u8 = (if (cands[a].is_active) @as(u8, 1) else 0) +
-                    (if (cands[b].is_active) @as(u8, 1) else 0) +
-                    (if (cands[c].is_active) @as(u8, 1) else 0);
-                const pc: u8 = 3 - ac;
-                const completes = ac >= active_remaining and active_remaining > 0;
-                if (ac == 0 and active_remaining > 0) continue;
 
                 for (perms) |perm| {
                     const p0 = items3[perm[0]];
@@ -332,6 +346,33 @@ pub fn planBestTrip(
     }
 
     return best;
+}
+
+/// Count real active/preview items for a set of item indices, respecting type uniqueness.
+/// Prevents trips that pick duplicate types beyond what the order needs.
+fn countRealTypes(
+    state: *const GameState,
+    item_indices: []const u16,
+    bot_active: *const NeedList,
+    bot_preview: *const NeedList,
+    allow_preview: bool,
+) struct { ac: u8, pc: u8 } {
+    var check_a = bot_active.*;
+    var check_p = bot_preview.*;
+    var real_ac: u8 = 0;
+    var real_pc: u8 = 0;
+    for (item_indices) |ii| {
+        const item_type = state.items[ii].item_type;
+        if (check_a.contains(item_type)) {
+            check_a.remove(item_type);
+            real_ac += 1;
+        } else if (allow_preview and check_p.contains(item_type)) {
+            check_p.remove(item_type);
+            real_pc += 1;
+        }
+        // else: duplicate type beyond what's needed — doesn't count
+    }
+    return .{ .ac = real_ac, .pc = real_pc };
 }
 
 pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, rounds_left: u32) u64 {
