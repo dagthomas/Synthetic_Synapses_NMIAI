@@ -110,6 +110,15 @@
 		return a ? a.action : 'wait';
 	}
 
+	function getDeliveredMask(order) {
+		const available = [...(order.items_delivered || [])];
+		return order.items_required.map(item => {
+			const idx = available.indexOf(item);
+			if (idx !== -1) { available.splice(idx, 1); return true; }
+			return false;
+		});
+	}
+
 	function getItemTypeName(t) {
 		return t.charAt(0).toUpperCase() + t.slice(1);
 	}
@@ -178,7 +187,7 @@
 						<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
 					</button>
 					<button class="ctrl-btn" onclick={stepBack} title="Step back (Left/H)">
-						<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+						<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 5v14L5 12z"/></svg>
 					</button>
 					<button class="ctrl-btn play-btn" onclick={togglePlay} title="Play/Pause (Space)">
 						{#if playing}
@@ -188,7 +197,7 @@
 						{/if}
 					</button>
 					<button class="ctrl-btn" onclick={stepForward} title="Step forward (Right/L)">
-						<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+						<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
 					</button>
 					<button class="ctrl-btn" onclick={() => setRound(rounds.length - 1)} title="End (End)">
 						<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
@@ -222,8 +231,9 @@
 							<span class="mono order-id">{order.id}</span>
 						</div>
 						<div class="order-items">
+							{@const deliveredMask = getDeliveredMask(order)}
 							{#each order.items_required as item, i}
-								<span class="order-item" class:delivered={order.items_delivered.includes(item) && order.items_delivered.filter(d => d === item).length > order.items_required.slice(0, i).filter(r => r === item && order.items_delivered.includes(r)).length}>
+								<span class="order-item" class:delivered={deliveredMask[i]}>
 									{getItemTypeName(item)}
 								</span>
 							{/each}

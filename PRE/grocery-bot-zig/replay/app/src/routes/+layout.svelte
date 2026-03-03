@@ -10,6 +10,7 @@
 		<a href="/live">Live</a>
 		<a href="/optimize">Optimize</a>
 		<a href="/gpu" class="gpu-link">GPU</a>
+		<a href="/pipeline" class="pipeline-link">Pipeline</a>
 	</div>
 </nav>
 
@@ -60,6 +61,15 @@
 	:global(.gpu-link:hover) {
 		background: rgba(0, 255, 65, 0.1) !important;
 		color: #00ff41 !important;
+	}
+	:global(.pipeline-link) {
+		color: #fdcb6e !important;
+		font-weight: 600;
+		text-shadow: 0 0 8px rgba(253, 203, 110, 0.4);
+	}
+	:global(.pipeline-link:hover) {
+		background: rgba(253, 203, 110, 0.1) !important;
+		color: #fdcb6e !important;
 	}
 	main {
 		width: 100%;

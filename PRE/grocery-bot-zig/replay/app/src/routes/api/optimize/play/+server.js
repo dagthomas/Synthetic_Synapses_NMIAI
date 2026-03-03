@@ -18,11 +18,13 @@ export async function POST({ request }) {
 	let botProcess = null;
 	let closed = false;
 	let safetyTimeout = null;
+	let heartbeatInterval = null;
 
 	function cleanupShared(controller) {
 		if (closed) return;
 		closed = true;
 		if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
+		if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
 		if (botProcess && !botProcess.killed) {
 			try { botProcess.kill(); } catch (e) {}
 		}
@@ -31,12 +33,12 @@ export async function POST({ request }) {
 
 	const stream = new ReadableStream({
 		start(controller) {
-			const MAX_RUNTIME = 420000; // 7 min for capture (~2min) + solve (~4min)
+			const MAX_RUNTIME = 900000; // 15 min: Zig capture (120s) + GPU solve (up to 600s)
 
 			function cleanup() { cleanupShared(controller); }
 
 			safetyTimeout = setTimeout(() => {
-				sendEvent('error', { message: 'Timeout: pipeline took too long' });
+				sendEvent('error', { message: 'Timeout: pipeline took too long (15 min limit)' });
 				cleanup();
 			}, MAX_RUNTIME);
 
@@ -47,10 +49,18 @@ export async function POST({ request }) {
 				} catch (e) {}
 			}
 
-			// All-Python pipeline: capture → solve in one process
-			sendEvent('status', { message: `Python pipeline: capture → parallel solve (${diff})` });
+			// SSE heartbeat: send a comment every 15s to keep the connection alive
+			// through proxies and browser idle timers
+			heartbeatInterval = setInterval(() => {
+				if (closed) return;
+				try {
+					controller.enqueue(encoder.encode(': ping\n\n'));
+				} catch (e) {}
+			}, 15000);
 
-			botProcess = spawn('python', ['-u', 'capture_and_solve_stream.py', url, diff, '--time', '300'], {
+			sendEvent('status', { message: `Zig capture → GPU solve pipeline (${diff})` });
+
+			botProcess = spawn('python', ['-u', 'capture_and_solve_stream.py', url, diff, '--capture', 'zig', '--time', '300'], {
 				cwd: GPU_DIR,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});
@@ -66,8 +76,6 @@ export async function POST({ request }) {
 					if (!line.trim()) continue;
 					try {
 						const evt = JSON.parse(line);
-						// Events from capture phase pass through directly
-						// Events from solver phase get solver_ prefix
 						const type = evt.type;
 						delete evt.type;
 						sendEvent(type, evt);
@@ -78,7 +86,6 @@ export async function POST({ request }) {
 			botProcess.stderr.on('data', (data) => {
 				const text = data.toString().trim();
 				if (text) {
-					// Filter noisy lines
 					for (const line of text.split('\n')) {
 						const l = line.trim();
 						if (!l || l.includes('Connecting to') || l.includes('Logging to')) continue;
@@ -88,7 +95,6 @@ export async function POST({ request }) {
 			});
 
 			botProcess.on('close', (code) => {
-				// Python script sends its own 'done' event; just cleanup
 				cleanup();
 			});
 

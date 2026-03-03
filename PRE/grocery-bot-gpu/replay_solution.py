@@ -160,14 +160,16 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
     final_score = 0
     expected_positions = None
     bot_goals = None
-    bot_goal_idx = None  # per-bot: which goal are we working toward
+    bot_goal_idx = None  # per-bot: which goal index we are working toward
     walkable = None
     desync_count = 0
     desync_rounds = 0  # rounds with at least one desynced bot
     synced_rounds = 0
-    round_offset = 0  # Track cumulative round shift (missed rounds)
+    round_offset = 0  # Track cumulative round shift (genuine missed rounds only)
     seen_order_ids = set()
     all_orders_captured = []
+    bot_prev_inv = {}       # bid -> list of item types in inventory last round
+    bot_prev_score = 0      # score last round (for delivery detection)
 
     async with websockets.connect(ws_url) as ws:
         async for message in ws:
@@ -259,31 +261,76 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                                 break
 
                     if not all_match:
-                        # Check if positions match dp_rnd-1 (missed 1 round)
+                        # Check if positions match dp_rnd-1 (missed 1 round).
+                        # Only trigger if the bot was expected to MOVE in dp_rnd —
+                        # if expected[dp_rnd] == expected[dp_rnd-1] the bot was
+                        # stationary, so a position match is ambiguous and we must
+                        # NOT increment the offset (would be a false positive).
                         check_rnd = dp_rnd - 1
                         if check_rnd >= 0 and check_rnd < len(expected_positions):
-                            prev_match = True
-                            for bid, bot in enumerate(live_bots):
+                            # Require at least one bot to have moved between check_rnd and dp_rnd
+                            expected_moved = False
+                            for bid in range(len(expected_positions[dp_rnd])):
                                 if bid < len(expected_positions[check_rnd]):
-                                    ex, ey = expected_positions[check_rnd][bid]
-                                    if tuple(bot['position']) != (ex, ey):
-                                        prev_match = False
+                                    ex_cur = expected_positions[dp_rnd][bid]
+                                    ex_prv = expected_positions[check_rnd][bid]
+                                    if ex_cur != ex_prv:
+                                        expected_moved = True
                                         break
-                            if prev_match:
-                                round_offset += 1
-                                dp_rnd = rnd - round_offset
-                                if round_offset <= 5:
-                                    print(f"R{rnd}: Detected missed round, offset now {round_offset} "
-                                          f"(dp_rnd={dp_rnd})", file=sys.stderr)
+                            if expected_moved:
+                                prev_match = True
+                                for bid, bot in enumerate(live_bots):
+                                    if bid < len(expected_positions[check_rnd]):
+                                        ex, ey = expected_positions[check_rnd][bid]
+                                        if tuple(bot['position']) != (ex, ey):
+                                            prev_match = False
+                                            break
+                                if prev_match:
+                                    round_offset += 1
+                                    dp_rnd = rnd - round_offset
+                                    if round_offset <= 5:
+                                        print(f"R{rnd}: Detected missed round, offset now {round_offset} "
+                                              f"(dp_rnd={dp_rnd})", file=sys.stderr)
             else:
                 dp_rnd = rnd
 
-            # Build actions from DP plan at the offset-corrected round
+            # ---- Goal advancement: detect completed goals from last round ----
+            if bot_goals and bot_goal_idx is not None:
+                for bid, bot in enumerate(live_bots):
+                    cur_inv = bot.get('inventory', [])
+                    prev_inv = bot_prev_inv.get(bid, cur_inv)  # default to cur on first round
+                    gi = bot_goal_idx.get(bid, 0)
+                    goals = bot_goals.get(bid, [])
+
+                    while gi < len(goals):
+                        goal_rnd, goal_pos, goal_act, goal_item = goals[gi]
+
+                        # Skip stale goals: dp_rnd has passed planned round by >15
+                        if dp_rnd > goal_rnd + 15:
+                            gi += 1
+                            continue
+
+                        # Pickup completed: bot's inventory grew
+                        if goal_act == ACT_PICKUP and len(cur_inv) > len(prev_inv):
+                            gi += 1
+                            continue
+
+                        # Dropoff completed: bot's inventory shrank
+                        if goal_act == ACT_DROPOFF and len(cur_inv) < len(prev_inv):
+                            gi += 1
+                            continue
+
+                        break
+
+                    bot_goal_idx[bid] = gi
+
+            # ---- Build per-bot actions ----
             ws_actions = []
             round_has_desync = False
 
             for bid, bot in enumerate(live_bots):
                 lx, ly = bot['position']
+                bpos = (lx, ly)
 
                 # Check sync with offset-corrected round
                 is_synced = True
@@ -294,19 +341,48 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                         desync_count += 1
                         round_has_desync = True
 
-                # Use DP action at offset-corrected round
-                action_rnd = dp_rnd if is_synced else dp_rnd
-                if actions and 0 <= action_rnd < len(actions) and bid < len(actions[action_rnd]):
-                    act, item_idx = actions[action_rnd][bid]
-                    a = {'bot': bot['id'], 'action': ['wait', 'move_up', 'move_down',
-                         'move_left', 'move_right', 'pick_up', 'drop_off'][act]}
-                    if act == ACT_PICKUP and 0 <= item_idx < len(map_state.items):
-                        a['item_id'] = map_state.items[item_idx]['id']
-                    elif act == ACT_PICKUP:
-                        a['action'] = 'wait'
-                    ws_actions.append(a)
+                if is_synced:
+                    # SYNCED: execute raw DP action
+                    if actions and 0 <= dp_rnd < len(actions) and bid < len(actions[dp_rnd]):
+                        act, item_idx = actions[dp_rnd][bid]
+                        a = {'bot': bot['id'], 'action': ['wait', 'move_up', 'move_down',
+                             'move_left', 'move_right', 'pick_up', 'drop_off'][act]}
+                        if act == ACT_PICKUP and 0 <= item_idx < len(map_state.items):
+                            a['item_id'] = map_state.items[item_idx]['id']
+                        elif act == ACT_PICKUP:
+                            a['action'] = 'wait'
+                        ws_actions.append(a)
+                    else:
+                        ws_actions.append({'bot': bot['id'], 'action': 'wait'})
                 else:
-                    ws_actions.append({'bot': bot['id'], 'action': 'wait'})
+                    # DESYNCED: navigate toward current goal via BFS
+                    gi = bot_goal_idx.get(bid, 0) if bot_goal_idx else 0
+                    goals = (bot_goals or {}).get(bid, [])
+
+                    if gi < len(goals):
+                        goal_rnd, goal_pos, goal_act, goal_item = goals[gi]
+                        goal_pos_t = tuple(goal_pos)
+                        occupied = {tuple(b['position']) for b in live_bots if b['id'] != bot['id']}
+
+                        if bpos == goal_pos_t:
+                            # Already at goal position — execute goal action
+                            a = {'bot': bot['id'], 'action': ['wait', 'move_up', 'move_down',
+                                 'move_left', 'move_right', 'pick_up', 'drop_off'][goal_act]}
+                            if goal_act == ACT_PICKUP and 0 <= goal_item < len(map_state.items):
+                                a['item_id'] = map_state.items[goal_item]['id']
+                            elif goal_act == ACT_PICKUP:
+                                a['action'] = 'wait'
+                            ws_actions.append(a)
+                        else:
+                            # Navigate toward goal position
+                            nav_act = bfs_next_action(bpos, goal_pos_t, walkable, occupied, map_state)
+                            ws_actions.append({'bot': bot['id'],
+                                               'action': ['wait', 'move_up', 'move_down',
+                                                          'move_left', 'move_right',
+                                                          'pick_up', 'drop_off'][nav_act]})
+                    else:
+                        # No more goals — wait
+                        ws_actions.append({'bot': bot['id'], 'action': 'wait'})
 
             if round_has_desync:
                 desync_rounds += 1
@@ -314,10 +390,13 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                 synced_rounds += 1
 
             # Log
-            mode = "SYNC" if not round_has_desync else f"OFF{round_offset}"
-            if rnd < 5 or rnd % 25 == 0 or rnd >= 295 or (round_has_desync and desync_rounds <= 5):
+            mode = "SYNC" if not round_has_desync else "DESYNC"
+            if rnd < 5 or rnd % 25 == 0 or rnd >= 295 or (round_has_desync and desync_rounds <= 10):
+                gi_str = ''
+                if bot_goal_idx and round_has_desync:
+                    gi_str = ' goals=[' + ','.join(str(bot_goal_idx.get(i, 0)) for i in range(num_bots)) + ']'
                 print(f"R{rnd}/{max_rounds} Score:{score} [{mode}] dp_rnd={dp_rnd} "
-                      f"(synced:{synced_rounds} desynced:{desync_rounds})", file=sys.stderr)
+                      f"(synced:{synced_rounds} desynced:{desync_rounds}){gi_str}", file=sys.stderr)
 
             response = {"actions": ws_actions}
             log_file.write(json.dumps(response) + '\n')
@@ -329,10 +408,30 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
 
             await ws.send(json.dumps(response))
 
+            # Update state tracking for next round's goal advancement
+            bot_prev_score = score
+            for bid, bot in enumerate(live_bots):
+                bot_prev_inv[bid] = list(bot.get('inventory', []))
+
     log_file.close()
     print(f"Log saved: {log_path}", file=sys.stderr)
     print(f"Stats: synced_rounds={synced_rounds} desync_rounds={desync_rounds} "
           f"total_desyncs={desync_count}", file=sys.stderr)
+
+    # Auto-import to PostgreSQL
+    try:
+        import subprocess
+        import_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     '..', 'grocery-bot-zig', 'replay', 'import_logs.py')
+        result = subprocess.run(
+            [sys.executable, import_script, '--run-type', 'replay', log_path],
+            capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            print(f"  DB import: {result.stdout.strip()}", file=sys.stderr)
+        else:
+            print(f"  DB import failed: {result.stderr.strip()}", file=sys.stderr)
+    except Exception as e:
+        print(f"  DB import error: {e}", file=sys.stderr)
 
     # Update capture with newly seen orders
     if all_orders_captured and difficulty:

@@ -150,3 +150,18 @@ if __name__ == '__main__':
     else:
         save_capture(difficulty, capture)
         print(f"Capture saved to solutions/{difficulty}/capture.json", file=sys.stderr)
+
+    # Auto-import to PostgreSQL as a 'live' run
+    try:
+        import subprocess
+        import_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     '..', 'grocery-bot-zig', 'replay', 'import_logs.py')
+        result = subprocess.run(
+            [sys.executable, import_script, '--run-type', 'live', log_path],
+            capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            print(f"  DB import: {result.stdout.strip()}", file=sys.stderr)
+        else:
+            print(f"  DB import failed: {result.stderr.strip()}", file=sys.stderr)
+    except Exception as e:
+        print(f"  DB import error: {e}", file=sys.stderr)

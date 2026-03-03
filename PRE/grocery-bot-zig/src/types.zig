@@ -81,6 +81,17 @@ pub const GameState = struct {
     active_order_idx: i32,
 };
 
+// ── MAPF Constants ────────────────────────────────────────────────────
+pub const MAX_TIME_HORIZON: u16 = 12; // WHCA* planning window
+pub const WRONG_WAY_PENALTY: u16 = 2; // Soft cost for going against aisle flow
+
+pub const AisleDir = enum { down, up }; // Preferred vertical direction in an aisle column
+
+pub const STResult = struct {
+    first_dir: ?Dir, // Direction for this round (null = wait)
+    path_len: u16, // Total path length found
+};
+
 // ── Distance Map ───────────────────────────────────────────────────────
 pub const DistMap = [MAX_H][MAX_W]u16;
 

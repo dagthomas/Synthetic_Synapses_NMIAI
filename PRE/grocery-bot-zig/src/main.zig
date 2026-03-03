@@ -175,6 +175,8 @@ fn runLive(url: []const u8) !void {
 
         // Detect round gap (timeout caused server to advance without our response)
         const current_round: i32 = @intCast(state.round);
+        // Skip duplicate/echo messages for rounds already responded to
+        if (current_round <= last_responded_round) continue;
         if (last_responded_round >= 0 and current_round > last_responded_round + 1) {
             std.debug.print("R{d} DESYNC: expected R{d}, skipping to re-sync\n", .{ state.round, last_responded_round + 1 });
             _ = strategy.decideActions(&state, &action_buf) catch {};
@@ -217,11 +219,6 @@ fn runLive(url: []const u8) !void {
 
         log_file.writeAll(response) catch {};
         log_file.writeAll("\n") catch {};
-
-        // Small delay to ensure server is ready to receive our response
-        // Without this, our response may arrive while server is still processing
-        // the previous round, causing 1-round action offset
-        std.Thread.sleep(15 * std.time.ns_per_ms);
 
         client.sendMessage(response) catch |err| {
             std.debug.print("Send error: {any}\n", .{err});

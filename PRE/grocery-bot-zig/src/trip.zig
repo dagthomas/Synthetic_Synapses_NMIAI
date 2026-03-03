@@ -138,7 +138,7 @@ pub fn planBestTrip(
         .easy => true, // Single bot: round-trip cost
         .medium => false, // Pure bot distance (orchestrator handles round-trip)
         .hard => false,
-        .expert => true, // Round-trip cost for faster order cycling
+        .expert => false, // EXPERIMENT: pure distance
         .auto => bot_count <= 1 or bot_count >= 8,
     };
     for (0..all_count) |i| {
@@ -229,7 +229,7 @@ pub fn planBestTrip(
         const pc: u8 = if (cands[a].is_active) 0 else 1;
         if (ac == 0 and active_remaining > 0) continue;
         const completes = ac >= active_remaining and active_remaining > 0;
-        const score = tripScore(cost, ac, pc, 1, completes, rounds_left);
+        const score = tripScore(cost, ac, pc, 1, completes, rounds_left, bot_count);
         if (best == null or score > best_score) {
             best = .{ .items = undefined, .adjs = undefined, .item_count = 1, .total_cost = cost, .active_count = ac, .preview_count = pc, .completes_order = completes };
             best.?.items[0] = cands[a].item_idx;
@@ -265,7 +265,7 @@ pub fn planBestTrip(
             const cost_ba = @as(u32, cands[b].dist_from_bot) + ba_dist + @as(u32, cands[a].dist_from_drop);
 
             if (cost_ab + 4 <= rounds_left) {
-                const score = tripScore(cost_ab, ac, pc, 2, completes, rounds_left);
+                const score = tripScore(cost_ab, ac, pc, 2, completes, rounds_left, bot_count);
                 if (best == null or score > best_score) {
                     const adj_b = pathfinding.findBestAdj(state, state.items[cands[b].item_idx].pos, &cand_dm[a]) orelse cands[b].adj;
                     best = .{ .items = undefined, .adjs = undefined, .item_count = 2, .total_cost = cost_ab, .active_count = ac, .preview_count = pc, .completes_order = completes };
@@ -277,7 +277,7 @@ pub fn planBestTrip(
                 }
             }
             if (cost_ba + 4 <= rounds_left) {
-                const score = tripScore(cost_ba, ac, pc, 2, completes, rounds_left);
+                const score = tripScore(cost_ba, ac, pc, 2, completes, rounds_left, bot_count);
                 if (best == null or score > best_score) {
                     const adj_a = pathfinding.findBestAdj(state, state.items[cands[a].item_idx].pos, &cand_dm[b]) orelse cands[a].adj;
                     best = .{ .items = undefined, .adjs = undefined, .item_count = 2, .total_cost = cost_ba, .active_count = ac, .preview_count = pc, .completes_order = completes };
@@ -327,7 +327,7 @@ pub fn planBestTrip(
                         @as(u32, cands[p2].dist_from_drop);
 
                     if (cost + 5 > rounds_left) continue;
-                    const score = tripScore(cost, ac, pc, 3, completes, rounds_left);
+                    const score = tripScore(cost, ac, pc, 3, completes, rounds_left, bot_count);
                     if (best == null or score > best_score) {
                         const adj1 = pathfinding.findBestAdj(state, state.items[cands[p1].item_idx].pos, &cand_dm[p0]) orelse cands[p1].adj;
                         const adj2 = pathfinding.findBestAdj(state, state.items[cands[p2].item_idx].pos, &cand_dm[p1]) orelse cands[p2].adj;
@@ -375,7 +375,7 @@ fn countRealTypes(
     return .{ .ac = real_ac, .pc = real_pc };
 }
 
-pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, rounds_left: u32) u64 {
+pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, rounds_left: u32, bot_count: u8) u64 {
     if (cost == 0) return std.math.maxInt(u64);
     // Active items are worth much more than preview items
     // When completing an order, preview items auto-deliver at dropoff (worth same as active)
@@ -387,6 +387,7 @@ pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, ro
     if (completes_order and rounds_left < 60) value += 20;
     // Small bonus per item count
     value += @as(u32, count) * 2;
+    _ = bot_count;
     // Preview items in completing trips auto-deliver at dropoff, saving a full round-trip
     // Each preview item saved ~10 rounds of pick + deliver on the next order
     if (completes_order and pc > 0) value += @as(u32, pc) * 150;

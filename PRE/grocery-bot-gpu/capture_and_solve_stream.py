@@ -18,6 +18,73 @@ def emit(data):
     print(json.dumps(data), flush=True)
 
 
+def capture_phase_zig(ws_url, difficulty):
+    """Phase 1: Run Zig bot to capture orders. Streams progress via emit()."""
+    import subprocess
+    import glob
+    import re
+    from zig_capture import parse_game_log
+
+    ZIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'grocery-bot-zig')
+    exe = os.path.join(ZIG_DIR, 'zig-out', 'bin', f'grocery-bot-{difficulty}.exe')
+    if not os.path.exists(exe):
+        exe = os.path.join(ZIG_DIR, 'zig-out', 'bin', 'grocery-bot.exe')
+
+    if not os.path.exists(exe):
+        emit({"type": "error", "msg": f"Zig bot not found: {exe}"})
+        return None
+
+    emit({"type": "phase", "phase": "capture"})
+    emit({"type": "status", "message": f"Phase 1: Zig bot capture ({difficulty})"})
+
+    existing_logs = set(glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl')))
+
+    proc = subprocess.Popen([exe, ws_url], cwd=ZIG_DIR,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+
+    round_re = re.compile(r'R(\d+)/(\d+) Score:(\d+)')
+    gameover_re = re.compile(r'GAME_OVER Score:(\d+)')
+    capture_score = 0
+
+    for line in proc.stderr:
+        line = line.strip()
+        if not line:
+            continue
+        m = round_re.search(line)
+        if m:
+            rnd, max_rnd, score = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if rnd % 20 == 0 or rnd <= 2 or rnd >= 295:
+                emit({"type": "progress", "round": rnd, "max_rounds": max_rnd, "score": score})
+        gm = gameover_re.search(line)
+        if gm:
+            capture_score = int(gm.group(1))
+
+    proc.wait()
+
+    new_logs = set(glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl'))) - existing_logs
+    log_path = max(new_logs, key=os.path.getmtime) if new_logs else None
+    if not log_path:
+        all_logs = glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl'))
+        log_path = max(all_logs, key=os.path.getmtime) if all_logs else None
+
+    if not log_path:
+        emit({"type": "error", "msg": "No game log produced by Zig bot"})
+        return None
+
+    capture = parse_game_log(log_path)
+    capture['difficulty'] = difficulty
+    capture['probe_score'] = capture_score or capture.get('probe_score', 0)
+
+    emit({"type": "final_score", "score": capture['probe_score'], "phase": "capture"})
+    emit({
+        "type": "capture_done",
+        "score": capture['probe_score'],
+        "orders": len(capture['orders']),
+        "message": f"Zig probe: score={capture['probe_score']}, {len(capture['orders'])} orders captured",
+    })
+    return capture
+
+
 async def capture_phase(ws_url, difficulty):
     """Phase 1: Play a probe game to capture all orders."""
     import websockets
@@ -304,14 +371,17 @@ def solve_phase_cpu(captured, time_limit=240.0, num_workers=None):
     return score, actions
 
 
-async def run_pipeline(ws_url, difficulty, solver='gpu', time_limit=240.0, num_workers=None):
+async def run_pipeline(ws_url, difficulty, solver='gpu', time_limit=240.0, num_workers=None, capture='zig'):
     """Full pipeline: capture → solve → done."""
     t0 = time.time()
 
-    emit({"type": "status", "message": f"Starting pipeline: {difficulty} (solver={solver})"})
+    emit({"type": "status", "message": f"Starting pipeline: {difficulty} (capture={capture}, solver={solver})"})
 
     # Phase 1: Capture
-    captured = await capture_phase(ws_url, difficulty)
+    if capture == 'zig':
+        captured = capture_phase_zig(ws_url, difficulty)
+    else:
+        captured = await capture_phase(ws_url, difficulty)
     if not captured:
         emit({"type": "done", "code": 1, "message": "Capture failed", "capture_score": 0})
         return
@@ -344,10 +414,13 @@ if __name__ == '__main__':
     parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
     parser.add_argument('--solver', choices=['gpu', 'cpu'], default='gpu',
                         help='Solver backend (default: gpu)')
+    parser.add_argument('--capture', choices=['zig', 'python'], default='zig',
+                        help='Capture method (default: zig)')
     parser.add_argument('--time', type=float, default=240.0, help='Total time budget (CPU only)')
     parser.add_argument('--workers', type=int, default=None, help='Parallel workers (CPU only)')
     args = parser.parse_args()
 
     asyncio.run(run_pipeline(args.ws_url, args.difficulty,
                              solver=args.solver,
+                             capture=args.capture,
                              time_limit=args.time, num_workers=args.workers))

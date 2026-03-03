@@ -80,6 +80,14 @@ export async function POST({ request }) {
 			let gameWidth = 0;
 			let gameHeight = 0;
 			let botCount = 0;
+			let gameWalls = [];
+			let gameShelves = [];
+			let gameItems = [];
+			let gameDropOff = null;
+			let gameSpawn = null;
+			let gameItemTypes = 0;
+			let gameOrderSizeMin = 3;
+			let gameOrderSizeMax = 5;
 			const startTime = Date.now();
 			const MAX_RUNTIME = solver === 'gpu' ? 600000 : 180000; // GPU: 10min, others: 3min
 
@@ -183,6 +191,7 @@ export async function POST({ request }) {
 									}
 								}
 
+								const spawnPos = [w - 2, h - 2];
 								sendEvent('init', {
 									width: w,
 									height: h,
@@ -190,10 +199,21 @@ export async function POST({ request }) {
 									shelves,
 									items: state.items || [],
 									drop_off: state.drop_off,
-									spawn: [w - 2, h - 2],
+									spawn: spawnPos,
 									bot_count: botCount,
 									max_rounds: state.max_rounds || 300,
 								});
+								// Store for DB insert
+								gameWalls = walls;
+								gameShelves = shelves;
+								gameItems = state.items || [];
+								gameDropOff = state.drop_off;
+								gameSpawn = spawnPos;
+								const typeSet = new Set((state.items || []).map(it => it.type));
+								gameItemTypes = typeSet.size;
+								const orderSizes = (state.orders || []).map(o => o.items_required?.length || 0).filter(s => s > 0);
+								gameOrderSizeMin = orderSizes.length ? Math.min(...orderSizes) : 3;
+								gameOrderSizeMax = orderSizes.length ? Math.max(...orderSizes) : 5;
 								initSent = true;
 							}
 
@@ -323,14 +343,20 @@ export async function POST({ request }) {
 				sendEvent('done', { code, message: `Bot exited with code ${code}` });
 
 				// Insert to DB if we have valid data
-				if (lastState && difficulty && gameWidth > 0) {
+				if (lastState && difficulty && gameWidth > 0 && gameDropOff) {
 					try {
 						const result = await query(
 							`INSERT INTO runs (seed, difficulty, grid_width, grid_height, bot_count,
-								final_score, items_delivered, orders_completed)
-							VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+								item_types, order_size_min, order_size_max,
+								walls, shelves, items, drop_off, spawn,
+								final_score, items_delivered, orders_completed, run_type)
+							VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
 							[0, difficulty, gameWidth, gameHeight, botCount,
-							 lastState.score || 0, 0, 0]
+							 gameItemTypes, gameOrderSizeMin, gameOrderSizeMax,
+							 JSON.stringify(gameWalls), JSON.stringify(gameShelves),
+							 JSON.stringify(gameItems), JSON.stringify(gameDropOff),
+							 JSON.stringify(gameSpawn),
+							 lastState.score || 0, 0, 0, 'live']
 						);
 						sendEvent('db', { run_id: result[0]?.id, message: 'Saved to database' });
 					} catch (e) {

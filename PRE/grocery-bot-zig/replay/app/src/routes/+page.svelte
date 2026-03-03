@@ -9,11 +9,13 @@
 	};
 
 	let filterDiff = $state('all');
+	let filterType = $state('all');
 
 	let filteredRuns = $derived(
-		filterDiff === 'all'
-			? data.runs
-			: data.runs.filter(r => r.difficulty === filterDiff)
+		data.runs.filter(r =>
+			(filterDiff === 'all' || r.difficulty === filterDiff) &&
+			(filterType === 'all' || r.run_type === filterType)
+		)
 	);
 
 	let totalMaxSum = $derived(data.stats.reduce((sum, s) => sum + (s.max_score || 0), 0));
@@ -32,6 +34,10 @@
 				onclick={() => filterDiff = diff}
 			>{diff}</button>
 		{/each}
+		<span class="filter-sep">|</span>
+		<button class="chip" class:active={filterType === 'all'} onclick={() => filterType = 'all'}>All types</button>
+		<button class="chip type-live" class:active={filterType === 'live'} onclick={() => filterType = 'live'}>Live</button>
+		<button class="chip type-replay" class:active={filterType === 'replay'} onclick={() => filterType = 'replay'}>Replay</button>
 	</div>
 </div>
 
@@ -62,6 +68,7 @@
 		<thead>
 			<tr>
 				<th>ID</th>
+				<th>Type</th>
 				<th>Difficulty</th>
 				<th>Seed</th>
 				<th>Grid</th>
@@ -78,6 +85,11 @@
 				<tr>
 					<td class="mono">#{run.id}</td>
 					<td>
+						<span class="badge type-badge type-{run.run_type}">
+							{run.run_type}
+						</span>
+					</td>
+					<td>
 						<span class="badge" style="background: {diffColors[run.difficulty]}20; color: {diffColors[run.difficulty]}; border: 1px solid {diffColors[run.difficulty]}44">
 							{run.difficulty}
 						</span>
@@ -89,7 +101,7 @@
 					<td>{run.orders_completed}</td>
 					<td>{run.items_delivered}</td>
 					<td class="muted">{new Date(run.created_at).toLocaleString()}</td>
-					<td><a href="/run/{run.id}" class="view-btn">Replay</a></td>
+					<td><a href="/run/{run.id}" class="view-btn">View</a></td>
 				</tr>
 			{/each}
 		</tbody>
@@ -170,4 +182,10 @@
 	.view-btn:hover { background: var(--accent-light); text-decoration: none; }
 	.empty { padding: 3rem; text-align: center; color: var(--text-muted); }
 	code { background: var(--bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.85em; }
+	.filter-sep { color: var(--border); padding: 0 0.25rem; align-self: center; }
+	.type-badge { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+	.type-live { background: #0984e320; color: #0984e3; border: 1px solid #0984e344; }
+	.type-replay { background: #6c5ce720; color: #a29bfe; border: 1px solid #6c5ce744; }
+	.chip.type-live.active { background: #0984e322; color: #0984e3; border-color: #0984e3; }
+	.chip.type-replay.active { background: #6c5ce722; color: #a29bfe; border-color: #6c5ce7; }
 </style>

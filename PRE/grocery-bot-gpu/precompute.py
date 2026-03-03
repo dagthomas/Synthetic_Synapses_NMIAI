@@ -423,6 +423,9 @@ class PrecomputedTables:
     def to_gpu_tensors(self, device='cuda'):
         """Return all tables as CUDA tensors for gpu_beam_search.
 
+        Cached per device — subsequent calls return the same tensors without
+        re-uploading, so multiple GPUBeamSearcher instances share GPU memory.
+
         Returns dict with:
         - dist_to_dropoff: [H, W] int16
         - step_to_dropoff: [H, W] int8  (first_step_to_dropoff)
@@ -430,6 +433,9 @@ class PrecomputedTables:
         - step_to_type: [num_types, H, W] int8  (first_step_to_type)
         """
         import torch
+
+        if self._gpu_tensors is not None and self._gpu_tensors.get('_device') == device:
+            return self._gpu_tensors
 
         result = {}
         if self.dist_to_dropoff is not None:
@@ -442,6 +448,8 @@ class PrecomputedTables:
                 self.dist_to_type, dtype=torch.int16, device=device)
             result['step_to_type'] = torch.tensor(
                 self.step_to_type, dtype=torch.int8, device=device)
+        result['_device'] = device
+        self._gpu_tensors = result
         return result
 
 

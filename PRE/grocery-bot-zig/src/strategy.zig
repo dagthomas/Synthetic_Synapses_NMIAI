@@ -3,6 +3,7 @@ const config = @import("config");
 const types = @import("types.zig");
 const pathfinding = @import("pathfinding.zig");
 const trip_mod = @import("trip.zig");
+const spacetime = @import("spacetime.zig");
 
 // Compile-time difficulty: .auto means runtime detection, otherwise locked to specific difficulty
 const Difficulty = config.Difficulty;
@@ -23,6 +24,26 @@ const MAX_H = types.MAX_H;
 const MAX_W = types.MAX_W;
 const INV_CAP = types.INV_CAP;
 const UNREACHABLE = types.UNREACHABLE;
+
+// ── MAPF Configuration ───────────────────────────────────────────────
+// Enable Space-Time A* with reservation table for Hard/Expert only.
+// Easy/Medium keep current behavior (compile-time eliminated).
+const USE_MAPF = switch (DIFFICULTY) {
+    .easy, .medium, .auto => false,
+    .hard, .expert => true,
+};
+
+/// Navigate from start to target using MAPF (ST-A*) when available, else BFS.
+fn navigateTo(state: *const GameState, start: Pos, target: Pos, bot_id: u8, bot_positions: *const [MAX_BOTS]Pos) pathfinding.BfsResult {
+    if (USE_MAPF and state.bot_count >= 5) {
+        if (spacetime.planAndReserve(state, start, target, bot_id)) |result| {
+            // ST-A* found a path (first_dir may be null = wait)
+            return .{ .dist = if (result.path_len > 0) result.path_len else 1, .first_dir = result.first_dir };
+        }
+        // ST-A* failed — fall back to regular BFS
+    }
+    return pathfinding.bfs(state, start, target, bot_id, bot_positions);
+}
 
 // ── Persistent State ───────────────────────────────────────────────────
 const HIST_LEN = 24;
@@ -333,6 +354,12 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     // Pre-compute all BFS distance maps once at game start (walls never change)
     if (state.round == 0) {
         pathfinding.precomputeAllDistances(state);
+        if (USE_MAPF) spacetime.init(state);
+    }
+
+    // Clear reservations at start of each round (MAPF replans every round)
+    if (USE_MAPF and state.bot_count >= 5) {
+        spacetime.clearReservations();
     }
 
     const needs = buildNeeds(state);
@@ -379,7 +406,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     }
     // Max bots allowed to carry preview items: limit to reduce dead inventory risk
     // CRITICAL: increasing this causes catastrophic dead-inv in Expert (10 bots)
-    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else if (state.bot_count >= 8) 3 else if (state.bot_count >= 5) 2 else 1;
+    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else if (state.bot_count >= 8) 4 else if (state.bot_count >= 5) 2 else 1;
 
     // ── Fix 6: Track score changes for diagnostic logging ──
     if (state.score != last_score) {
@@ -602,7 +629,10 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // Force reset after being stuck on same order too long
         // Trigger escape to physically break deadlocks — just resetting trip plans
         // causes bot to immediately re-plan the same failed route
-        if (pb.rounds_on_order > 25 and pb.rounds_on_order % 12 == 0) {
+        // STAGGER: Only 1-2 bots escape per cycle to maintain coordination.
+        // Each bot's escape window is offset by bot ID to prevent mass escape.
+        const escape_threshold: u16 = 25 + @as(u16, @intCast(bi)) * 4;
+        if (pb.rounds_on_order > escape_threshold and (pb.rounds_on_order -| escape_threshold) % 12 == 0) {
             pb.has_trip = false;
             pb.delivering = false;
             pb.osc_count = 0;
@@ -724,7 +754,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             .easy => state.bot_count,
             .medium => state.bot_count,
             .hard => 4,
-            .expert => 8,
+            .expert => 4,
             .auto => if (state.bot_count >= 8) 8 else if (state.bot_count >= 5) 3 else state.bot_count,
         };
 
@@ -761,13 +791,14 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                             .easy => false, // Single bot: pure pickup distance
                             .medium => true, // Round-trip cost reduces total cycle time
                             .hard => true,
-                            .expert => false, // Too many bots: pure distance works better
+                            .expert => false,
                             .auto => state.bot_count > 1 and state.bot_count < 8,
                         };
                         const trip_cost: u16 = if (use_roundtrip and d_back < UNREACHABLE) raw_d + d_back else raw_d;
                         // Concentration bonus: prefer bots that already have assignments
                         const conc_bonus: u16 = switch (DIFFICULTY) {
                             .medium => if (bot_assigned[bk] > 0) 8 else 0,
+                            .expert => if (bot_assigned[bk] > 0) 3 else 0,
                             .auto => if (bot_assigned[bk] > 0 and state.bot_count == 3) 8 else 0,
                             else => 0,
                         };
@@ -915,6 +946,61 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         std.debug.print("R{d} Score:{d} items_on_map={d} stuck={any} osc={d}\n", .{ state.round, state.score, state.item_count, order_stuck, pbots[0].osc_count });
     }
 
+    // ── MAPF Priority Pre-pass: reserve paths for delivering bots first ──
+    // Delivering bots get priority in the reservation table (closest to dropoff first).
+    // This ensures picking bots route around them, not the other way around.
+    if (USE_MAPF and state.bot_count >= 5) {
+        const DelBot = struct { bi: u8, dist: u16 };
+        var del_bots: [MAX_BOTS]DelBot = undefined;
+        var del_count: u8 = 0;
+        for (0..state.bot_count) |bi| {
+            if (!pbots[bi].delivering) continue;
+            // Check if bot actually has active items
+            var ba = active_orig;
+            var ha = false;
+            for (0..state.bots[bi].inv_len) |ii| {
+                if (ba.contains(state.bots[bi].inv[ii])) {
+                    ha = true;
+                    ba.remove(state.bots[bi].inv[ii]);
+                }
+            }
+            if (!ha) continue;
+            const d = pathfinding.distFromMap(&dm_drop, eff_pos[bi]);
+            del_bots[del_count] = .{ .bi = @intCast(bi), .dist = d };
+            del_count += 1;
+        }
+        // Sort by distance (closest first = highest priority)
+        for (0..del_count) |i| {
+            var min_j = i;
+            for (i + 1..del_count) |j| {
+                if (del_bots[j].dist < del_bots[min_j].dist) min_j = j;
+            }
+            if (min_j != i) {
+                const tmp = del_bots[i];
+                del_bots[i] = del_bots[min_j];
+                del_bots[min_j] = tmp;
+            }
+        }
+        // Reserve paths for delivering bots → picking bots will route around them
+        for (del_bots[0..del_count]) |db| {
+            _ = spacetime.planAndReserve(state, eff_pos[db.bi], state.dropoff, db.bi);
+        }
+        // Reserve stalled bots as stationary obstacles (they won't move soon)
+        for (0..state.bot_count) |bi| {
+            if (pbots[bi].stall_count >= 5) {
+                if (eff_pos[bi].x >= 0 and eff_pos[bi].y >= 0) {
+                    spacetime.reserveStationary(
+                        @intCast(eff_pos[bi].x),
+                        @intCast(eff_pos[bi].y),
+                        0,
+                        types.MAX_TIME_HORIZON,
+                        @intCast(bi),
+                    );
+                }
+            }
+        }
+    }
+
     for (0..state.bot_count) |bi| {
         if (bi > 0) try writer.writeAll(",");
         const bot = &state.bots[bi];
@@ -922,6 +1008,13 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         const bpos = eff_pos[bi]; // Effective position (accounts for offset)
 
         pb.last_tried_pickup = false;
+
+        // MAPF: reserve this bot's current position at t=0 so subsequent bots avoid colliding here
+        if (USE_MAPF and state.bot_count >= 5) {
+            if (bpos.x >= 0 and bpos.y >= 0) {
+                spacetime.reserve(@intCast(bpos.x), @intCast(bpos.y), 0, @intCast(bi));
+            }
+        }
 
         const dm_bot = &all_dm_bot[bi];
 
@@ -948,7 +1041,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // Safe preview: allow beyond carrier limit when bot is near dropoff AND order is far from completion.
         // Near dropoff → fast delivery. Many items remaining → order won't cycle soon. Low dead-inv risk.
         const dist_to_drop_bot = pathfinding.distFromMap(&dm_drop, bpos);
-        const safe_preview = state.bot_count >= 5 and pick_remaining.count >= 3 and dist_to_drop_bot <= 10 and orch_active_assigned[bi] == 0;
+        const safe_preview = state.bot_count >= 5 and pick_remaining.count >= 2 and dist_to_drop_bot <= 15 and orch_active_assigned[bi] == 0;
         const allow_preview_for_bot = !has_active and
             (bot.inv_len < INV_CAP) and
             (if (state.bot_count <= 1) all_active_covered
@@ -1196,7 +1289,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             // Opportunistic detour: pick up active items on the way to dropoff
             // Single-bot: generous detour (max 5 extra). Multi-bot: 1 normally, 3 when queued.
             const base_detour: u32 = if (state.bot_count <= 1) 5
-                else if (delivery_rank >= 2) 3  // More detour tolerance when queued behind other deliverers
+                else if (delivery_rank >= 2) 3
                 else 1;
             if (effective_slots > 0 and !endgame and dist_to_drop > 2) {
                 // Would picking the last remaining item complete the order?
@@ -1250,7 +1343,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 }
                 if (best_det_ii) |det_ii| {
                     if (!bpos.eql(best_det_adj)) {
-                        const det_res = pathfinding.bfs(state, bpos, best_det_adj, @intCast(bi), &bot_positions);
+                        const det_res = navigateTo(state, bpos, best_det_adj, @intCast(bi), &bot_positions);
                         if (det_res.dist < UNREACHABLE) if (det_res.first_dir) |d| {
                             try writeMove(writer, bot.id, d);
                             updateBotPos(&bot_positions[bi], d);
@@ -1262,7 +1355,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                     }
                 }
             }
-            const res = pathfinding.bfs(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+            const res = navigateTo(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
             if (res.dist < UNREACHABLE) {
                 if (res.first_dir) |d| {
                     // Anti-oscillation: if near dropoff and BFS would move us further away, wait (max 3 rounds)
@@ -1317,7 +1410,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                         continue;
                     }
                 } else {
-                    const res = pathfinding.bfs(state, bpos, adj, @intCast(bi), &bot_positions);
+                    const res = navigateTo(state, bpos, adj, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                         try writeMove(writer, bot.id, d);
                         updateBotPos(&bot_positions[bi], d);
@@ -1382,7 +1475,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                         continue;
                     }
                 } else {
-                    const res = pathfinding.bfs(state, bpos, first_adj, @intCast(bi), &bot_positions);
+                    const res = navigateTo(state, bpos, first_adj, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                         try writeMove(writer, bot.id, d);
                         updateBotPos(&bot_positions[bi], d);
@@ -1397,7 +1490,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // ─── 7. Have active items → go deliver ─────────────────────
         if (bot.inv_len > 0 and has_active) {
             pb.delivering = true;
-            const res = pathfinding.bfs(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+            const res = navigateTo(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
             if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                 // Anti-oscillation near dropoff (max 3 rounds wait)
                 const cur_md = @abs(bpos.x - state.dropoff.x) + @abs(bpos.y - state.dropoff.y);
@@ -1486,7 +1579,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 const pick_idx = idle_rank % prev_target_count;
                 const target = prev_targets[pick_idx].adj;
                 if (!bpos.eql(target)) {
-                    const res = pathfinding.bfs(state, bpos, target, @intCast(bi), &bot_positions);
+                    const res = navigateTo(state, bpos, target, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                         try writeMove(writer, bot.id, d);
                         updateBotPos(&bot_positions[bi], d);
@@ -1519,7 +1612,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 }
                 if (best_active_adj) |target| {
                     if (!bpos.eql(target)) {
-                        const res = pathfinding.bfs(state, bpos, target, @intCast(bi), &bot_positions);
+                        const res = navigateTo(state, bpos, target, @intCast(bi), &bot_positions);
                         if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                             try writeMove(writer, bot.id, d);
                             updateBotPos(&bot_positions[bi], d);
@@ -1552,7 +1645,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 const rush_to_dropoff = pick_remaining.count <= 2;
                 const target_dist: u16 = if (rush_to_dropoff) 0 else 3;
                 if (dd_dist > target_dist) {
-                    const res = pathfinding.bfs(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+                    const res = navigateTo(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                         if (!rush_to_dropoff or !bpos.eql(state.dropoff)) {
                             try writeMove(writer, bot.id, d);
@@ -1578,7 +1671,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 // These bots are pure blockers — get them out of the way so delivering bots can pass
                 const spawn = Pos{ .x = @as(i16, @intCast(state.width)) - 2, .y = @as(i16, @intCast(state.height)) - 2 };
                 if (!bpos.eql(spawn)) {
-                    const res = pathfinding.bfs(state, bpos, spawn, @intCast(bi), &bot_positions);
+                    const res = navigateTo(state, bpos, spawn, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                         try writeMove(writer, bot.id, d);
                         updateBotPos(&bot_positions[bi], d);
@@ -1594,6 +1687,13 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         try writer.print("{{\"bot\":{d},\"action\":\"wait\"}}", .{bot.id});
         pending_is_move[bi] = false;
         pending_dirs[bi] = null;
+
+        // MAPF: reserve stationary position for non-moving bots so subsequent bots route around
+        if (USE_MAPF and state.bot_count >= 5) {
+            if (bpos.x >= 0 and bpos.y >= 0) {
+                spacetime.reserveStationary(@intCast(bpos.x), @intCast(bpos.y), 0, types.MAX_TIME_HORIZON, @intCast(bi));
+            }
+        }
     }
 
     try writer.writeAll("]}");

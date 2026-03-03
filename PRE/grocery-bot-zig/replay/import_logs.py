@@ -150,9 +150,15 @@ def parse_log_file(path):
             except ValueError:
                 continue
 
-    # Items in DB format
-    items_db = [{"id": it["id"], "type": it["type"], "x": it["position"][0], "y": it["position"][1]}
+    # Items in DB format — position must be [x, y] array (Grid.svelte reads item.position[0/1])
+    items_db = [{"id": it["id"], "type": it["type"], "position": it["position"]}
                 for it in items]
+
+    # Remove shelf cells from walls so they render as shelves (not walls) in the frontend.
+    # The game log puts all non-walkable cells in grid.walls, including shelf cells.
+    # The frontend checks: dropoff → spawn → wall → shelf, so shelf cells must NOT be in walls.
+    shelf_coords = {(p[0], p[1]) for p in shelves}
+    walls = [w for w in walls if tuple(w) not in shelf_coords]
 
     return {
         "seed": seed,
@@ -175,7 +181,7 @@ def parse_log_file(path):
     }
 
 
-def save_to_db(db_url, record):
+def save_to_db(db_url, record, run_type='live'):
     """Insert a parsed game record into PostgreSQL."""
     conn = psycopg2.connect(db_url)
     try:
@@ -184,8 +190,8 @@ def save_to_db(db_url, record):
             INSERT INTO runs (seed, difficulty, grid_width, grid_height, bot_count,
                               item_types, order_size_min, order_size_max,
                               walls, shelves, items, drop_off, spawn,
-                              final_score, items_delivered, orders_completed)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                              final_score, items_delivered, orders_completed, run_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             record["seed"], record["difficulty"],
@@ -195,6 +201,7 @@ def save_to_db(db_url, record):
             json.dumps(record["items"]), json.dumps(record["drop_off"]),
             json.dumps(record["spawn"]),
             record["final_score"], record["items_delivered"], record["orders_completed"],
+            run_type,
         ))
         run_id = cur.fetchone()[0]
 
@@ -226,6 +233,7 @@ def main():
     parser = argparse.ArgumentParser(description="Import game_log JSONL files into PostgreSQL")
     parser.add_argument("files", nargs="*", help="JSONL files to import (default: all game_log*.jsonl in parent dir)")
     parser.add_argument("--db", default=DEFAULT_DB, help="PostgreSQL connection URL")
+    parser.add_argument("--run-type", default="live", choices=["live", "replay"], help="Run type: live or replay")
     args = parser.parse_args()
 
     # Determine files to import
@@ -262,10 +270,10 @@ def main():
             continue
 
         try:
-            run_id = save_to_db(args.db, record)
+            run_id = save_to_db(args.db, record, run_type=args.run_type)
             print(f"  {basename}: {record['difficulty']} {record['grid_width']}x{record['grid_height']}, "
                   f"score={record['final_score']}, orders={record['orders_completed']}, "
-                  f"rounds={len(record['rounds'])} -> run_id={run_id}")
+                  f"rounds={len(record['rounds'])}, type={args.run_type} -> run_id={run_id}")
             imported += 1
         except Exception as e:
             print(f"  {basename}: ERROR - {e}")

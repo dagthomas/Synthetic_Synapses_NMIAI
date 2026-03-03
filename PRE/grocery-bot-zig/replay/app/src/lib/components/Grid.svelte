@@ -278,83 +278,86 @@
 	{/each}
 
 	<!-- Bots (animated hover-bot design) -->
-	{#each bots as bot}
+	{#each bots as bot (bot.id)}
 		{@const bx = bot.position[0] * cellSize}
 		{@const by = bot.position[1] * cellSize}
 		{@const color = botColors[bot.id % botColors.length]}
 		{@const isSelected = selectedBot === bot.id}
 		{@const delayClass = `delay-${bot.id % 4}`}
 
-		<!-- Selection highlight -->
-		{#if isSelected}
-			<rect
-				x={bx - 2}
-				y={by - 2}
-				width={cellSize + 4}
-				height={cellSize + 4}
-				rx="4"
-				fill="none"
-				stroke={color}
-				stroke-width="2"
-				opacity="0.7"
-				filter="url(#selected-glow)"
-			/>
-		{/if}
-
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<svg
-			x={bx}
-			y={by}
-			width={cellSize}
-			height={cellSize}
-			viewBox="0 0 28 28"
+		<!-- Animated wrapper: CSS transform transitions smoothly each round -->
+		<g
+			style="transform: translate({bx}px, {by}px); transition: transform 0.25s ease-out; cursor: pointer;"
 			onclick={() => onSelectBot(bot.id)}
-			style="cursor: pointer"
 		>
-			<!-- Floor shadow -->
-			<ellipse cx="14" cy="25" rx="8" ry="2" fill="#000" opacity="0.3" />
+			<!-- Selection highlight -->
+			{#if isSelected}
+				<rect
+					x={-2}
+					y={-2}
+					width={cellSize + 4}
+					height={cellSize + 4}
+					rx="4"
+					fill="none"
+					stroke={color}
+					stroke-width="2"
+					opacity="0.7"
+					filter="url(#selected-glow)"
+				/>
+			{/if}
 
-			<!-- Animated robot body -->
-			<g class="bot-anim-hover {delayClass}">
-				<!-- Hover thruster base -->
-				<path d="M 10 20 L 18 20 L 16 23 L 12 23 Z" fill="#b2bec3" />
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<svg
+				x={0}
+				y={0}
+				width={cellSize}
+				height={cellSize}
+				viewBox="0 0 28 28"
+			>
+				<!-- Floor shadow -->
+				<ellipse cx="14" cy="25" rx="8" ry="2" fill="#000" opacity="0.3" />
 
-				<!-- Antenna -->
-				<line x1="14" y1="8" x2="14" y2="3" stroke="#b2bec3" stroke-width="1.5" />
-				<circle cx="14" cy="3" r="1.5" fill={color} filter="url(#bot-glow)" />
+				<!-- Animated robot body -->
+				<g class="bot-anim-hover {delayClass}">
+					<!-- Hover thruster base -->
+					<path d="M 10 20 L 18 20 L 16 23 L 12 23 Z" fill="#b2bec3" />
 
-				<!-- Side nodes / ears -->
-				<rect x="4" y="11" width="3" height="6" rx="1" fill="#b2bec3" />
-				<rect x="21" y="11" width="3" height="6" rx="1" fill="#b2bec3" />
+					<!-- Antenna -->
+					<line x1="14" y1="8" x2="14" y2="3" stroke="#b2bec3" stroke-width="1.5" />
+					<circle cx="14" cy="3" r="1.5" fill={color} filter="url(#bot-glow)" />
 
-				<!-- Main colored chassis -->
-				<rect x="6" y="8" width="16" height="13" rx="3" fill={color} filter="url(#bot-glow)" />
+					<!-- Side nodes / ears -->
+					<rect x="4" y="11" width="3" height="6" rx="1" fill="#b2bec3" />
+					<rect x="21" y="11" width="3" height="6" rx="1" fill="#b2bec3" />
 
-				<!-- Visor / face -->
-				<rect x="8" y="10" width="12" height="9" rx="1.5" fill="#1e272e" />
+					<!-- Main colored chassis -->
+					<rect x="6" y="8" width="16" height="13" rx="3" fill={color} filter="url(#bot-glow)" />
 
-				<!-- Blinking eyes -->
-				<circle cx="10" cy="12" r="0.75" fill="#fff" class="bot-anim-blink" />
-				<circle cx="18" cy="12" r="0.75" fill="#fff" class="bot-anim-blink" />
+					<!-- Visor / face -->
+					<rect x="8" y="10" width="12" height="9" rx="1.5" fill="#1e272e" />
 
-				<!-- Bot ID number on screen -->
-				<text x="14" y="15.5" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="900" fill="#ffffff" font-family="sans-serif">{bot.id}</text>
-			</g>
-		</svg>
+					<!-- Blinking eyes -->
+					<circle cx="10" cy="12" r="0.75" fill="#fff" class="bot-anim-blink" />
+					<circle cx="18" cy="12" r="0.75" fill="#fff" class="bot-anim-blink" />
 
-		<!-- Inventory indicator (dots below bot cell) -->
-		{#each bot.inventory as invItem, i}
-			{@const cx = bx + cellSize / 2 - (bot.inventory.length - 1) * 3 + i * 6}
-			<circle
-				{cx}
-				cy={by + cellSize + 2}
-				r="2.5"
-				fill={ITEM_COLORS[invItem] || '#aaa'}
-				stroke="#000"
-				stroke-width="0.5"
-			/>
-		{/each}
+					<!-- Bot ID number on screen -->
+					<text x="14" y="15.5" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="900" fill="#ffffff" font-family="sans-serif">{bot.id}</text>
+				</g>
+			</svg>
+
+			<!-- Inventory indicator (dots below bot cell, relative to group origin) -->
+			{#each bot.inventory as invItem, i}
+				<circle
+					cx={cellSize / 2 - (bot.inventory.length - 1) * 3 + i * 6}
+					cy={cellSize + 4}
+					r="2.5"
+					fill={ITEM_COLORS[invItem] || '#aaa'}
+					stroke="#000"
+					stroke-width="0.5"
+				/>
+			{/each}
+		</g>
 	{/each}
 </svg>
 

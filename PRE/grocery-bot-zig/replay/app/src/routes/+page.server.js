@@ -3,7 +3,8 @@ import { query } from '$lib/db.server.js';
 export async function load() {
 	const runs = await query(`
 		SELECT id, seed, difficulty, grid_width, grid_height, bot_count,
-		       final_score, items_delivered, orders_completed, created_at
+		       final_score, items_delivered, orders_completed, created_at,
+		       run_type
 		FROM runs
 		ORDER BY created_at DESC
 		LIMIT 200

@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS runs (
     final_score INTEGER NOT NULL,
     items_delivered INTEGER NOT NULL,
     orders_completed INTEGER NOT NULL,
+    run_type TEXT NOT NULL DEFAULT 'live',
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

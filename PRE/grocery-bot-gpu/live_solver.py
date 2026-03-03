@@ -295,17 +295,24 @@ class ReactiveSolver:
             inv = [t.lower() for t in bot.get('inventory', [])]
             bid = bot['id']
 
-            # 1. At dropoff with ANY items → try drop off (handles order transitions)
-            if (bx, by) == self.drop_off and inv:
-                has_match = any(t in needed_lower for t in inv)
-                if has_match:
-                    actions.append({'bot': bid, 'action': 'drop_off'})
-                    for t in inv:
-                        if t in needed_lower:
-                            needed_lower.remove(t)
-                    continue
+            # 1. At dropoff → drop off or evacuate (never idle-block the dropoff)
+            if (bx, by) == self.drop_off:
+                if inv:
+                    has_match = any(t in needed_lower for t in inv)
+                    if has_match:
+                        actions.append({'bot': bid, 'action': 'drop_off'})
+                        for t in inv:
+                            if t in needed_lower:
+                                needed_lower.remove(t)
+                        continue
+                    elif self.num_bots > 1:
+                        # EVACUATE: dead inventory at dropoff blocks other bots
+                        occupied = bot_positions - {(bx, by)}
+                        act = self._escape_move(bid, (bx, by), occupied)
+                        actions.append({'bot': bid, 'action': action_names[act]})
+                        continue
                 elif self.num_bots > 1:
-                    # EVACUATE: dead inventory at dropoff blocks other bots
+                    # EVACUATE: empty bot idling at dropoff blocks deliveries
                     occupied = bot_positions - {(bx, by)}
                     act = self._escape_move(bid, (bx, by), occupied)
                     actions.append({'bot': bid, 'action': action_names[act]})
@@ -315,9 +322,12 @@ class ReactiveSolver:
             picked = False
             if len(inv) < INV_CAP:
                 # Multi-bot: only pick preview items if active is FULLY covered
-                # and bot already has at least 1 active item (prevents dead inv)
+                # and ALL items in bot's inventory are needed (no dead items) to prevent
+                # picking 2 preview items + 1 active → deadlock after delivery
                 use_preview = (not still_need_lower and preview_need and
-                               (self.num_bots == 1 or any(t in needed_lower for t in inv)))
+                               (self.num_bots == 1 or
+                                (any(t in needed_lower for t in inv) and
+                                 all(t in needed_lower for t in inv))))
                 pick_targets = still_need_lower if still_need_lower else (preview_need if use_preview else [])
                 for item_type in pick_targets:
                     if item_type not in self.items_by_type:
@@ -1186,7 +1196,7 @@ async def play_live(ws_url, log_dir=None, save_capture=False, fast_mode=False):
         actions_to_save = all_actions_recorded if all_actions_recorded else \
                           (solver.best_actions if solver else [])
         if actions_to_save:
-            saved = save_solution(difficulty, score, actions_to_save, force=True)
+            saved = save_solution(difficulty, score, actions_to_save, force=False)
             if saved:
                 print(f"  Solution saved: {difficulty} score={score}", file=sys.stderr)
             else:

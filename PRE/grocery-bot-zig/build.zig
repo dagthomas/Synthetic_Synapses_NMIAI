@@ -37,4 +37,46 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
+
+    // Simulator executable (pure Zig, no WebSocket)
+    const sim_name = switch (difficulty) {
+        .auto => "grocery-sim",
+        .easy => "grocery-sim-easy",
+        .medium => "grocery-sim-medium",
+        .hard => "grocery-sim-hard",
+        .expert => "grocery-sim-expert",
+    };
+
+    const sim_exe = b.addExecutable(.{
+        .name = sim_name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/sim_main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    sim_exe.root_module.addImport("config", options.createModule());
+
+    b.installArtifact(sim_exe);
+
+    const sim_step = b.step("sim", "Run the simulator");
+    const sim_cmd = b.addRunArtifact(sim_exe);
+    sim_step.dependOn(&sim_cmd.step);
+    sim_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        sim_cmd.addArgs(args);
+    }
+
+    // Shared library for Python FFI (always named grocery-sim, difficulty=runtime)
+    const lib = b.addLibrary(.{
+        .name = "grocery-sim",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ffi.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    lib.root_module.addImport("config", options.createModule());
+    b.installArtifact(lib);
 }

@@ -798,11 +798,15 @@ def solve(seed=None, difficulty=None, verbose=True, max_active_bots=None, game_f
                 bc.set_idle()
 
         # Assign items to idle bots
-        # Note: pipeline_assign was too aggressive (order_changed resets picking bots,
-        # creating dead inventory). Pipeline depth only affects auto-delivery staging.
-        assignments = assign_items_globally(
-            state, dist_maps, all_orders, controllers, max_active_bots
-        )
+        if pipeline_depth > 0:
+            assignments = pipeline_assign(
+                state, dist_maps, all_orders, controllers,
+                max_active_bots, pipeline_depth=pipeline_depth
+            )
+        else:
+            assignments = assign_items_globally(
+                state, dist_maps, all_orders, controllers, max_active_bots
+            )
         for bid, items in assignments.items():
             bc = controllers[bid]
             bx = int(state.bot_positions[bid, 0])

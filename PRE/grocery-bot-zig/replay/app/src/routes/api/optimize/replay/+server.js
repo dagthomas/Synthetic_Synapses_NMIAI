@@ -208,20 +208,7 @@ export async function POST({ request }) {
 				pollLogFile();
 				sendEvent('done', { code, message: `Replay finished (exit ${code})` });
 
-				if (lastState && detectedDiff && gameWidth > 0) {
-					try {
-						const result = await query(
-							`INSERT INTO runs (seed, difficulty, grid_width, grid_height, bot_count,
-								final_score, items_delivered, orders_completed)
-							VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-							[0, detectedDiff, gameWidth, gameHeight, botCount,
-							 lastState.score || 0, 0, 0]
-						);
-						sendEvent('db', { run_id: result[0]?.id, message: 'Saved to database' });
-					} catch (e) {
-						sendEvent('db_error', { message: e.message });
-					}
-				}
+				// DB import handled by replay_solution.py via import_logs.py
 
 				cleanup();
 			});

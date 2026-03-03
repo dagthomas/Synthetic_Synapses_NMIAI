@@ -8,23 +8,27 @@ import sys
 from game_engine import actions_to_ws_format, build_map
 
 
-async def replay(ws_url, action_sequence, map_state, verbose=True):
+async def replay(ws_url, action_sequence, map_state, verbose=True, capture_orders=False):
     """Replay a pre-computed action sequence over WebSocket.
 
     Args:
-        ws_url: WebSocket URL (e.g., "ws://localhost:9999" or "wss://game-dev.ainm.no/ws?token=...")
+        ws_url: WebSocket URL
         action_sequence: list of per-round actions (each is list of (action_type, item_idx) per bot)
         map_state: MapState for action name translation
         verbose: Print progress
+        capture_orders: If True, capture orders from game state messages
 
     Returns:
-        Final score from server
+        Final score from server (or (score, orders) if capture_orders=True)
     """
     try:
         import websockets
     except ImportError:
         print("Install websockets: pip install websockets")
         sys.exit(1)
+
+    seen_order_ids = set()
+    captured_orders = []
 
     async with websockets.connect(ws_url) as ws:
         final_score = 0
@@ -36,7 +40,22 @@ async def replay(ws_url, action_sequence, map_state, verbose=True):
                 final_score = data.get("score", 0)
                 if verbose:
                     print(f"Game over at round {round_num}: score={final_score}")
+                if capture_orders:
+                    return final_score, captured_orders
                 return final_score
+
+            # Capture orders
+            if capture_orders:
+                for order in data.get('orders', []):
+                    oid = order.get('id', f'order_{len(captured_orders)}')
+                    if oid not in seen_order_ids:
+                        seen_order_ids.add(oid)
+                        captured_orders.append({
+                            'id': oid,
+                            'items_required': order['items_required'],
+                            'items_delivered': [],
+                            'status': 'future',
+                        })
 
             # Send pre-computed actions
             server_round = data.get("round", round_num)
@@ -60,6 +79,8 @@ async def replay(ws_url, action_sequence, map_state, verbose=True):
             if verbose:
                 print(f"Game over: score={final_score}")
 
+        if capture_orders:
+            return final_score, captured_orders
         return final_score
 
 
