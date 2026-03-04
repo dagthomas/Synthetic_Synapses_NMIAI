@@ -233,7 +233,7 @@ def main():
     parser = argparse.ArgumentParser(description="Import game_log JSONL files into PostgreSQL")
     parser.add_argument("files", nargs="*", help="JSONL files to import (default: all game_log*.jsonl in parent dir)")
     parser.add_argument("--db", default=DEFAULT_DB, help="PostgreSQL connection URL")
-    parser.add_argument("--run-type", default="live", choices=["live", "replay"], help="Run type: live or replay")
+    parser.add_argument("--run-type", default="live", choices=["live", "replay", "synthetic"], help="Run type: live, replay, or synthetic")
     args = parser.parse_args()
 
     # Determine files to import

@@ -142,6 +142,102 @@ def build_walkable(map_state):
     return walkable
 
 
+def greedy_action(bot, data, map_state, walkable, live_bots):
+    """Greedy fallback: pick needed items, deliver to dropoff. Used after DP plan exhausted."""
+    bid = bot['id']
+    bx, by = bot['position']
+    bpos = (bx, by)
+    inv = bot.get('inventory', [])
+    drop_off = tuple(map_state.drop_off)
+    occupied = {tuple(b['position']) for b in live_bots if b['id'] != bid}
+
+    # Build set of item types needed by active order
+    needed_types = set()
+    active_order = None
+    for order in data.get('orders', []):
+        if order.get('status') == 'active':
+            active_order = order
+            break
+    if active_order:
+        delivered = active_order.get('items_delivered', [])
+        for i, item_type in enumerate(active_order.get('items_required', [])):
+            if i >= len(delivered) or not delivered[i]:
+                needed_types.add(item_type)
+
+    # Also consider preview order items for pre-fetching
+    preview_types = set()
+    for order in data.get('orders', []):
+        if order.get('status') == 'preview':
+            for item_type in order.get('items_required', []):
+                preview_types.add(item_type)
+
+    # Map item types in bot inventory (by item ID -> type lookup)
+    inv_types = []
+    for item_id in inv:
+        for it in map_state.items:
+            if it['id'] == item_id:
+                inv_types.append(it['type'])
+                break
+
+    # If at dropoff and have items matching active order -> drop off
+    if bpos == drop_off and len(inv) > 0:
+        has_match = any(t in needed_types for t in inv_types)
+        if has_match:
+            return {'bot': bid, 'action': 'drop_off'}
+
+    # If inventory has items matching active order -> go to dropoff
+    if len(inv) > 0:
+        has_active_match = any(t in needed_types for t in inv_types)
+        if has_active_match or len(inv) >= INV_CAP:
+            nav = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
+            if nav == ACT_WAIT and bpos == drop_off:
+                return {'bot': bid, 'action': 'drop_off'}
+            return {'bot': bid, 'action': ['wait', 'move_up', 'move_down',
+                     'move_left', 'move_right', 'pick_up', 'drop_off'][nav]}
+
+    # If inventory has space -> find nearest needed item to pick up
+    if len(inv) < INV_CAP:
+        target_types = needed_types if needed_types else preview_types
+        if target_types:
+            best_item = None
+            best_dist = 9999
+            for idx, it in enumerate(map_state.items):
+                if it['type'] in target_types:
+                    adj_cells = map_state.item_adjacencies.get(idx, [])
+                    if not adj_cells:
+                        ix, iy = it['position']
+                        for ddx, ddy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+                            nx, ny = ix + ddx, iy + ddy
+                            if (nx, ny) in walkable:
+                                adj_cells.append((nx, ny))
+                    for adj in adj_cells:
+                        d = abs(adj[0] - bx) + abs(adj[1] - by)
+                        if d < best_dist:
+                            best_dist = d
+                            best_item = (it, adj)
+
+            if best_item:
+                item, adj_pos = best_item
+                adj_pos = tuple(adj_pos)
+                if bpos == adj_pos:
+                    # Adjacent to item -> pick up
+                    return {'bot': bid, 'action': 'pick_up', 'item_id': item['id']}
+                else:
+                    nav = bfs_next_action(bpos, adj_pos, walkable, occupied, map_state)
+                    return {'bot': bid, 'action': ['wait', 'move_up', 'move_down',
+                             'move_left', 'move_right', 'pick_up', 'drop_off'][nav]}
+
+    # If bot has non-matching items, deliver them anyway (might match new order after delivery)
+    if len(inv) > 0:
+        nav = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
+        if nav == ACT_WAIT and bpos == drop_off:
+            return {'bot': bid, 'action': 'drop_off'}
+        return {'bot': bid, 'action': ['wait', 'move_up', 'move_down',
+                 'move_left', 'move_right', 'pick_up', 'drop_off'][nav]}
+
+    return {'bot': bid, 'action': 'wait'}
+
+
 async def replay_best(ws_url, difficulty=None, log_dir=None):
     """Replay saved best solution with adaptive desync correction."""
     import websockets
@@ -170,6 +266,7 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
     all_orders_captured = []
     bot_prev_inv = {}       # bid -> list of item types in inventory last round
     bot_prev_score = 0      # score last round (for delivery detection)
+    greedy_mode_logged = False  # log once when switching to greedy
 
     async with websockets.connect(ws_url) as ws:
         async for message in ws:
@@ -343,17 +440,32 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
 
                 if is_synced:
                     # SYNCED: execute raw DP action
-                    if actions and 0 <= dp_rnd < len(actions) and bid < len(actions[dp_rnd]):
+                    has_dp = actions and 0 <= dp_rnd < len(actions) and bid < len(actions[dp_rnd])
+                    if has_dp:
                         act, item_idx = actions[dp_rnd][bid]
-                        a = {'bot': bot['id'], 'action': ['wait', 'move_up', 'move_down',
-                             'move_left', 'move_right', 'pick_up', 'drop_off'][act]}
-                        if act == ACT_PICKUP and 0 <= item_idx < len(map_state.items):
-                            a['item_id'] = map_state.items[item_idx]['id']
-                        elif act == ACT_PICKUP:
-                            a['action'] = 'wait'
-                        ws_actions.append(a)
+                        # Check if bot's DP plan has remaining goals
+                        gi = bot_goal_idx.get(bid, 0) if bot_goal_idx else 0
+                        goals = (bot_goals or {}).get(bid, [])
+                        plan_exhausted = gi >= len(goals) and act == ACT_WAIT
+
+                        if plan_exhausted:
+                            # DP says wait but no more goals -> greedy for new orders
+                            if not greedy_mode_logged:
+                                greedy_mode_logged = True
+                                print(f"R{rnd}: All bots switched to GREEDY mode "
+                                      f"(DP plan exhausted, score={score})", file=sys.stderr)
+                            ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
+                        else:
+                            a = {'bot': bot['id'], 'action': ['wait', 'move_up', 'move_down',
+                                 'move_left', 'move_right', 'pick_up', 'drop_off'][act]}
+                            if act == ACT_PICKUP and 0 <= item_idx < len(map_state.items):
+                                a['item_id'] = map_state.items[item_idx]['id']
+                            elif act == ACT_PICKUP:
+                                a['action'] = 'wait'
+                            ws_actions.append(a)
                     else:
-                        ws_actions.append({'bot': bot['id'], 'action': 'wait'})
+                        # DP plan exhausted -> greedy fallback for new orders
+                        ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
                 else:
                     # DESYNCED: navigate toward current goal via BFS
                     gi = bot_goal_idx.get(bid, 0) if bot_goal_idx else 0
@@ -381,8 +493,8 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                                                           'move_left', 'move_right',
                                                           'pick_up', 'drop_off'][nav_act]})
                     else:
-                        # No more goals — wait
-                        ws_actions.append({'bot': bot['id'], 'action': 'wait'})
+                        # No more goals -> greedy fallback for new orders
+                        ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
 
             if round_has_desync:
                 desync_rounds += 1

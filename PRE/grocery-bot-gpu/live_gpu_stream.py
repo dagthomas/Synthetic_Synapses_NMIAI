@@ -58,8 +58,8 @@ PASSES = {
 PR_PARAMS = {
     'easy':   {'max_states': 50_000, 'horizon': 80},
     'medium': {'max_states': 15_000, 'horizon': 50},
-    'hard':   {'max_states': 25_000, 'horizon': 55},
-    'expert': {'max_states': 12_000, 'horizon': 45},
+    'hard':   {'max_states': 40_000, 'horizon': 60},
+    'expert': {'max_states': 20_000, 'horizon': 50},
 }
 
 ACTION_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
@@ -76,7 +76,7 @@ class PlanState:
 
 class AnytimeGPUStream:
     def __init__(self, ws_url, save=False, max_states=None, no_refine=False, device='cuda',
-                 post_optimize_time=0, json_stream=False):
+                 post_optimize_time=0, json_stream=False, preload_capture=False, record=False):
         self.ws_url = ws_url
         self.do_save = save
         self.max_states_override = max_states
@@ -84,6 +84,8 @@ class AnytimeGPUStream:
         self.device = device
         self.post_optimize_time = post_optimize_time  # seconds to continue GPU after game_over
         self.json_stream = json_stream  # emit JSON events to stdout for SSE dashboard
+        self.preload_capture = preload_capture  # preload existing capture orders at round 0
+        self.do_record = record  # import game log to PostgreSQL after game
 
         # ── shared state (protected by _lock) ─────────────────────────────────
         self._lock = threading.Lock()
@@ -111,6 +113,10 @@ class AnytimeGPUStream:
         self._solve_gen = 0        # bumped when new orders arrive
         self._seen_order_ids = set()
         self._data_ready = threading.Event()  # set after round 0
+
+        # ── seed cracking ─────────────────────────────────────────────────────
+        self._cracked_seed: Optional[int] = None
+        self._all_orders_from_seed: Optional[list] = None  # 100 orders from cracked seed
 
     # ── JSON streaming (for SvelteKit SSE dashboard) ─────────────────────────
 
@@ -289,6 +295,7 @@ class AnytimeGPUStream:
                         max_refine_iters=max_refine,
                         no_filler=True,
                         num_pass1_orderings=n_p1_ord,
+                        no_compile=True,
                     )
                 except Exception as e:
                     print(f"  [{pass_name}] Error: {e}", file=sys.stderr)
@@ -343,12 +350,21 @@ class AnytimeGPUStream:
         # Progressive state budgets (cold start → warm refinements)
         # Sized so cold start finishes in ~15-30s on RTX 5090 for Hard
         _budgets = {
-            'hard':   [20_000, 100_000, 500_000, 2_000_000],
-            'expert': [10_000,  50_000, 200_000, 1_000_000],
+            'hard':   [50_000, 200_000, 1_000_000, 5_000_000],
+            'expert': [20_000, 100_000,   500_000, 2_000_000],
+        }
+        # Larger budgets when seed is cracked (full order foresight = better gradient)
+        _budgets_with_seed = {
+            'hard':   [50_000, 200_000, 1_000_000, 5_000_000],
+            'expert': [20_000, 100_000,   500_000, 2_000_000],
         }
         _extended_budget = {
             'hard': 5_000_000,
             'expert': 2_000_000,
+        }
+        _extended_budget_with_seed = {
+            'hard': 10_000_000,
+            'expert':  5_000_000,
         }
 
         while True:
@@ -360,13 +376,20 @@ class AnytimeGPUStream:
                 continue
 
             diff = capture.get('difficulty', 'easy')
-            budgets = _budgets.get(diff, [8_000, 20_000, 60_000])
 
             with self._lock:
                 current_gen = self._solve_gen
+                _cracked = self._cracked_seed
+                _all_ord = self._all_orders_from_seed
+
+            if _cracked is not None:
+                budgets = _budgets_with_seed.get(diff, _budgets.get(diff, [8_000, 20_000, 60_000]))
+            else:
+                budgets = _budgets.get(diff, [8_000, 20_000, 60_000])
 
             print(f"  [gpu_seq] Starting: diff={diff}, orders={len(capture['orders'])}, "
-                  f"gen={current_gen}, budgets={budgets}", file=sys.stderr)
+                  f"gen={current_gen}, budgets={budgets}, "
+                  f"seed={'cracked' if _cracked else 'unknown'}", file=sys.stderr)
             t_refine_start = time.time()
 
             best_score = 0
@@ -382,9 +405,11 @@ class AnytimeGPUStream:
                 print(f"  [gpu_seq] Warm-seeding from {existing_plan.source} "
                       f"score={best_score}", file=sys.stderr)
 
+            gen_changed_during_passes = False
             for pass_idx, max_states in enumerate(budgets):
                 # Abort this budget series if new orders arrived
                 if self._solve_gen != current_gen:
+                    gen_changed_during_passes = True
                     print(f"  [gpu_seq] Gen changed at pass {pass_idx}, restarting",
                           file=sys.stderr)
                     break
@@ -395,8 +420,13 @@ class AnytimeGPUStream:
 
                 try:
                     # Scale refinement iters with pass index: more time per pass → more iters
-                    # Pass 0 (cold): 1 refine, Pass 1: 2, Pass 2: 3, Pass 3+: 4
-                    pass_refine_iters = min(pass_idx + 1, 4)
+                    # Pass 0 (cold): 2 refine, Pass 1: 3, Pass 2: 4, Pass 3+: 6
+                    pass_refine_iters = min(pass_idx + 2, 6)
+
+                    # Pull latest cracked seed info
+                    with self._lock:
+                        _cracked = self._cracked_seed
+                        _all_ord = self._all_orders_from_seed
 
                     if best_actions is None:
                         # Cold start: multi-restart sequential DP.
@@ -404,10 +434,11 @@ class AnytimeGPUStream:
                         # greedy rollout) and run the top 3 in full DP to find the
                         # best bot ordering. For single-bot, falls back to standard DP.
                         num_bots = cap_snap.get('num_bots', 1)
-                        n_restarts = 3 if num_bots > 1 else 1
+                        n_restarts = 5 if num_bots >= 10 else (3 if num_bots > 1 else 1)
+                        num_screen = 200 if num_bots >= 5 else 60
                         print(f"  [gpu_seq] Pass {pass_idx}: multi-restart "
                               f"max_states={max_states:,} restarts={n_restarts} "
-                              f"refine={pass_refine_iters}",
+                              f"screen={num_screen} refine={pass_refine_iters}",
                               file=sys.stderr)
                         score, actions = solve_multi_restart(
                             capture_data=cap_snap,
@@ -415,10 +446,12 @@ class AnytimeGPUStream:
                             max_states=max_states,
                             max_refine_iters=pass_refine_iters,
                             num_restarts=n_restarts,
-                            num_screen=60,
+                            num_screen=num_screen,
                             n_screen_steps=20,
                             no_filler=True,
                             verbose=True,
+                            all_orders_override=_all_ord,
+                            no_compile=True,
                         )
                     else:
                         # Warm start: refine from best available plan.
@@ -443,6 +476,8 @@ class AnytimeGPUStream:
                             max_refine_iters=pass_refine_iters,
                             no_filler=True,
                             verbose=True,
+                            all_orders_override=_all_ord,
+                            no_compile=True,
                         )
 
                 except Exception as e:
@@ -480,16 +515,27 @@ class AnytimeGPUStream:
                     self._update_plan(score, actions, exp_pos, goals,
                                       f'gpu_seq_p{pass_idx}', snap_gen)
 
+            # If the pass loop broke early due to a gen change, skip the extended
+            # refinement loop and restart immediately from the top with the new gen.
+            if gen_changed_during_passes:
+                continue
+
             # Extended refinement while waiting for new orders.
             # Keep polishing the plan with the largest budget until new orders arrive.
             final_gen = self._solve_gen
-            ext_budget = _extended_budget.get(diff, 2_000_000)
+            with self._lock:
+                _cracked_ext = self._cracked_seed
+                _all_ord_ext = self._all_orders_from_seed
+            ext_budget = (_extended_budget_with_seed if _cracked_ext else _extended_budget).get(
+                diff, 2_000_000)
             print(f"  [gpu_seq] Budget cycle done gen={final_gen} best={best_score}, "
-                  f"entering extended refinement loop (budget={ext_budget:,})", file=sys.stderr)
+                  f"entering extended refinement loop (budget={ext_budget:,}, "
+                  f"seed={'cracked' if _cracked_ext else 'unknown'})", file=sys.stderr)
             while self._solve_gen == final_gen and best_actions is not None:
                 # Check if external plan improved
                 with self._lock:
                     ext = self._plan
+                    _all_ord_ext = self._all_orders_from_seed
                 if (ext and ext.actions and ext.score > best_score
                         and ext.source not in ('none', 'greedy')):
                     best_score = ext.score
@@ -504,9 +550,11 @@ class AnytimeGPUStream:
                         capture_data=cap_snap,
                         device=dev,
                         max_states=ext_budget,
-                        max_refine_iters=1,
+                        max_refine_iters=3,
                         no_filler=True,
                         verbose=True,
+                        all_orders_override=_all_ord_ext,
+                        no_compile=True,
                     )
                 except Exception as e:
                     print(f"  [gpu_seq] Extended refine error: {e}", file=sys.stderr)
@@ -531,6 +579,7 @@ class AnytimeGPUStream:
                                       'gpu_seq_ext', final_gen)
                     print(f"  [gpu_seq] Extended refinement improved: {best_score}",
                           file=sys.stderr)
+                    continue  # Immediately try another pass after improvement
 
             print(f"  [gpu_seq] Waiting for new orders (gen={final_gen})...",
                   file=sys.stderr)
@@ -550,6 +599,46 @@ class AnytimeGPUStream:
             oid = order.get('id', f'order_{i}')
             self._seen_order_ids.add(oid)
             self._order_id_to_idx[oid] = i
+
+        # Pre-load existing capture orders so GPU starts solving with full order list.
+        # Orders already in seen_order_ids (from live round 0) are skipped.
+        # When those orders appear later in the live game, gen won't be bumped.
+        if self.preload_capture:
+            import os
+            diff = self._difficulty
+            preload_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                'solutions', diff, 'capture.json'
+            )
+            preloaded_cap = None
+            if os.path.exists(preload_path):
+                try:
+                    import json as _json
+                    with open(preload_path) as f:
+                        preloaded_cap = _json.load(f)
+                    print(f"  [preload] Loaded capture: {preload_path}", file=sys.stderr)
+                except Exception as e:
+                    print(f"  [preload] Failed to load {preload_path}: {e}", file=sys.stderr)
+            else:
+                print(f"  [preload] No capture found at {preload_path}", file=sys.stderr)
+
+            if preloaded_cap:
+                injected = 0
+                for order in preloaded_cap.get('orders', []):
+                    oid = order.get('id', f'order_{len(self._order_id_to_idx)}')
+                    if oid not in self._seen_order_ids:
+                        self._seen_order_ids.add(oid)
+                        idx = len(self._order_id_to_idx)
+                        self._order_id_to_idx[oid] = idx
+                        capture['orders'].append({
+                            'id': oid,
+                            'items_required': list(order['items_required']),
+                            'items_delivered': list(order.get('items_delivered', [])),
+                            'status': 'future',
+                        })
+                        injected += 1
+                print(f"  [preload] Injected {injected} orders (total={len(capture['orders'])})",
+                      file=sys.stderr)
 
         with self._lock:
             self._capture = capture
@@ -573,6 +662,12 @@ class AnytimeGPUStream:
 
         gen = self._solve_gen
         self._start_mapf(gen)
+
+        # Try to crack the seed for full order foresight (multi-bot only).
+        # Runs in daemon thread; upgrades GPU plan when seed found.
+        if self._num_bots > 1:
+            self._crack_seed_async(data)
+
         # Single-bot: full sequential GPU DP (completes in ~3s, optimal).
         # Multi-bot: GPU warm-start refinement from MAPF plan (much faster than full DP).
         if self._num_bots == 1:
@@ -583,6 +678,147 @@ class AnytimeGPUStream:
             gpu_r.start()
         pr_t = threading.Thread(target=self._per_round_gpu_worker, daemon=True)
         pr_t.start()
+
+    # ── seed cracking ─────────────────────────────────────────────────────────
+
+    def _crack_seed_async(self, ws_data):
+        """Start seed cracking in a daemon thread from round-0 WS data."""
+        orders = ws_data.get('orders', [])
+        if len(orders) < 2:
+            print("  [seed_crack] Not enough orders to crack seed", file=sys.stderr)
+            return
+
+        order0_types = orders[0].get('items_required', [])
+        order1_types = orders[1].get('items_required', [])
+        diff = self._difficulty
+        ms = self._map_state
+
+        def _worker():
+            try:
+                from seed_crack import crack_seed_fast, save_cracked_seed, load_cracked_seed
+                from game_engine import generate_all_orders
+
+                # Check cache first
+                seed = load_cracked_seed(diff, order0_types)
+                if seed is None:
+                    seed = crack_seed_fast(order0_types, order1_types, ms, diff)
+                    if seed is not None:
+                        save_cracked_seed(diff, seed, order0_types)
+
+                if seed is not None:
+                    self._on_seed_cracked(seed)
+                else:
+                    print(f"  [seed_crack] Failed — continuing without seed",
+                          file=sys.stderr)
+            except Exception as e:
+                print(f"  [seed_crack] Error: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+    def _on_seed_cracked(self, seed):
+        """Called when seed is successfully cracked. Generates all 100 orders."""
+        from game_engine import generate_all_orders
+
+        ms = self._map_state
+        diff = self._difficulty
+        all_orders = generate_all_orders(seed, ms, diff, count=100)
+
+        with self._lock:
+            self._cracked_seed = seed
+            self._all_orders_from_seed = all_orders
+
+            # Replace capture orders with exact orders from seed
+            if self._capture is not None:
+                exact_orders = []
+                for i, order in enumerate(all_orders):
+                    status = 'active' if i == 0 else ('preview' if i == 1 else 'future')
+                    exact_orders.append({
+                        'id': f'order_{i}',
+                        'items_required': list(order._required_names),
+                        'items_delivered': [],
+                        'status': status,
+                    })
+                self._capture['orders'] = exact_orders
+                self._capture['seed'] = seed
+
+            self._solve_gen += 1
+            gen = self._solve_gen
+
+        print(f"  [seed_crack] Seed cracked! seed={seed}, gen→{gen}, "
+              f"orders={len(all_orders)}", file=sys.stderr)
+        self._emit({"type": "seed_cracked", "seed": seed})
+
+        # Start trip scheduler for warm start
+        threading.Thread(target=self._start_trip_scheduler, args=(gen,),
+                         daemon=True).start()
+
+    def _start_trip_scheduler(self, gen):
+        """Run TripScheduler and publish warm-start plan."""
+        try:
+            from trip_scheduler import TripScheduler
+            from gpu_sequential_solver import cpu_verify
+            from game_engine import init_game_from_capture
+
+            with self._lock:
+                if self._cracked_seed is None or self._all_orders_from_seed is None:
+                    return
+                seed = self._cracked_seed
+                all_orders = self._all_orders_from_seed
+                cap = copy.deepcopy(self._capture)
+                ms = self._map_state
+
+            tables = self._tables
+            if tables is None:
+                print("  [trip_sched] No tables available", file=sys.stderr)
+                return
+
+            diff = self._difficulty
+            num_bots = self._num_bots
+
+            from configs import CONFIGS
+            cfg = CONFIGS[diff]
+
+            t0 = time.time()
+            scheduler = TripScheduler(ms, all_orders, tables, num_bots, diff)
+            schedules = scheduler.run(time_budget_s=3.0)
+            combined_actions = scheduler.to_init_actions(schedules)
+
+            # CPU verify the warm start
+            gs, _ = init_game_from_capture(cap, num_orders=len(cap['orders']))
+            # Override orders with cracked seed orders
+            from game_engine import Order
+            gs.orders = [all_orders[0].copy(), all_orders[1].copy()]
+            gs.orders[0].status = 'active'
+            gs.orders[1].status = 'preview'
+            gs.next_order_idx = 2
+
+            from gpu_sequential_solver import cpu_verify
+            score = cpu_verify(gs, all_orders, combined_actions, num_bots)
+            elapsed = time.time() - t0
+
+            print(f"  [trip_sched] Warm start score={score} ({elapsed:.1f}s)", file=sys.stderr)
+            self._emit({"type": "trip_sched_done", "score": score, "elapsed": round(elapsed, 1)})
+
+            if score > 0:
+                ms_r = self._map_ref()
+                cap_r = self._capture_snapshot()
+                try:
+                    from replay_solution import predict_full_sim, extract_goals
+                    exp_pos = predict_full_sim(combined_actions, cap_r, ms_r)
+                    goals = extract_goals(combined_actions, ms_r, exp_pos)
+                except Exception as e:
+                    exp_pos = None
+                    goals = None
+                self._update_plan(score, combined_actions, exp_pos, goals,
+                                  'trip_sched', gen)
+
+        except Exception as e:
+            print(f"  [trip_sched] Error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     # ── order tracking ────────────────────────────────────────────────────────
 
@@ -650,7 +886,8 @@ class AnytimeGPUStream:
                 dev = 'cpu'
 
             searcher = GPUBeamSearcher(
-                ms, all_orders, device=dev, num_bots=self._num_bots)
+                ms, all_orders, device=dev, num_bots=self._num_bots,
+                no_compile=True)
 
             with self._pr_lock:
                 self._pr_searcher = searcher
@@ -971,7 +1208,8 @@ class AnytimeGPUStream:
                             cur_searcher = GPUBeamSearcher(
                                 ms, all_orders, device=dev,
                                 num_bots=num_bots,
-                                locked_trajectories=locked_trajs)
+                                locked_trajectories=locked_trajs,
+                                no_compile=True)
                         else:
                             cur_searcher = searcher  # first bot: reuse base searcher
 
@@ -1162,12 +1400,14 @@ class AnytimeGPUStream:
                 break  # one active order
             if inventory and any(t in active_needs for t in inventory):
                 return (ACT_DROPOFF, -1, None)
-            # At dropoff with dead inventory (or empty) — possibly evacuate.
-            # Skip evacuation for pickup bots so they can route through dropoff.
-            if not target_types:  # No pickup target → evacuate toward spawn
-                act = bfs_next_action((bx, by), ms.spawn, walkable, occupied, ms)
-                if act != ACT_WAIT:
-                    return (act, -1, None)
+            # At dropoff with dead inventory (or empty) — move 1 step away to clear the tile.
+            # Do NOT route all the way to spawn — that wastes ~30 rounds for nothing.
+            if not target_types:  # No pickup target → clear the dropoff tile
+                for _a in [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]:
+                    _nx, _ny = bx + DX[_a], by + DY[_a]
+                    if (_nx, _ny) in walkable and (_nx, _ny) not in occupied:
+                        return (_a, -1, None)
+                return (ACT_WAIT, -1, None)
 
         # 2. If target_types not pre-computed, compute from order minus own inventory
         if target_types is None:
@@ -1188,15 +1428,21 @@ class AnytimeGPUStream:
                     if c > 0:
                         target_types.add(t)
 
-        # 3. Inventory full → deliver or evacuate if dead inventory
+        # 3. Inventory full → deliver or wait if dead inventory
         if inv_full:
             if (bx, by) == drop_off:
                 # Full at dropoff but didn't match active_needs above → dead inventory.
-                # Evacuate toward spawn so delivery corridor stays clear.
-                act = bfs_next_action((bx, by), ms.spawn, walkable, occupied, ms)
+                # Move 1 step away to clear the tile — do NOT route to spawn.
+                for _a in [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]:
+                    _nx, _ny = bx + DX[_a], by + DY[_a]
+                    if (_nx, _ny) in walkable and (_nx, _ny) not in occupied:
+                        act = _a
+                        break
+                else:
+                    act = ACT_WAIT
             else:
                 # Only head to dropoff if we're carrying items the active order needs.
-                # Dead inventory (order changed) → go to spawn to avoid clogging corridors.
+                # Dead inventory (order changed) → WAIT; GPU plan will fix next round.
                 active_needs = set()
                 for order in data.get('orders', []):
                     if order.get('status') != 'active':
@@ -1214,8 +1460,8 @@ class AnytimeGPUStream:
                 if any(t in active_needs for t in inventory):
                     act = bfs_next_action((bx, by), drop_off, walkable, occupied, ms)
                 else:
-                    # All dead — go to spawn so delivery bots can pass
-                    act = bfs_next_action((bx, by), ms.spawn, walkable, occupied, ms)
+                    # All dead — just wait, don't route to spawn
+                    act = ACT_WAIT
             return (act, -1, None)
 
         # 4. Pick up nearest target item.
@@ -1263,11 +1509,7 @@ class AnytimeGPUStream:
             act = bfs_next_action((bx, by), drop_off, walkable, occupied, ms)
             return (act, -1, None)
 
-        # 6. Nothing to do → evacuate toward spawn to clear delivery corridor
-        act = bfs_next_action((bx, by), ms.spawn, walkable, occupied, ms)
-        if act != ACT_WAIT:
-            return (act, -1, None)
-
+        # 6. Nothing to do → just wait (don't route all the way to spawn)
         return (ACT_WAIT, -1, None)
 
     # ── per-round action computation ──────────────────────────────────────────
@@ -1605,21 +1847,19 @@ class AnytimeGPUStream:
 
             if is_yield:
                 # ── Yield: vacate the cell a delivery bot needs ──────────────
-                # Bots at dropoff OR with dead inventory → escape toward spawn
-                # (permanently leave delivery path; dead-inv bots oscillating in
-                # corridor cause deadlocks if they stay).
+                # Bots at dropoff OR with dead inventory → step 1 cell to any
+                # adjacent free cell (clears the delivery path locally).
                 # Empty yield bots elsewhere → chain-clear toward dropoff.
                 has_dead_inv = len(inv) > 0 and not has_useful
                 if bpos == drop_off or has_dead_inv:
-                    act = bfs_next_action(bpos, spawn, walkable, eff_occ, ms)
-                    if act == ACT_WAIT:
-                        # Completely stuck — try any adjacent free cell
-                        for try_act in (ACT_MOVE_LEFT, ACT_MOVE_UP,
-                                        ACT_MOVE_DOWN, ACT_MOVE_RIGHT):
-                            tx, ty = bx + DX[try_act], by + DY[try_act]
-                            if (tx, ty) in walkable and (tx, ty) not in eff_occ:
-                                act = try_act
-                                break
+                    # Move 1 step to any adjacent free cell to clear the corridor
+                    act = ACT_WAIT
+                    for try_act in (ACT_MOVE_LEFT, ACT_MOVE_UP,
+                                    ACT_MOVE_DOWN, ACT_MOVE_RIGHT):
+                        tx, ty = bx + DX[try_act], by + DY[try_act]
+                        if (tx, ty) in walkable and (tx, ty) not in eff_occ:
+                            act = try_act
+                            break
                     if act == ACT_WAIT and bpos == drop_off:
                         yield_stuck_at_drop = True  # mark so delivery bots back away
                 else:
@@ -1682,18 +1922,17 @@ class AnytimeGPUStream:
                 # ── Pickup / idle ─────────────────────────────────────────────
                 # Full dead inventory: bot is at capacity with items useless for the
                 # current order. It can never deliver them now and can't pick up useful
-                # items. Navigate toward spawn to clear the corridor for active bots.
+                # items. Step 1 cell to any adjacent free cell to clear the corridor.
                 has_dead_inv_full = len(inv) >= INV_CAP and not has_useful
                 if has_dead_inv_full:
-                    # Navigate toward spawn — clears corridor for delivery bots.
-                    act = bfs_next_action(bpos, spawn, walkable, eff_occ, ms)
-                    if act == ACT_WAIT:
-                        for try_act in (ACT_MOVE_UP, ACT_MOVE_DOWN,
-                                        ACT_MOVE_LEFT, ACT_MOVE_RIGHT):
-                            tx, ty = bx + DX[try_act], by + DY[try_act]
-                            if (tx, ty) in walkable and (tx, ty) not in eff_occ:
-                                act = try_act
-                                break
+                    # Move 1 step to any adjacent free cell to clear the corridor.
+                    act = ACT_WAIT
+                    for try_act in (ACT_MOVE_UP, ACT_MOVE_DOWN,
+                                    ACT_MOVE_LEFT, ACT_MOVE_RIGHT):
+                        tx, ty = bx + DX[try_act], by + DY[try_act]
+                        if (tx, ty) in walkable and (tx, ty) not in eff_occ:
+                            act = try_act
+                            break
                     item_idx = -1
                 else:
                     allowed = {t for t, c in still_needed.items()
@@ -1828,6 +2067,23 @@ class AnytimeGPUStream:
         log_file.close()
         print(f"Log: {log_path}", file=sys.stderr)
 
+        # Import game log to PostgreSQL (controlled by --record flag)
+        if self.do_record:
+            try:
+                import subprocess as _subprocess
+                _import_script = os.path.normpath(os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
+                ))
+                if os.path.exists(_import_script):
+                    _subprocess.Popen(
+                        ['python', _import_script, log_path, '--run-type', 'live'],
+                        stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
+                    )
+                    print(f"  [db] Importing to PostgreSQL in background", file=sys.stderr)
+            except Exception as _e:
+                print(f"  [db] Import failed to start: {_e}", file=sys.stderr)
+
         # Post-game optimization: continue GPU solver for additional time
         if self.post_optimize_time > 0 and self._difficulty:
             print(f"\nPost-game optimization: GPU continues for {self.post_optimize_time}s...",
@@ -1885,10 +2141,14 @@ class AnytimeGPUStream:
                 store_capture(self._difficulty, cap)
                 print(f"Saved capture: {len(cap.get('orders', []))} orders", file=sys.stderr)
 
+        reported_score = self._plan.score if self._plan.score > 0 else final_score
         self._emit({"type": "pipeline_done",
-                    "final_score": self._plan.score,
+                    "final_score": reported_score,
+                    "game_score": final_score,
+                    "plan_score": self._plan.score,
                     "difficulty": self._difficulty,
-                    "replay_ready": self.do_save and self._plan.score > 0})
+                    "replay_ready": self.do_save and self._plan.score > 0,
+                    "capture_ready": self.do_save and bool(self._capture)})
         return final_score
 
 
@@ -1913,9 +2173,21 @@ def main():
                         help='Emit JSON events to stdout for SSE dashboard consumption. '
                              'Events: init, round, plan_upgrade, gpu_pass_done, '
                              'game_over, post_optimize_*, pipeline_done.')
+    parser.add_argument('--preload-capture', action='store_true',
+                        help='Pre-load existing solutions/<diff>/capture.json at round 0. '
+                             'Injects all known orders so GPU starts optimizing with the '
+                             'full order list immediately (prevents gen restarts per order).')
+    parser.add_argument('--record', action='store_true',
+                        help='Import game log to PostgreSQL after game ends (requires --save log).')
     args = parser.parse_args()
 
     device = 'cpu' if args.cpu else 'cuda'
+
+    # Auto-set post-optimize time for hard/expert when saving (if not explicitly set)
+    post_opt = args.post_optimize_time
+    if post_opt == 0 and args.save:
+        # Detect difficulty from WS URL if possible, otherwise default to 120s
+        post_opt = 120
 
     solver = AnytimeGPUStream(
         ws_url=args.ws_url,
@@ -1923,8 +2195,10 @@ def main():
         max_states=args.max_states,
         no_refine=args.no_refine,
         device=device,
-        post_optimize_time=args.post_optimize_time,
+        post_optimize_time=post_opt,
         json_stream=args.json_stream,
+        preload_capture=args.preload_capture,
+        record=args.record,
     )
     asyncio.run(solver.run())
 

@@ -3,6 +3,7 @@ const ws = @import("ws.zig");
 const types = @import("types.zig");
 const strategy = @import("strategy.zig");
 const parser = @import("parser.zig");
+const precomputed = @import("precomputed.zig");
 
 const GameState = types.GameState;
 const Pos = types.Pos;
@@ -201,11 +202,10 @@ fn runLive(url: []const u8) !void {
                 // Trigger after 2 consecutive rounds (was 3)
                 if (desync_counter >= 2) {
                     std.debug.print("R{d} POSITION DESYNC: {d}/{d} mismatches for {d} rounds, re-syncing\n", .{ state.round, mismatches, check_count, desync_counter });
-                    _ = strategy.decideActions(&state, &action_buf) catch {};
+                    // Reset desync state but fall through to normal decision + send
+                    // (previously we called decideActions here then continued, wasting the round)
                     strategy.expected_count = 0;
                     desync_counter = 0;
-                    last_responded_round = current_round;
-                    continue;
                 }
             } else {
                 desync_counter = 0; // Reset immediately on clean round (was gradual decay)
@@ -238,7 +238,7 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage:\n  grocery-bot <wss://...>           Live mode\n  grocery-bot --replay <logfile>    Replay mode\n", .{});
+        std.debug.print("Usage:\n  grocery-bot <wss://...> [--precomputed capture.json]  Live mode\n  grocery-bot --replay <logfile>                        Replay mode\n", .{});
         return;
     }
 
@@ -249,6 +249,14 @@ pub fn main() !void {
         }
         try runReplay(args[2]);
     } else {
+        // Parse optional --precomputed <path> after the URL
+        var i: usize = 2;
+        while (i + 1 < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--precomputed")) {
+                _ = precomputed.load(args[i + 1]);
+                i += 1;
+            }
+        }
         try runLive(args[1]);
     }
 }

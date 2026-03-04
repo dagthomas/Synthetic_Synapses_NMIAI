@@ -5,3 +5,4 @@
 /grocery-bot-zig/replay/app/.svelte-kit
 /grocery-bot-gpu/_pycache
 /grocery-bot-gpu/__pycache__
+./grocery-bot-gpu/.playwright_profile

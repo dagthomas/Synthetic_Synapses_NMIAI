@@ -121,6 +121,96 @@ export fn ffi_verify(
     return game.score;
 }
 
+/// Verify a full 300-round game initialized from live capture data.
+/// grid_bytes: [height * width] u8 (0=floor,1=wall,2=shelf,3=dropoff)
+/// item_x/item_y: [num_items] u8 — sorted by (x,y) matching Python indexing
+/// item_type_id: [num_items] u8 — Python type IDs (0..num_types-1)
+/// Returns final score.
+export fn ffi_verify_live(
+    width: u8,
+    height: u8,
+    dropoff_x: u8,
+    dropoff_y: u8,
+    grid_bytes: [*]const u8,
+    num_items: u16,
+    item_x: [*]const u8,
+    item_y: [*]const u8,
+    item_type_id: [*]const u8,
+    num_types: u8,
+    num_bots: u8,
+    actions: [*]const i8,
+    action_items: [*]const i16,
+    order_types: [*]const u8,
+    order_lens: [*]const u8,
+    num_orders: u16,
+) i32 {
+    var game = SimGame.initFromCapture(
+        width, height, dropoff_x, dropoff_y,
+        grid_bytes, num_items, item_x, item_y, item_type_id, num_types, num_bots,
+    );
+
+    if (num_orders > 0) {
+        overrideOrders(&game, order_types, order_lens, num_orders);
+    }
+
+    var action_buf: [MAX_BOTS]ActionRec = undefined;
+
+    for (0..MAX_ROUNDS) |r| {
+        const na = fillActions(&action_buf, actions, action_items, num_bots, @intCast(r));
+        game.processActionsArray(action_buf[0..na]);
+    }
+
+    return game.score;
+}
+
+/// Simulate all bots from live capture data and record locked bot positions.
+/// Same as ffi_presim_locked but initialized from capture instead of seed.
+export fn ffi_presim_locked_live(
+    width: u8,
+    height: u8,
+    dropoff_x: u8,
+    dropoff_y: u8,
+    grid_bytes: [*]const u8,
+    num_items: u16,
+    item_x: [*]const u8,
+    item_y: [*]const u8,
+    item_type_id: [*]const u8,
+    num_types: u8,
+    num_total_bots: u8,
+    all_actions: [*]const i8,
+    all_action_items: [*]const i16,
+    locked_bot_ids: [*]const u8,
+    num_locked: u8,
+    order_types: [*]const u8,
+    order_lens: [*]const u8,
+    num_orders: u16,
+    out_pos_x: [*]i16,
+    out_pos_y: [*]i16,
+) void {
+    var game = SimGame.initFromCapture(
+        width, height, dropoff_x, dropoff_y,
+        grid_bytes, num_items, item_x, item_y, item_type_id, num_types, num_total_bots,
+    );
+
+    if (num_orders > 0) {
+        overrideOrders(&game, order_types, order_lens, num_orders);
+    }
+
+    var action_buf: [MAX_BOTS]ActionRec = undefined;
+
+    for (0..MAX_ROUNDS) |r| {
+        const na = fillActions(&action_buf, all_actions, all_action_items, num_total_bots, @intCast(r));
+        game.processActionsArray(action_buf[0..na]);
+
+        // Record locked bot positions after this round
+        for (0..num_locked) |li| {
+            const bid = locked_bot_ids[li];
+            out_pos_x[li * MAX_ROUNDS + r] = game.bot_pos[bid][0];
+            out_pos_y[li * MAX_ROUNDS + r] = game.bot_pos[bid][1];
+        }
+    }
+}
+
 /// Simulate all bots and record locked bot positions each round.
 /// all_actions: [num_total_bots * 300] action codes
 /// all_action_items: [num_total_bots * 300] item indices

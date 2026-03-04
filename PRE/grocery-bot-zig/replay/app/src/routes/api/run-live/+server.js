@@ -2,7 +2,6 @@ import { spawn } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, readdirSync, statSync } from 'fs';
-import { query } from '$lib/db.server.js';
 
 // Resolve BOT_DIR from this file's location (6 levels up from src/routes/api/run-live/)
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -338,30 +337,35 @@ export async function POST({ request }) {
 				}
 			});
 
-			botProcess.on('close', async (code) => {
+			botProcess.on('close', (code) => {
 				if (!botInfo.streaming) pollLogFile();
 				sendEvent('done', { code, message: `Bot exited with code ${code}` });
 
-				// Insert to DB if we have valid data
-				if (lastState && difficulty && gameWidth > 0 && gameDropOff) {
-					try {
-						const result = await query(
-							`INSERT INTO runs (seed, difficulty, grid_width, grid_height, bot_count,
-								item_types, order_size_min, order_size_max,
-								walls, shelves, items, drop_off, spawn,
-								final_score, items_delivered, orders_completed, run_type)
-							VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
-							[0, difficulty, gameWidth, gameHeight, botCount,
-							 gameItemTypes, gameOrderSizeMin, gameOrderSizeMax,
-							 JSON.stringify(gameWalls), JSON.stringify(gameShelves),
-							 JSON.stringify(gameItems), JSON.stringify(gameDropOff),
-							 JSON.stringify(gameSpawn),
-							 lastState.score || 0, 0, 0, 'live']
-						);
-						sendEvent('db', { run_id: result[0]?.id, message: 'Saved to database' });
-					} catch (e) {
-						sendEvent('db_error', { message: e.message });
+				// For GPU streaming mode, find the log file created during the run
+				if (botInfo.streaming && !logFile) {
+					for (const searchDir of [GPU_DIR, BOT_DIR]) {
+						try {
+							const files = readdirSync(searchDir)
+								.filter(f => f.startsWith('game_log_') && f.endsWith('.jsonl'))
+								.map(f => ({ name: f, mtime: statSync(resolve(searchDir, f)).mtimeMs }))
+								.filter(f => f.mtime >= startTime)
+								.sort((a, b) => b.mtime - a.mtime);
+							if (files.length > 0) {
+								logFile = resolve(searchDir, files[0].name);
+								break;
+							}
+						} catch (e) {}
 					}
+				}
+
+				// Import game log to PostgreSQL in background (non-blocking)
+				const importScript = resolve(BOT_DIR, 'replay', 'import_logs.py');
+				if (logFile) {
+					const importer = spawn('python', [importScript, logFile, '--run-type', 'live'], {
+						stdio: 'ignore',
+					});
+					importer.on('error', () => {});
+					sendEvent('db', { message: `Saving to DB: ${logFile.split(/[\\/]/).pop()}` });
 				}
 
 				cleanup();

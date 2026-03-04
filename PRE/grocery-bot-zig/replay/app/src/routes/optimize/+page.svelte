@@ -3,14 +3,14 @@
 
 	const CELL = 28;
 	const BOT_COLORS = [
-		'#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6',
-		'#1abc9c', '#e67e22', '#34495e', '#e84393', '#00cec9',
+		'#f85149', '#58a6ff', '#39d353', '#d29922', '#bc8cff',
+		'#3fb950', '#db6d28', '#8b949e', '#f778ba', '#79c0ff',
 	];
 	const diffColors = {
-		easy: '#00b894',
-		medium: '#fdcb6e',
-		hard: '#e17055',
-		expert: '#e74c3c',
+		easy: '#39d353',
+		medium: '#d29922',
+		hard: '#f85149',
+		expert: '#da3633',
 	};
 
 	// Input state
@@ -281,7 +281,7 @@
 	}
 </script>
 
-<div class="page">
+<div class="page stagger">
 	<h1>Learn & Replay</h1>
 	<p class="subtitle">Play, optimize, replay with higher scores</p>
 
@@ -446,6 +446,8 @@
 	h1 {
 		font-size: 1.5rem;
 		margin: 0 0 0.25rem;
+		font-family: var(--font-mono);
+		font-weight: 700;
 	}
 	.subtitle {
 		color: var(--text-muted);
@@ -465,10 +467,12 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		padding: 1rem;
+		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+		transition: all 0.25s ease;
 	}
 	.card.has-solution {
-		border-color: var(--green);
-		border-width: 2px;
+		border-color: rgba(57, 211, 83, 0.5);
+		box-shadow: 0 0 16px rgba(57, 211, 83, 0.06), 0 2px 12px rgba(0, 0, 0, 0.4);
 	}
 	.card-header {
 		display: flex;
@@ -480,6 +484,7 @@
 		font-size: 1.5rem;
 		font-weight: 700;
 		color: var(--green);
+		font-family: var(--font-mono);
 	}
 	.card-score.muted {
 		color: var(--text-muted);
@@ -548,6 +553,7 @@
 		border-radius: var(--radius);
 		padding: 1rem;
 		margin-bottom: 1rem;
+		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 	}
 	.url-row {
 		display: flex;
@@ -560,14 +566,16 @@
 		padding: 0.5rem 0.75rem;
 		background: var(--bg);
 		border: 1px solid var(--border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm, 6px);
 		color: var(--text);
 		font-size: 0.85rem;
 		font-family: inherit;
+		transition: all 0.2s ease;
 	}
 	.url-input:focus {
 		outline: none;
 		border-color: var(--accent);
+		box-shadow: 0 0 0 2px rgba(57, 211, 83, 0.1);
 	}
 	.token-info {
 		display: flex;
@@ -594,7 +602,8 @@
 		font-size: 0.8rem;
 		font-weight: 600;
 		font-family: inherit;
-		transition: opacity 0.15s;
+		transition: all 0.15s ease;
+		letter-spacing: 0.02em;
 	}
 	.btn:disabled {
 		opacity: 0.4;
@@ -602,7 +611,8 @@
 	}
 	.btn-play {
 		background: var(--green);
-		color: #000;
+		color: #0d1117;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 	}
 	.btn-learn {
 		background: var(--accent);
@@ -610,8 +620,9 @@
 		width: 100%;
 	}
 	.btn-replay {
-		background: var(--blue, #3498db);
-		color: #fff;
+		background: var(--blue);
+		color: #0d1117;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 	}
 	.btn-stop {
 		background: var(--red);
@@ -629,8 +640,8 @@
 	}
 	.progress-fill {
 		height: 100%;
-		background: var(--green);
-		opacity: 0.3;
+		background: linear-gradient(90deg, var(--green), var(--accent));
+		opacity: 0.4;
 		transition: width 0.15s;
 	}
 	.progress-text {
@@ -675,10 +686,10 @@
 		font-size: 0.75rem;
 	}
 	.order.active {
-		border-color: var(--green);
+		border-color: var(--yellow);
 	}
 	.order.preview {
-		border-color: var(--orange, #f39c12);
+		border-color: var(--pink);
 		opacity: 0.7;
 	}
 	.order-header {

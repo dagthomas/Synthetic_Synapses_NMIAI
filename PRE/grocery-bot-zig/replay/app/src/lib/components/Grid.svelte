@@ -13,21 +13,16 @@
 		botColors,
 		selectedBot = null,
 		onSelectBot = () => {},
+		activeTypes = new Set(),
+		previewTypes = new Set(),
 	} = $props();
 
 	const ITEM_COLORS = {
-		milk: '#dfe6e9', bread: '#ffeaa7', eggs: '#fab1a0', butter: '#fdcb6e',
-		cheese: '#f39c12', pasta: '#e17055', rice: '#dfe6e9', juice: '#74b9ff',
-		yogurt: '#a29bfe', cereal: '#e67e22', flour: '#b2bec3', sugar: '#dfe6e9',
-		coffee: '#6d4c2a', tea: '#00b894', oil: '#fdcb6e', salt: '#b2bec3',
-	};
-
-	// Animation class per item type
-	const ITEM_ANIM = {
-		milk: 'anim-float', bread: 'anim-pulse', eggs: 'anim-wiggle', butter: 'anim-float',
-		cheese: 'anim-pulse', pasta: 'anim-wiggle', rice: 'anim-float', juice: 'anim-float',
-		yogurt: 'anim-pulse', cereal: 'anim-wiggle', flour: 'anim-pulse', sugar: 'anim-float',
-		coffee: 'anim-float', tea: 'anim-wiggle', oil: 'anim-pulse', salt: 'anim-wiggle',
+		milk: '#00FF41', bread: '#FF0055', eggs: '#FF0055', butter: '#0DF0E3',
+		cheese: '#FF0055', pasta: '#00FF41', rice: '#0DF0E3', juice: '#00FF41',
+		yogurt: '#0DF0E3', cereal: '#0DF0E3', flour: '#FF0055', sugar: '#0DF0E3',
+		coffee: '#FF0055', tea: '#00FF41', oil: '#0DF0E3', salt: '#00FF41',
+		cream: '#0DF0E3', oats: '#FF0055',
 	};
 
 	function cellType(x, y) {
@@ -42,24 +37,24 @@
 	function cellColor(type, x, y) {
 		switch (type) {
 			case 'wall':
-				// Perimeter walls: darker gray. Interior aisle walls: brownish
-				if (x === 0 || x === width - 1 || y === 0 || y === height - 1) return '#4a5568';
-				return '#5d4037';
-			case 'shelf': return '#6d4c2a';
-			case 'dropoff': return '#00b89440';
-			case 'spawn': return '#0984e340';
-			default: return '#1e272e';
+				if (x === 0 || x === width - 1 || y === 0 || y === height - 1) return '#2d333b';
+				return '#373e47';
+			case 'shelf': return '#0d2818';
+			case 'dropoff': return '#39d35330';
+			case 'spawn': return '#58a6ff30';
+			default: return '#010409';
 		}
 	}
 
 	function cellStroke(type, x, y) {
 		switch (type) {
 			case 'wall':
-				if (x === 0 || x === width - 1 || y === 0 || y === height - 1) return '#5a6577';
-				return '#7b5b3a';
-			case 'dropoff': return '#00b894';
-			case 'spawn': return '#0984e3';
-			default: return '#2a2e3d';
+				if (x === 0 || x === width - 1 || y === 0 || y === height - 1) return '#444c56';
+				return '#545d68';
+			case 'shelf': return '#1a4d2e';
+			case 'dropoff': return '#39d353';
+			case 'spawn': return '#58a6ff';
+			default: return '#161b22';
 		}
 	}
 
@@ -94,7 +89,7 @@
 	<defs>
 		<!-- Drop-off indicator -->
 		<pattern id="dropoff-pattern" width="6" height="6" patternUnits="userSpaceOnUse">
-			<path d="M0 6L6 0" stroke="#00b89444" stroke-width="1"/>
+			<path d="M0 6L6 0" stroke="#39d35344" stroke-width="1"/>
 		</pattern>
 		<!-- Bot glow -->
 		<filter id="bot-glow">
@@ -106,6 +101,10 @@
 			<feGaussianBlur stdDeviation="3" result="coloredBlur"/>
 			<feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
 		</filter>
+		<!-- Butter scan clip -->
+		<clipPath id="butterClip">
+			<path d="M 7 14 L 17 11 L 21 13 L 11 16 Z M 7 14 L 11 16 L 11 20 L 7 18 Z M 11 16 L 21 13 L 21 17 L 11 20 Z" />
+		</clipPath>
 	</defs>
 
 	<!-- Grid cells -->
@@ -121,41 +120,71 @@
 		/>
 		{#if cell.type === 'dropoff'}
 			<svg x={cell.x * cellSize} y={cell.y * cellSize} width={cellSize} height={cellSize} viewBox="0 0 28 28">
-				<rect x="1" y="1" width="26" height="26" fill="#00b894" opacity="0.15" />
-				<rect x="1" y="1" width="26" height="26" fill="none" stroke="#00b894" stroke-width="1" stroke-dasharray="2 2" opacity="0.5" />
-				<rect x="2" y="2" width="4" height="4" fill="#00b894" opacity="0.8" />
-				<rect x="22" y="2" width="4" height="4" fill="#00b894" opacity="0.8" />
-				<rect x="2" y="22" width="4" height="4" fill="#00b894" opacity="0.8" />
-				<rect x="22" y="22" width="4" height="4" fill="#00b894" opacity="0.8" />
-				<path d="M 11 4 L 14 6 L 17 4" fill="none" stroke="#55efc4" stroke-width="1.5" class="anim-arrow-flash-1" stroke-linejoin="round" />
-				<path d="M 11 24 L 14 22 L 17 24" fill="none" stroke="#55efc4" stroke-width="1.5" class="anim-arrow-flash-1" stroke-linejoin="round" />
-				<path d="M 4 11 L 6 14 L 4 17" fill="none" stroke="#55efc4" stroke-width="1.5" class="anim-arrow-flash-2" stroke-linejoin="round" />
-				<path d="M 24 11 L 22 14 L 24 17" fill="none" stroke="#55efc4" stroke-width="1.5" class="anim-arrow-flash-2" stroke-linejoin="round" />
+				<rect x="1" y="1" width="26" height="26" fill="#39d353" opacity="0.12" />
+				<rect x="1" y="1" width="26" height="26" fill="none" stroke="#39d353" stroke-width="1" stroke-dasharray="2 2" opacity="0.5" />
+				<rect x="2" y="2" width="4" height="4" fill="#39d353" opacity="0.8" />
+				<rect x="22" y="2" width="4" height="4" fill="#39d353" opacity="0.8" />
+				<rect x="2" y="22" width="4" height="4" fill="#39d353" opacity="0.8" />
+				<rect x="22" y="22" width="4" height="4" fill="#39d353" opacity="0.8" />
+				<path d="M 11 4 L 14 6 L 17 4" fill="none" stroke="#b8d4a0" stroke-width="1.5" class="anim-arrow-flash-1" stroke-linejoin="round" />
+				<path d="M 11 24 L 14 22 L 17 24" fill="none" stroke="#b8d4a0" stroke-width="1.5" class="anim-arrow-flash-1" stroke-linejoin="round" />
+				<path d="M 4 11 L 6 14 L 4 17" fill="none" stroke="#b8d4a0" stroke-width="1.5" class="anim-arrow-flash-2" stroke-linejoin="round" />
+				<path d="M 24 11 L 22 14 L 24 17" fill="none" stroke="#b8d4a0" stroke-width="1.5" class="anim-arrow-flash-2" stroke-linejoin="round" />
 				<rect x="8" y="8" width="12" height="12" fill="#000000" opacity="0.6" rx="1" />
-				<rect x="8" y="8" width="12" height="12" fill="none" stroke="#00b894" stroke-width="1" rx="1" />
-				<line x1="8" y1="8" x2="20" y2="8" stroke="#55efc4" stroke-width="1.5" class="anim-hatch-scan" filter="url(#bot-glow)"/>
+				<rect x="8" y="8" width="12" height="12" fill="none" stroke="#39d353" stroke-width="1" rx="1" />
+				<line x1="8" y1="8" x2="20" y2="8" stroke="#b8d4a0" stroke-width="1.5" class="anim-hatch-scan" filter="url(#bot-glow)"/>
 				<text x="14" y="15" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="900" fill="#ffffff" font-family="sans-serif">D</text>
 			</svg>
 		{/if}
 		{#if cell.type === 'spawn'}
 			<svg x={cell.x * cellSize} y={cell.y * cellSize} width={cellSize} height={cellSize} viewBox="0 0 28 28">
-				<rect x="1" y="1" width="26" height="26" fill="#0984e3" opacity="0.15" />
-				<path d="M 0 6 V 0 H 6" fill="none" stroke="#0984e3" stroke-width="1.5" opacity="0.8"/>
-				<path d="M 28 6 V 0 H 22" fill="none" stroke="#0984e3" stroke-width="1.5" opacity="0.8"/>
-				<path d="M 0 22 V 28 H 6" fill="none" stroke="#0984e3" stroke-width="1.5" opacity="0.8"/>
-				<path d="M 28 22 V 28 H 22" fill="none" stroke="#0984e3" stroke-width="1.5" opacity="0.8"/>
-				<circle cx="14" cy="14" r="6" fill="none" stroke="#0984e3" stroke-width="1" class="anim-pad-pulse" />
-				<circle cx="14" cy="14" r="10" fill="none" stroke="#0984e3" stroke-width="1.5" stroke-dasharray="4 4" class="anim-pad-rotate" opacity="0.6"/>
-				<circle cx="14" cy="14" r="7" fill="none" stroke="#74b9ff" stroke-width="1" stroke-dasharray="2 2" class="anim-pad-rotate-reverse" opacity="0.8"/>
-				<circle cx="14" cy="14" r="5" fill="#0984e3" opacity="0.3" />
-				<circle cx="14" cy="14" r="5" fill="none" stroke="#0984e3" stroke-width="1" />
+				<rect x="1" y="1" width="26" height="26" fill="#58a6ff" opacity="0.12" />
+				<path d="M 0 6 V 0 H 6" fill="none" stroke="#58a6ff" stroke-width="1.5" opacity="0.8"/>
+				<path d="M 28 6 V 0 H 22" fill="none" stroke="#58a6ff" stroke-width="1.5" opacity="0.8"/>
+				<path d="M 0 22 V 28 H 6" fill="none" stroke="#58a6ff" stroke-width="1.5" opacity="0.8"/>
+				<path d="M 28 22 V 28 H 22" fill="none" stroke="#58a6ff" stroke-width="1.5" opacity="0.8"/>
+				<circle cx="14" cy="14" r="6" fill="none" stroke="#58a6ff" stroke-width="1" class="anim-pad-pulse" />
+				<circle cx="14" cy="14" r="10" fill="none" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="4 4" class="anim-pad-rotate" opacity="0.6"/>
+				<circle cx="14" cy="14" r="7" fill="none" stroke="#58a6ff" stroke-width="1" stroke-dasharray="2 2" class="anim-pad-rotate-reverse" opacity="0.8"/>
+				<circle cx="14" cy="14" r="5" fill="#58a6ff" opacity="0.3" />
+				<circle cx="14" cy="14" r="5" fill="none" stroke="#58a6ff" stroke-width="1" />
 				<text x="14" y="15" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="900" fill="#ffffff" font-family="sans-serif">S</text>
 			</svg>
 		{/if}
 	{/each}
 
-	<!-- Animated items on shelves -->
+	<!-- Animated items on shelves (cyberpunk) -->
 	{#each shelfItems as si}
+		{@const isActive = activeTypes.has(si.type)}
+		{@const isPreview = !isActive && previewTypes.has(si.type)}
+		<!-- Active/preview highlight behind item -->
+		{#if isActive}
+			<rect
+				x={si.x * cellSize - 2}
+				y={si.y * cellSize - 2}
+				width={cellSize + 4}
+				height={cellSize + 4}
+				rx="3"
+				fill="rgba(250, 204, 21, 0.2)"
+				stroke="#facc15"
+				stroke-width="2"
+				opacity="0.9"
+				class="anim-active-glow"
+			/>
+		{:else if isPreview}
+			<rect
+				x={si.x * cellSize - 2}
+				y={si.y * cellSize - 2}
+				width={cellSize + 4}
+				height={cellSize + 4}
+				rx="3"
+				fill="rgba(244, 114, 182, 0.18)"
+				stroke="#f472b6"
+				stroke-width="2"
+				opacity="0.85"
+				class="anim-preview-glow"
+			/>
+		{/if}
 		<svg
 			x={si.x * cellSize}
 			y={si.y * cellSize}
@@ -163,127 +192,185 @@
 			height={cellSize}
 			viewBox="0 0 28 28"
 		>
-			<ellipse cx="14" cy="23" rx="6" ry="1.5" fill="#000" opacity="0.15" />
+			<ellipse cx="14" cy="23" rx="6" ry="1.5" fill="#00FF41" class="cyber-shadow" />
 			{#if si.type === 'milk'}
-				<g class="item-anim anim-float">
-					<path d="M10 11 L14 7 L18 11 V21 C18 21.5 17.5 22 17 22 H11 C10.5 22 10 21.5 10 21 Z" fill="#dfe6e9" />
-					<path d="M9 11 H19" stroke="#b2bec3" stroke-width="1.5" stroke-linecap="round"/>
-					<rect x="10" y="14" width="8" height="4" fill="#74b9ff"/>
+				<!-- Data Flow Carton -->
+				<g>
+					<path d="M10 11 L14 7 L18 11 V21 C18 21.5 17.5 22 17 22 H11 C10.5 22 10 21.5 10 21 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2" stroke-linejoin="round" opacity="0.3"/>
+					<path d="M10 11 L14 7 L18 11 V21 C18 21.5 17.5 22 17 22 H11 C10.5 22 10 21.5 10 21 Z" fill="none" stroke="#00FF41" stroke-width="1.2" stroke-linejoin="round" class="cyber-flow"/>
+					<path d="M9 11 H19" stroke="#00FF41" stroke-width="1.2" stroke-linecap="round"/>
+					<rect x="12" y="14" width="4" height="4" fill="none" stroke="#0DF0E3" stroke-width="1"/>
+					<circle cx="14" cy="16" r="1" fill="#FF0055" class="cyber-blink"/>
 				</g>
 			{:else if si.type === 'bread'}
-				<g class="item-anim anim-pulse">
-					<path d="M 6 15 C 6 10, 22 10, 22 15 L 21 21 C 21 21.5, 20.5 22, 20 22 H 8 C 7.5 22, 7 21.5, 7 21 Z" fill="#ffeaa7" stroke="#e17055" stroke-width="1.5"/>
-					<path d="M 10 13 V 20 M 14 13 V 20 M 18 13 V 20" stroke="#e17055" stroke-width="1" opacity="0.6" stroke-linecap="round"/>
+				<!-- Wireframe Loaf -->
+				<g>
+					<path class="cyber-flicker" d="M 6 15 C 6 10, 22 10, 22 15 L 21 21 C 21 21.5, 20.5 22, 20 22 H 8 C 7.5 22, 7 21.5, 7 21 Z" fill="#161B22" stroke="#FF0055" stroke-width="1.2"/>
+					<path class="cyber-score" d="M 10 13 V 20 M 14 13 V 20 M 18 13 V 20" stroke="#0DF0E3" stroke-width="1.2" stroke-linecap="square"/>
 				</g>
 			{:else if si.type === 'eggs'}
-				<g class="item-anim anim-wiggle">
-					<ellipse cx="10" cy="15" rx="3" ry="4" fill="#fab1a0"/>
-					<ellipse cx="14" cy="14" rx="3" ry="4" fill="#fab1a0"/>
-					<ellipse cx="18" cy="15" rx="3" ry="4" fill="#fab1a0"/>
-					<path d="M 5 17 L 6 21 C 6 21.5, 6.5 22, 7 22 H 21 C 21.5 22, 22 21.5, 22 21 L 23 17 Z" fill="#b2bec3"/>
+				<!-- Incubation Pods -->
+				<g>
+					<ellipse cx="10" cy="15" rx="3" ry="4" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<ellipse cx="14" cy="14" rx="3" ry="4" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<ellipse cx="18" cy="15" rx="3" ry="4" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<path d="M 5 17 L 6 21 C 6 21.5, 6.5 22, 7 22 H 21 C 21.5 22, 22 21.5, 22 21 L 23 17 Z" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2"/>
+					<circle cx="10" cy="15" r="1.5" class="cyber-node-1"/>
+					<circle cx="14" cy="14" r="1.5" class="cyber-node-2"/>
+					<circle cx="18" cy="15" r="1.5" class="cyber-node-3"/>
 				</g>
 			{:else if si.type === 'butter'}
-				<g class="item-anim anim-float">
-					<path d="M 7 14 L 17 11 L 21 13 L 11 16 Z" fill="#fdcb6e"/>
-					<path d="M 7 14 L 11 16 L 11 20 L 7 18 Z" fill="#f39c12"/>
-					<path d="M 11 16 L 21 13 L 21 17 L 11 20 Z" fill="#e67e22"/>
-					<path d="M 7 14 L 13 12.5 L 13 16.5 L 7 18 Z" fill="#dfe6e9"/>
+				<!-- Isometric Block + Laser Scan -->
+				<g>
+					<path d="M 7 14 L 17 11 L 21 13 L 11 16 Z M 7 14 L 11 16 L 11 20 L 7 18 Z M 11 16 L 21 13 L 21 17 L 11 20 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2" stroke-linejoin="round"/>
+					<path d="M 7 14 L 13 12.5 L 13 16.5 L 7 18 Z" fill="none" stroke="#0DF0E3" stroke-width="1" stroke-dasharray="1 2"/>
+					<line x1="0" y1="0" x2="28" y2="0" stroke="#FF0055" stroke-width="1.5" clip-path="url(#butterClip)" class="cyber-scan"/>
 				</g>
 			{:else if si.type === 'cheese'}
-				<g class="item-anim anim-pulse">
-					<path d="M 7 19 L 21 21 L 18 10 Z" fill="#f39c12" stroke="#e67e22" stroke-width="1.5" stroke-linejoin="round"/>
-					<circle cx="12" cy="17" r="1.5" fill="#e67e22"/>
-					<circle cx="17" cy="17" r="2" fill="#e67e22"/>
-					<circle cx="15" cy="13" r="1" fill="#e67e22"/>
+				<!-- Glitch Wedge -->
+				<g>
+					<path class="cyber-glitch" d="M 7 19 L 21 21 L 18 10 Z" fill="#161B22" stroke="#FF0055" stroke-width="1.2" stroke-linejoin="round"/>
+					<rect x="11" y="16" width="2" height="2" fill="#0DF0E3"/>
+					<rect x="16" y="16" width="2" height="2" fill="#0DF0E3"/>
+					<rect x="14.5" y="12.5" width="1" height="1" fill="#0DF0E3"/>
 				</g>
 			{:else if si.type === 'pasta'}
-				<g class="item-anim anim-wiggle">
-					<path d="M 5 10 L 13 13 L 13 15 L 5 18 Z" fill="#e17055"/>
-					<path d="M 23 10 L 15 13 L 15 15 L 23 18 Z" fill="#e17055"/>
-					<rect x="13" y="12" width="2" height="4" rx="0.5" fill="#fdcb6e"/>
+				<!-- Rotating Core -->
+				<g>
+					<path d="M 5 10 L 13 13 L 13 15 L 5 18 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<path d="M 23 10 L 15 13 L 15 15 L 23 18 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<rect x="12" y="12" width="4" height="4" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2" class="cyber-core"/>
 				</g>
 			{:else if si.type === 'rice'}
-				<g class="item-anim anim-float">
-					<path d="M 9 12 C 7 12, 7 22, 10 22 H 18 C 21 22, 21 12, 19 12 Z" fill="#dfe6e9"/>
-					<path d="M 12 8 L 14 11 L 16 8 Z" fill="#dfe6e9"/>
-					<path d="M 12 11 H 16" stroke="#b2bec3" stroke-width="2" stroke-linecap="round"/>
-					<text x="14" y="19" text-anchor="middle" font-size="7" font-weight="900" fill="#b2bec3" font-family="sans-serif">R</text>
+				<!-- Terminal Sack -->
+				<g>
+					<path d="M 9 12 C 7 12, 7 22, 10 22 H 18 C 21 22, 21 12, 19 12 Z" fill="#161B22" stroke="#0DF0E3" stroke-width="1.2"/>
+					<path d="M 12 8 L 14 11 L 16 8 Z" fill="none" stroke="#00FF41" stroke-width="1.2"/>
+					<path d="M 11 11 H 17" stroke="#00FF41" stroke-width="1.2" stroke-linecap="square"/>
+					<text x="12.5" y="19" text-anchor="middle" font-size="6" font-weight="bold" font-family="monospace" fill="#00FF41">[R]</text>
+					<rect x="16.5" y="14.5" width="2" height="5" fill="#00FF41" class="cyber-cursor"/>
 				</g>
 			{:else if si.type === 'juice'}
-				<g class="item-anim anim-float">
-					<rect x="9" y="10" width="10" height="12" rx="1.5" fill="#74b9ff"/>
-					<path d="M 15 10 L 15 6 L 17 5" fill="none" stroke="#dfe6e9" stroke-width="1.5" stroke-linecap="round"/>
-					<circle cx="14" cy="16" r="3" fill="#fdcb6e"/>
+				<!-- Battery Box -->
+				<g>
+					<rect x="9" y="10" width="10" height="12" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<path d="M 15 10 V 6 H 17" fill="none" stroke="#FF0055" stroke-width="1.2" stroke-linecap="square"/>
+					<rect x="11" y="12" width="6" height="8" fill="#0D1117"/>
+					<rect x="11" y="12" width="6" height="8" class="cyber-battery"/>
 				</g>
 			{:else if si.type === 'yogurt'}
-				<g class="item-anim anim-pulse">
-					<path d="M 9 12 L 10 21 C 10 21.5, 11 22, 14 22 C 17 22, 18 21.5, 18 21 L 19 12 Z" fill="#a29bfe"/>
-					<ellipse cx="14" cy="12" rx="5.5" ry="1.5" fill="#dfe6e9"/>
+				<!-- Radar Node -->
+				<g>
+					<path d="M 9 12 L 10 21 C 10 21.5, 11 22, 14 22 C 17 22, 18 21.5, 18 21 L 19 12 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<ellipse cx="14" cy="12" rx="5.5" ry="1.5" fill="none" stroke="#0DF0E3" class="cyber-wave-1"/>
+					<ellipse cx="14" cy="12" rx="5.5" ry="1.5" fill="none" stroke="#0DF0E3" class="cyber-wave-2"/>
+					<ellipse cx="14" cy="12" rx="5.5" ry="1.5" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2"/>
+					<path d="M 12 16 H 16 M 13 19 H 15" stroke="#0DF0E3" stroke-width="1.2" stroke-dasharray="2 2"/>
 				</g>
 			{:else if si.type === 'cereal'}
-				<g class="item-anim anim-wiggle">
-					<rect x="9" y="8" width="10" height="14" rx="0.5" fill="#e67e22"/>
-					<circle cx="14" cy="15" r="3" fill="#ffeaa7"/>
-					<circle cx="14" cy="15" r="1.5" fill="#dfe6e9"/>
-					<rect x="11" y="10" width="6" height="2" fill="#dfe6e9" opacity="0.5"/>
+				<!-- Bit Flakes -->
+				<g>
+					<rect x="9" y="8" width="10" height="14" fill="#161B22" stroke="#0DF0E3" stroke-width="1.2"/>
+					<rect x="13" y="14" width="2" height="2" fill="#00FF41" class="cyber-hex-1"/>
+					<rect x="11" y="15" width="1" height="1" fill="#FF0055" class="cyber-hex-2"/>
+					<rect x="16" y="13" width="1" height="1" fill="#FF0055" class="cyber-hex-3"/>
+					<rect x="15" y="16" width="1" height="1" fill="#0DF0E3" class="cyber-hex-4"/>
+					<rect x="12" y="12" width="1" height="1" fill="#0DF0E3" class="cyber-hex-2"/>
 				</g>
 			{:else if si.type === 'flour'}
-				<g class="item-anim anim-pulse">
-					<path d="M 9 10 L 19 10 L 19 21 C 19 21.5, 18.5 22, 18 22 L 10 22 C 9.5 22, 9 21.5, 9 21 Z" fill="#b2bec3"/>
-					<path d="M 9 10 L 14 13 L 19 10 L 19 7 C 19 6.5, 18.5 6, 18 6 L 10 6 C 9.5 6, 9 6.5, 9 7 Z" fill="#dfe6e9"/>
-					<path d="M 14 14 V 19 M 12 15 L 14 16 M 16 15 L 14 16 M 12 17 L 14 18 M 16 17 L 14 18" stroke="#6d4c2a" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+				<!-- Compressed Archive -->
+				<g>
+					<path d="M 9 10 L 19 10 L 19 21 C 19 21.5, 18.5 22, 18 22 L 10 22 C 9.5 22, 9 21.5, 9 21 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<path d="M 9 10 L 14 13 L 19 10 L 19 7 C 19 6.5, 18.5 6, 18 6 L 10 6 C 9.5 6, 9 6.5, 9 7 Z" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2"/>
+					<path class="cyber-extract" d="M 14 14 V 19 M 12 16 H 16 M 12 18 H 16" stroke="#FF0055" stroke-width="1.2" stroke-linecap="round"/>
 				</g>
 			{:else if si.type === 'sugar'}
-				<g class="item-anim anim-float">
-					<rect x="9" y="15" width="6" height="6" rx="0.5" fill="#dfe6e9" stroke="#b2bec3" stroke-width="0.5"/>
-					<rect x="15" y="15" width="6" height="6" rx="0.5" fill="#dfe6e9" stroke="#b2bec3" stroke-width="0.5"/>
-					<rect x="12" y="10" width="6" height="6" rx="0.5" fill="#ffffff" stroke="#b2bec3" stroke-width="0.5"/>
+				<!-- Data Cubes -->
+				<g>
+					<rect x="9" y="15" width="6" height="6" stroke-width="1" class="cyber-cube-1"/>
+					<rect x="15" y="15" width="6" height="6" stroke-width="1" class="cyber-cube-2"/>
+					<rect x="12" y="10" width="6" height="6" stroke-width="1" class="cyber-cube-3"/>
+					<circle cx="12" cy="18" r="0.5" fill="#00FF41"/>
+					<circle cx="18" cy="18" r="0.5" fill="#0DF0E3"/>
+					<circle cx="15" cy="13" r="0.5" fill="#FF0055"/>
 				</g>
 			{:else if si.type === 'coffee'}
-				<g class="item-anim anim-float">
-					<path d="M 10 12 L 11 20 C 11 21.5, 12 22, 14 22 C 16 22, 17 21.5, 17 20 L 18 12 Z" fill="#6d4c2a"/>
-					<path d="M 9.5 10 C 9.5 9, 18.5 9, 18.5 10 L 18.5 12 L 9.5 12 Z" fill="#dfe6e9"/>
-					<path d="M 13 8 Q 11 6, 13 4 M 16 8 Q 18 6, 16 4" fill="none" stroke="#dfe6e9" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+				<!-- Hot Code -->
+				<g>
+					<path d="M 10 12 L 11 20 C 11 21.5, 12 22, 14 22 C 16 22, 17 21.5, 17 20 L 18 12 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<path d="M 9.5 10 C 9.5 9, 18.5 9, 18.5 10 L 18.5 12 L 9.5 12 Z" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2"/>
+					<path class="cyber-exhaust-1" d="M 12 8 V 6 H 13 V 4" fill="none" stroke="#FF0055" stroke-width="1" stroke-linejoin="miter"/>
+					<path class="cyber-exhaust-2" d="M 16 8 V 6 H 15 V 4" fill="none" stroke="#0DF0E3" stroke-width="1" stroke-linejoin="miter"/>
 				</g>
 			{:else if si.type === 'tea'}
-				<g class="item-anim anim-wiggle">
-					<path d="M 9 13 V 17 C 9 19, 11 21, 14 21 C 17 21, 19 19, 19 17 V 13 Z" fill="#00b894"/>
-					<path d="M 19 14 H 21 C 22.5 14, 22.5 17, 21 17 H 19" fill="none" stroke="#00b894" stroke-width="2"/>
-					<path d="M 14 13 Q 14 9, 11 9" fill="none" stroke="#b2bec3" stroke-width="1"/>
-					<rect x="9" y="7" width="4" height="4" fill="#ffeaa7"/>
+				<!-- Syntax Infusion -->
+				<g>
+					<path d="M 9 13 V 17 C 9 19, 11 21, 14 21 C 17 21, 19 19, 19 17 V 13 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<path d="M 19 14 H 21 C 22.5 14, 22.5 17, 21 17 H 19" fill="none" stroke="#0DF0E3" stroke-width="1.2"/>
+					<path d="M 14 13 V 9 H 11" fill="none" stroke="#0DF0E3" stroke-width="1" stroke-linecap="square"/>
+					<rect x="9" y="7" width="4" height="4" fill="#0D1117" stroke="#00FF41" stroke-width="1"/>
+					<line x1="9" y1="7" x2="9" y2="11" stroke="#FF0055" stroke-width="1" class="cyber-tag-scan"/>
 				</g>
 			{:else if si.type === 'oil'}
-				<g class="item-anim anim-pulse">
-					<path d="M 12 11 C 10 14, 10 21, 10 21 C 10 21.5, 10.5 22, 11 22 H 17 C 17.5 22, 18 21.5, 18 21 C 18 21, 18 14, 16 11 V 8 H 12 Z" fill="#fdcb6e" stroke="#b2bec3" stroke-width="1"/>
-					<rect x="12" y="6" width="4" height="2" rx="0.5" fill="#00b894"/>
-					<path d="M 13 15 V 19" stroke="#ffeaa7" stroke-width="1.5" stroke-linecap="round"/>
+				<!-- Coolant Liquid -->
+				<g>
+					<path d="M 12 11 C 10 14, 10 21, 10 21 C 10 21.5, 10.5 22, 11 22 H 17 C 17.5 22, 18 21.5, 18 21 C 18 21, 18 14, 16 11 V 8 H 12 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<rect x="12" y="6" width="4" height="2" fill="#0DF0E3"/>
+					<rect x="13.5" y="15" width="1" height="1" fill="#0DF0E3" class="cyber-bubble-1"/>
+					<rect x="12" y="17" width="1" height="1" fill="#0DF0E3" class="cyber-bubble-2"/>
+					<rect x="15" y="16" width="1" height="1" fill="#0DF0E3" class="cyber-bubble-3"/>
+					<path d="M 12 11 H 16" stroke="#00FF41" stroke-width="1" stroke-dasharray="2 2"/>
 				</g>
 			{:else if si.type === 'salt'}
-				<g class="item-anim anim-wiggle">
-					<rect x="11" y="10" width="6" height="12" rx="1" fill="#b2bec3"/>
-					<path d="M 11 10 C 11 7, 17 7, 17 10 Z" fill="#2d3436"/>
-					<circle cx="13" cy="8.5" r="0.75" fill="#dfe6e9"/>
-					<circle cx="15" cy="8.5" r="0.75" fill="#dfe6e9"/>
-					<circle cx="14" cy="7.5" r="0.75" fill="#dfe6e9"/>
-					<text x="14" y="18" text-anchor="middle" font-size="7" font-weight="900" fill="#2d3436" font-family="sans-serif">S</text>
+				<!-- Crypto Hash Rain -->
+				<g>
+					<rect x="11" y="10" width="6" height="12" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<path d="M 11 10 C 11 7, 17 7, 17 10 Z" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2"/>
+					<rect x="13" y="7.5" width="1" height="1" fill="#FF0055"/>
+					<rect x="15" y="8.5" width="1" height="1" fill="#FF0055"/>
+					<rect x="12" y="8.5" width="1" height="1" fill="#FF0055"/>
+					<line x1="12.5" y1="12" x2="12.5" y2="14" stroke="#0DF0E3" stroke-width="1" class="cyber-rain-1"/>
+					<line x1="14" y1="11" x2="14" y2="13" stroke="#FF0055" stroke-width="1" class="cyber-rain-2"/>
+					<line x1="15.5" y1="13" x2="15.5" y2="15" stroke="#00FF41" stroke-width="1" class="cyber-rain-3"/>
+				</g>
+			{:else if si.type === 'cream'}
+				<!-- Data Gel Pitcher -->
+				<g>
+					<path d="M 11 10 L 8 8 V 10 L 10 12 V 20 C 10 21.5, 10.5 22, 12 22 H 16 C 17.5 22, 18 21.5, 18 20 V 10 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2" stroke-linejoin="round"/>
+					<path d="M 11 10 H 18" stroke="#00FF41" stroke-width="1.2" stroke-linecap="round"/>
+					<path d="M 18 13 H 21 V 17 H 18" fill="none" stroke="#0DF0E3" stroke-width="1.2" stroke-linejoin="round"/>
+					<line x1="12" y1="18" x2="16" y2="18" stroke="#0DF0E3" stroke-width="1" stroke-dasharray="1 1"/>
+					<line x1="12" y1="15" x2="15" y2="15" stroke="#FF0055" stroke-width="1" stroke-dasharray="1 1"/>
+					<rect x="7.5" y="11" width="1" height="2" fill="#FF0055" class="cyber-drip-1"/>
+					<rect x="7.5" y="12" width="1" height="1" fill="#0DF0E3" class="cyber-drip-2"/>
+				</g>
+			{:else if si.type === 'oats'}
+				<!-- Fiber Frequency Core -->
+				<g>
+					<path d="M 9 9.5 V 20 C 9 21.5, 19 21.5, 19 20 V 9.5" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<path class="cyber-fiber" d="M 9 14 C 12 12, 16 16, 19 14" fill="none" stroke="#FF0055" stroke-width="1.2" stroke-dasharray="2 2"/>
+					<ellipse cx="14" cy="9.5" rx="5.5" ry="1.5" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/>
+					<ellipse cx="14" cy="8.5" rx="5.5" ry="1.5" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2"/>
+					<text x="14" y="19.5" text-anchor="middle" font-size="5" font-family="monospace" font-weight="bold" fill="#0DF0E3">[O]</text>
+					<circle cx="14" cy="11.5" r=".75" class="cyber-node-blink"/>
 				</g>
 			{:else}
-				<!-- Fallback: colored dot -->
-				<g class="item-anim anim-float">
-					<circle cx="14" cy="14" r="5" fill={ITEM_COLORS[si.type] || '#aaa'} opacity="0.8"/>
-					<text x="14" y="15" text-anchor="middle" font-size="8" font-weight="700" fill="white">{si.type.charAt(0).toUpperCase()}</text>
+				<!-- Fallback: cyber dot -->
+				<g>
+					<circle cx="14" cy="14" r="5" fill="none" stroke="#00FF41" stroke-width="1.2" class="cyber-flow"/>
+					<circle cx="14" cy="14" r="2" fill="#0DF0E3" class="cyber-blink"/>
+					<text x="14" y="15" text-anchor="middle" font-size="7" font-weight="bold" font-family="monospace" fill="#00FF41">{si.type.charAt(0).toUpperCase()}</text>
 				</g>
 			{/if}
 		</svg>
 	{/each}
 
-	<!-- Bots (animated hover-bot design) -->
+	<!-- Bots (Cyber Drone design) -->
 	{#each bots as bot (bot.id)}
 		{@const bx = bot.position[0] * cellSize}
 		{@const by = bot.position[1] * cellSize}
 		{@const color = botColors[bot.id % botColors.length]}
 		{@const isSelected = selectedBot === bot.id}
-		{@const delayClass = `delay-${bot.id % 4}`}
 
 		<!-- Animated wrapper: CSS transform transitions smoothly each round -->
 		<g
@@ -314,35 +401,33 @@
 				width={cellSize}
 				height={cellSize}
 				viewBox="0 0 28 28"
+				style="--bot-color: {color};"
 			>
-				<!-- Floor shadow -->
-				<ellipse cx="14" cy="25" rx="8" ry="2" fill="#000" opacity="0.3" />
+				<!-- Ground Shadow -->
+				<ellipse cx="14" cy="23" rx="6" ry="1.5" fill={color} class="cyber-shadow" />
 
-				<!-- Animated robot body -->
-				<g class="bot-anim-hover {delayClass}">
-					<!-- Hover thruster base -->
-					<path d="M 10 20 L 18 20 L 16 23 L 12 23 Z" fill="#b2bec3" />
+				<g class="bot-cyber-hover">
+					<!-- Plasma Thrusters -->
+					<path d="M 12 19 V 22 M 14 19 V 23 M 16 19 V 22" stroke="#0DF0E3" stroke-width="1.2" stroke-linecap="round" class="bot-exhaust"/>
 
-					<!-- Antenna -->
-					<line x1="14" y1="8" x2="14" y2="3" stroke="#b2bec3" stroke-width="1.5" />
-					<circle cx="14" cy="3" r="1.5" fill={color} filter="url(#bot-glow)" />
+					<!-- Uplink Antenna -->
+					<line x1="14" y1="9" x2="14" y2="4" stroke={color} stroke-width="1.2" />
+					<circle cx="14" cy="4" r="1.5" class="bot-antenna-node" fill={color} />
 
-					<!-- Side nodes / ears -->
-					<rect x="4" y="11" width="3" height="6" rx="1" fill="#b2bec3" />
-					<rect x="21" y="11" width="3" height="6" rx="1" fill="#b2bec3" />
+					<!-- Side Ports -->
+					<rect x="5.5" y="11" width="2" height="4" fill={color} opacity="0.5"/>
+					<rect x="20.5" y="11" width="2" height="4" fill={color} opacity="0.5"/>
 
-					<!-- Main colored chassis -->
-					<rect x="6" y="8" width="16" height="13" rx="3" fill={color} filter="url(#bot-glow)" />
+					<!-- Angular Chassis -->
+					<path d="M 9 9 L 19 9 L 21 15 L 7 15 Z" fill={color} opacity="0.7" stroke-linejoin="round"/>
+					<path d="M 7 15 L 11 19 H 17 L 21 15" fill={color} opacity="0.5" stroke-linejoin="round"/>
 
-					<!-- Visor / face -->
-					<rect x="8" y="10" width="12" height="9" rx="1.5" fill="#1e272e" />
+					<!-- Visor & Scanner -->
+					<rect x="10" y="11.5" width="8" height="3" fill="#0D1117" />
+					<rect x="13" y="12" width="2" height="2" fill="#FF0055" class="bot-scanner" />
 
-					<!-- Blinking eyes -->
-					<circle cx="10" cy="12" r="0.75" fill="#fff" class="bot-anim-blink" />
-					<circle cx="18" cy="12" r="0.75" fill="#fff" class="bot-anim-blink" />
-
-					<!-- Bot ID number on screen -->
-					<text x="14" y="15.5" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="900" fill="#ffffff" font-family="sans-serif">{bot.id}</text>
+					<!-- Bot ID -->
+					<text x="14" y="18" text-anchor="middle" dominant-baseline="central" font-size="5" font-weight="900" fill={color} font-family="monospace">{bot.id}</text>
 				</g>
 			</svg>
 
@@ -362,52 +447,258 @@
 </svg>
 
 <style>
-	/* Item animations */
-	.item-anim {
-		transform-origin: 14px 14px;
+	/* === ACTIVE/PREVIEW ITEM GLOW === */
+	.anim-active-glow {
+		animation: activeGlowPulse 1.5s ease-in-out infinite;
+		filter: drop-shadow(0 0 4px rgba(250, 204, 21, 0.5));
+	}
+	@keyframes activeGlowPulse {
+		0%, 100% { opacity: 0.7; stroke-width: 2; }
+		50% { opacity: 1; stroke-width: 3; }
+	}
+	.anim-preview-glow {
+		animation: previewGlowPulse 2s ease-in-out infinite;
+		filter: drop-shadow(0 0 3px rgba(244, 114, 182, 0.4));
+	}
+	@keyframes previewGlowPulse {
+		0%, 100% { opacity: 0.65; stroke-width: 1.5; }
+		50% { opacity: 1; stroke-width: 2.5; }
 	}
 
-	.anim-float { animation: itemFloat 2.5s ease-in-out infinite; }
-	.anim-pulse { animation: itemPulse 2s ease-in-out infinite; }
-	.anim-wiggle { animation: itemWiggle 3s ease-in-out infinite; }
+	/* === CYBERPUNK ITEM ANIMATIONS === */
 
-	@keyframes itemFloat {
+	/* Shadow breathing pulse */
+	.cyber-shadow {
+		animation: cyberShadowPulse 3s infinite ease-in-out;
+		transform-origin: 14px 23px;
+	}
+	@keyframes cyberShadowPulse {
+		0%, 100% { opacity: 0.15; transform: scale(1); }
+		50% { opacity: 0.25; transform: scale(1.1); }
+	}
+
+	/* 1. Milk — Data flow (marching ants) */
+	.cyber-flow {
+		stroke-dasharray: 4 4;
+		animation: cyberDashFlow 1.5s linear infinite;
+	}
+	@keyframes cyberDashFlow { to { stroke-dashoffset: -12; } }
+
+	/* Milk + Fallback — Blinking status node */
+	.cyber-blink {
+		animation: cyberBlinkNode 1s steps(2, start) infinite;
+	}
+	@keyframes cyberBlinkNode {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0; }
+	}
+
+	/* 2. Bread — Neon flicker */
+	.cyber-flicker {
+		animation: cyberNeonFlicker 4s infinite;
+	}
+	@keyframes cyberNeonFlicker {
+		0%, 18%, 22%, 25%, 53%, 57%, 100% { opacity: 1; }
+		20%, 24%, 55% { opacity: 0.2; }
+	}
+
+	/* Bread — Score flow */
+	.cyber-score {
+		stroke-dasharray: 2 2;
+		animation: cyberFlowUp 1.5s linear infinite;
+	}
+	@keyframes cyberFlowUp { to { stroke-dashoffset: -10; } }
+
+	/* 3. Eggs — Sequential node pulse */
+	.cyber-node-1 { animation: cyberNodePulse 1.5s infinite 0s; }
+	.cyber-node-2 { animation: cyberNodePulse 1.5s infinite 0.5s; }
+	.cyber-node-3 { animation: cyberNodePulse 1.5s infinite 1s; }
+	@keyframes cyberNodePulse {
+		0%, 100% { fill: #0DF0E3; opacity: 0.3; }
+		50% { fill: #FF0055; opacity: 1; }
+	}
+
+	/* 4. Butter — Laser scan pass */
+	.cyber-scan {
+		animation: cyberScanPass 2.5s infinite linear;
+	}
+	@keyframes cyberScanPass {
+		0%, 10% { transform: translateY(8px); opacity: 0; }
+		15%, 85% { opacity: 1; }
+		90%, 100% { transform: translateY(22px); opacity: 0; }
+	}
+
+	/* 5. Cheese — Chromatic glitch */
+	.cyber-glitch {
+		animation: cyberGlitchMove 3s infinite steps(1);
+	}
+	@keyframes cyberGlitchMove {
+		0%, 93% { transform: translate(0, 0); opacity: 1; }
+		94% { transform: translate(-1.5px, 0px); }
+		96% { transform: translate(1.5px, 0px); }
+		98% { transform: translate(0px, 1.5px); }
+		100% { transform: translate(0, 0); }
+	}
+
+	/* 6. Pasta — Robotic core spin */
+	.cyber-core {
+		animation: cyberCoreSpin 2.5s cubic-bezier(0.6, -0.28, 0.735, 0.045) infinite;
+		transform-origin: 14px 14px;
+	}
+	@keyframes cyberCoreSpin {
+		0% { transform: rotate(0deg); }
+		10%, 50% { transform: rotate(90deg); }
+		60%, 100% { transform: rotate(180deg); }
+	}
+
+	/* 7. Rice — Terminal cursor blink */
+	.cyber-cursor {
+		animation: cyberTermBlink 0.9s infinite;
+	}
+	@keyframes cyberTermBlink {
+		0%, 50% { opacity: 1; }
+		51%, 100% { opacity: 0; }
+	}
+
+	/* 8. Juice — Battery charge level */
+	.cyber-battery {
+		animation: cyberChargeLevel 3s steps(8) infinite;
+		transform-origin: center bottom;
+	}
+	@keyframes cyberChargeLevel {
+		0% { transform: scaleY(0); opacity: 0.8; fill: #FF0055; }
+		50% { fill: #0DF0E3; }
+		80%, 100% { transform: scaleY(1); opacity: 1; fill: #00FF41; }
+	}
+
+	/* 9. Yogurt — Radar waves */
+	.cyber-wave-1 {
+		animation: cyberRadarWave 2s infinite 0s ease-out;
+		transform-origin: 14px 12px;
+	}
+	.cyber-wave-2 {
+		animation: cyberRadarWave 2s infinite 1s ease-out;
+		transform-origin: 14px 12px;
+	}
+	@keyframes cyberRadarWave {
+		0% { transform: scale(1); opacity: 0.8; stroke-width: 1; }
+		100% { transform: scale(1.6); opacity: 0; stroke-width: 0.1; }
+	}
+
+	/* 10. Cereal — Floating hex bits */
+	.cyber-hex-1 { animation: cyberFloatHex 2s infinite linear 0s; }
+	.cyber-hex-2 { animation: cyberFloatHex 2s infinite linear 0.5s; }
+	.cyber-hex-3 { animation: cyberFloatHex 2s infinite linear 1s; }
+	.cyber-hex-4 { animation: cyberFloatHex 2s infinite linear 1.5s; }
+	@keyframes cyberFloatHex {
+		0% { transform: translateY(0) scale(1); opacity: 1; }
+		100% { transform: translateY(-8px) scale(0.5); opacity: 0; }
+	}
+
+	/* 11. Flour — Zip extraction lines */
+	.cyber-extract {
+		stroke-dasharray: 2 4;
+		animation: cyberZipExtract 1.5s linear infinite;
+	}
+	@keyframes cyberZipExtract { to { stroke-dashoffset: -12; } }
+
+	/* 12. Sugar — Authorization cube sequence */
+	.cyber-cube-1 { animation: cyberAuthCube 1.5s infinite 0s; transform-origin: center; }
+	.cyber-cube-2 { animation: cyberAuthCube 1.5s infinite 0.5s; transform-origin: center; }
+	.cyber-cube-3 { animation: cyberAuthCube 1.5s infinite 1s; transform-origin: center; }
+	@keyframes cyberAuthCube {
+		0%, 100% { transform: scale(1); stroke: #00FF41; fill: #161B22; }
+		50% { transform: scale(1.15); stroke: #0DF0E3; fill: #0DF0E3; opacity: 0.9; }
+	}
+
+	/* 13. Coffee — Digital exhaust */
+	.cyber-exhaust-1 { animation: cyberCodeExhaust 1.5s infinite 0s linear; }
+	.cyber-exhaust-2 { animation: cyberCodeExhaust 1.5s infinite 0.75s linear; }
+	@keyframes cyberCodeExhaust {
+		0% { transform: translateY(2px); opacity: 0; }
+		50% { opacity: 1; }
+		100% { transform: translateY(-6px); opacity: 0; }
+	}
+
+	/* 14. Tea — Tag scanner */
+	.cyber-tag-scan {
+		animation: cyberTagScan 1.5s infinite linear;
+	}
+	@keyframes cyberTagScan {
+		0% { transform: translateX(-1px); opacity: 0; }
+		50% { opacity: 1; }
+		100% { transform: translateX(5px); opacity: 0; }
+	}
+
+	/* 15. Oil — Coolant bubbles */
+	.cyber-bubble-1 { animation: cyberBubbleRise 2s infinite 0s ease-in; }
+	.cyber-bubble-2 { animation: cyberBubbleRise 2s infinite 0.6s ease-in; }
+	.cyber-bubble-3 { animation: cyberBubbleRise 2s infinite 1.2s ease-in; }
+	@keyframes cyberBubbleRise {
+		0% { transform: translateY(6px) scale(0.5); opacity: 0; }
+		20% { opacity: 1; }
+		100% { transform: translateY(-4px) scale(1.2); opacity: 0; }
+	}
+
+	/* 16. Salt — Matrix rain */
+	.cyber-rain-1 { animation: cyberMatrixRain 1.5s infinite 0s linear; }
+	.cyber-rain-2 { animation: cyberMatrixRain 1.5s infinite 0.4s linear; }
+	.cyber-rain-3 { animation: cyberMatrixRain 1.5s infinite 0.8s linear; }
+	@keyframes cyberMatrixRain {
+		0% { transform: translateY(-3px); opacity: 0; }
+		20%, 80% { opacity: 1; }
+		100% { transform: translateY(6px); opacity: 0; }
+	}
+
+	/* Cream — Data Drip */
+	.cyber-drip-1 { animation: cyberDripFall 1.5s infinite 0s linear; }
+	.cyber-drip-2 { animation: cyberDripFall 1.5s infinite 0.75s linear; }
+	@keyframes cyberDripFall {
+		0% { transform: translateY(0); opacity: 1; }
+		70% { transform: translateY(6px); opacity: 0; }
+		100% { transform: translateY(6px); opacity: 0; }
+	}
+
+	/* Oats — Fiber Flow + Node Blink */
+	.cyber-fiber { stroke-dasharray: 2 2; animation: cyberFiberFlow 1s linear infinite; }
+	@keyframes cyberFiberFlow { to { stroke-dashoffset: -8; } }
+	.cyber-node-blink { animation: cyberNodeBlink 1.5s infinite steps(2, start); }
+	@keyframes cyberNodeBlink { 0%, 100% { fill: #00FF41; } 50% { fill: #FF0055; } }
+
+	/* Cyber Drone bot animations */
+	.bot-cyber-hover {
+		animation: cyberBotHover 3s ease-in-out infinite;
+	}
+	@keyframes cyberBotHover {
 		0%, 100% { transform: translateY(0); }
 		50% { transform: translateY(-3px); }
 	}
-	@keyframes itemPulse {
-		0%, 100% { transform: scale(1); }
-		50% { transform: scale(1.1); }
-	}
-	@keyframes itemWiggle {
-		0%, 100% { transform: rotate(0deg); }
-		25% { transform: rotate(-8deg); }
-		75% { transform: rotate(8deg); }
-	}
 
-	/* Bot hover animation */
-	.bot-anim-hover {
-		transform-origin: 14px 14px;
-		animation: botHover 2s ease-in-out infinite;
+	.bot-scanner {
+		animation: cyberScanEye 2s ease-in-out infinite;
+	}
+	@keyframes cyberScanEye {
+		0%, 10% { transform: translateX(-2.5px); }
+		40%, 60% { transform: translateX(2.5px); }
+		90%, 100% { transform: translateX(-2.5px); }
 	}
 
-	.delay-0 { animation-delay: 0s; }
-	.delay-1 { animation-delay: 0.2s; }
-	.delay-2 { animation-delay: 0.4s; }
-	.delay-3 { animation-delay: 0.6s; }
-
-	.bot-anim-blink {
-		animation: botBlink 4s infinite;
+	.bot-exhaust {
+		animation: cyberExhaustFlicker 0.1s infinite;
+		transform-origin: top;
+		transform-box: fill-box;
+	}
+	@keyframes cyberExhaustFlicker {
+		0%, 100% { opacity: 0.8; transform: scaleY(1); }
+		50% { opacity: 0.3; transform: scaleY(0.5); }
 	}
 
-	@keyframes botHover {
-		0%, 100% { transform: translateY(0); }
-		50% { transform: translateY(-2.5px); }
+	.bot-antenna-node {
+		animation: cyberNodeBlink 1.5s infinite steps(2, start);
 	}
-
-	@keyframes botBlink {
-		0%, 88%, 100% { opacity: 1; }
-		90%, 94% { opacity: 0; }
+	@keyframes cyberNodeBlink {
+		0%, 100% { fill: var(--bot-color, #00FF41); }
+		50% { fill: #FF0055; }
 	}
 
 	/* Spawn pad animations */

@@ -4,6 +4,7 @@ const types = @import("types.zig");
 const pathfinding = @import("pathfinding.zig");
 const trip_mod = @import("trip.zig");
 const spacetime = @import("spacetime.zig");
+const precomputed = @import("precomputed.zig");
 
 // Compile-time difficulty: .auto means runtime detection, otherwise locked to specific difficulty
 const Difficulty = config.Difficulty;
@@ -143,15 +144,24 @@ fn isOscillating(pb: *const PersistentBot, pos: Pos) bool {
 }
 
 // Count how many inventory items DON'T match active or preview needs
-pub fn countDeadInventory(bot: *const Bot, active: *const NeedList, preview_nl: *const NeedList) u8 {
+// With precomputed data: items needed in the NEXT order (N+2) are not counted as dead.
+pub fn countDeadInventory(bot: *const Bot, active: *const NeedList, preview_nl: *const NeedList, active_order_idx: i32) u8 {
     var dead: u8 = 0;
     var work_a = active.*;
     var work_p = preview_nl.*;
+    // Build N+2 order need list (conservative: only immediate next, not all future)
+    var work_f = NeedList.init();
+    if (precomputed.isActive() and active_order_idx >= 0) {
+        const next_idx: u16 = @intCast(@as(u32, @intCast(active_order_idx)) + 2);
+        work_f = precomputed.futureNeeds(next_idx);
+    }
     for (0..bot.inv_len) |ii| {
         if (work_a.contains(bot.inv[ii])) {
             work_a.remove(bot.inv[ii]);
         } else if (work_p.contains(bot.inv[ii])) {
             work_p.remove(bot.inv[ii]);
+        } else if (work_f.contains(bot.inv[ii])) {
+            work_f.remove(bot.inv[ii]);
         } else {
             dead += 1;
         }
@@ -355,6 +365,15 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     if (state.round == 0) {
         pathfinding.precomputeAllDistances(state);
         if (USE_MAPF) spacetime.init(state);
+        // Verify precomputed order data matches current game seed
+        if (precomputed.isLoaded()) {
+            for (0..state.order_count) |oi| {
+                if (state.orders[oi].is_active) {
+                    precomputed.verify(state.active_order_idx, &state.orders[oi]);
+                    break;
+                }
+            }
+        }
     }
 
     // Clear reservations at start of each round (MAPF replans every round)
@@ -1075,7 +1094,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // ─── 0. Auto-delivery completion: order fully satisfied but not completed ──
         // When auto-delivery fills ALL items of the new active order, no bot has has_active=true
         // because active needs are empty. But drop_off still triggers the completion check (+5).
-        if (order_auto_complete and bpos.eql(state.dropoff) and bot.inv_len > 0) {
+        if (order_auto_complete and (bpos.eql(state.dropoff) or bot.pos.eql(state.dropoff)) and bot.inv_len > 0) {
             try writer.print("{{\"bot\":{d},\"action\":\"drop_off\"}}", .{bot.id});
             pb.has_trip = false;
             pb.delivering = false;
@@ -1086,7 +1105,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
         // ─── 1. At dropoff → drop off ───────────────────────────────
         // Only drop off if bot has items matching the active order (drop_off ignores non-matching items)
-        if (bpos.eql(state.dropoff) and bot.inv_len > 0 and has_active) {
+        if ((bpos.eql(state.dropoff) or bot.pos.eql(state.dropoff)) and bot.inv_len > 0 and has_active) {
             try writer.print("{{\"bot\":{d},\"action\":\"drop_off\"}}", .{bot.id});
             pb.has_trip = false;
             pb.delivering = false;
@@ -1096,7 +1115,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
 
         // ─── 1b. At dropoff but shouldn't be → evacuate (multi-bot) or fall through (single) ──
-        if (bpos.eql(state.dropoff) and !has_active) {
+        if ((bpos.eql(state.dropoff) or bot.pos.eql(state.dropoff)) and !has_active) {
             if (state.bot_count > 1) {
                 const flee_dir = fleeDropoff(state, bpos, @intCast(bi), &bot_positions);
                 if (flee_dir) |d| {
@@ -1119,8 +1138,9 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             var esc_picked = false;
             for (0..state.item_count) |ii| {
                 const item = &state.items[ii];
-                const mdist = @abs(bpos.x - item.pos.x) + @abs(bpos.y - item.pos.y);
-                if (mdist != 1) continue;
+                const mdist_eff = @abs(bpos.x - item.pos.x) + @abs(bpos.y - item.pos.y);
+                const mdist_raw = @abs(bot.pos.x - item.pos.x) + @abs(bot.pos.y - item.pos.y);
+                if (mdist_eff != 1 and mdist_raw != 1) continue;
                 if (bot.inv_len >= INV_CAP) break;
                 if (claimed[ii] >= 0 and claimed[ii] != @as(i8, @intCast(bi))) continue;
                 const esc_is_active = pick_remaining.contains(item.item_type);
@@ -1154,14 +1174,16 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
 
         // ─── 2. Adjacent needed item → pick up ──────────────────────
-        // Use bpos (effective position) for adjacency check
+        // Check adjacency from BOTH effective and raw positions.
+        // In offset mode, server uses raw pos for pickup; using only bpos causes failures.
         var picked = false;
         for (0..2) |pass| {
             if (picked) break;
             for (0..state.item_count) |ii| {
                 const item = &state.items[ii];
-                const mdist = @abs(bpos.x - item.pos.x) + @abs(bpos.y - item.pos.y);
-                if (mdist != 1) continue;
+                const mdist_eff = @abs(bpos.x - item.pos.x) + @abs(bpos.y - item.pos.y);
+                const mdist_raw = @abs(bot.pos.x - item.pos.x) + @abs(bot.pos.y - item.pos.y);
+                if (mdist_eff != 1 and mdist_raw != 1) continue;
                 if (bot.inv_len >= INV_CAP) break;
                 if (claimed[ii] >= 0 and claimed[ii] != @as(i8, @intCast(bi))) continue;
 
@@ -1443,7 +1465,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             // adding preview items lets them auto-deliver when order completes at dropoff
             const completing_possible = state.bot_count <= 1 and pick_remaining.count > 0 and pick_remaining.count <= trip_slots;
             const allow_preview_in_trip = allow_preview_for_bot or completing_possible;
-            const t = trip_mod.planBestTrip(state, dm_bot, &dm_drop, &pick_remaining, &bot_preview, &claimed, bi, @intCast(trip_slots), allow_preview_in_trip, rounds_left, @intCast(state.bot_count));
+            const t = trip_mod.planBestTrip(state, dm_bot, &dm_drop, &pick_remaining, &bot_preview, &claimed, bi, @intCast(trip_slots), allow_preview_in_trip, rounds_left, @intCast(state.bot_count), state.active_order_idx);
             if (t) |tp| {
                 pb.has_trip = true;
                 pb.trip_count = tp.item_count;
@@ -1554,6 +1576,22 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                     if (d >= UNREACHABLE) continue;
                     prev_targets[prev_target_count] = .{ .adj = adj, .dist = d };
                     prev_target_count += 1;
+                }
+            }
+            // Precomputed fallback: pre-position near items for N+2 order
+            if (prev_target_count == 0 and precomputed.isActive() and state.active_order_idx >= 0) {
+                const next_idx: u16 = @intCast(@as(u32, @intCast(state.active_order_idx)) + 2);
+                const future_nl = precomputed.futureNeeds(next_idx);
+                if (future_nl.count > 0) {
+                    for (0..state.item_count) |ii| {
+                        if (prev_target_count >= 16) break;
+                        if (!future_nl.contains(state.items[ii].item_type)) continue;
+                        const adj = pathfinding.findBestAdj(state, state.items[ii].pos, dm_bot) orelse continue;
+                        const d = dm_bot[@intCast(adj.y)][@intCast(adj.x)];
+                        if (d >= UNREACHABLE) continue;
+                        prev_targets[prev_target_count] = .{ .adj = adj, .dist = d };
+                        prev_target_count += 1;
+                    }
                 }
             }
             if (prev_target_count > 0) {

@@ -16,18 +16,5 @@ services:
       timeout: 5s
       retries: 5
 
-  app:
-    build:
-      context: ./app
-      dockerfile: Dockerfile
-    ports:
-      - "5173:3000"
-    environment:
-      DATABASE_URL: postgres://grocery:grocery123@db:5432/grocery_bot
-      ORIGIN: http://localhost:5173
-    depends_on:
-      db:
-        condition: service_healthy
-
 volumes:
   pgdata:

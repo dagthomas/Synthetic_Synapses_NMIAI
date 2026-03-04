@@ -153,6 +153,21 @@ def main():
 
     save_path = save_capture(difficulty, capture)
 
+    # Import game log to PostgreSQL in background
+    try:
+        import subprocess as _subprocess
+        _import_script = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
+        ))
+        if os.path.exists(_import_script):
+            _subprocess.Popen(
+                ['python', _import_script, log_path, '--run-type', 'live'],
+                stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
+            )
+    except Exception:
+        pass
+
     # Output summary as JSON for pipeline consumption
     result = {
         'type': 'capture_done',

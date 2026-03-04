@@ -3,14 +3,14 @@
 
 	const CELL = 28;
 	const BOT_COLORS = [
-		'#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6',
-		'#1abc9c', '#e67e22', '#34495e', '#e84393', '#00cec9',
+		'#f85149', '#58a6ff', '#39d353', '#d29922', '#bc8cff',
+		'#3fb950', '#db6d28', '#8b949e', '#f778ba', '#79c0ff',
 	];
 	const diffColors = {
-		easy: '#00b894',
-		medium: '#fdcb6e',
-		hard: '#e17055',
-		expert: '#e74c3c',
+		easy: '#39d353',
+		medium: '#d29922',
+		hard: '#f85149',
+		expert: '#da3633',
 	};
 
 	// Input state
@@ -346,7 +346,7 @@
 	});
 </script>
 
-<div class="live-page">
+<div class="live-page stagger">
 	<!-- Input Bar -->
 	<div class="input-bar card">
 		<div class="input-row">
@@ -560,8 +560,6 @@
 	{:else if !running && !finished}
 		<div class="empty-state card">
 			<h2>Live Game Runner</h2>
-			<p>Paste a WebSocket token URL from <a href="https://app.ainm.no/challenge" target="_blank">app.ainm.no/challenge</a> and click Run Game.</p>
-			<p>You'll see the game grid update in real-time with bot positions, orders, and score.</p>
 		</div>
 	{:else if running && !gameInit}
 		<div class="launch-screen">
@@ -588,14 +586,14 @@
 					<g class="launch-bot-hover">
 						<path d="M 30 55 L 50 55 L 46 62 L 34 62 Z" fill="#b2bec3" />
 						<line x1="40" y1="22" x2="40" y2="10" stroke="#b2bec3" stroke-width="2.5" />
-						<circle cx="40" cy="9" r="3" fill="#6c5ce7" class="antenna-pulse" />
+						<circle cx="40" cy="9" r="3" fill="#39d353" class="antenna-pulse" />
 						<rect x="12" y="30" width="8" height="16" rx="3" fill="#b2bec3" />
 						<rect x="60" y="30" width="8" height="16" rx="3" fill="#b2bec3" />
-						<rect x="18" y="22" width="44" height="35" rx="8" fill="#6c5ce7" class="chassis-glow" />
+						<rect x="18" y="22" width="44" height="35" rx="8" fill="#39d353" class="chassis-glow" />
 						<rect x="24" y="28" width="32" height="24" rx="4" fill="#1e272e" />
 						<circle cx="32" cy="34" r="2" fill="#fff" class="eye-blink" />
 						<circle cx="48" cy="34" r="2" fill="#fff" class="eye-blink" />
-						<text x="40" y="46" text-anchor="middle" dominant-baseline="central" font-size="12" font-weight="900" fill="#6c5ce7" font-family="monospace">GO</text>
+						<text x="40" y="46" text-anchor="middle" dominant-baseline="central" font-size="12" font-weight="900" fill="#39d353" font-family="monospace">GO</text>
 					</g>
 				</svg>
 			</div>
@@ -641,20 +639,21 @@
 <style>
 	.live-page { display: flex; flex-direction: column; gap: 1rem; }
 
-	.input-bar { display: flex; flex-direction: column; gap: 0.75rem; }
+	.input-bar { display: flex; flex-direction: column; gap: 0.75rem; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4); }
 	.input-row { display: flex; gap: 0.5rem; align-items: center; }
 	.url-input {
 		flex: 1;
 		padding: 0.6rem 0.75rem;
 		background: var(--bg);
 		border: 1px solid var(--border);
-		border-radius: var(--radius);
+		border-radius: var(--radius-sm);
 		color: var(--text);
-		font-family: 'JetBrains Mono', monospace;
+		font-family: var(--font-mono);
 		font-size: 0.8rem;
 		outline: none;
+		transition: all 0.2s ease;
 	}
-	.url-input:focus { border-color: var(--accent); }
+	.url-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(57, 211, 83, 0.1); }
 	.url-input:disabled { opacity: 0.5; }
 
 	.diff-select, .solver-select {
@@ -679,20 +678,21 @@
 		font-weight: 400;
 		font-size: 0.75rem;
 		color: var(--text-muted);
-		font-family: 'JetBrains Mono', monospace;
+		font-family: var(--font-mono);
 		margin-left: 0.25rem;
 	}
 
 	.run-btn {
 		padding: 0.6rem 1.5rem;
 		background: var(--accent);
-		color: white;
+		color: #0d1117;
 		font-weight: 600;
 		border: none;
 		border-radius: var(--radius);
 		white-space: nowrap;
+		letter-spacing: 0.03em;
 	}
-	.run-btn:hover:not(:disabled) { background: var(--accent-light); }
+	.run-btn:hover:not(:disabled) { background: var(--accent-light); box-shadow: 0 0 12px rgba(57, 211, 83, 0.2); }
 	.run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 	.stop-btn {
 		padding: 0.6rem 1.5rem;
@@ -703,6 +703,7 @@
 		border-radius: var(--radius);
 		white-space: nowrap;
 		cursor: pointer;
+		letter-spacing: 0.03em;
 	}
 	.stop-btn:hover { opacity: 0.85; }
 
@@ -716,7 +717,7 @@
 	}
 	.progress-fill {
 		height: 100%;
-		background: var(--accent);
+		background: linear-gradient(90deg, var(--accent), var(--green));
 		border-radius: 3px;
 		transition: width 0.2s ease;
 	}
@@ -727,7 +728,7 @@
 		font-size: 0.8rem;
 		color: var(--text-muted);
 	}
-	.round-info { font-family: 'JetBrains Mono', monospace; }
+	.round-info { font-family: var(--font-mono); }
 	.score-info { display: flex; align-items: center; gap: 0.35rem; }
 	.score-value { color: var(--green); font-size: 1.1rem; }
 	.final-badge {
@@ -739,7 +740,7 @@
 		font-weight: 600;
 	}
 	.dead-badge { color: var(--red); font-weight: 600; }
-	.inv-info { font-family: 'JetBrains Mono', monospace; }
+	.inv-info { font-family: var(--font-mono); }
 	.replay-link {
 		margin-left: auto;
 		padding: 0.2rem 0.6rem;
@@ -750,7 +751,7 @@
 
 	.main-area {
 		display: grid;
-		grid-template-columns: 1fr 320px;
+		grid-template-columns: 1fr 420px;
 		gap: 1rem;
 		align-items: start;
 	}
@@ -762,6 +763,7 @@
 		background: var(--bg-card);
 		padding: 0.5rem;
 		width: 100%;
+		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 	}
 
 	.side-panel {
@@ -778,6 +780,8 @@
 		letter-spacing: 0.05em;
 		color: var(--text-muted);
 		margin-bottom: 0.5rem;
+		padding-bottom: 0.35rem;
+		border-bottom: 1px solid rgba(48, 54, 61, 0.4);
 	}
 
 	.order {
@@ -785,9 +789,10 @@
 		border-radius: 6px;
 		margin-bottom: 0.5rem;
 		border: 1px solid var(--border);
+		transition: border-color 0.15s ease;
 	}
-	.active-order { border-color: #00b89444; background: #00b89408; }
-	.preview-order { border-color: #fdcb6e44; background: #fdcb6e08; }
+	.active-order { border-color: #facc1544; background: #facc1508; }
+	.preview-order { border-color: #f472b644; background: #f472b608; }
 	.order-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
 	.order-status {
 		font-size: 0.65rem;
@@ -795,22 +800,22 @@
 		font-weight: 700;
 		padding: 0.1rem 0.35rem;
 		border-radius: 3px;
-		background: #fdcb6e22;
-		color: var(--orange);
+		background: #f472b622;
+		color: var(--pink);
 	}
-	.order-status.active { background: #00b89422; color: var(--green); }
-	.order-id { font-size: 0.7rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+	.order-status.active { background: #facc1522; color: var(--yellow); }
+	.order-id { font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); }
 	.order-items { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.25rem; }
 	.order-item {
-		font-size: 0.7rem;
-		padding: 0.1rem 0.4rem;
+		font-size: 0.62rem;
+		padding: 0.1rem 0.3rem;
 		background: var(--bg);
 		border-radius: 3px;
 		border: 1px solid var(--border);
 	}
 	.order-item.delivered {
-		background: #00b89422;
-		border-color: #00b89444;
+		background: #39d35322;
+		border-color: #39d35344;
 		color: var(--green);
 		text-decoration: line-through;
 	}
@@ -819,14 +824,14 @@
 	.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem 0.75rem; }
 	.stat { display: flex; justify-content: space-between; align-items: center; padding: 0.15rem 0; }
 	.stat-label { font-size: 0.7rem; color: var(--text-muted); }
-	.stat-value { font-size: 0.8rem; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+	.stat-value { font-size: 0.8rem; font-weight: 600; font-family: var(--font-mono); }
 	.stat-value.green { color: var(--green); }
 	.stat-value.bad { color: var(--red); }
 	.stat-value.good { color: var(--green); }
 	.stat-value.accent { color: var(--accent-light); }
-	.orders-info { font-family: 'JetBrains Mono', monospace; }
+	.orders-info { font-family: var(--font-mono); }
 	.rate-badge { font-size: 0.7rem; color: var(--text-muted); }
-	.projected-info { font-family: 'JetBrains Mono', monospace; color: var(--accent-light); }
+	.projected-info { font-family: var(--font-mono); color: var(--accent-light); }
 
 	.bot-row {
 		display: block;
@@ -838,6 +843,7 @@
 		border-radius: 6px;
 		margin-bottom: 0.35rem;
 		color: var(--text);
+		transition: all 0.15s ease;
 	}
 	.bot-row:hover { background: var(--bg-hover); }
 	.bot-row.selected { border-color: var(--bot-color); background: color-mix(in srgb, var(--bot-color) 10%, transparent); }
@@ -853,20 +859,20 @@
 		font-weight: 700;
 		color: white;
 	}
-	.bot-pos { font-size: 0.75rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+	.bot-pos { font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); }
 	.bot-action {
 		margin-left: auto;
 		font-size: 0.7rem;
 		color: var(--accent-light);
-		font-family: 'JetBrains Mono', monospace;
+		font-family: var(--font-mono);
 	}
 	.bot-inv { display: flex; flex-wrap: wrap; gap: 0.2rem; margin-left: 1.75rem; }
 	.empty-inv { font-size: 0.7rem; color: var(--text-muted); font-style: italic; }
 	.inv-item {
 		font-size: 0.65rem;
 		padding: 0.05rem 0.35rem;
-		background: #6c5ce718;
-		border: 1px solid #6c5ce733;
+		background: #39d35318;
+		border: 1px solid #39d35333;
 		border-radius: 3px;
 		color: var(--accent-light);
 	}
@@ -874,13 +880,16 @@
 	.log-area {
 		max-height: 200px;
 		overflow-y: auto;
-		font-family: 'JetBrains Mono', monospace;
+		font-family: var(--font-mono);
 		font-size: 0.7rem;
+		background: rgba(1, 4, 9, 0.5);
+		border-radius: 6px;
+		padding: 0.5rem;
 	}
 	.log-line {
 		padding: 0.15rem 0;
 		color: var(--text-muted);
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid rgba(48, 54, 61, 0.3);
 	}
 	.mini-log { max-height: 100px; margin-top: 0.5rem; }
 
@@ -892,8 +901,9 @@
 		padding: 3rem;
 		text-align: center;
 		gap: 0.75rem;
+		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 	}
-	.empty-state h2 { font-size: 1.3rem; }
+	.empty-state h2 { font-size: 1.3rem; font-family: var(--font-mono); }
 	.empty-state p { color: var(--text-muted); max-width: 500px; }
 
 	.spinner {
@@ -905,7 +915,7 @@
 		animation: spin 0.8s linear infinite;
 	}
 
-	.mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.8rem; }
+	.mono { font-family: var(--font-mono); font-size: 0.8rem; }
 
 	@keyframes spin {
 		to { transform: rotate(360deg); }
@@ -919,8 +929,8 @@
 		align-items: center;
 		justify-content: center;
 		min-height: 500px;
-		background: radial-gradient(ellipse at center, #1a1a2e 0%, #0d0d1a 70%);
-		border: 1px solid #6c5ce733;
+		background: radial-gradient(ellipse at center, #161b22 0%, #0d1117 70%);
+		border: 1px solid #39d35333;
 		border-radius: var(--radius);
 		overflow: hidden;
 		gap: 1.5rem;
@@ -937,7 +947,7 @@
 		position: absolute;
 		left: 0; right: 0;
 		height: 1px;
-		background: linear-gradient(90deg, transparent, #6c5ce7, transparent);
+		background: linear-gradient(90deg, transparent, #39d353, transparent);
 		animation: gridFadeIn 1.5s ease-out forwards;
 		opacity: 0;
 	}
@@ -945,7 +955,7 @@
 		position: absolute;
 		top: 0; bottom: 0;
 		width: 1px;
-		background: linear-gradient(180deg, transparent, #6c5ce7, transparent);
+		background: linear-gradient(180deg, transparent, #39d353, transparent);
 		animation: gridFadeIn 1.5s ease-out forwards;
 		opacity: 0;
 	}
@@ -966,24 +976,24 @@
 	}
 	.ring-1 {
 		width: 120px; height: 120px;
-		border-color: #6c5ce744;
+		border-color: #39d35344;
 		animation: ringPulse 3s ease-out infinite;
 	}
 	.ring-2 {
 		width: 200px; height: 200px;
-		border-color: #6c5ce733;
+		border-color: #39d35333;
 		animation: ringPulse 3s ease-out infinite 0.5s;
 	}
 	.ring-3 {
 		width: 280px; height: 280px;
-		border-color: #6c5ce722;
+		border-color: #39d35322;
 		animation: ringPulse 3s ease-out infinite 1s;
 	}
 
 	/* Bot icon */
 	.launch-bot {
 		z-index: 2;
-		filter: drop-shadow(0 0 20px #6c5ce744);
+		filter: drop-shadow(0 0 20px #39d35344);
 	}
 	.launch-bot-hover {
 		transform-origin: 40px 40px;
@@ -1007,11 +1017,11 @@
 	.launch-title {
 		font-size: 1.8rem;
 		font-weight: 900;
-		letter-spacing: 0.3em;
+		letter-spacing: 0.15em;
 		color: #fff;
-		text-shadow: 0 0 30px #6c5ce766;
+		text-shadow: 0 0 30px #39d35366;
 		animation: titlePulse 2s ease-in-out infinite;
-		font-family: 'JetBrains Mono', monospace;
+		font-family: var(--font-mono);
 	}
 	.launch-subtitle {
 		display: flex;
@@ -1027,7 +1037,7 @@
 		text-shadow: 0 0 15px currentColor;
 	}
 	.launch-seed {
-		font-family: 'JetBrains Mono', monospace;
+		font-family: var(--font-mono);
 		font-size: 0.85rem;
 		color: var(--text-muted);
 		padding: 0.2rem 0.6rem;
@@ -1036,13 +1046,13 @@
 		border-radius: 4px;
 	}
 	.launch-solver {
-		font-family: 'JetBrains Mono', monospace;
+		font-family: var(--font-mono);
 		font-size: 0.85rem;
 		font-weight: 700;
 		color: var(--accent-light);
 		padding: 0.2rem 0.6rem;
-		background: #6c5ce718;
-		border: 1px solid #6c5ce744;
+		background: #39d35318;
+		border: 1px solid #39d35344;
 		border-radius: 4px;
 	}
 
@@ -1060,15 +1070,15 @@
 		gap: 0.6rem;
 		opacity: 0;
 		animation: stepSlideIn 0.4s ease-out forwards;
-		font-family: 'JetBrains Mono', monospace;
+		font-family: var(--font-mono);
 		font-size: 0.75rem;
 	}
 	.step-dot {
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: #6c5ce7;
-		box-shadow: 0 0 8px #6c5ce766;
+		background: #39d353;
+		box-shadow: 0 0 8px #39d35366;
 		flex-shrink: 0;
 		animation: dotPulse 1.5s infinite;
 	}
@@ -1082,9 +1092,9 @@
 		left: 0;
 		right: 0;
 		height: 2px;
-		background: linear-gradient(90deg, transparent, #6c5ce7, transparent);
+		background: linear-gradient(90deg, transparent, #39d353, transparent);
 		animation: scanMove 2.5s ease-in-out infinite;
-		box-shadow: 0 0 15px #6c5ce7, 0 0 30px #6c5ce744;
+		box-shadow: 0 0 15px #39d353, 0 0 30px #39d35344;
 	}
 
 	/* ── Launch Animations ── */
@@ -1102,8 +1112,8 @@
 		50% { transform: translateY(-6px); }
 	}
 	@keyframes antennaBlink {
-		0%, 100% { opacity: 1; fill: #6c5ce7; }
-		50% { opacity: 0.3; fill: #a29bfe; }
+		0%, 100% { opacity: 1; fill: #39d353; }
+		50% { opacity: 0.3; fill: #56d364; }
 	}
 	@keyframes chassisGlow {
 		0%, 100% { filter: brightness(1); }
@@ -1122,8 +1132,8 @@
 		100% { opacity: 1; transform: translateX(0); }
 	}
 	@keyframes dotPulse {
-		0%, 100% { box-shadow: 0 0 4px #6c5ce744; }
-		50% { box-shadow: 0 0 12px #6c5ce7; }
+		0%, 100% { box-shadow: 0 0 4px #39d35344; }
+		50% { box-shadow: 0 0 12px #39d353; }
 	}
 	@keyframes scanMove {
 		0% { top: 0; }

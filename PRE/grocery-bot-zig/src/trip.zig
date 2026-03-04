@@ -2,6 +2,7 @@ const std = @import("std");
 const config = @import("config");
 const types = @import("types.zig");
 const pathfinding = @import("pathfinding.zig");
+const precomputed = @import("precomputed.zig");
 
 const Difficulty = config.Difficulty;
 const DIFFICULTY = config.difficulty;
@@ -46,6 +47,7 @@ pub fn planBestTrip(
     allow_preview: bool,
     rounds_left: u32,
     bot_count: u8,
+    active_order_idx: i32,
 ) ?TripPlan {
     const active_remaining = bot_active.count;
 
@@ -218,6 +220,17 @@ pub fn planBestTrip(
         cand_dm[i] = pathfinding.getPrecomputedDm(state, cands[i].adj).*;
     }
 
+    // Pre-compute future utility per candidate (preview items only)
+    var cand_utility: [16]u16 = .{0} ** 16;
+    if (precomputed.isActive() and active_order_idx >= 0) {
+        const fut_start: u16 = @intCast(@as(u32, @intCast(active_order_idx)) + 2);
+        for (0..n) |i| {
+            if (!cands[i].is_active) {
+                cand_utility[i] = precomputed.typeFutureUtility(state.items[cands[i].item_idx].item_type, fut_start, 8);
+            }
+        }
+    }
+
     var best: ?TripPlan = null;
     var best_score: u64 = 0;
 
@@ -229,7 +242,7 @@ pub fn planBestTrip(
         const pc: u8 = if (cands[a].is_active) 0 else 1;
         if (ac == 0 and active_remaining > 0) continue;
         const completes = ac >= active_remaining and active_remaining > 0;
-        const score = tripScore(cost, ac, pc, 1, completes, rounds_left, bot_count);
+        const score = tripScore(cost, ac, pc, 1, completes, rounds_left, bot_count, cand_utility[a]);
         if (best == null or score > best_score) {
             best = .{ .items = undefined, .adjs = undefined, .item_count = 1, .total_cost = cost, .active_count = ac, .preview_count = pc, .completes_order = completes };
             best.?.items[0] = cands[a].item_idx;
@@ -264,8 +277,9 @@ pub fn planBestTrip(
             const cost_ab = @as(u32, cands[a].dist_from_bot) + ab_dist + @as(u32, cands[b].dist_from_drop);
             const cost_ba = @as(u32, cands[b].dist_from_bot) + ba_dist + @as(u32, cands[a].dist_from_drop);
 
+            const pair_utility = cand_utility[a] + cand_utility[b];
             if (cost_ab + 4 <= rounds_left) {
-                const score = tripScore(cost_ab, ac, pc, 2, completes, rounds_left, bot_count);
+                const score = tripScore(cost_ab, ac, pc, 2, completes, rounds_left, bot_count, pair_utility);
                 if (best == null or score > best_score) {
                     const adj_b = pathfinding.findBestAdj(state, state.items[cands[b].item_idx].pos, &cand_dm[a]) orelse cands[b].adj;
                     best = .{ .items = undefined, .adjs = undefined, .item_count = 2, .total_cost = cost_ab, .active_count = ac, .preview_count = pc, .completes_order = completes };
@@ -277,7 +291,7 @@ pub fn planBestTrip(
                 }
             }
             if (cost_ba + 4 <= rounds_left) {
-                const score = tripScore(cost_ba, ac, pc, 2, completes, rounds_left, bot_count);
+                const score = tripScore(cost_ba, ac, pc, 2, completes, rounds_left, bot_count, pair_utility);
                 if (best == null or score > best_score) {
                     const adj_a = pathfinding.findBestAdj(state, state.items[cands[a].item_idx].pos, &cand_dm[b]) orelse cands[a].adj;
                     best = .{ .items = undefined, .adjs = undefined, .item_count = 2, .total_cost = cost_ba, .active_count = ac, .preview_count = pc, .completes_order = completes };
@@ -327,7 +341,8 @@ pub fn planBestTrip(
                         @as(u32, cands[p2].dist_from_drop);
 
                     if (cost + 5 > rounds_left) continue;
-                    const score = tripScore(cost, ac, pc, 3, completes, rounds_left, bot_count);
+                    const triple_utility = cand_utility[a] + cand_utility[b] + cand_utility[c];
+                    const score = tripScore(cost, ac, pc, 3, completes, rounds_left, bot_count, triple_utility);
                     if (best == null or score > best_score) {
                         const adj1 = pathfinding.findBestAdj(state, state.items[cands[p1].item_idx].pos, &cand_dm[p0]) orelse cands[p1].adj;
                         const adj2 = pathfinding.findBestAdj(state, state.items[cands[p2].item_idx].pos, &cand_dm[p1]) orelse cands[p2].adj;
@@ -375,7 +390,7 @@ fn countRealTypes(
     return .{ .ac = real_ac, .pc = real_pc };
 }
 
-pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, rounds_left: u32, bot_count: u8) u64 {
+pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, rounds_left: u32, bot_count: u8, future_utility: u16) u64 {
     if (cost == 0) return std.math.maxInt(u64);
     // Active items are worth much more than preview items
     // When completing an order, preview items auto-deliver at dropoff (worth same as active)
@@ -391,6 +406,11 @@ pub fn tripScore(cost: u32, ac: u8, pc: u8, count: u8, completes_order: bool, ro
     // Preview items in completing trips auto-deliver at dropoff, saving a full round-trip
     // Each preview item saved ~10 rounds of pick + deliver on the next order
     if (completes_order and pc > 0) value += @as(u32, pc) * 150;
+    // Future utility bonus: prefer preview items needed in many future orders
+    // Conservative: max +15 bonus (min(utility, 5) * 3)
+    if (pc > 0 and future_utility > 0) {
+        value += @min(future_utility, 5) * 3;
+    }
     // Penalize trips that use >50% of remaining time when under 60 rounds
     if (rounds_left < 60 and cost * 2 > rounds_left) {
         value = value / 2;

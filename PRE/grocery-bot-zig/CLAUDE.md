@@ -100,6 +100,14 @@ Per-bot priority cascade each round:
 - Bot collision: 1 bot per tile (except spawn)
 - Drop-off at (1, h-2), spawn at (w-2, h-2)
 
+## Token & Session Rules (CRITICAL for iterate pipeline)
+- **Tokens last ~288 seconds** (~5 minutes) from creation
+- **Same token URL can be reused for MULTIPLE games** within the 5-minute window
+- **Same token = same seed = same map = same orders** — games are fully deterministic per token
+- This enables the iterate pipeline: play → capture orders → GPU optimize → replay with same URL → capture more orders → repeat
+- No need to fetch new tokens between iterations — reuse the same URL
+- Competition scoring: only MAX score per map counts across all attempts
+
 ## Difficulty Configs
 | | Bots | Grid | Types | Order Size |
 |---|---|---|---|---|
@@ -183,11 +191,84 @@ Note: Sim server now generates production-style aisle walls. These scores are wi
 - Live Easy seed 7001: 116 (vs 121 sweep) — deterministic, no desync
 - Previous live Medium seed 7002: 89 (vs 148 sweep) — massive desync before fix
 
+## Production Pipeline: Iterative Live → GPU DP → Replay (within 5-min token)
+
+The competition scoring uses **max score per map**. The optimal strategy within a single 5-minute token:
+1. **Live GPU play** — `live_gpu_stream.py` plays with GPU actions at every round, discovers orders
+2. **GPU DP optimizes offline** — `optimize_and_save.py` solves with all captured orders (sequential DP)
+3. **Replay with SAME token** — `replay_solution.py` replays optimized solution → discovers MORE orders
+4. **Repeat steps 2-3** until token expires (~288 seconds)
+
+### Key Insight: Token Reuse
+- **Same token URL = same seed = same map = same orders** — fully deterministic
+- **Token can be reused multiple times** within its ~288s lifetime
+- Each replay-capture cycle discovers ~2-3 new orders → higher GPU score → more orders → repeat
+- No need to fetch new tokens between iterations
+
+### Automated Pipeline (SvelteKit `/pipeline` page, iterate mode)
+```
+User pastes token URL → Start Iterative
+  ├── Iter 0: live_gpu_stream.py (live play + post-optimize)
+  │     └── capture_from_game_log.py (extract orders)
+  ├── Iter 1: optimize_and_save.py (offline GPU DP)
+  │     ├── replay_solution.py (replay with same URL)
+  │     └── capture_from_game_log.py (more orders)
+  ├── Iter 2: optimize → replay → capture (repeat)
+  └── ... until time budget exhausted
+```
+
+### Manual Workflow
+```bash
+# 1. Live GPU play (captures orders into game log)
+cd grocery-bot-gpu
+python live_gpu_stream.py "wss://game.ainm.no/ws?token=..." --save --json-stream --post-optimize-time 30
+
+# 2. Extract orders from game log
+python capture_from_game_log.py game_log_XXXX.jsonl hard
+
+# 3. GPU DP optimize offline
+python optimize_and_save.py hard --max-time 45
+
+# 4. Replay with SAME token URL
+python replay_solution.py "wss://game.ainm.no/ws?token=..." --difficulty hard
+
+# 5. Capture more orders from replay → go to step 3
+python capture_from_game_log.py game_log_YYYY.jsonl hard
+```
+
+### Critical Notes
+- `--no-filler` is MANDATORY for GPU DP: without it, DP wastes moves on fake orders
+- `no_compile=True` required for all live/threaded GPU calls (prevents torch.compile FX dynamo crash)
+- Each capture-optimize-replay cycle discovers ~2-3 new orders
+- `solution_store.py` NEVER overwrites better scores
+- `replay_solution.py` has greedy fallback: after DP plan exhausts, switches to reactive item pickup
+
+### GPU DP Solver (`grocery-bot-gpu/`)
+| File | Purpose |
+|------|---------|
+| `gpu_beam_search.py` | Core GPU DP solver (CUDA, RTX 5090) |
+| `gpu_sequential_solver.py` | Multi-bot sequential DP with refinement |
+| `live_gpu_stream.py` | Live game: GPU actions at every round |
+| `optimize_and_save.py` | Offline GPU optimize: load capture → solve → save (JSON events) |
+| `capture_from_game_log.py` | Extract orders from game logs |
+| `replay_solution.py` | Replay GPU solutions with greedy fallback |
+| `solution_store.py` | Score-safe solution storage |
+| `production_run.py` | CLI iterative pipeline (token fetch + optimize + replay) |
+
 ## File Dependencies
 ```
-main.zig → ws.zig, types.zig, strategy.zig, parser.zig, pathfinding.zig
-strategy.zig → types.zig, pathfinding.zig, trip.zig
-trip.zig → types.zig, pathfinding.zig
+main.zig → ws.zig, types.zig, strategy.zig, parser.zig, pathfinding.zig, precomputed.zig
+strategy.zig → types.zig, pathfinding.zig, trip.zig, precomputed.zig
+trip.zig → types.zig, pathfinding.zig, precomputed.zig
 parser.zig → types.zig
 pathfinding.zig → types.zig
+precomputed.zig → types.zig
 ```
+
+## Precomputed Order Data (precomputed.zig)
+Loads capture.json at startup via `--precomputed <path>`. Since orders are random per game,
+this only helps when replaying known games (same token). For live play, it safely disables
+(verification fails on round 0 when orders don't match).
+
+**NOTE**: Precomputed features are kept for potential future use with deterministic replays
+but do NOT improve live game performance.

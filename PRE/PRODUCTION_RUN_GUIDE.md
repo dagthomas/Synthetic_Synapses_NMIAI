@@ -27,6 +27,25 @@ optimized replay submission.
 
 ---
 
+## Getting a Live Token
+
+Tokens are obtained from https://app.ainm.no/challenge (requires login).
+Claude Code can fetch tokens automatically using the Pinchtab browser skill:
+
+1. Open https://app.ainm.no/challenge in Chrome
+2. Click the difficulty button (e.g. "Hard")
+3. Copy the `wss://game.ainm.no/ws?token=...` URL that appears
+
+**Claude Code browser automation** (use `pinchtab` skill):
+- Navigate to https://app.ainm.no/challenge
+- Click the difficulty button
+- Extract the token field value
+
+Token format: `wss://game.ainm.no/ws?token=<JWT>`
+JWT payload contains: `map_seed`, `difficulty`, `exp` (expiry ~10 min)
+
+---
+
 ## Quick Reference
 
 ```bash

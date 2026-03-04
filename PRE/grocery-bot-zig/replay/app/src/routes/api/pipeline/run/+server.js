@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { readdirSync, statSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BOT_DIR = resolve(__dirname, '..', '..', '..', '..', '..', '..', '..');
@@ -98,6 +99,25 @@ export async function POST({ request }) {
 
 			botProcess.on('close', (code) => {
 				sendEvent('status', { message: `Process exited (code ${code})` });
+
+				// Import game log to PostgreSQL in background (non-blocking)
+				// live_gpu_stream.py also does this internally, but catches edge cases
+				try {
+					const importScript = resolve(GPU_DIR, '..', 'grocery-bot-zig', 'replay', 'import_logs.py');
+					const files = readdirSync(GPU_DIR)
+						.filter(f => f.startsWith('game_log_') && f.endsWith('.jsonl'))
+						.map(f => ({ name: f, mtime: statSync(resolve(GPU_DIR, f)).mtimeMs }))
+						.sort((a, b) => b.mtime - a.mtime);
+					if (files.length > 0) {
+						const logFile = resolve(GPU_DIR, files[0].name);
+						const importer = spawn('python', [importScript, logFile, '--run-type', 'live'], {
+							stdio: 'ignore',
+						});
+						importer.on('error', () => {});
+						sendEvent('db', { message: `Saving to DB: ${files[0].name}` });
+					}
+				} catch (e) {}
+
 				cleanup();
 			});
 

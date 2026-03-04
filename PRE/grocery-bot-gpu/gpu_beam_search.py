@@ -40,7 +40,7 @@ class GPUBeamSearcher:
 
     def __init__(self, map_state, all_orders, device='cuda', num_bots=1,
                  locked_trajectories=None, pipeline_mode=False, pipeline_depth=1,
-                 preferred_types=None):
+                 preferred_types=None, no_compile=False):
         self.device = device
         self.ms = map_state
         self.all_orders = all_orders
@@ -60,6 +60,9 @@ class GPUBeamSearcher:
         # Soft hint (bonus) to avoid competition between bots for the same types.
         # Set via compute_type_assignments() in gpu_sequential_solver.py.
         self.preferred_types = preferred_types  # set[int] or None
+        # Pre-build preferred type mask (used 300x per search in _eval)
+        self._pref_mask = None  # set after device is ready, below
+
 
         # === Locked trajectories for sequential multi-bot DP ===
         self.candidate_bot_id = 0  # Set by dp_search()
@@ -181,6 +184,74 @@ class GPUBeamSearcher:
         self.first_step_to_dropoff = gpu_tables['step_to_dropoff']
         self.first_step_to_type = gpu_tables['step_to_type']
 
+        # === Trip table for exact multi-item trip costs ===
+        trips = tables.get_trips(map_state)
+        trip_gpu = trips.to_gpu(device)
+        self.trip_cost_gpu = trip_gpu['cost']             # [N_cells, N_combos] int16
+        self.trip_cell_idx_map = trip_gpu['cell_idx_map'] # [H, W] int32
+        self._trip_n_cells = trips.n_cells
+        self._trip_n_combos = trips.n_combos
+        self._del_weights = torch.tensor(
+            [1, 2, 4, 8, 16, 32], dtype=torch.long, device=device)
+
+        # Precompute per (order_idx, delivery_bitmask):
+        #   remaining_trip_combo: combo_idx for the next ≤3 items to pick
+        #   remaining_after_cost: cost from dropoff for items beyond the first trip
+        #   order_full_cost: total rounds to complete full order from dropoff
+        from itertools import combinations as _combs
+        drop_ci = tables.pos_to_idx[
+            (map_state.drop_off[0], map_state.drop_off[1])]
+        _rtc = np.full((self.num_orders, 64), -1, dtype=np.int32)
+        _rac = np.zeros((self.num_orders, 64), dtype=np.int16)
+        _ofc = np.zeros(self.num_orders, dtype=np.int16)
+        for oi in range(self.num_orders):
+            oreq = [int(x) for x in all_orders[oi].required]
+            n = len(oreq)
+            _ofc[oi] = min(trips.order_cost(drop_ci, oreq, drop_ci), 9999)
+            for bitmask in range(1 << n):
+                remaining = [oreq[j] for j in range(n)
+                             if not (bitmask & (1 << j))]
+                nr = len(remaining)
+                if nr == 0:
+                    continue
+                if nr <= 3:
+                    combo = tuple(sorted(remaining))
+                    ci = trips.combo_to_idx.get(combo)
+                    if ci is not None:
+                        _rtc[oi, bitmask] = ci
+                else:
+                    # Find best 3-item first trip + rest from dropoff
+                    best_total = 9999
+                    best_ci = -1
+                    best_rest = 0
+                    seen = set()
+                    for idx3 in _combs(range(nr), 3):
+                        fc = tuple(sorted(remaining[i] for i in idx3))
+                        if fc in seen:
+                            continue
+                        seen.add(fc)
+                        fci = trips.combo_to_idx.get(fc)
+                        if fci is None:
+                            continue
+                        f_cost = int(trips.cost[drop_ci, fci])
+                        rest = [remaining[i] for i in range(nr)
+                                if i not in set(idx3)]
+                        r_cost = trips.order_cost(
+                            drop_ci, rest, drop_ci)
+                        if f_cost + r_cost < best_total:
+                            best_total = f_cost + r_cost
+                            best_ci = fci
+                            best_rest = r_cost
+                    if best_ci >= 0:
+                        _rtc[oi, bitmask] = best_ci
+                        _rac[oi, bitmask] = min(best_rest, 9999)
+        self.remaining_trip_combo = torch.tensor(
+            _rtc, dtype=torch.int32, device=device)
+        self.remaining_after_cost = torch.tensor(
+            _rac, dtype=torch.int16, device=device)
+        self.order_full_cost = torch.tensor(
+            _ofc, dtype=torch.int16, device=device)
+
         # === Build action expansion pattern (all actions for fallback) ===
         acts = torch.zeros(self.num_actions, dtype=torch.int8, device=device)
         items = torch.full((self.num_actions,), -1, dtype=torch.int16, device=device)
@@ -224,6 +295,57 @@ class GPUBeamSearcher:
         self._neg1_i8 = torch.tensor(-1, dtype=torch.int8, device=device)
         self._zero_i8 = torch.tensor(0, dtype=torch.int8, device=device)
         self._one_i8 = torch.tensor(1, dtype=torch.int8, device=device)
+
+        # Pre-allocate hash shift constants (used 300x per search in _hash)
+        self._hash_shifts = torch.arange(
+            32, 32 + MAX_ORDER_SIZE, dtype=torch.int64, device=device)
+
+        # Pre-allocate DX/DY as int32 to avoid repeated .to(int32) in _step
+        self.DX_i32 = self.DX.to(torch.int32)
+        self.DY_i32 = self.DY.to(torch.int32)
+
+        # Pre-allocate fixed action template for _dp_expand [1, N]
+        # (broadcast-expanded per state, avoids creating from scratch each call)
+        _dp_acts_tmpl = torch.zeros(1, self.dp_num_actions, dtype=torch.int8, device=device)
+        _dp_acts_tmpl[0, 0] = ACT_WAIT
+        _dp_acts_tmpl[0, 1] = ACT_MOVE_UP
+        _dp_acts_tmpl[0, 2] = ACT_MOVE_DOWN
+        _dp_acts_tmpl[0, 3] = ACT_MOVE_LEFT
+        _dp_acts_tmpl[0, 4] = ACT_MOVE_RIGHT
+        _dp_acts_tmpl[0, 5] = ACT_DROPOFF
+        _dp_acts_tmpl[0, 6:6 + MAX_ADJ] = ACT_PICKUP
+        self._dp_acts_template = _dp_acts_tmpl
+
+        # torch.compile hot-path functions for reduced overhead on repeated calls (300x per search).
+        # Only on CUDA; CPU path sees negligible benefit and compile adds overhead.
+        # Disabled in live/multi-threaded mode (no_compile=True) to avoid dynamo FX tracing conflicts.
+        # Try triton-backed 'reduce-overhead' first (best perf), fall back to 'aot_eager' (no triton).
+        if device == 'cuda' and int(torch.__version__.split('.')[0]) >= 2 and not no_compile:
+            _compile = None
+            try:
+                import triton  # noqa: F401
+                _compile = lambda fn: torch.compile(fn, mode='reduce-overhead', fullgraph=False)
+            except ImportError:
+                try:
+                    # aot_eager: ahead-of-time tracing, works without triton
+                    _compile = lambda fn: torch.compile(fn, backend='aot_eager', fullgraph=False)
+                except Exception:
+                    pass
+            if _compile is not None:
+                try:
+                    self._eval = _compile(self._eval)
+                    self._step_candidate_only = _compile(self._step_candidate_only)
+                    self._hash = _compile(self._hash)
+                except Exception:
+                    pass  # Silently fall back to uncompiled
+
+        # Pre-build preferred type mask on GPU (avoids per-_eval allocation)
+        if preferred_types is not None and len(preferred_types) > 0:
+            pref_mask = torch.zeros(self.num_types + 1, dtype=torch.bool, device=device)
+            for t in preferred_types:
+                if 0 <= t < self.num_types:
+                    pref_mask[t] = True
+            self._pref_mask = pref_mask
 
         dt = time.time() - t0
         walkable_cells = int(self.walkable.sum())
@@ -304,22 +426,12 @@ class GPUBeamSearcher:
         per_state_adj = self.adj_items[by, bx]       # [B, MAX_ADJ]
         per_state_count = self.adj_count[by, bx]      # [B]
 
-        # Build action tensor [B, N]
-        acts = torch.zeros(B, N, dtype=torch.int8, device=d)
+        # Build action tensor [B, N] from pre-allocated template (avoids zeroing + filling)
+        acts = self._dp_acts_template.expand(B, N).clone()
         items = torch.full((B, N), -1, dtype=torch.int16, device=d)
 
-        # Fixed actions: wait(0), up(1), down(2), left(3), right(4), dropoff(5)
-        acts[:, 0] = ACT_WAIT
-        acts[:, 1] = ACT_MOVE_UP
-        acts[:, 2] = ACT_MOVE_DOWN
-        acts[:, 3] = ACT_MOVE_LEFT
-        acts[:, 4] = ACT_MOVE_RIGHT
-        acts[:, 5] = ACT_DROPOFF
-
-        # Variable pickups: per-state adjacent items
-        for a in range(self.MAX_ADJ):
-            acts[:, 6 + a] = ACT_PICKUP
-            items[:, 6 + a] = per_state_adj[:, a]
+        # Variable pickups: per-state adjacent items (vectorized)
+        items[:, 6:6 + self.MAX_ADJ] = per_state_adj
 
         # Expand: [B, N] -> [B*N]
         expanded = {}
@@ -332,17 +444,15 @@ class GPUBeamSearcher:
         actions = acts.reshape(-1)
         action_items = items.reshape(-1)
 
-        # Valid mask: fixed actions always valid; pickups only where adj exists
-        valid = torch.ones(B * N, dtype=torch.bool, device=d)
-        for a in range(self.MAX_ADJ):
-            # Mark pickup slots as invalid where no adjacent item exists
-            pickup_idx = torch.arange(B, device=d) * N + (6 + a)
-            invalid = per_state_adj[:, a] < 0  # no item at this adj slot
-            valid[pickup_idx[invalid]] = False
+        # Valid mask: fixed actions valid; pickups only where adj exists (vectorized)
+        valid = torch.ones(B, N, dtype=torch.bool, device=d)
+        # Pickup slots 6..6+MAX_ADJ: invalid where no adjacent item
+        valid[:, 6:6 + self.MAX_ADJ] = per_state_adj >= 0
 
         # Wall pruning: mask invalid move directions (slots 1-4: UP, DOWN, LEFT, RIGHT)
-        move_valid = self.valid_moves[by, bx]  # [B, 4]
-        valid.view(B, N)[:, 1:5] &= move_valid
+        valid[:, 1:5] &= self.valid_moves[by, bx]  # [B, 4]
+
+        valid = valid.reshape(-1)
 
         return expanded, actions, action_items, valid, N
 
@@ -847,12 +957,12 @@ class GPUBeamSearcher:
                         active_idx, active_del, score, orders_comp,
                         locked_inv, locked_bx, locked_by, B, d, spawn_x, spawn_y):
         """Process candidate bot's expanded actions (movement/pickup/dropoff)."""
-        acts_i32 = actions.to(torch.int32)
+        acts_long = actions.long()
 
         # === MOVEMENT ===
         is_move = (actions >= 1) & (actions <= 4)
-        dx = self.DX[acts_i32.long()]
-        dy = self.DY[acts_i32.long()]
+        dx = self.DX_i32[acts_long]
+        dy = self.DY_i32[acts_long]
         nx = bot_x.to(torch.int32) + dx
         ny = bot_y.to(torch.int32) + dy
 
@@ -933,12 +1043,12 @@ class GPUBeamSearcher:
     def _step_candidate_only(self, actions, action_items, bot_x, bot_y, bot_inv,
                              active_idx, active_del, score, orders_comp, B, d):
         """Process candidate bot only (no locked bots). Original fast path."""
-        acts_i32 = actions.to(torch.int32)
+        acts_long = actions.long()
 
         # === MOVEMENT ===
         is_move = (actions >= 1) & (actions <= 4)
-        dx = self.DX[acts_i32.long()]
-        dy = self.DY[acts_i32.long()]
+        dx = self.DX_i32[acts_long]
+        dy = self.DY_i32[acts_long]
         nx = bot_x.to(torch.int32) + dx
         ny = bot_y.to(torch.int32) + dy
 
@@ -1035,10 +1145,9 @@ class GPUBeamSearcher:
              | ((sorted_inv[:, 2].long() + 1) << 20)
              | (state['active_idx'].long() << 25))
 
-        # Pack active_del as bits (vectorized)
+        # Pack active_del as bits (vectorized, pre-allocated shifts)
         del_bits = state['active_del'].long()  # [B, MAX_ORDER_SIZE]
-        shifts = torch.arange(32, 32 + MAX_ORDER_SIZE, device=self.device)
-        h = h | (del_bits << shifts.unsqueeze(0)).sum(dim=1)
+        h = h | (del_bits << self._hash_shifts.unsqueeze(0)).sum(dim=1)
 
         return h
 
@@ -1135,12 +1244,12 @@ class GPUBeamSearcher:
             preview_val_per_item = 15000.0
             preview_value = inv_matches_preview.float() * preview_val_per_item
         elif self.num_locked > 0:
-            # Multi-bot with locked delivery bots: progressive value, no penalty.
-            # With many locked bots delivering, active order completes fast;
-            # start valuing preview items higher from the beginning.
-            # At 0% done: 5000 (was 2000 — encourage pre-fetching earlier)
-            # At 50% done: 10000 (was 8500)
-            # At 100% done: 15000
+            # Multi-bot: aggressively value preview items from the start.
+            # Orders complete in 30-50 rounds with multiple bots delivering,
+            # so pre-fetching early creates seamless order transitions.
+            # At 0% done: 12000 (was 5000 — much stronger pre-fetch signal)
+            # At 50% done: 16000
+            # At 100% done: 20000
             frac_exp = fraction_done.unsqueeze(1).expand_as(inv_matches_preview)
             preview_val_per_item = 5000.0 + 10000.0 * frac_exp
             preview_value = inv_matches_preview.float() * preview_val_per_item
@@ -1158,7 +1267,7 @@ class GPUBeamSearcher:
         is_dead = has_item_flat & ~inv_matches_active & ~inv_matches_preview  # [B, 3]
         # Multi-bot mode: also check orders +2, +3 before declaring dead.
         # With multiple bots, orders complete faster so pre-fetching further ahead is useful.
-        if self.num_locked > 0 and is_dead.any():
+        if is_dead.any():
             for _extra_d in [2, 3]:
                 _eidx = (aidx + _extra_d).clamp(0, self.num_orders - 1)
                 _ereq = self.order_req[_eidx]   # [B, MAX_ORDER_SIZE]
@@ -1166,7 +1275,8 @@ class GPUBeamSearcher:
                 _match_extra = (inv_exp == _ereq_exp) & (_ereq_exp >= 0) & has_item_exp
                 _matches_extra = _match_extra.any(dim=2) & ~inv_matches_active & ~inv_matches_preview
                 is_dead = is_dead & ~_matches_extra
-        # Dead items are more catastrophic early (waste whole game) vs late (just 1-2 wasted rounds)
+        # Dead items: catastrophic early (waste whole game), less so late.
+        # Multi-bot: softer penalty — speculative items may match future orders.
         dead_penalty = 50000 * min(1.0, rounds_left / 150.0) + 5000
         ev = ev - is_dead.sum(dim=1).float() * dead_penalty
 
@@ -1186,52 +1296,77 @@ class GPUBeamSearcher:
 
         close = best_item_dist < 9999
 
-        # Trip feasibility check
+        # Trip feasibility check (single-item, used for distance guidance)
         min_trip_time = best_item_dist + dist_drop + 2  # pickup + dropoff actions
         trip_feasible = close & (min_trip_time <= rounds_left)
+
+        # === Trip-table: exact remaining-order cost from current position ===
+        del_bits = (act_del.long() * self._del_weights).sum(dim=1)  # [B]
+        cell_idx = self.trip_cell_idx_map[bot_y, bot_x]  # [B]
+        trip_combo = self.remaining_trip_combo[aidx, del_bits]  # [B]
+        has_trip_info = (trip_combo >= 0) & (cell_idx >= 0)
+        safe_cell = cell_idx.clamp(0, self._trip_n_cells - 1)
+        safe_combo = trip_combo.clamp(0, self._trip_n_combos - 1)
+        next_trip_cost = self.trip_cost_gpu[safe_cell, safe_combo].float()
+        after_cost = self.remaining_after_cost[aidx, del_bits].float()
+        total_order_remaining = (
+            has_trip_info.float() * (next_trip_cost + after_cost) +
+            (~has_trip_info).float() * 9999.0)
+
+        # Bonus: entire remaining order is achievable in time
+        order_achievable = has_trip_info & (total_order_remaining <= rounds_left)
+        ev = ev + order_achievable.float() * 8000
+        # Prefer states with less remaining work (smoother gradient than just feasibility)
+        ev = ev - has_trip_info.float() * total_order_remaining.clamp(0, 300) * 50
 
         # Approaching needed items — only for single-bot mode.
         # Multi-bot mode uses differentiated guidance in the coordination block below.
         if self.num_locked == 0:
-            ev = ev + torch.where(
-                trip_feasible & has_space & ~has_active_inv,
-                20000.0 - best_item_dist * 800,
-                torch.zeros(B, device=d))
-            ev = ev + torch.where(
-                trip_feasible & has_space & has_active_inv,
-                5000.0 - best_item_dist * 200,
-                torch.zeros(B, device=d))
+            _m1 = (trip_feasible & has_space & ~has_active_inv).float()
+            ev = ev + _m1 * (20000.0 - best_item_dist * 800)
+            _m2 = (trip_feasible & has_space & has_active_inv).float()
+            ev = ev + _m2 * (5000.0 - best_item_dist * 200)
 
         # Bot with active items: closer to dropoff is better
         delivery_urgency = max(1.0, (100 - rounds_left) / 20.0) if rounds_left < 100 else 1.0
-        ev = ev - torch.where(
-            has_active_inv, dist_drop * 200 * delivery_urgency, torch.zeros(B, device=d))
+        ev = ev - has_active_inv.float() * dist_drop * 200 * delivery_urgency
 
         # Pipeline/multi-bot: bot holding preview items should position near dropoff
         # as active order nears completion (ready for instant auto-delivery).
         if self.pipeline_mode or self.num_locked > 0:
             has_preview_inv_any = inv_matches_preview.any(dim=1)  # [B]
-            # Scale guidance by order completion fraction: stronger as order nears done
             preview_drop_guidance = 80.0 * fraction_done + 20.0  # 20..100 per unit dist
-            ev = ev - torch.where(
-                has_preview_inv_any & ~has_active_inv,
-                dist_drop * preview_drop_guidance,
-                torch.zeros(B, device=d))
+            _m3 = (has_preview_inv_any & ~has_active_inv).float()
+            ev = ev - _m3 * dist_drop * preview_drop_guidance
 
         # Can't reach dropoff in time: inventory is completely wasted
         cant_deliver = has_active_inv & (dist_drop >= rounds_left)
         ev = ev - cant_deliver.float() * 80000
 
-        # Empty bot camping at dropoff: penalize blocking deliveries
+        # Empty bot camping at dropoff: penalize blocking deliveries.
         at_drop = (state['bot_x'].long() == self.drop_x) & (state['bot_y'].long() == self.drop_y)
         camping_penalty = at_drop & ~has_active_inv
         ev = ev - camping_penalty.float() * 12000
 
+        # === Dropoff queue system ===
+        # When multiple bots are heading to dropoff with items, they should
+        # form a queue along the bottom row (y = height-2) approaching from
+        # the right. Penalize crowding at dropoff; reward queuing positions.
+        if self.num_locked > 0 and 'locked_bx' in state:
+            locked_bx_state = state.get('locked_bx')
+            locked_by_state = state.get('locked_by')
+            if locked_bx_state is not None:
+                # Count locked bots near dropoff (within 2 cells)
+                locked_near_drop = (
+                    (locked_bx_state - self.drop_x).abs() +
+                    (locked_by_state - self.drop_y).abs() <= 2
+                ).sum(dim=1).float()  # [B]
         # === Coordination with locked bots ===
         if 'locked_bx' in state and self.num_locked > 0:
             locked_bx_state = state['locked_bx']  # [B, num_locked]
             locked_by_state = state['locked_by']
-            # Congestion: penalize being near dropoff when many locked bots are too
+            # Congestion: penalize being near dropoff when many locked bots are too.
+            # Scale with num_locked — more bots = higher congestion cost.
             locked_at_drop = ((locked_bx_state == self.drop_x) &
                               (locked_by_state == self.drop_y)).sum(dim=1).float()
             near_drop = dist_drop < 3
@@ -1290,9 +1425,14 @@ class GPUBeamSearcher:
                         cand_covers_unique = cand_covers_unique + (
                             type_match & uncovered_by_locked[:, os]).float()
 
-                # Strong incentive: reward unique coverage, penalize redundancy
-                ev = ev + cand_covers_unique * 30000
-                ev = ev - cand_redundant * 20000
+                # Very strong coordination: bots MUST avoid picking items that
+                # other bots already carry or plan to pick. This is the #1 source
+                # of wasted moves in multi-bot games.
+                _nl = self.num_locked
+                unique_bonus = 30000 + _nl * 3000   # 33K (medium) to 57K (expert)
+                redundant_pen = 20000 + _nl * 2000   # 22K (medium) to 38K (expert)
+                ev = ev + cand_covers_unique * unique_bonus
+                ev = ev - cand_redundant * redundant_pen
 
                 # === Differentiated distance guidance (replaces general guidance) ===
                 # Priority 1: Uncovered active types → strong signal (same as single-bot).
@@ -1316,14 +1456,10 @@ class GPUBeamSearcher:
                 trip_c = close_c & ((best_covered_dist + dist_drop + 2) <= rounds_left)
 
                 # --- Priority 1: Uncovered active types ---
-                ev = ev + torch.where(
-                    trip_u & has_space & ~has_active_inv,
-                    20000.0 - best_uncovered_dist * 800,
-                    torch.zeros(B, device=d))
-                ev = ev + torch.where(
-                    trip_u & has_space & has_active_inv,
-                    5000.0 - best_uncovered_dist * 200,
-                    torch.zeros(B, device=d))
+                _mu1 = (trip_u & has_space & ~has_active_inv).float()
+                ev = ev + _mu1 * (20000.0 - best_uncovered_dist * 800)
+                _mu2 = (trip_u & has_space & has_active_inv).float()
+                ev = ev + _mu2 * (5000.0 - best_uncovered_dist * 200)
 
                 # --- Priority 2: All active slots covered → pipeline toward preview ---
                 # Bot becomes a pipeline bot: pre-fetch next order's items.
@@ -1367,56 +1503,44 @@ class GPUBeamSearcher:
                     trip_pp = close_pp & ((best_pp_dist + dist_drop + 2) <= rounds_left)
 
                     # Pipeline toward order+1 uncovered types
-                    ev = ev + torch.where(
-                        all_active_covered & trip_p & has_space & ~has_active_inv,
-                        16000.0 - best_prev_dist * 800,
-                        torch.zeros(B, device=d))
+                    _mp1 = (all_active_covered & trip_p & has_space & ~has_active_inv).float()
+                    ev = ev + _mp1 * (16000.0 - best_prev_dist * 800)
 
                     # Deep pipeline toward order+2 (when order+1 fully covered by locked bots)
-                    ev = ev + torch.where(
-                        all_active_covered & ~close_p & trip_pp & has_space & ~has_active_inv,
-                        14000.0 - best_pp_dist * 800,
-                        torch.zeros(B, device=d))
+                    _mp2 = (all_active_covered & ~close_p & trip_pp & has_space & ~has_active_inv).float()
+                    ev = ev + _mp2 * (14000.0 - best_pp_dist * 800)
 
                     # --- Priority 3: No preview options → weak covered fallback ---
                     no_options = all_active_covered & ~close_p & ~close_pp
-                    ev = ev + torch.where(
-                        no_options & trip_c & has_space & ~has_active_inv,
-                        10000.0 - best_covered_dist * 500,
-                        torch.zeros(B, device=d))
+                    _mp3 = (no_options & trip_c & has_space & ~has_active_inv).float()
+                    ev = ev + _mp3 * (10000.0 - best_covered_dist * 500)
 
         # === Type specialization bonus (soft assignment) ===
         # Encourages this bot to pick items of its preferred types, reducing
         # competition with other bots and improving natural work division.
-        if self.preferred_types is not None and len(self.preferred_types) > 0:
-            # Build preferred_mask: [num_types] bool
-            pref_mask = torch.zeros(self.num_types + 1, dtype=torch.bool, device=d)
-            for t in self.preferred_types:
-                if 0 <= t < self.num_types:
-                    pref_mask[t] = True
+        if self._pref_mask is not None:
+            pref_mask = self._pref_mask
 
-            # Bonus for carrying preferred type items in inventory
+            # Bonus for carrying preferred type items in inventory (vectorized)
             inv_safe = inv.long().clamp(0, self.num_types)  # [B, INV_CAP]
             has_item_flat2 = (inv >= 0)  # [B, INV_CAP]
-            for s in range(INV_CAP):
-                is_pref = pref_mask[inv_safe[:, s]]  # [B]
-                ev = ev + (is_pref & has_item_flat2[:, s]).float() * 8000
+            is_pref_all = pref_mask[inv_safe]  # [B, INV_CAP]
+            ev = ev + (is_pref_all & has_item_flat2).float().sum(dim=1) * 8000
 
             # Guidance bonus: moving toward nearest preferred type when empty/space
-            best_pref_dist = torch.full((B,), 9999.0, device=d)
-            for t in self.preferred_types:
-                if 0 <= t < self.num_types:
-                    t_t = torch.tensor(t, dtype=torch.long, device=d)
-                    d_t = self.dist_to_type[t_t, bot_y, bot_x].float()  # [B]
-                    better = d_t < best_pref_dist
-                    best_pref_dist = torch.where(better, d_t, best_pref_dist)
+            # Vectorized: stack all preferred type distances, take min
+            pref_list = [t for t in self.preferred_types if 0 <= t < self.num_types]
+            if pref_list:
+                pref_t = torch.tensor(pref_list, dtype=torch.long, device=d)
+                # dist_to_type[pref_types, bot_y, bot_x] → [len(pref_list), B]
+                pref_dists = self.dist_to_type[pref_t.unsqueeze(1), bot_y.unsqueeze(0), bot_x.unsqueeze(0)]
+                best_pref_dist = pref_dists.float().min(dim=0).values  # [B]
+            else:
+                best_pref_dist = torch.full((B,), 9999.0, device=d)
             close_pref = best_pref_dist < 9999
             trip_pref = close_pref & ((best_pref_dist + dist_drop + 2) <= rounds_left)
-            # Only guide toward preferred types when empty (not already carrying active items)
-            ev = ev + torch.where(
-                trip_pref & has_space & ~has_active_inv,
-                6000.0 - best_pref_dist * 300,
-                torch.zeros(B, device=d))
+            _mpref = (trip_pref & has_space & ~has_active_inv).float()
+            ev = ev + _mpref * (6000.0 - best_pref_dist * 300)
 
         return ev
 
@@ -1466,19 +1590,12 @@ class GPUBeamSearcher:
             evals[~valid_mask] = float('-inf')
             evals[is_noop_dup] = float('-inf')
 
-            # Top-K
+            # Top-K — avoid .item() sync; use total size as upper bound
             new_B = new_state['bot_x'].shape[0]
-            valid_count = int((valid_mask & ~is_noop_dup).sum().item())
-            k = min(beam_width, max(valid_count, 1))
+            k = min(beam_width, new_B)
             _, topk_idx = torch.topk(evals, k)
 
             N = C  # candidates per parent state
-
-            # Count unique states for diagnostics
-            num_unique = 0
-            if verbose and (rnd < 5 or rnd % 50 == 0 or rnd == MAX_ROUNDS - 1):
-                hashes = self._hash({key: val[topk_idx] for key, val in new_state.items()})
-                num_unique = int(torch.unique(hashes).shape[0])
 
             # Gather selected states
             state = {}
@@ -1493,12 +1610,17 @@ class GPUBeamSearcher:
             parent_history.append(parent.cpu())
             act_offset_history.append((taken_acts, taken_items))
 
-            dt = time.time() - t_rnd
+            # Verbose diagnostics (only sync to CPU when printing)
             if verbose and (rnd < 5 or rnd % 25 == 0 or rnd == MAX_ROUNDS - 1):
+                dt = time.time() - t_rnd
                 best_score = state['score'].max().item()
+                num_unique = 0
+                if rnd < 5 or rnd % 50 == 0 or rnd == MAX_ROUNDS - 1:
+                    hashes = self._hash(state)
+                    num_unique = int(torch.unique(hashes).shape[0])
                 uniq_str = f", unique={num_unique}" if num_unique > 0 else ""
                 print(f"  R{rnd:3d}: score={best_score:3d}, beam={k}, "
-                      f"valid={valid_count}/{new_B}{uniq_str}, dt={dt:.3f}s",
+                      f"states={new_B}{uniq_str}, dt={dt:.3f}s",
                       file=sys.stderr)
 
         # Find best final state
@@ -1732,7 +1854,9 @@ class GPUBeamSearcher:
         use_dp_expand = True
         N = self.dp_num_actions if use_dp_expand else self.num_actions
 
-        # History for action reconstruction (kept on CPU to save GPU mem)
+        # History for action reconstruction (kept on GPU to avoid per-round CPU sync,
+        # transferred to CPU only during final backtracking).
+        # With 32GB VRAM, ~200K states × 300 rounds uses <1GB total.
         parent_idx_history = []  # parent_idx_history[r][i] = index into round r-1's set
         act_history = []         # act_history[r][i] = action type taken
         item_history = []        # item_history[r][i] = action item index
@@ -1749,25 +1873,34 @@ class GPUBeamSearcher:
             else:
                 expanded, actions, action_items = self._expand(state)
                 dp_valid = None
-            BN = B * N
 
-            # Step all expanded states
-            new_state = self._step(expanded, actions, action_items, round_num=rnd)
-
-            # Detect no-ops (actions producing same state as wait)
-            no_change = (
-                (new_state['bot_x'] == expanded['bot_x']) &
-                (new_state['bot_y'] == expanded['bot_y']) &
-                ((new_state['bot_inv'] == expanded['bot_inv']).all(dim=1)) &
-                (new_state['score'] == expanded['score']) &
-                ((new_state['active_del'] == expanded['active_del']).all(dim=1)) &
-                (new_state['active_idx'] == expanded['active_idx'])
-            )
-            is_noop = no_change & (actions != ACT_WAIT)
-
-            # Also mark invalid dp_expand slots as noop
+            # === Pre-filter: step only valid actions (saves ~40% of _step work) ===
             if dp_valid is not None:
-                is_noop = is_noop | ~dp_valid
+                filt_idx = dp_valid.nonzero(as_tuple=True)[0]
+                filt_expanded = {k: v[filt_idx] for k, v in expanded.items()}
+                filt_actions = actions[filt_idx]
+                filt_items = action_items[filt_idx]
+                filt_parent = filt_idx // N  # maps to parent index in state
+                BF = filt_idx.shape[0]
+            else:
+                filt_expanded = expanded
+                filt_actions = actions
+                filt_items = action_items
+                filt_parent = None
+                BF = B * N
+
+            # Step only valid expanded states
+            new_state = self._step(filt_expanded, filt_actions, filt_items, round_num=rnd)
+
+            # Detect no-ops among valid states
+            no_change = (
+                (new_state['bot_x'] == filt_expanded['bot_x']) &
+                (new_state['bot_y'] == filt_expanded['bot_y']) &
+                ((new_state['bot_inv'] == filt_expanded['bot_inv']).all(dim=1)) &
+                (new_state['score'] == filt_expanded['score']) &
+                (new_state['active_idx'] == filt_expanded['active_idx'])
+            )
+            is_noop = no_change & (filt_actions != ACT_WAIT)
 
             # Hash states for dedup
             hashes = self._hash(new_state)
@@ -1775,25 +1908,28 @@ class GPUBeamSearcher:
 
             # Dedup: sort by hash, keep highest-scoring representative per hash
             sorted_h, sort_idx = hashes.sort()
-            is_first = torch.ones(BN, dtype=torch.bool, device=d)
+            is_first = torch.ones(BF, dtype=torch.bool, device=d)
             is_first[1:] = sorted_h[1:] != sorted_h[:-1]
             valid = is_first & (sorted_h != -1)
 
-            # Indices of unique valid states in the expanded array
+            # Indices of unique valid states in the filtered array
             unique_idx = sort_idx[valid]
             B_new = unique_idx.shape[0]
 
-            # Parent tracking: which state in previous round produced this one
-            parent_idx = unique_idx // N
-            parent_idx_history.append(parent_idx.cpu())
-            act_history.append(actions[unique_idx].cpu())
-            item_history.append(action_items[unique_idx].cpu())
+            # Parent tracking: map filtered→original parent index
+            if filt_parent is not None:
+                parent_idx = filt_parent[unique_idx]
+            else:
+                parent_idx = unique_idx // N
+            parent_idx_history.append(parent_idx)
+            act_history.append(filt_actions[unique_idx])
+            item_history.append(filt_items[unique_idx])
 
             # Gather unique states
             state = {k: v[unique_idx] for k, v in new_state.items()}
 
             # Adaptive beam: allow 2x headroom when state diversity is high
-            diversity = B_new / BN if BN > 0 else 0
+            diversity = B_new / BF if BF > 0 else 0
             effective_max = int(max_states * 2) if diversity > 0.5 else max_states
 
             # If too many states, prune by eval (lossy fallback)
@@ -1802,17 +1938,15 @@ class GPUBeamSearcher:
                 evals = self._eval(state, round_num=rnd)
                 keep = min(effective_max, B_new)
 
-                # Step 7: Threshold pruning before topk
-                # Filter out low-eval states first, then topk on survivors
-                if B_new > keep * 2:  # only bother if filtering saves >50%
+                # Threshold pruning before topk (avoids .item() sync)
+                # Filter out obviously bad states, then topk on survivors
+                if B_new > keep * 2:
                     max_eval = evals.max()
-                    # Keep states within reasonable range of best
                     threshold = max_eval - 50000  # ~5 score points
                     survivor_mask = evals >= threshold
-                    survivor_count = survivor_mask.sum().item()
-                    if survivor_count > keep and survivor_count < B_new * 0.9:
-                        # Filter first, then topk on smaller set
-                        survivor_idx = survivor_mask.nonzero(as_tuple=True)[0]
+                    survivor_idx = survivor_mask.nonzero(as_tuple=True)[0]
+                    sc = survivor_idx.shape[0]
+                    if sc > keep and sc < B_new * 0.9:
                         survivor_evals = evals[survivor_idx]
                         _, local_topk = torch.topk(survivor_evals, keep)
                         topk = survivor_idx[local_topk]
@@ -1823,26 +1957,35 @@ class GPUBeamSearcher:
 
                 topk_sorted, _ = topk.sort()  # maintain order for consistency
                 state = {k: v[topk_sorted] for k, v in state.items()}
-                parent_idx_history[-1] = parent_idx_history[-1][topk_sorted.cpu()]
-                act_history[-1] = act_history[-1][topk_sorted.cpu()]
-                item_history[-1] = item_history[-1][topk_sorted.cpu()]
+                # History is on GPU — index directly (no CPU transfer needed)
+                parent_idx_history[-1] = parent_idx_history[-1][topk_sorted]
+                act_history[-1] = act_history[-1][topk_sorted]
+                item_history[-1] = item_history[-1][topk_sorted]
                 B_new = keep
 
-            dt = time.time() - t0
-            if i < 10 or i % 5 == 0 or i == max_rounds - 1:
+            # Only sync to CPU when needed for verbose output or callbacks
+            _need_score = on_round and (i < 10 or i % 5 == 0 or i == max_rounds - 1)
+            _need_verbose = verbose and (i < 10 or i % 25 == 0 or i == max_rounds - 1)
+            if _need_score or _need_verbose:
+                dt = time.time() - t0
                 best_score = state['score'].max().item()
-                if verbose and (i < 10 or i % 25 == 0 or i == max_rounds - 1):
+                if _need_verbose:
                     print(f"  R{rnd:3d}: score={best_score:3d}, "
-                          f"unique={B_new}, expanded={BN}, "
+                          f"unique={B_new}, expanded={BF}, "
                           f"t={dt:.1f}s", file=sys.stderr)
                 if on_round:
-                    on_round(rnd, best_score, B_new, BN, dt)
+                    on_round(rnd, best_score, B_new, BF, dt)
 
         # Find best final state
         best_idx = state['score'].argmax().item()
         best_score = state['score'][best_idx].item()
 
-        # Backtrack to reconstruct action sequence (single-bot actions only)
+        # Backtrack to reconstruct action sequence (transfer history from GPU to CPU)
+        # Batch transfer: move all history to CPU at once before backtracking
+        parent_idx_history = [h.cpu() for h in parent_idx_history]
+        act_history = [h.cpu() for h in act_history]
+        item_history = [h.cpu() for h in item_history]
+
         actions_seq = []
         idx = best_idx
         for j in range(max_rounds - 1, -1, -1):

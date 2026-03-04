@@ -50,12 +50,16 @@ def ws_action_to_internal(ws_act, ms):
 
 
 def run_seed(difficulty, seed, device='cuda', max_states=None, no_refine=False,
-            verbose=True, round_delay=0.0):
+            verbose=True, round_delay=0.0, record=False):
     """Run one seed via in-process sim. Returns (final_score, elapsed_s).
 
     round_delay: seconds to sleep between rounds, simulating live game timing.
     Real game is 0.4s/round. Use 0.1-0.4 to let background GPU threads contribute.
+    record: if True, write a JSONL log and import to PostgreSQL as 'synthetic'.
     """
+    import json as _json
+    import subprocess as _subprocess
+
     solver = AnytimeGPUStream(
         ws_url='sim://in-process',
         save=False,
@@ -68,6 +72,8 @@ def run_seed(difficulty, seed, device='cuda', max_states=None, no_refine=False,
     ms = state.map_state
     t0 = time.time()
     last_source = 'none'
+
+    log_lines = [] if record else None
 
     for rnd in range(MAX_ROUNDS):
         state.round = rnd
@@ -91,6 +97,11 @@ def run_seed(difficulty, seed, device='cuda', max_states=None, no_refine=False,
                   file=sys.stderr)
             last_source = source
 
+        # Capture JSONL data for DB import
+        if record:
+            log_lines.append(_json.dumps(data))
+            log_lines.append(_json.dumps({'actions': ws_actions}))
+
         # Convert WS actions → internal (act, item_idx)
         actions_by_bot = {wa['bot']: ws_action_to_internal(wa, ms) for wa in ws_actions}
         num_bots = len(state.bot_positions)
@@ -99,6 +110,26 @@ def run_seed(difficulty, seed, device='cuda', max_states=None, no_refine=False,
         step(state, internal_actions, all_orders)
 
     elapsed = time.time() - t0
+
+    # Write JSONL and import to DB
+    if record and log_lines:
+        import tempfile
+        log_lines.append(_json.dumps({'type': 'game_over', 'score': state.score}))
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                f'game_log_syn_{difficulty}_{seed}_{int(t0)}.jsonl')
+        with open(log_path, 'w') as f:
+            f.write('\n'.join(log_lines) + '\n')
+        _import_script = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
+        ))
+        if os.path.exists(_import_script):
+            _subprocess.Popen(
+                ['python', _import_script, log_path, '--run-type', 'synthetic'],
+                stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
+            )
+            print(f"  [db] Importing synthetic log to PostgreSQL (seed={seed})", file=sys.stderr)
+
     return state.score, elapsed
 
 
@@ -191,6 +222,8 @@ def main():
                         help='Skip greedy baseline comparison')
     parser.add_argument('--quiet', '-q', action='store_true',
                         help='Suppress per-round output')
+    parser.add_argument('--record', action='store_true',
+                        help='Write JSONL log per seed and import to PostgreSQL as synthetic')
     args = parser.parse_args()
 
     device = 'cpu' if args.cpu else 'cuda'
@@ -226,6 +259,7 @@ def main():
             no_refine=args.no_refine,
             verbose=not args.quiet,
             round_delay=args.round_delay,
+            record=args.record,
         )
         scores.append(score)
         times.append(elapsed)

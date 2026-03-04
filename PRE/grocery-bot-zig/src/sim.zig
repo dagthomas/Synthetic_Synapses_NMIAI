@@ -274,6 +274,99 @@ pub const SimGame = struct {
         return game;
     }
 
+    /// Initialize game state from live capture data instead of seed.
+    /// grid_bytes: [height * width] u8, values match Cell enum (0=floor,1=wall,2=shelf,3=dropoff)
+    /// item_x/item_y: [num_items] u8 — sorted by (x,y) to match Python indexing
+    /// item_type_id: [num_items] u8 — Python type IDs (0..num_types-1)
+    /// All bots start at spawn with empty inventories. Orders must be overridden via overrideOrders().
+    pub fn initFromCapture(
+        width: u16,
+        height: u16,
+        dropoff_x: u16,
+        dropoff_y: u16,
+        grid_bytes: [*]const u8,
+        num_items: u16,
+        item_x: [*]const u8,
+        item_y: [*]const u8,
+        item_type_id: [*]const u8,
+        num_types: u8,
+        num_bots: u8,
+    ) SimGame {
+        var game = SimGame{
+            .cfg = DiffConfig{ .w = @intCast(width), .h = @intCast(height), .bots = num_bots,
+                               .aisles = 0, .type_count = num_types, .order_min = 3, .order_max = 5 },
+            .width = width,
+            .height = height,
+            .grid = undefined,
+            .items = undefined,
+            .item_count = 0,
+            .bot_pos = undefined,
+            .bot_inv = undefined,
+            .bot_inv_len = undefined,
+            .bot_count = num_bots,
+            .all_orders = undefined,
+            .order_count = 0,
+            .next_order_idx = 2,
+            .active_idx = 0,
+            .dropoff = .{ @intCast(dropoff_x), @intCast(dropoff_y) },
+            .spawn = .{ @intCast(width - 2), @intCast(height - 2) },
+            .item_types = undefined,
+            .type_count = num_types,
+            .score = 0,
+            .items_delivered = 0,
+            .orders_completed = 0,
+            .mt = MersenneTwister.init(0),
+        };
+
+        // Init grid from byte array (0=floor,1=wall,2=shelf,3=dropoff)
+        for (0..MAX_H) |y| {
+            for (0..MAX_W) |x| {
+                game.grid[y][x] = .floor;
+            }
+        }
+        for (0..height) |y| {
+            for (0..width) |x| {
+                const code = grid_bytes[y * width + x];
+                game.grid[y][x] = switch (code) {
+                    1 => .wall,
+                    2 => .shelf,
+                    3 => .dropoff,
+                    else => .floor,
+                };
+            }
+        }
+
+        // Item types: use ALL_TYPES names for distinctness (indices match Python type IDs)
+        for (0..num_types) |i| {
+            game.item_types[i] = ItemType.fromStr(ALL_TYPES[i % ALL_TYPES.len]);
+        }
+        for (num_types..16) |i| {
+            game.item_types[i] = ItemType.fromStr(ALL_TYPES[i % ALL_TYPES.len]);
+        }
+
+        // Items (already sorted by (x,y) from Python)
+        game.item_count = num_items;
+        for (0..num_items) |i| {
+            const tid: usize = @as(usize, item_type_id[i]) % num_types;
+            game.items[i] = .{
+                .id_buf = undefined,
+                .id_len = 0,
+                .item_type = game.item_types[tid],
+                .pos = .{ .x = @intCast(item_x[i]), .y = @intCast(item_y[i]) },
+            };
+            const id_str = std.fmt.bufPrint(&game.items[i].id_buf, "item_{d}", .{i}) catch "item_?";
+            game.items[i].id_len = @intCast(id_str.len);
+        }
+
+        // Bots at spawn with empty inventories
+        for (0..num_bots) |i| {
+            game.bot_pos[i] = .{ game.spawn[0], game.spawn[1] };
+            game.bot_inv_len[i] = 0;
+        }
+
+        return game;
+    }
+
     fn sortShelfPositions(positions: [][2]u16) void {
         // Insertion sort by (x, y)
         for (1..positions.len) |i| {

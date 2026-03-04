@@ -6,7 +6,10 @@
       "Bash(do echo:*)",
       "Bash(/c/Users/dagth/zig15/zig-x86_64-windows-0.15.2/zig.exe build:*)",
       "mcp__nmiai__search_docs",
-      "mcp__nmiai__list_docs"
+      "mcp__nmiai__list_docs",
+      "mcp__ide__getDiagnostics",
+      "Bash(PGPASSWORD=grocery123 psql:*)",
+      "Bash(docker exec:*)"
     ]
   }
 }

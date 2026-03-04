@@ -11,5 +11,7 @@ export async function load({ params }) {
 		[params.id]
 	);
 
+	if (rounds.length === 0) throw error(404, 'Run has no round data');
+
 	return { run, rounds };
 }

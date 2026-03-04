@@ -53,6 +53,7 @@ class PrecomputedTables:
         # Lazily computed
         self._dist_maps = None
         self._gpu_tensors = None
+        self._trip_table = None
 
         # Item/type tables (set by _compute_item_tables)
         self.dist_to_type = None     # [num_types, H, W] int16
@@ -452,6 +453,262 @@ class PrecomputedTables:
         self._gpu_tensors = result
         return result
 
+    def get_trips(self, map_state, max_size=3):
+        """Get or compute TripTable for this map. Cached after first call."""
+        if self._trip_table is None:
+            self._trip_table = TripTable.compute(self, map_state, max_size)
+        return self._trip_table
+
+
+# --- Trip precomputation ---
+
+# Hardcoded permutations for k=1,2,3 (avoids itertools import)
+_PERMS = {
+    1: ((0,),),
+    2: ((0, 1), (1, 0)),
+    3: ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)),
+}
+
+
+def _enum_multisets(num_types, max_size):
+    """Enumerate all sorted multisets of size 1..max_size from num_types item types.
+
+    Returns (combos, combo_to_idx) where combos[i] is a sorted tuple of type IDs.
+    """
+    combos = []
+    combo_to_idx = {}
+
+    def _rec(remaining, min_t, current):
+        if remaining == 0:
+            c = tuple(current)
+            combo_to_idx[c] = len(combos)
+            combos.append(c)
+            return
+        for t in range(min_t, num_types):
+            current.append(t)
+            _rec(remaining - 1, t, current)
+            current.pop()
+
+    for size in range(1, max_size + 1):
+        _rec(size, 0, [])
+    return combos, combo_to_idx
+
+
+class TripTable:
+    """Precomputed optimal trip costs for collecting item multisets and returning to dropoff.
+
+    For each (starting_cell, item_multiset), stores the minimum rounds to:
+    1. Travel to shelves and pick up all items in the multiset
+    2. Return to dropoff and perform the dropoff action
+
+    Trip cost = sum(travel segments) + sum(pickup actions) + 1 (dropoff action)
+
+    Algorithm: backward-chaining DP over shelf adjacency cells.
+    Inner costs (intermediate shelves -> dropoff) are independent of starting
+    position, so computed once per type-ordering and reused for all N cells.
+    """
+
+    def __init__(self, cost, first_target, combos, combo_to_idx,
+                 num_types, cell_idx_map, n_cells):
+        self.cost = cost                    # [N_cells, N_combos] int16
+        self.first_target = first_target    # [N_cells, N_combos] int16
+        self.combos = combos                # list of sorted type-id tuples
+        self.combo_to_idx = combo_to_idx    # dict: tuple -> combo index
+        self.num_types = num_types
+        self.cell_idx_map = cell_idx_map    # [H, W] int32 (-1 = not walkable)
+        self.n_cells = n_cells
+        self.n_combos = len(combos)
+        self._gpu = None
+
+    def get_cost(self, cell_idx, combo):
+        """Get trip cost for a cell index and combo (sorted tuple of type IDs)."""
+        ci = self.combo_to_idx.get(combo)
+        if ci is None or cell_idx < 0:
+            return 9999
+        return int(self.cost[cell_idx, ci])
+
+    def order_cost(self, start_cell_idx, order_types, dropoff_cell_idx, _memo=None):
+        """Minimum rounds to fulfill an order, splitting into trips of <= 3.
+
+        Tries all possible trip decompositions and returns the cheapest.
+        First trip starts from start_cell_idx, subsequent trips from dropoff.
+        """
+        from itertools import combinations
+
+        if _memo is None:
+            _memo = {}
+
+        key = (start_cell_idx, tuple(sorted(order_types)))
+        if key in _memo:
+            return _memo[key]
+
+        n = len(order_types)
+        if n == 0:
+            return 0
+        if n <= 3:
+            combo = tuple(sorted(order_types))
+            ci = self.combo_to_idx.get(combo)
+            cost = int(self.cost[start_cell_idx, ci]) if ci is not None else 9999
+            _memo[key] = cost
+            return cost
+
+        best = 9999
+        for trip_size in range(1, min(4, n + 1)):
+            seen_combos = set()
+            for first_indices in combinations(range(n), trip_size):
+                first_combo = tuple(sorted(order_types[i] for i in first_indices))
+                if first_combo in seen_combos:
+                    continue
+                seen_combos.add(first_combo)
+
+                ci = self.combo_to_idx.get(first_combo)
+                if ci is None:
+                    continue
+                first_cost = int(self.cost[start_cell_idx, ci])
+
+                remaining = [order_types[i] for i in range(n)
+                             if i not in set(first_indices)]
+                rest_cost = self.order_cost(
+                    dropoff_cell_idx, remaining, dropoff_cell_idx, _memo)
+
+                total = first_cost + rest_cost
+                if total < best:
+                    best = total
+
+        _memo[key] = best
+        return best
+
+    def to_gpu(self, device='cuda'):
+        """Upload tables to GPU. Cached per device."""
+        import torch
+        if self._gpu is not None and self._gpu.get('_device') == device:
+            return self._gpu
+        self._gpu = {
+            'cost': torch.tensor(self.cost, dtype=torch.int16, device=device),
+            'first_target': torch.tensor(
+                self.first_target, dtype=torch.int16, device=device),
+            'cell_idx_map': torch.tensor(
+                self.cell_idx_map, dtype=torch.int32, device=device),
+            '_device': device,
+        }
+        return self._gpu
+
+    @classmethod
+    def compute(cls, tables, map_state, max_size=3):
+        """Compute optimal trip costs for all multisets from all walkable cells.
+
+        Uses backward-chaining DP over shelf adjacency cells:
+        For each ordering of unique types in a combo, cost is computed
+        bottom-up (last type -> first type), then minimized across orderings.
+        """
+        t0 = time.time()
+        N = tables.n_cells
+        num_types = map_state.num_types
+        H, W = tables.grid_shape
+        dist = tables.dist_matrix  # [N, N] int16
+        drop_x, drop_y = map_state.drop_off
+        drop_idx = tables.pos_to_idx[(drop_x, drop_y)]
+
+        # Collect unique pickup cells per type
+        type_adj_sets = [set() for _ in range(num_types)]
+        for item_idx in range(map_state.num_items):
+            tid = int(map_state.item_types[item_idx])
+            for ax, ay in map_state.item_adjacencies.get(item_idx, []):
+                ci = tables.pos_to_idx.get((ax, ay))
+                if ci is not None:
+                    type_adj_sets[tid].add(ci)
+        adj = [np.array(sorted(s), dtype=np.int32) for s in type_adj_sets]
+
+        # Precompute distance slices (avoids repeated fancy indexing)
+        # d_start[t][s, i] = dist from cell s to adj[t][i]
+        d_start = []
+        for t in range(num_types):
+            if len(adj[t]):
+                d_start.append(dist[:, adj[t]].astype(np.int32))
+            else:
+                d_start.append(np.empty((N, 0), dtype=np.int32))
+
+        # d_drop[t][i] = dist from adj[t][i] to dropoff
+        d_drop = []
+        for t in range(num_types):
+            if len(adj[t]):
+                d_drop.append(dist[adj[t], drop_idx].astype(np.int32))
+            else:
+                d_drop.append(np.empty(0, dtype=np.int32))
+
+        # d_adj[t1][t2][i, j] = dist from adj[t1][i] to adj[t2][j]
+        d_adj = [[None] * num_types for _ in range(num_types)]
+        for t1 in range(num_types):
+            if not len(adj[t1]):
+                continue
+            rows = dist[adj[t1]]  # [|adj[t1]|, N]
+            for t2 in range(num_types):
+                if len(adj[t2]):
+                    d_adj[t1][t2] = rows[:, adj[t2]].astype(np.int32)
+
+        # Enumerate all multisets
+        combos, combo_to_idx = _enum_multisets(num_types, max_size)
+        nc = len(combos)
+
+        # Output arrays
+        cost_out = np.full((N, nc), 9999, dtype=np.int16)
+        first_out = np.full((N, nc), -1, dtype=np.int16)
+        arange_N = np.arange(N)
+
+        for ci, combo in enumerate(combos):
+            # Count unique types with multiplicities
+            tc = {}
+            for t in combo:
+                tc[t] = tc.get(t, 0) + 1
+            utypes = sorted(tc)
+            counts = [tc[t] for t in utypes]
+            k = len(utypes)
+
+            if any(len(adj[t]) == 0 for t in utypes):
+                continue
+
+            best = np.full(N, 9999, dtype=np.int32)
+            best_ft = np.full(N, -1, dtype=np.int32)
+
+            for perm in _PERMS[k]:
+                ot = [utypes[p] for p in perm]   # ordered types
+                oc = [counts[p] for p in perm]   # ordered counts
+
+                # Backward: cost from last type's adj cells to dropoff
+                # pickup_count + travel_to_dropoff + dropoff_action
+                tail = oc[-1] + d_drop[ot[-1]] + 1  # [|adj[last]|]
+
+                # Chain backward through remaining types
+                for s in range(k - 2, -1, -1):
+                    ct, nt = ot[s], ot[s + 1]
+                    # cost = pickups + min(travel_to_next + next_cost)
+                    tail = oc[s] + (d_adj[ct][nt] + tail[np.newaxis, :]).min(axis=1)
+
+                # Forward: from each starting cell, find cheapest first shelf
+                ft = ot[0]
+                total = d_start[ft] + tail[np.newaxis, :]  # [N, |adj[ft]|]
+                bi = total.argmin(axis=1)   # [N]
+                cv = total[arange_N, bi]    # [N]
+                fc = adj[ft][bi]            # [N] first target cell idx
+
+                m = cv < best
+                best[m] = cv[m]
+                best_ft[m] = fc[m]
+
+            cost_out[:, ci] = np.clip(best, 0, 9999).astype(np.int16)
+            first_out[:, ci] = best_ft.astype(np.int16)
+
+        # Build cell index map: grid[y, x] -> walkable cell index
+        cell_idx_map = np.full((H, W), -1, dtype=np.int32)
+        for idx, (x, y) in enumerate(tables.walkable):
+            cell_idx_map[y, x] = idx
+
+        dt = time.time() - t0
+        print(f"  TripTable: {nc} combos, {N} cells, {dt * 1000:.1f}ms",
+              file=sys.stderr)
+        return cls(cost_out, first_out, combos, combo_to_idx,
+                   num_types, cell_idx_map, N)
+
 
 def precompute_for_difficulty(difficulty, verbose=True):
     """Precompute tables for a specific difficulty using captured map data."""
@@ -484,7 +741,7 @@ def precompute_for_difficulty(difficulty, verbose=True):
             print(f"  dist_to_type: {tables.dist_to_type.shape}", file=sys.stderr)
             print(f"  num_types: {ms.num_types}, num_items: {ms.num_items}", file=sys.stderr)
 
-    return tables
+    return tables, ms
 
 
 def show_info():
@@ -518,12 +775,39 @@ if __name__ == '__main__':
     parser.add_argument('difficulty', nargs='?', default=None,
                         choices=['easy', 'medium', 'hard', 'expert'])
     parser.add_argument('--info', action='store_true', help='Show cache stats')
+    parser.add_argument('--trips', action='store_true',
+                        help='Also compute and test trip tables')
     args = parser.parse_args()
 
     if args.info:
         show_info()
     elif args.difficulty:
-        precompute_for_difficulty(args.difficulty)
+        result = precompute_for_difficulty(args.difficulty)
+        if args.trips and result:
+            tables, ms = result
+            trips = tables.get_trips(ms)
+            print(f"  Trip cost memory: {trips.cost.nbytes/1024:.1f} KB",
+                  file=sys.stderr)
+            # Show sample: cost from dropoff for a few combos
+            drop_idx = tables.pos_to_idx[(ms.drop_off[0], ms.drop_off[1])]
+            print(f"  Sample trip costs from dropoff (cell {drop_idx}):",
+                  file=sys.stderr)
+            for combo in trips.combos[:5]:
+                c = trips.get_cost(drop_idx, combo)
+                names = [ms.item_type_names[t] for t in combo]
+                print(f"    {names}: {c} rounds", file=sys.stderr)
+            # Show order cost if orders available
+            if hasattr(ms, 'orders') and ms.orders:
+                order = ms.orders[0]
+                types = [t for t in order['types'] if t >= 0]
+                oc = trips.order_cost(drop_idx, types, drop_idx)
+                names = [ms.item_type_names[t] for t in types]
+                print(f"  Order 0 cost ({names}): {oc} rounds", file=sys.stderr)
     else:
         for diff in ['easy', 'medium', 'hard', 'expert']:
-            precompute_for_difficulty(diff)
+            result = precompute_for_difficulty(diff)
+            if args.trips and result:
+                tables, ms = result
+                trips = tables.get_trips(ms)
+                print(f"  Trip cost memory: {trips.cost.nbytes/1024:.1f} KB",
+                      file=sys.stderr)

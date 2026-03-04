@@ -59,6 +59,43 @@ def _load_lib():
         ctypes.POINTER(ctypes.c_int16),          # out_pos_y [num_locked * 300]
     ]
 
+    # ── Live capture variants (no seed — grid/items from capture data) ──
+    _LIVE_MAP_ARGS = [
+        ctypes.c_uint8,                          # width
+        ctypes.c_uint8,                          # height
+        ctypes.c_uint8,                          # dropoff_x
+        ctypes.c_uint8,                          # dropoff_y
+        ctypes.POINTER(ctypes.c_uint8),          # grid_bytes [height * width]
+        ctypes.c_uint16,                         # num_items
+        ctypes.POINTER(ctypes.c_uint8),          # item_x [num_items]
+        ctypes.POINTER(ctypes.c_uint8),          # item_y [num_items]
+        ctypes.POINTER(ctypes.c_uint8),          # item_type_id [num_items]
+        ctypes.c_uint8,                          # num_types
+        ctypes.c_uint8,                          # num_bots
+    ]
+
+    lib.ffi_verify_live.restype = ctypes.c_int32
+    lib.ffi_verify_live.argtypes = _LIVE_MAP_ARGS + [
+        ctypes.POINTER(ctypes.c_int8),           # actions [300 * num_bots]
+        ctypes.POINTER(ctypes.c_int16),          # action_items [300 * num_bots]
+        ctypes.POINTER(ctypes.c_uint8),          # order_types (flat)
+        ctypes.POINTER(ctypes.c_uint8),          # order_lens [num_orders]
+        ctypes.c_uint16,                         # num_orders
+    ]
+
+    lib.ffi_presim_locked_live.restype = None
+    lib.ffi_presim_locked_live.argtypes = _LIVE_MAP_ARGS + [
+        ctypes.POINTER(ctypes.c_int8),           # all_actions [num_total * 300]
+        ctypes.POINTER(ctypes.c_int16),          # all_action_items
+        ctypes.POINTER(ctypes.c_uint8),          # locked_bot_ids [num_locked]
+        ctypes.c_uint8,                          # num_locked
+        ctypes.POINTER(ctypes.c_uint8),          # order_types
+        ctypes.POINTER(ctypes.c_uint8),          # order_lens
+        ctypes.c_uint16,                         # num_orders
+        ctypes.POINTER(ctypes.c_int16),          # out_pos_x [num_locked * 300]
+        ctypes.POINTER(ctypes.c_int16),          # out_pos_y [num_locked * 300]
+    ]
+
     return lib
 
 
@@ -67,6 +104,68 @@ def _get_lib():
     if _lib is None:
         _lib = _load_lib()
     return _lib
+
+
+def _capture_to_map_args(capture_data):
+    """Pack capture_data grid/items into ctypes args for ffi_verify_live/_presim_locked_live.
+
+    Returns a tuple of ctypes args matching _LIVE_MAP_ARGS order:
+        (width, height, dropoff_x, dropoff_y, grid_ptr, num_items, ix_ptr, iy_ptr, it_ptr, num_types, num_bots)
+    And numpy arrays that must stay alive for the duration of the call.
+    """
+    width = capture_data['grid']['width']
+    height = capture_data['grid']['height']
+    drop_x, drop_y = capture_data['drop_off']
+    num_bots = capture_data['num_bots']
+
+    # Build grid bytes: 0=floor, 1=wall, 2=shelf, 3=dropoff
+    grid = np.zeros(height * width, dtype=np.uint8)
+    for wx, wy in capture_data['grid']['walls']:
+        grid[wy * width + wx] = 1
+    # shelves: will be set from item positions below
+
+    # Items sorted by (x,y) — must match Python's build_map_from_capture ordering
+    server_items = sorted(capture_data['items'],
+                          key=lambda it: (it['position'][0], it['position'][1]))
+
+    type_names_set = set()
+    for item in server_items:
+        type_names_set.add(item['type'])
+    item_type_names = sorted(type_names_set)
+    type_name_to_id = {name: i for i, name in enumerate(item_type_names)}
+    num_types = len(item_type_names)
+
+    num_items = len(server_items)
+    item_x = np.zeros(num_items, dtype=np.uint8)
+    item_y = np.zeros(num_items, dtype=np.uint8)
+    item_type_id = np.zeros(num_items, dtype=np.uint8)
+
+    for i, item in enumerate(server_items):
+        ix, iy = item['position']
+        item_x[i] = ix
+        item_y[i] = iy
+        item_type_id[i] = type_name_to_id[item['type']]
+        grid[iy * width + ix] = 2  # shelf
+
+    # Dropoff cell
+    grid[drop_y * width + drop_x] = 3
+
+    args = (
+        ctypes.c_uint8(width),
+        ctypes.c_uint8(height),
+        ctypes.c_uint8(drop_x),
+        ctypes.c_uint8(drop_y),
+        grid.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        ctypes.c_uint16(num_items),
+        item_x.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        item_y.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        item_type_id.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        ctypes.c_uint8(num_types),
+        ctypes.c_uint8(num_bots),
+    )
+    # Return arrays too so caller can keep them alive
+    _keep_alive = (grid, item_x, item_y, item_type_id)
+    return args, _keep_alive
 
 
 def _orders_to_flat(all_orders):
@@ -175,6 +274,94 @@ def zig_presim_locked(difficulty_idx, seed, all_orders, bot_actions,
         all_acts.ctypes.data_as(ctypes.POINTER(ctypes.c_int8)),
         all_items.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
         ctypes.c_uint8(num_total_bots),
+        locked_ids_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        ctypes.c_uint8(num_locked),
+        order_types.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        order_lens.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        ctypes.c_uint16(len(all_orders)),
+        out_x.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
+        out_y.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
+    )
+
+    # Reshape position outputs to [num_locked, 300]
+    pos_x = out_x.reshape(num_locked, MAX_ROUNDS)
+    pos_y = out_y.reshape(num_locked, MAX_ROUNDS)
+
+    # Build locked_actions/items arrays from bot_actions (for GPUBeamSearcher)
+    locked_actions = np.zeros((num_locked, MAX_ROUNDS), dtype=np.int8)
+    locked_action_items = np.full((num_locked, MAX_ROUNDS), -1, dtype=np.int16)
+    for i, bid in enumerate(locked_bot_ids):
+        if bid in bot_actions:
+            for r, (act, item) in enumerate(bot_actions[bid]):
+                locked_actions[i, r] = int(act)
+                if item is not None and item >= 0:
+                    locked_action_items[i, r] = int(item)
+
+    return {
+        'locked_actions': locked_actions,
+        'locked_action_items': locked_action_items,
+        'locked_pos_x': pos_x,
+        'locked_pos_y': pos_y,
+        'locked_bot_ids': locked_bot_ids,
+    }
+
+
+def zig_verify_live(capture_data, all_orders, combined_actions, num_bots):
+    """Fast replacement for cpu_verify using Zig DLL — live game (no seed).
+
+    Args:
+        capture_data: Captured game data dict (grid, items, drop_off, num_bots).
+        all_orders: List of Order objects.
+        combined_actions: List of 300 round_actions, each [(act, item)] * num_bots.
+        num_bots: Number of bots.
+
+    Returns:
+        Final score (int).
+    """
+    lib = _get_lib()
+    map_args, _keep = _capture_to_map_args(capture_data)
+    acts, items = _combined_to_flat(combined_actions, num_bots)
+    order_types, order_lens = _orders_to_flat(all_orders)
+
+    return lib.ffi_verify_live(
+        *map_args,
+        acts.ctypes.data_as(ctypes.POINTER(ctypes.c_int8)),
+        items.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
+        order_types.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        order_lens.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        ctypes.c_uint16(len(all_orders)),
+    )
+
+
+def zig_presim_locked_live(capture_data, all_orders, bot_actions,
+                            locked_bot_ids, num_total_bots):
+    """Fast replacement for pre_simulate_locked using Zig DLL — live game (no seed).
+
+    Args:
+        capture_data: Captured game data dict.
+        all_orders: List of Order objects.
+        bot_actions: Dict {bot_id: [(act, item)] * 300} for all planned bots.
+        locked_bot_ids: Sorted list of bot IDs to lock.
+        num_total_bots: Total number of bots in the game.
+
+    Returns:
+        locked_trajectories dict ready for GPUBeamSearcher.
+    """
+    lib = _get_lib()
+    map_args, _keep = _capture_to_map_args(capture_data)
+    num_locked = len(locked_bot_ids)
+
+    all_acts, all_items = _bot_actions_to_flat(bot_actions, num_total_bots)
+    order_types, order_lens = _orders_to_flat(all_orders)
+
+    locked_ids_arr = np.array(locked_bot_ids, dtype=np.uint8)
+    out_x = np.zeros(num_locked * MAX_ROUNDS, dtype=np.int16)
+    out_y = np.zeros(num_locked * MAX_ROUNDS, dtype=np.int16)
+
+    lib.ffi_presim_locked_live(
+        *map_args,
+        all_acts.ctypes.data_as(ctypes.POINTER(ctypes.c_int8)),
+        all_items.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
         locked_ids_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
         ctypes.c_uint8(num_locked),
         order_types.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),

@@ -1,18 +1,31 @@
 :root {
-	--bg: #0f1117;
-	--bg-card: #1a1d27;
-	--bg-hover: #242838;
-	--border: #2a2e3d;
-	--text: #e1e4ed;
-	--text-muted: #8b8fa3;
-	--accent: #6c5ce7;
-	--accent-light: #a29bfe;
-	--green: #00b894;
-	--red: #e17055;
-	--orange: #fdcb6e;
-	--blue: #74b9ff;
-	--radius: 8px;
-	--shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+	/* Terminal Green — GitHub Dark + #39d353 */
+	--bg: #0d1117;
+	--bg-card: rgba(22, 27, 34, 0.85);
+	--bg-card-solid: #161b22;
+	--bg-hover: #1c2128;
+	--border: rgba(48, 54, 61, 0.8);
+	--border-solid: #30363d;
+	--text: #c9d1d9;
+	--text-muted: #8b949e;
+	--accent: #39d353;
+	--accent-light: #56d364;
+	--green: #39d353;
+	--red: #f85149;
+	--orange: #d29922;
+	--yellow: #facc15;
+	--pink: #f472b6;
+	--blue: #58a6ff;
+	--radius: 4px;
+	--radius-sm: 2px;
+	--shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+	--shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+	--glow-warm: 0 0 20px rgba(57, 211, 83, 0.08);
+
+	/* Typography — monospace only */
+	--font-display: 'JetBrains Mono', monospace;
+	--font-body: 'JetBrains Mono', monospace;
+	--font-mono: 'JetBrains Mono', monospace;
 }
 
 * {
@@ -22,52 +35,131 @@
 }
 
 body {
-	font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	font-family: var(--font-body);
 	background: var(--bg);
 	color: var(--text);
 	line-height: 1.5;
+	font-weight: 400;
+	font-size: 0.85rem;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
 }
 
 a {
-	color: var(--accent-light);
+	color: var(--accent);
 	text-decoration: none;
+	transition: color 0.2s ease;
 }
 a:hover {
-	text-decoration: underline;
+	color: var(--accent-light);
+	text-decoration: none;
 }
 
 button {
 	cursor: pointer;
 	border: none;
-	border-radius: var(--radius);
-	font-family: inherit;
-	font-size: 0.875rem;
-	transition: all 0.15s ease;
+	border-radius: var(--radius-sm);
+	font-family: var(--font-body);
+	font-size: 0.8rem;
+	transition: all 0.2s ease;
+	letter-spacing: 0.02em;
 }
 
+/* ── Card: the base panel ── */
 .card {
 	background: var(--bg-card);
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	padding: 1rem;
+	padding: 1.25rem;
+	transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.card:hover {
+	border-color: #484f58;
 }
 
-/* Custom thin scrollbars */
+/* ── Inputs ── */
+input[type="text"],
+input[type="number"],
+select {
+	font-family: var(--font-body);
+	background: #010409;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text);
+	padding: 0.5rem 0.75rem;
+	font-size: 0.8rem;
+	outline: none;
+	transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 2px rgba(57, 211, 83, 0.15);
+}
+input[type="text"]::placeholder {
+	color: var(--text-muted);
+	opacity: 0.5;
+}
+input:disabled, select:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* ── Custom thin scrollbars ── */
 * {
 	scrollbar-width: thin;
-	scrollbar-color: var(--border) transparent;
+	scrollbar-color: #30363d transparent;
 }
 *::-webkit-scrollbar {
-	width: 6px;
-	height: 6px;
+	width: 5px;
+	height: 5px;
 }
 *::-webkit-scrollbar-track {
 	background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-	background: var(--border);
+	background: #30363d;
 	border-radius: 3px;
 }
 *::-webkit-scrollbar-thumb:hover {
 	background: var(--text-muted);
+}
+
+/* ── Stagger-in animation ── */
+@keyframes stagger-up {
+	from {
+		opacity: 0;
+		transform: translateY(14px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.stagger > * {
+	animation: stagger-up 0.35s ease-out both;
+}
+/* Non-linear delays + slight duration jitter for organic feel */
+.stagger > *:nth-child(1)   { animation-delay:  20ms; animation-duration: 0.30s; }
+.stagger > *:nth-child(2)   { animation-delay:  70ms; animation-duration: 0.36s; }
+.stagger > *:nth-child(3)   { animation-delay: 130ms; animation-duration: 0.32s; }
+.stagger > *:nth-child(4)   { animation-delay: 200ms; animation-duration: 0.38s; }
+.stagger > *:nth-child(5)   { animation-delay: 280ms; animation-duration: 0.33s; }
+.stagger > *:nth-child(6)   { animation-delay: 360ms; animation-duration: 0.36s; }
+.stagger > *:nth-child(7)   { animation-delay: 450ms; animation-duration: 0.31s; }
+.stagger > *:nth-child(n+8) { animation-delay: 530ms; animation-duration: 0.35s; }
+
+/* ── Scanline overlay ── */
+@keyframes scanlines {
+	0% { background-position: 0 0; }
+	100% { background-position: 0 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.stagger > * {
+		animation: none;
+		opacity: 1;
+	}
 }
