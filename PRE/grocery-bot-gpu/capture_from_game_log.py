@@ -13,7 +13,10 @@ import os
 import glob
 import argparse
 
-from solution_store import save_capture
+from solution_store import merge_capture, save_solution
+from game_engine import (build_map_from_capture,
+                         ACT_WAIT, ACT_MOVE_UP, ACT_MOVE_DOWN,
+                         ACT_MOVE_LEFT, ACT_MOVE_RIGHT, ACT_PICKUP, ACT_DROPOFF)
 
 DIFFICULTY_DIMS = {
     (12, 10, 1): 'easy',
@@ -124,6 +127,82 @@ def extract_capture(game_log_path, difficulty=None):
     return capture, final_score, difficulty
 
 
+WS_ACTION_TO_ACT = {
+    'wait': ACT_WAIT,
+    'move_up': ACT_MOVE_UP,
+    'move_down': ACT_MOVE_DOWN,
+    'move_left': ACT_MOVE_LEFT,
+    'move_right': ACT_MOVE_RIGHT,
+    'pick_up': ACT_PICKUP,
+    'drop_off': ACT_DROPOFF,
+}
+
+
+def extract_game_actions(game_log_path, map_state):
+    """Extract the action sequence from a game log as internal (act_type, item_idx) tuples.
+
+    The game log alternates: game_state line, then action-response line.
+    Action lines have {"actions": [{"bot": 0, "action": "move_up", ...}, ...]}.
+
+    Returns list of round_actions (one per round), each is [(act, item_idx)] * num_bots,
+    or None on failure.
+    """
+    # Build item_id -> index lookup from map_state
+    item_id_to_idx = {}
+    for idx, item in enumerate(map_state.items):
+        item_id_to_idx[item['id']] = idx
+
+    num_bots = None
+    all_round_actions = []
+
+    with open(game_log_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            # Detect num_bots from first game_state
+            if data.get('type') == 'game_state' and num_bots is None:
+                num_bots = len(data.get('bots', []))
+
+            # Action lines have 'actions' key but no 'type'
+            if 'actions' not in data or 'type' in data:
+                continue
+
+            if num_bots is None:
+                continue
+
+            ws_actions = data['actions']
+            # Build per-bot action list (indexed by bot id)
+            round_acts = [(ACT_WAIT, -1)] * num_bots
+            for wa in ws_actions:
+                bid = wa.get('bot', 0)
+                act_name = wa.get('action', 'wait')
+                act_type = WS_ACTION_TO_ACT.get(act_name, ACT_WAIT)
+                item_idx = -1
+                if act_type == ACT_PICKUP:
+                    item_id = wa.get('item_id', '')
+                    item_idx = item_id_to_idx.get(item_id, -1)
+                    if item_idx < 0:
+                        act_type = ACT_WAIT  # unknown item -> wait
+                if 0 <= bid < num_bots:
+                    round_acts[bid] = (act_type, item_idx)
+            all_round_actions.append(round_acts)
+
+    if not all_round_actions:
+        return None
+
+    # Pad to 300 rounds if needed
+    while len(all_round_actions) < 300:
+        all_round_actions.append([(ACT_WAIT, -1)] * (num_bots or 1))
+
+    return all_round_actions[:300]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Extract capture from Zig bot game_log')
@@ -151,7 +230,29 @@ def main():
 
     capture, score, difficulty = extract_capture(log_path, args.difficulty)
 
-    save_path = save_capture(difficulty, capture)
+    merged, num_new, total = merge_capture(difficulty, capture)
+    save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'solutions', difficulty, 'capture.json')
+
+    if num_new > 0:
+        print(f"Merged {num_new} new orders (total: {total}, was: {total - num_new})", file=sys.stderr)
+    else:
+        print(f"No new orders (total: {total})", file=sys.stderr)
+
+    # Extract game actions and save as warm-start solution
+    if score > 0:
+        try:
+            map_state = build_map_from_capture(merged)
+            game_actions = extract_game_actions(log_path, map_state)
+            if game_actions:
+                saved = save_solution(difficulty, score, game_actions)
+                if saved:
+                    print(f"Saved game actions as solution (score={score})", file=sys.stderr)
+                else:
+                    print(f"Existing solution is better (game score={score})", file=sys.stderr)
+            else:
+                print(f"No actions extracted from game log", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Could not extract game actions: {e}", file=sys.stderr)
 
     # Import game log to PostgreSQL in background
     try:
@@ -172,10 +273,11 @@ def main():
     result = {
         'type': 'capture_done',
         'difficulty': difficulty,
-        'orders': len(capture['orders']),
-        'items': len(capture['items']),
-        'num_bots': capture['num_bots'],
-        'grid': f"{capture['grid']['width']}x{capture['grid']['height']}",
+        'orders': total,
+        'new_orders': num_new,
+        'items': len(merged['items']),
+        'num_bots': merged['num_bots'],
+        'grid': f"{merged['grid']['width']}x{merged['grid']['height']}",
         'probe_score': score,
         'path': save_path,
     }

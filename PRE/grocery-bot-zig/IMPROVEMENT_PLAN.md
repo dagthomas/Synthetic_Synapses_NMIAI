@@ -154,10 +154,10 @@ Total time: ~5 minutes per difficulty, all automated.
 
 | Difficulty | Zig Max | Multi+Optimizer Max | Multi+Optimizer Mean | Leader |
 |---|---|---|---|---|
-| Easy | 131 | **150** | 143.8 | 141 |
-| Medium | 140 | **166** | 155.2 | 160 |
-| Hard | 128 | **161** | 142.2 | 157 |
-| Expert | 96 | **135** | 119.0 | 195 |
+| Easy | 131 | **150** | 143.8 | 150 |
+| Medium | 140 | **166** | 155.2 | 225 |
+| Hard | 128 | **161** | 142.2 | 260 |
+| Expert | 96 | **135** | 119.0 | 310 |
 | **Total** | **495** | **612** | **560** | **653** |
 
 Beats leader on Easy, Medium, and Hard. Expert remains the biggest challenge — the 10-bot coordination problem likely requires fundamentally better multi-agent coordination (temporal scheduling, corridor reservation, or full MAPF solver).

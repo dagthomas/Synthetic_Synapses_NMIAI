@@ -72,9 +72,27 @@ pub fn reserveStationary(x: u16, y: u16, t_start: u16, t_end: u16, bot_id: u8) v
 var aisle_dir: [MAX_H][MAX_W]?AisleDir = undefined;
 var aisles_initialized: bool = false;
 
+// Module-level aisle/corridor maps (promoted for use in occupancy penalty)
+var aisle_columns: [MAX_W]bool = [_]bool{false} ** MAX_W;
+var corridor_rows: [MAX_H]bool = [_]bool{false} ** MAX_H;
+var init_width: u16 = 0;
+var init_height: u16 = 0;
+
+pub fn isInAisle(x: u16) bool {
+    if (x >= MAX_W) return false;
+    return aisle_columns[x];
+}
+
+pub fn isCorridorRow(y: u16) bool {
+    if (y >= MAX_H) return false;
+    return corridor_rows[y];
+}
+
 pub fn init(state: *const GameState) void {
     const w = state.width;
     const h = state.height;
+    init_width = w;
+    init_height = h;
 
     for (0..MAX_H) |y| {
         for (0..MAX_W) |x| {
@@ -82,7 +100,7 @@ pub fn init(state: *const GameState) void {
         }
     }
 
-    var is_corridor_row: [MAX_H]bool = [_]bool{false} ** MAX_H;
+    @memset(&corridor_rows, false);
     for (0..h) |y| {
         var floor_count: u16 = 0;
         for (0..w) |x| {
@@ -90,18 +108,18 @@ pub fn init(state: *const GameState) void {
             if (cell == .floor or cell == .dropoff) floor_count += 1;
         }
         if (floor_count * 10 > w * 6) {
-            is_corridor_row[y] = true;
+            corridor_rows[y] = true;
         }
     }
 
-    var aisle_columns: [MAX_W]bool = [_]bool{false} ** MAX_W;
+    @memset(&aisle_columns, false);
     var aisle_col_count: u16 = 0;
 
     for (1..w - 1) |x| {
         var aisle_cells: u16 = 0;
         var total_floor: u16 = 0;
         for (0..h) |y| {
-            if (is_corridor_row[y]) continue;
+            if (corridor_rows[y]) continue;
             const cell = state.grid[y][x];
             if (cell != .floor and cell != .dropoff) continue;
             total_floor += 1;
@@ -123,7 +141,7 @@ pub fn init(state: *const GameState) void {
         if (!aisle_columns[x]) continue;
         const dir: AisleDir = if (aisle_idx % 2 == 0) .down else .up;
         for (0..h) |y| {
-            if (is_corridor_row[y]) continue;
+            if (corridor_rows[y]) continue;
             const cell = state.grid[y][x];
             if (cell == .floor or cell == .dropoff) {
                 aisle_dir[y][x] = dir;
@@ -152,7 +170,7 @@ const STNode = struct {
 
 /// Run Space-Time A* from start to goal. Only effective for short-range goals
 /// (distance <= MAX_TIME_HORIZON). Returns null if goal not reached.
-fn spaceTimeAStar(state: *const GameState, start: Pos, goal: Pos, bot_id: u8) ?STResult {
+fn spaceTimeAStar(state: *const GameState, start: Pos, goal: Pos, bot_id: u8, bot_positions: ?*const [MAX_BOTS]Pos) ?STResult {
     if (start.eql(goal)) return STResult{ .first_dir = null, .path_len = 0 };
 
     const w = state.width;
@@ -307,6 +325,26 @@ fn spaceTimeAStar(state: *const GameState, start: Pos, goal: Pos, bot_id: u8) ?S
                     };
                     if (is_wrong_way) move_cost += WRONG_WAY_PENALTY;
                 }
+
+                // Aisle occupancy penalty: avoid entering aisle column with another bot
+                if (aisle_columns[nx] and bot_positions != null) {
+                    const bps = bot_positions.?;
+                    var occupied = false;
+                    for (0..state.bot_count) |bk| {
+                        if (bk == bot_id) continue;
+                        if (bps[bk].x < 0 or bps[bk].y < 0) continue;
+                        const bkx: u16 = @intCast(bps[bk].x);
+                        const bky: u16 = @intCast(bps[bk].y);
+                        if (bkx == nx and !corridor_rows[bky]) {
+                            occupied = true;
+                            break;
+                        }
+                    }
+                    if (occupied) {
+                        // +3 for Hard (5 bots), +2 for Expert (8+ bots) to avoid over-penalizing
+                        move_cost += if (state.bot_count >= 8) 2 else 3;
+                    }
+                }
             }
 
             const ng = cur.g + move_cost;
@@ -358,6 +396,6 @@ fn spaceTimeAStar(state: *const GameState, start: Pos, goal: Pos, bot_id: u8) ?S
 
 // ── Public API ────────────────────────────────────────────────────────
 
-pub fn planAndReserve(state: *const GameState, start: Pos, goal: Pos, bot_id: u8) ?STResult {
-    return spaceTimeAStar(state, start, goal, bot_id);
+pub fn planAndReserve(state: *const GameState, start: Pos, goal: Pos, bot_id: u8, bot_positions: ?*const [MAX_BOTS]Pos) ?STResult {
+    return spaceTimeAStar(state, start, goal, bot_id, bot_positions);
 }

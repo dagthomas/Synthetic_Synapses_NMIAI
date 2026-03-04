@@ -40,7 +40,7 @@ class GPUBeamSearcher:
 
     def __init__(self, map_state, all_orders, device='cuda', num_bots=1,
                  locked_trajectories=None, pipeline_mode=False, pipeline_depth=1,
-                 preferred_types=None, no_compile=False):
+                 preferred_types=None, no_compile=False, order_cap=None):
         self.device = device
         self.ms = map_state
         self.all_orders = all_orders
@@ -56,6 +56,10 @@ class GPUBeamSearcher:
         # pipeline_depth: which order ahead to target (1=order+1, 2=order+2, etc.)
         # Only used when pipeline_mode=True.
         self.pipeline_depth = max(1, pipeline_depth)
+        # order_cap: max orders this bot should complete before switching to
+        # pre-fetch/idle. Forces work distribution across bots in sequential DP.
+        # None = unlimited (default). Only used in Pass 1 for Hard/Expert.
+        self.order_cap = order_cap
         # preferred_types: set of item type IDs this bot should specialize in.
         # Soft hint (bonus) to avoid competition between bots for the same types.
         # Set via compute_type_assignments() in gpu_sequential_solver.py.
@@ -392,17 +396,14 @@ class GPUBeamSearcher:
         Returns (expanded_state, actions[B*N], action_items[B*N]).
         """
         N = self.num_actions
+        B = state['bot_x'].shape[0]
+        BN = B * N
         expanded = {}
         for k, v in state.items():
             if v.dim() == 1:
-                expanded[k] = v.repeat_interleave(N)
-            elif k == 'locked_inv':
-                # [B, num_locked, INV_CAP] -> [B*N, num_locked, INV_CAP]
-                expanded[k] = v.repeat_interleave(N, dim=0)
+                expanded[k] = v.repeat_interleave(N, output_size=BN)
             else:
-                expanded[k] = v.repeat_interleave(N, dim=0)
-
-        B = state['bot_x'].shape[0]
+                expanded[k] = v.repeat_interleave(N, dim=0, output_size=BN)
         actions = self.action_pattern.repeat(B)
         action_items = self.action_item_pattern.repeat(B)
         return expanded, actions, action_items
@@ -434,12 +435,13 @@ class GPUBeamSearcher:
         items[:, 6:6 + self.MAX_ADJ] = per_state_adj
 
         # Expand: [B, N] -> [B*N]
+        BN = B * N
         expanded = {}
         for k, v in state.items():
             if v.dim() == 1:
-                expanded[k] = v.repeat_interleave(N)
+                expanded[k] = v.repeat_interleave(N, output_size=BN)
             else:
-                expanded[k] = v.repeat_interleave(N, dim=0)
+                expanded[k] = v.repeat_interleave(N, dim=0, output_size=BN)
 
         actions = acts.reshape(-1)
         action_items = items.reshape(-1)
@@ -512,7 +514,7 @@ class GPUBeamSearcher:
 
         # Slot 1: Dropoff
         all_acts[:, slot] = ACT_DROPOFF
-        valid[:, slot] = at_drop & has_items & has_active_inv
+        valid[:, slot] = at_drop & has_items & has_active_inv & (state['active_idx'] < self.num_orders)
         slot += 1
 
         # Slot 2: Move toward dropoff
@@ -682,13 +684,31 @@ class GPUBeamSearcher:
         all_items = all_items[:, :C_actual]
         valid = valid[:, :C_actual]
 
+        # === Dedup: mark duplicate (action, item) pairs per state as invalid ===
+        # Many "move toward type X" candidates produce the same directional move.
+        # Hash (action, item) into a key, sort per row, mark later duplicates invalid.
+        # Key: action * 1000 + (item + 1) gives unique int per (action, item) pair.
+        act_key = all_acts.to(torch.int32) * 1000 + (all_items.to(torch.int32) + 1)  # [B, C]
+        # Set invalid slots to unique negative keys so they don't match anything
+        act_key = torch.where(valid, act_key, torch.full_like(act_key, -1) - torch.arange(C_actual, device=d).unsqueeze(0))
+        # Sort each row to group duplicates
+        sorted_keys, sort_perm = act_key.sort(dim=1)
+        # Mark first occurrence as valid, later duplicates as invalid
+        is_dup = torch.zeros_like(valid)
+        is_dup[:, 1:] = (sorted_keys[:, 1:] == sorted_keys[:, :-1]) & (sorted_keys[:, 1:] >= 0)
+        # Unsort the dup mask back to original slot order
+        _, unsort_perm = sort_perm.sort(dim=1)
+        is_dup_orig = is_dup.gather(1, unsort_perm)
+        valid = valid & ~is_dup_orig
+
         # Expand state
+        BC = B * C_actual
         expanded = {}
         for k, v in state.items():
             if v.dim() == 1:
-                expanded[k] = v.repeat_interleave(C_actual)
+                expanded[k] = v.repeat_interleave(C_actual, output_size=BC)
             else:
-                expanded[k] = v.repeat_interleave(C_actual, dim=0)
+                expanded[k] = v.repeat_interleave(C_actual, dim=0, output_size=BC)
 
         actions = all_acts.reshape(-1)
         action_items = all_items.reshape(-1)
@@ -737,6 +757,10 @@ class GPUBeamSearcher:
 
                 elif real_bid in self.locked_idx_map:
                     b = self.locked_idx_map[real_bid]
+                    lb_act = int(self.locked_actions[b, round_num])
+                    # Skip WAIT actions entirely — no movement, no game state change
+                    if lb_act == ACT_WAIT:
+                        continue
                     # ===== LOCKED BOT =====
                     bot_x, bot_y, bot_inv, active_idx, active_del, \
                         score, orders_comp, locked_inv, locked_bx, locked_by = \
@@ -824,19 +848,19 @@ class GPUBeamSearcher:
             return bot_inv, active_del, score, active_idx
 
         score = score + order_complete.to(torch.int32) * 5
-        new_aidx = (active_idx + order_complete.to(torch.int32)).clamp(
-            0, self.num_orders - 1)
+        new_aidx = active_idx + order_complete.to(torch.int32)  # no clamp — may exceed num_orders
         oc_mask = order_complete.unsqueeze(1).expand_as(active_del)
         active_del = torch.where(oc_mask, self._zero_i8, active_del)
 
-        new_aidx_l = new_aidx.long().clamp(0, self.num_orders - 1)
+        valid_auto = order_complete & (new_aidx < self.num_orders)
+        new_aidx_l = new_aidx.long().clamp(0, self.num_orders - 1)  # clamp only for table lookup
         new_req = self.order_req[new_aidx_l]
 
         # Auto-deliver ALL locked bots at dropoff (vectorized per bot)
         if locked_bx is not None:
             for b2 in range(self.num_locked):
                 b2_at_drop = (locked_bx[:, b2] == self.drop_x) & (locked_by[:, b2] == self.drop_y)
-                b2_auto = order_complete & b2_at_drop
+                b2_auto = valid_auto & b2_at_drop
                 if b2_auto.any():
                     linv_b2 = locked_inv[:, b2, :]  # [B, INV_CAP]
                     linv_b2, active_del, score_add = self._vectorized_deliver(
@@ -846,7 +870,7 @@ class GPUBeamSearcher:
 
         # Auto-deliver candidate bot at dropoff (vectorized)
         cand_at_drop = (bot_x == self.drop_x) & (bot_y == self.drop_y)
-        auto_cand = order_complete & cand_at_drop
+        auto_cand = valid_auto & cand_at_drop
         if auto_cand.any():
             bot_inv, active_del, score_add = self._vectorized_deliver(
                 bot_inv, new_req, active_del, auto_cand, B, d)
@@ -920,6 +944,7 @@ class GPUBeamSearcher:
         # --- Dropoff ---
         elif lb_act == ACT_DROPOFF:
             lb_at_drop = (lbx == self.drop_x) & (lby == self.drop_y)
+            lb_can_drop = lb_at_drop & (active_idx < self.num_orders)
 
             aidx_l = active_idx.long().clamp(0, self.num_orders - 1)
             act_req_lb = self.order_req[aidx_l]
@@ -927,7 +952,7 @@ class GPUBeamSearcher:
             # Vectorized delivery for locked bot
             linv_b = locked_inv[:, b, :]  # [B, INV_CAP]
             linv_b, active_del, score_add = self._vectorized_deliver(
-                linv_b, act_req_lb, active_del, lb_at_drop, B, d)
+                linv_b, act_req_lb, active_del, lb_can_drop, B, d)
             locked_inv[:, b, :] = linv_b
             score = score + score_add
 
@@ -941,7 +966,7 @@ class GPUBeamSearcher:
             act_req_lb = self.order_req[aidx_l]
             slot_done = (active_del == 1) | (act_req_lb < 0)
             has_required = (act_req_lb >= 0).any(dim=1)
-            order_complete_lb = slot_done.all(dim=1) & has_required & lb_at_drop
+            order_complete_lb = slot_done.all(dim=1) & has_required & lb_can_drop
 
             if order_complete_lb.any():
                 orders_comp = orders_comp + order_complete_lb.to(torch.int32)
@@ -1012,7 +1037,7 @@ class GPUBeamSearcher:
         is_dropoff = (actions == ACT_DROPOFF)
         at_drop = (bot_x == self.drop_x) & (bot_y == self.drop_y)
         has_items = (bot_inv >= 0).any(dim=1)
-        can_dropoff = is_dropoff & at_drop & has_items
+        can_dropoff = is_dropoff & at_drop & has_items & (active_idx < self.num_orders)
 
         aidx = active_idx.long().clamp(0, self.num_orders - 1)
         act_req = self.order_req[aidx]
@@ -1086,7 +1111,7 @@ class GPUBeamSearcher:
         is_dropoff = (actions == ACT_DROPOFF)
         at_drop = (bot_x == self.drop_x) & (bot_y == self.drop_y)
         has_items = (bot_inv >= 0).any(dim=1)
-        can_dropoff = is_dropoff & at_drop & has_items
+        can_dropoff = is_dropoff & at_drop & has_items & (active_idx < self.num_orders)
 
         aidx = active_idx.long().clamp(0, self.num_orders - 1)
         act_req = self.order_req[aidx]
@@ -1107,17 +1132,17 @@ class GPUBeamSearcher:
         score = score + order_complete.to(torch.int32) * 5
         orders_comp = orders_comp + order_complete.to(torch.int32)
 
-        new_aidx = (active_idx + order_complete.to(torch.int32)).clamp(
-            0, self.num_orders - 1)
+        new_aidx = active_idx + order_complete.to(torch.int32)  # no clamp — may exceed num_orders
         oc_mask = order_complete.unsqueeze(1).expand_as(active_del)
         active_del = torch.where(oc_mask, self._zero_i8, active_del)
 
         # Auto-deliver candidate at dropoff (vectorized)
-        new_aidx_l = new_aidx.long().clamp(0, self.num_orders - 1)
+        valid_auto = order_complete & (new_aidx < self.num_orders)
+        new_aidx_l = new_aidx.long().clamp(0, self.num_orders - 1)  # clamp only for table lookup
         new_req = self.order_req[new_aidx_l]
 
         bot_inv, active_del, score_add = self._vectorized_deliver(
-            bot_inv, new_req, active_del, order_complete, B, d)
+            bot_inv, new_req, active_del, valid_auto, B, d)
         score = score + score_add
 
         sort_key = (bot_inv < 0).to(torch.int8)
@@ -1150,6 +1175,81 @@ class GPUBeamSearcher:
         h = h | (del_bits << self._hash_shifts.unsqueeze(0)).sum(dim=1)
 
         return h
+
+    @torch.no_grad()
+    def _eval_cheap(self, state, round_num=0):
+        """Cheap evaluation for two-phase beam pre-filtering. Returns [B] float32.
+
+        Only computes: score, distance to dropoff, inventory matching (active),
+        and trip-table feasibility. ~5x faster than full _eval.
+        """
+        B = state['bot_x'].shape[0]
+        d = self.device
+
+        bot_x = state['bot_x'].long()
+        bot_y = state['bot_y'].long()
+        inv = state['bot_inv']
+        aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
+
+        rounds_left = MAX_ROUNDS - round_num - 1
+
+        # Score is dominant
+        ev = state['score'].float() * 100000
+
+        # Distance to dropoff
+        dist_drop = self.dist_to_dropoff[bot_y, bot_x].float()
+
+        # Active order analysis
+        act_req = self.order_req[aidx]
+        act_del = state['active_del']
+        active_needed = (act_req >= 0) & (act_del == 0)
+        active_done = (act_req >= 0) & (act_del == 1)
+        active_remaining = active_needed.sum(dim=1).float()
+        active_delivered = active_done.sum(dim=1).float()
+        active_total = ((act_req >= 0)).sum(dim=1).float()
+        fraction_done = active_delivered / active_total.clamp(min=1)
+
+        ev = ev + fraction_done * 30000
+        ev = ev + (active_remaining == 0).float() * 50000
+
+        # Inventory-order matching
+        inv_exp = inv.unsqueeze(2)
+        req_exp = act_req.unsqueeze(1)
+        del_exp = act_del.unsqueeze(1)
+        has_item_exp = (inv_exp >= 0)
+        match_active = (inv_exp == req_exp) & (del_exp == 0) & (req_exp >= 0) & has_item_exp
+        inv_matches_active = match_active.any(dim=2)
+        has_active_inv = inv_matches_active.any(dim=1)
+        num_active_items = inv_matches_active.sum(dim=1).float()
+
+        active_inv_value = (70000 - dist_drop * 1750).clamp(min=0)
+        ev = ev + num_active_items * active_inv_value
+
+        # Dead inventory (quick check)
+        has_item_flat = (inv >= 0)
+        is_dead = has_item_flat & ~inv_matches_active
+        ev = ev - is_dead.sum(dim=1).float() * 40000
+
+        # Trip-table cost
+        del_bits = (act_del.long() * self._del_weights).sum(dim=1)
+        cell_idx = self.trip_cell_idx_map[bot_y, bot_x]
+        trip_combo = self.remaining_trip_combo[aidx, del_bits]
+        has_trip_info = (trip_combo >= 0) & (cell_idx >= 0)
+        safe_cell = cell_idx.clamp(0, self._trip_n_cells - 1)
+        safe_combo = trip_combo.clamp(0, self._trip_n_combos - 1)
+        next_trip_cost = self.trip_cost_gpu[safe_cell, safe_combo].float()
+        after_cost = self.remaining_after_cost[aidx, del_bits].float()
+        total_order_remaining = (
+            has_trip_info.float() * (next_trip_cost + after_cost) +
+            (~has_trip_info).float() * 9999.0)
+        order_achievable = has_trip_info & (total_order_remaining <= rounds_left)
+        ev = ev + order_achievable.float() * 8000
+        ev = ev - has_trip_info.float() * total_order_remaining.clamp(0, 300) * 50
+
+        # Delivery urgency
+        ev = ev - has_active_inv.float() * dist_drop * 200
+
+        return ev
 
     @torch.no_grad()
     def _eval(self, state, round_num=0):
@@ -1319,6 +1419,17 @@ class GPUBeamSearcher:
         # Prefer states with less remaining work (smoother gradient than just feasibility)
         ev = ev - has_trip_info.float() * total_order_remaining.clamp(0, 300) * 50
 
+        # === Endgame partial delivery: when order can't be completed, maximize item pickups ===
+        # Each item delivered is +1 point even without completing the order (+5 bonus).
+        # When order is unachievable, strongly incentivize: pick up matching items → deliver.
+        if rounds_left < 30:
+            cant_complete = ~order_achievable & has_space & close
+            # Per matching item in inventory: boost delivery urgency
+            partial_value = num_active_items * 15000 * (~order_achievable).float()
+            ev = ev + partial_value
+            # Incentivize picking up more matching items when order can't be completed
+            ev = ev + cant_complete.float() * (12000.0 - best_item_dist * 600)
+
         # Approaching needed items — only for single-bot mode.
         # Multi-bot mode uses differentiated guidance in the coordination block below.
         if self.num_locked == 0:
@@ -1393,37 +1504,30 @@ class GPUBeamSearcher:
 
                 # locked_covers_slot[b, os]: True if any locked bot carries or will pick
                 # the type needed by order slot os (full remaining-game coverage).
-                locked_covers_slot = torch.zeros(
-                    B, MAX_ORDER_SIZE, dtype=torch.bool, device=d)
-                for os in range(MAX_ORDER_SIZE):
-                    ntype = act_req[:, os].long().clamp(0, self.num_types - 1)  # [B]
-                    ntype_e = ntype.unsqueeze(1).unsqueeze(2)  # [B, 1, 1]
-                    # Covers by current inventory
-                    has_type = ((locked_inv_l == ntype_e) &
-                                (locked_inv_state >= 0)).any(dim=2).any(dim=1)  # [B]
-                    # Also covers if any locked bot PLANS to pick that type this game
-                    if remaining_cover is not None:
-                        has_type = has_type | remaining_cover[ntype]  # [B] bool
-                    locked_covers_slot[:, os] = has_type
+                # Vectorized: act_req [B, 6] -> [B, 1, 1, 6], locked_inv [B, L, C, 1]
+                ntypes_all = act_req.long().clamp(0, self.num_types - 1)  # [B, 6]
+                ntypes_4d = ntypes_all.unsqueeze(1).unsqueeze(2)  # [B, 1, 1, 6]
+                linv_4d = locked_inv_l.unsqueeze(3)  # [B, L, C, 1]
+                linv_valid = (locked_inv_state >= 0).unsqueeze(3)  # [B, L, C, 1]
+                # [B, L, C, 6] -> any over L,C -> [B, 6]
+                locked_covers_slot = ((linv_4d == ntypes_4d) & linv_valid).any(dim=2).any(dim=1)
+                if remaining_cover is not None:
+                    locked_covers_slot = locked_covers_slot | remaining_cover[ntypes_all]
 
                 # For each active order slot, check if candidate carries that type
                 # needed: active_needed [B, MAX_ORDER_SIZE]
                 covered_by_locked = active_needed & locked_covers_slot      # [B, 6]
                 uncovered_by_locked = active_needed & ~locked_covers_slot   # [B, 6]
 
-                # Candidate inventory items: [B, INV_CAP]
-                cand_redundant = torch.zeros(B, dtype=torch.float32, device=d)
-                cand_covers_unique = torch.zeros(B, dtype=torch.float32, device=d)
-                for s in range(INV_CAP):
-                    for os in range(MAX_ORDER_SIZE):
-                        type_match = ((inv[:, s].long() == act_req[:, os].long()) &
-                                      (inv[:, s] >= 0))
-                        # Carrying a type already covered by locked bots → redundant
-                        cand_redundant = cand_redundant + (
-                            type_match & covered_by_locked[:, os]).float()
-                        # Carrying a type NOT covered by any locked bot → uniquely useful
-                        cand_covers_unique = cand_covers_unique + (
-                            type_match & uncovered_by_locked[:, os]).float()
+                # Candidate inventory items: vectorized [B, INV_CAP, MAX_ORDER_SIZE]
+                # inv_exp: [B, INV_CAP, 1], act_req: [B, 1, MAX_ORDER_SIZE]
+                type_match_grid = ((inv_exp == req_exp) & has_item_exp &
+                                   (req_exp >= 0))  # [B, INV_CAP, MAX_ORDER_SIZE]
+                # covered_by_locked: [B, MAX_ORDER_SIZE] -> [B, 1, MAX_ORDER_SIZE]
+                cov_exp = covered_by_locked.unsqueeze(1)   # [B, 1, 6]
+                uncov_exp = uncovered_by_locked.unsqueeze(1)  # [B, 1, 6]
+                cand_redundant = (type_match_grid & cov_exp).float().sum(dim=(1, 2))
+                cand_covers_unique = (type_match_grid & uncov_exp).float().sum(dim=(1, 2))
 
                 # Very strong coordination: bots MUST avoid picking items that
                 # other bots already carry or plan to pick. This is the #1 source
@@ -1542,6 +1646,25 @@ class GPUBeamSearcher:
             _mpref = (trip_pref & has_space & ~has_active_inv).float()
             ev = ev + _mpref * (6000.0 - best_pref_dist * 300)
 
+        # === Order cap: force work distribution across bots ===
+        # After completing order_cap orders, this bot should STOP actively
+        # delivering and switch to pre-fetching for the next order.
+        # This prevents bot 0 from hogging all orders in sequential Pass 1.
+        if self.order_cap is not None and self.order_cap > 0:
+            oc = state['orders_comp']  # [B] int32 — orders completed by THIS bot
+            over_cap = (oc >= self.order_cap)  # [B] bool
+            if over_cap.any():
+                # Kill delivery incentive: penalize carrying/delivering active items
+                ev = ev - over_cap.float() * has_active_inv.float() * 100000
+                ev = ev - over_cap.float() * num_active_items * 60000
+                # Kill pickup incentive: penalize being near active items
+                ev = ev - over_cap.float() * close.float() * 30000
+                # Boost pre-fetch: strongly encourage picking preview/future items
+                has_preview = inv_matches_preview.any(dim=1)  # [B]
+                ev = ev + over_cap.float() * has_preview.float() * 50000
+                # Position near dropoff for auto-delivery when order transitions
+                ev = ev - over_cap.float() * dist_drop * 300
+
         return ev
 
     @torch.no_grad()
@@ -1585,15 +1708,32 @@ class GPUBeamSearcher:
             )
             is_noop_dup = no_change & (actions != ACT_WAIT)
 
-            # Eval
-            evals = self._eval(new_state, round_num=rnd)
-            evals[~valid_mask] = float('-inf')
-            evals[is_noop_dup] = float('-inf')
-
-            # Top-K — avoid .item() sync; use total size as upper bound
+            # Two-phase beam: cheap pre-filter → full eval on survivors
             new_B = new_state['bot_x'].shape[0]
             k = min(beam_width, new_B)
-            _, topk_idx = torch.topk(evals, k)
+
+            # Phase 1: cheap pre-filter when expanded set is large enough
+            prefilter_k = min(k * 2, new_B)
+            if new_B > k * 3:
+                # Cheap eval: score + distance + basic matching (~5x faster)
+                cheap_evals = self._eval_cheap(new_state, round_num=rnd)
+                cheap_evals[~valid_mask] = float('-inf')
+                cheap_evals[is_noop_dup] = float('-inf')
+                _, prefilter_idx = torch.topk(cheap_evals, prefilter_k)
+                # Gather pre-filtered states
+                pf_state = {key: val[prefilter_idx] for key, val in new_state.items()}
+                pf_actions = actions[prefilter_idx]
+                pf_action_items = action_items[prefilter_idx]
+                # Phase 2: full eval on reduced set
+                evals = self._eval(pf_state, round_num=rnd)
+                _, topk_local = torch.topk(evals, k)
+                topk_idx = prefilter_idx[topk_local]
+            else:
+                # Small beam: full eval on everything
+                evals = self._eval(new_state, round_num=rnd)
+                evals[~valid_mask] = float('-inf')
+                evals[is_noop_dup] = float('-inf')
+                _, topk_idx = torch.topk(evals, k)
 
             N = C  # candidates per parent state
 
@@ -1906,8 +2046,18 @@ class GPUBeamSearcher:
             hashes = self._hash(new_state)
             hashes[is_noop] = -1  # mark invalid
 
-            # Dedup: sort by hash, keep highest-scoring representative per hash
-            sorted_h, sort_idx = hashes.sort()
+            # Dedup: sort by hash, keep highest-scoring representative per hash.
+            # Two stable sorts: first by score descending, then by hash ascending.
+            # Stable sort preserves score ordering within same-hash groups,
+            # so is_first picks the highest-scoring state per hash.
+            if self.num_locked > 0:
+                _, score_order = new_state['score'].sort(descending=True, stable=True)
+                hashes_scored = hashes[score_order]
+                sorted_h, hash_order = hashes_scored.sort(stable=True)
+                sort_idx = score_order[hash_order]
+            else:
+                # Single-bot: score is deterministic from hash, arbitrary pick is fine
+                sorted_h, sort_idx = hashes.sort()
             is_first = torch.ones(BF, dtype=torch.bool, device=d)
             is_first[1:] = sorted_h[1:] != sorted_h[:-1]
             valid = is_first & (sorted_h != -1)
@@ -1931,6 +2081,14 @@ class GPUBeamSearcher:
             # Adaptive beam: allow 2x headroom when state diversity is high
             diversity = B_new / BF if BF > 0 else 0
             effective_max = int(max_states * 2) if diversity > 0.5 else max_states
+
+            # Periodic pruning: every 10 rounds, prune to 80% of max_states
+            # even when below the hard limit. Prevents slow growth to limit.
+            soft_prune = (i > 0 and i % 10 == 0 and
+                          B_new > int(max_states * 0.6) and
+                          B_new <= effective_max)
+            if soft_prune:
+                effective_max = int(max_states * 0.8)
 
             # If too many states, prune by eval (lossy fallback)
             if B_new > effective_max:

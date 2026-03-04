@@ -1,7 +1,11 @@
 <script>
 	import Grid from '$lib/components/Grid.svelte';
 
-	const CELL = 24;
+	// Adaptive cell size — bigger for small grids, smaller for large ones
+	let adaptiveCell = $derived(
+		gameInit ? Math.max(18, Math.min(32, Math.floor(560 / Math.max(gameInit.width, gameInit.height)))) : 24
+	);
+	const CELL = 24; // fallback
 	const BOT_COLORS = [
 		'#f85149', '#58a6ff', '#39d353', '#d29922', '#bc8cff',
 		'#3fb950', '#db6d28', '#8b949e', '#f778ba', '#79c0ff',
@@ -16,7 +20,7 @@
 		gpu_refine: '#39d353',
 		none:   '#484f58',
 	};
-	const TARGETS = { easy: 142, medium: 214, hard: 252, expert: 303 };
+	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310 };
 	function sourceColor(s) {
 		return SOURCE_COLORS[s] || '#74b9ff';
 	}
@@ -67,6 +71,7 @@
 	let bots           = $state([]);
 	let orders         = $state([]);
 	let finalScore     = $state(null);
+	let greedyMode     = $state(false);  // true when DP plan exhausted, bot thinking for itself
 
 	// ── Score Chart ──────────────────────────────────────────────────────────────
 	let scoreHistory   = $state([]);
@@ -99,6 +104,9 @@
 
 	// ── Plan Upgrades ────────────────────────────────────────────────────────────
 	let planUpgrades   = $state([]);
+
+	// ── Per-iteration snapshots (for tab switching) ──────────────────────────
+	let iterSnapshots  = $state({});  // { [iter]: { scoreHistory, gpuPasses, planUpgrades, finalScore, bots, orders } }
 
 	// ── Post-optimize ────────────────────────────────────────────────────────────
 	let postOptStart   = $state(null);
@@ -175,16 +183,48 @@
 		planUpgrades = []; postOptStart = null; postOptProgress = null;
 		postOptFinal = null; pipelineDone = null; logs = [];
 		iterations = []; activeIter = 0; currentIterData = null;
-		detectedDiff = null;
+		detectedDiff = null; iterSnapshots = {};
+	}
+
+	function snapshotIter(iter) {
+		// Save current iteration's display state for tab recall
+		iterSnapshots = { ...iterSnapshots, [iter]: {
+			scoreHistory: [...scoreHistory],
+			gpuPasses: [...gpuPasses],
+			planUpgrades: [...planUpgrades],
+			finalScore,
+			bots: [...bots],
+			orders: [...orders],
+			liveScore,
+			planScore,
+			planSource,
+			currentRound,
+		}};
+	}
+
+	function restoreIterSnapshot(iter) {
+		const snap = iterSnapshots[iter];
+		if (!snap) return;
+		scoreHistory = snap.scoreHistory;
+		gpuPasses = snap.gpuPasses;
+		planUpgrades = snap.planUpgrades;
+		finalScore = snap.finalScore;
+		bots = snap.bots;
+		orders = snap.orders;
+		liveScore = snap.liveScore;
+		planScore = snap.planScore;
+		planSource = snap.planSource;
+		currentRound = snap.currentRound;
 	}
 
 	function resetIterState() {
-		// Reset per-iteration state but keep iterations array
-		gameInit = null; currentRound = 0; liveScore = 0;
-		planScore = 0; planSource = 'none'; bots = []; orders = [];
+		// Reset per-iteration state but keep iterations array and grid
+		// Don't clear gameInit — keep showing last game grid during optimize phase
+		currentRound = 0; liveScore = 0;
+		planScore = 0; planSource = 'none';
 		finalScore = null; scoreHistory = []; gpuPasses = [];
 		planUpgrades = []; postOptStart = null; postOptProgress = null;
-		postOptFinal = null; pipelineDone = null;
+		postOptFinal = null; pipelineDone = null; greedyMode = false;
 	}
 
 	// ── Event Handler ─────────────────────────────────────────────────────────────
@@ -266,6 +306,8 @@
 				break;
 
 			case 'iter_start':
+				// Snapshot previous iteration's data before resetting
+				if (iterations.length > 0) snapshotIter(activeIter);
 				activeIter = event.iter;
 				resetIterState();
 				iterations = [...iterations, {
@@ -288,7 +330,24 @@
 				break;
 
 			case 'optimize_start':
+				gpuPasses = [];  // Reset for this optimize phase
 				addLog(`Optimizing: ${event.orders} orders, prev=${event.prev_score}`, iter);
+				break;
+
+			case 'gpu_bot_done':
+				gpuPasses = [...gpuPasses, {
+					pass: `B${event.bot}`, score: event.score,
+					elapsed: event.elapsed, max_states: 0,
+				}];
+				addLog(`Bot ${event.bot}/${event.num_bots}: score=${event.score} (${event.elapsed}s)`, iter);
+				break;
+
+			case 'gpu_phase':
+				gpuPasses = [...gpuPasses, {
+					pass: event.phase, score: event.score,
+					elapsed: event.elapsed, max_states: 0,
+				}];
+				addLog(`${event.phase} iter ${event.iteration}: score=${event.score}`, iter);
 				break;
 
 			case 'optimize_done':
@@ -327,6 +386,7 @@
 					iterations = updated;
 				}
 				addLog(`Iter ${event.iter + 1}: score=${event.score} (${Math.floor(event.remaining)}s left)`, event.iter);
+				snapshotIter(event.iter);
 				break;
 			}
 
@@ -339,6 +399,7 @@
 				break;
 
 			case 'pipeline_complete':
+				snapshotIter(activeIter);
 				phase = 'done';
 				running = false;
 				stopTimer();
@@ -350,6 +411,9 @@
 				break;
 
 			case 'log':
+				if (event.text?.includes('GREEDY mode') || event.text?.includes('greedy')) {
+					greedyMode = true;
+				}
 				addLog(event.text, iter);
 				break;
 
@@ -537,6 +601,7 @@
 				{:else if phase === 'playing'}🎮 Playing
 				{:else if phase === 'optimizing'}🔥 GPU Optimizing
 				{:else if phase === 'post_optimizing'}🔥 Post-Optimizing
+				{:else if phase === 'replaying' && greedyMode}🧠 Thinking
 				{:else if phase === 'replaying'}▶ Replaying
 				{:else}✓ Done
 				{/if}
@@ -615,6 +680,7 @@
 					{phase === 'playing' ? '🎮 Playing...' :
 					 phase === 'optimizing' ? '🔥 GPU optimizing...' :
 					 phase === 'post_optimizing' ? '🔥 Post-optimizing...' :
+					 phase === 'replaying' && greedyMode ? '🧠 Thinking...' :
 					 phase === 'replaying' ? '▶ Replaying...' : 'Running...'}
 					{#if mode === 'iterate' && iterations.length > 0}
 						(iter {activeIter + 1}, {fmtSecs(timerRemaining)} left)
@@ -648,7 +714,9 @@
 		</div>
 		<div class="stat">
 			<span class="stat-label">Source</span>
-			<span class="stat-src" style="color:{sourceColor(planSource)}">{planSource}</span>
+			<span class="stat-src" style="color:{sourceColor(planSource)}">
+				{#if greedyMode}🧠 {/if}{planSource}
+			</span>
 		</div>
 		<div class="stat">
 			<span class="stat-label">Round</span>
@@ -693,17 +761,18 @@
 	<!-- ── Iteration Tabs ──────────────────────────────────────────────────── -->
 	{#if iterations.length > 0}
 	<div class="iter-tabs">
+		<span class="iter-tabs-label">Iter:</span>
 		{#each iterations as it, i}
 			<button
 				class="iter-tab"
 				class:active={activeIter === i}
 				class:done={it.phase === 'done'}
 				class:best={it.score === iterBestScore && it.score > 0}
-				onclick={() => activeIter = i}
+				onclick={() => { if (it.phase === 'done') restoreIterSnapshot(i); activeIter = i; }}
 			>
 				<span class="tab-num">#{i + 1}</span>
 				{#if it.score > 0}
-					<span class="tab-score" class:best={it.score === iterBestScore}>{it.score}</span>
+					<span class="tab-score" class:best={it.score === iterBestScore}>{it.score}pts</span>
 				{:else}
 					<span class="tab-dots">...</span>
 				{/if}
@@ -712,63 +781,129 @@
 	</div>
 	{/if}
 
-	<!-- ── Main Grid + Sidebar ───────────────────────────────────────────────── -->
-	{#if gameInit}
-	<div class="game-area">
-		<div class="grid-wrap">
-			<Grid
-				width={gameInit.width}
-				height={gameInit.height}
-				cellSize={CELL}
-				{wallSet}
-				{shelfSet}
-				{itemMap}
-				dropOff={gameInit.drop_off}
-				spawn={gameInit.spawn}
-				bots={botsTyped}
-				{botPositions}
-				botColors={BOT_COLORS}
-				{selectedBot}
-				onSelectBot={(id) => selectedBot = selectedBot === id ? null : id}
-			/>
+	<!-- ── Row 1: Logs | GPU Progress | Score Chart ────────────────────────── -->
+	{#if gameInit || phase !== 'idle'}
+	<div class="grid-row">
+		<!-- Logs -->
+		<div class="grid-cell">
+			<div class="sidebar-section log-inline">
+				<h3>Log <span class="log-count">({logs.length})</span></h3>
+				<div class="log-box">
+					{#each logs.slice().reverse() as entry}
+						<div class="log-line"
+							class:error={entry.text?.startsWith('ERROR')}
+							class:upgrade={entry.text?.includes('Plan:') || entry.text?.includes('->')}
+							class:desync={entry.text?.toLowerCase().includes('desync')}
+							class:gpu-log={entry.text?.includes('GPU') || entry.text?.includes('gpu')}
+							class:score-log={entry.text?.includes('score=') || entry.text?.includes('Final=')}
+							class:iter-start={entry.text?.startsWith('---')}
+							class:seed-log={entry.text?.includes('Seed cracked') || entry.text?.includes('seed')}
+							class:warn-log={entry.text?.includes('skip') || entry.text?.includes('timeout') || entry.text?.toLowerCase().includes('warn')}
+							class:greedy-log={entry.text?.includes('GREEDY') || entry.text?.includes('greedy')}>
+							<span class="log-t">{entry.t}</span>
+							{#if entry.iter !== null && entry.iter !== undefined}
+								<span class="log-iter">#{entry.iter + 1}</span>
+							{/if}
+							<span>{entry.text}</span>
+						</div>
+					{/each}
+					{#if logs.length === 0}
+						<div class="muted">Awaiting signal...</div>
+					{/if}
+				</div>
+			</div>
 		</div>
 
-		<div class="sidebar">
-			<!-- Score Chart (inline) -->
-			{#if scoreHistory.length > 1}
+		<!-- GPU Progress -->
+		<div class="grid-cell">
+			<div class="sidebar-section">
+				{#if gpuPasses.length > 0}
+				<h3>GPU Progress ({gpuPasses.length})</h3>
+				{#each gpuPasses as p}
+					<div class="gpu-pass" class:best={p.score === bestGpuScore}>
+						<span class="pass-num">{typeof p.pass === 'number' ? `P${p.pass}` : p.pass}</span>
+						{#if p.max_states > 0}
+							<span class="pass-states">{((p.max_states||0)/1000).toFixed(0)}K</span>
+						{/if}
+						<span class="pass-score" class:best={p.score === bestGpuScore}>{p.score}</span>
+						<span class="pass-time muted">{p.elapsed}s</span>
+					</div>
+				{/each}
+				{:else}
+				<h3>GPU Progress</h3>
+				<div class="muted">Waiting for GPU...</div>
+				{/if}
+			</div>
+		</div>
+
+		<!-- Score Chart -->
+		<div class="grid-cell">
 			<div class="sidebar-section chart-section">
 				<h3>Score</h3>
-				<svg viewBox="0 0 {CHART_W} {CHART_H}" class="chart-svg-sm" preserveAspectRatio="none">
+				{#if scoreHistory.length > 1}
+				<svg viewBox="0 0 {CHART_W} {CHART_H}" class="chart-svg-col" preserveAspectRatio="none">
 					{#each [0.25, 0.5, 0.75] as frac}
 						<line x1="0" y1={CHART_H * frac} x2={CHART_W} y2={CHART_H * frac}
-							stroke="#30363d" stroke-width="1"/>
+							stroke="#1a1f28" stroke-width="1"/>
 					{/each}
 					{#if targetScore && chartMaxScore > 0}
 						<line x1="0" y1={CHART_H - (targetScore / chartMaxScore) * CHART_H}
 							x2={CHART_W} y2={CHART_H - (targetScore / chartMaxScore) * CHART_H}
-							stroke="#f85149" stroke-width="1" stroke-dasharray="6 4" opacity="0.5"/>
+							stroke="#f85149" stroke-width="1" stroke-dasharray="5 3" opacity="0.5"/>
 					{/if}
 					{#if chartPlanLine}
-						<polyline points={chartPlanLine} fill="none" stroke="#56d364"
-							stroke-width="1.5" stroke-dasharray="4 3" opacity="0.7"/>
+						<polyline points={chartPlanLine} fill="none" stroke="#39d353"
+							stroke-width="1.5" stroke-dasharray="4 3" opacity="0.6"/>
 					{/if}
-					<polyline points={chartPolyline} fill="none" stroke="#39d353" stroke-width="2"/>
+					<polyline points={chartPolyline} fill="none" stroke="#56d364" stroke-width="2"/>
 					{#if chartLastPt}
 						<circle
 							cx={(chartLastPt.round / maxRounds) * CHART_W}
 							cy={CHART_H - (chartLastPt.score / chartMaxScore) * CHART_H}
-							r="3" fill="#39d353"/>
+							r="3" fill="#56d364"/>
 					{/if}
 				</svg>
 				<div class="chart-legend">
-					<span style="color:#39d353">— live</span>
-					<span style="color:#56d364">-- plan</span>
-					{#if targetScore}<span style="color:#f85149">-- {targetScore}</span>{/if}
+					<span style="color:#56d364">/// live</span>
+					<span style="color:#39d353">--- plan</span>
+					{#if targetScore}<span style="color:#f85149">--- {targetScore}</span>{/if}
 				</div>
+				{:else}
+				<div class="muted chart-empty">Waiting for data...</div>
+				{/if}
 			</div>
-			{/if}
+		</div>
+	</div>
 
-			<!-- Orders -->
+	<!-- ── Row 2: Grid | Orders | Bots ─────────────────────────────────────── -->
+	<div class="grid-row">
+		<!-- Grid -->
+		<div class="grid-cell">
+			{#if gameInit}
+			<div class="grid-wrap">
+				<Grid
+					width={gameInit.width}
+					height={gameInit.height}
+					cellSize={adaptiveCell}
+					{wallSet}
+					{shelfSet}
+					{itemMap}
+					dropOff={gameInit.drop_off}
+					spawn={gameInit.spawn}
+					bots={botsTyped}
+					{botPositions}
+					botColors={BOT_COLORS}
+					{selectedBot}
+					onSelectBot={(id) => selectedBot = selectedBot === id ? null : id}
+				/>
+			</div>
+			{:else}
+			<div class="muted" style="padding:1rem">Waiting for game...</div>
+			{/if}
+		</div>
+
+		<!-- Orders -->
+		<div class="grid-cell">
 			<div class="sidebar-section">
 				<h3>Orders ({orders.length})</h3>
 				{#each orders as order}
@@ -785,25 +920,12 @@
 					<div class="muted">Waiting for orders...</div>
 				{/if}
 			</div>
+		</div>
 
-			<!-- GPU Passes -->
-			{#if gpuPasses.length > 0}
+		<!-- Bots -->
+		<div class="grid-cell">
 			<div class="sidebar-section">
-				<h3>GPU Passes ({gpuPasses.length})</h3>
-				{#each gpuPasses as p}
-					<div class="gpu-pass" class:best={p.score === bestGpuScore}>
-						<span class="pass-num">P{p.pass}</span>
-						<span class="pass-states">{((p.max_states||0)/1000).toFixed(0)}K</span>
-						<span class="pass-score" class:best={p.score === bestGpuScore}>{p.score}</span>
-						<span class="pass-time muted">{p.elapsed}s</span>
-					</div>
-				{/each}
-			</div>
-			{/if}
-
-			<!-- Bot inventory -->
-			{#if botsTyped.length > 0}
-			<div class="sidebar-section">
+				{#if botsTyped.length > 0}
 				<h3>Bots ({botsTyped.length})</h3>
 				{#each botsTyped as bot}
 					<div class="bot-row" class:selected={selectedBot === bot.id}
@@ -813,31 +935,82 @@
 						<span class="bot-inv">{bot.inventory.length > 0 ? bot.inventory.join(', ') : '-'}</span>
 					</div>
 				{/each}
+				{:else}
+				<h3>Bots</h3>
+				<div class="muted">Waiting...</div>
+				{/if}
 			</div>
-			{/if}
+		</div>
+	</div>
+
+	<!-- ── Iterations (full width, shown when available) ───────────────────── -->
+	{#if iterations.length > 0}
+	<div class="sidebar-section iter-sidebar">
+		<h3>Iterations
+			<span class="iter-meta">
+				Best: <span class="cyan">{iterBestScore}</span>
+				| {iterations.length} runs
+			</span>
+		</h3>
+		<div class="iter-chart-col">
+			<svg viewBox="0 0 {Math.max(200, iterations.length * 36)} 70" class="chart-svg-col" preserveAspectRatio="none">
+				{#each iterations as it, i}
+					{@const maxV = Math.max(targetScore || 200, iterBestScore, 1)}
+					{@const h = Math.max(3, (it.score / maxV) * 55)}
+					{@const w = Math.max(12, Math.min(28, 190 / Math.max(iterations.length, 1)))}
+					{@const x = 4 + i * (w + 3)}
+					<rect
+						{x} y={60 - h} width={w} height={h}
+						fill={it.score >= targetScore ? '#56d364' :
+							  it.score === iterBestScore && it.score > 0 ? '#39d353' : '#d29922'}
+						rx="0" opacity={activeIter === i ? 1 : 0.6}
+					/>
+					<text x={x + w/2} y={56 - h} fill="#c9d1d9" font-size="8"
+						text-anchor="middle" font-weight="700" font-family="var(--font-mono)">{it.score || ''}</text>
+					<text x={x + w/2} y={69} fill="#484f58" font-size="6"
+						text-anchor="middle" font-family="var(--font-mono)">Iter {i+1}</text>
+				{/each}
+				{#if targetScore}
+					{@const maxV = Math.max(targetScore || 200, iterBestScore, 1)}
+					<line x1="0" y1={60 - (targetScore / maxV) * 55}
+						x2={Math.max(200, iterations.length * 36)} y2={60 - (targetScore / maxV) * 55}
+						stroke="#f85149" stroke-width="1" stroke-dasharray="3 2" opacity="0.6"/>
+				{/if}
+			</svg>
+		</div>
+		<div class="iter-list-col">
+			{#each iterations as it, i}
+			<div class="iter-row-sm" class:active={activeIter === i}
+				class:best-row={it.score === iterBestScore && it.score > 0}
+				onclick={() => { if (it.phase === 'done') restoreIterSnapshot(i); activeIter = i; }}>
+				<span class="ir-num">Iter {i+1}</span>
+				<span class="ir-score" class:best={it.score === iterBestScore && it.score > 0}
+					class:hit={it.score >= targetScore}>{it.score ? it.score + 'pts' : '...'}</span>
+				{#if it.optScore > 0}<span class="ir-detail">opt:{it.optScore}</span>{/if}
+				<span class="ir-time">{it.elapsed ? it.elapsed.toFixed(0) + 's' : ''}</span>
+				{#if it.capturedOrders}<span class="ir-cap">+{it.capturedOrders} orders</span>{/if}
+			</div>
+			{/each}
 		</div>
 	</div>
 	{/if}
+	{/if}
 
-	<!-- ── Plan Upgrades ────────────────────────────────────────────────────── -->
+	<!-- ── Source Transitions (inline) ──────────────────────────────────────── -->
 	{#if planUpgrades.length > 0}
-	<div class="panel">
-		<h3>Plan Upgrades</h3>
-		<div class="timeline">
+	<div class="panel transitions-panel">
+		<h3>Source Transitions</h3>
+		<div class="transition-flow">
 			{#each planUpgrades as u, i}
-				<div class="tl-item">
-					<div class="tl-dot" style="background:{sourceColor(u.to)}"></div>
-					<div class="tl-content">
-						<span class="tl-src" style="color:{sourceColor(u.to)}">{u.to}</span>
-						{#if u.score}
-							<span class="tl-score">{u.score} pts</span>
-						{/if}
-						<span class="tl-round muted">R{u.round}</span>
-					</div>
-					{#if i < planUpgrades.length - 1}
-						<div class="tl-line"></div>
-					{/if}
+				<div class="tr-chip">
+					<span class="tr-round">R{u.round}</span>
+					<span class="tr-arrow-in" style="color:{sourceColor(u.from || 'none')}">&#x25C0;</span>
+					<span class="tr-to" style="color:{sourceColor(u.to)}; text-shadow: 0 0 8px {sourceColor(u.to)}40">{u.to}</span>
+					{#if u.score}<span class="tr-score">{u.score}</span>{/if}
 				</div>
+				{#if i < planUpgrades.length - 1}
+					<span class="tr-sep">&#x25B8;</span>
+				{/if}
 			{/each}
 		</div>
 	</div>
@@ -906,74 +1079,6 @@
 	</div>
 	{/if}
 
-	<!-- ── Iteration History (iterate mode) ─────────────────────────────────── -->
-	{#if iterations.length > 0}
-	<div class="panel iter-panel">
-		<h3>Iterations
-			<span class="iter-meta">
-				Best: <span class="green">{iterBestScore}</span>
-				| {iterations.length} runs
-				| {fmtSecs(timerElapsed)}
-				{#if targetScore}| Target: <span class="red">{targetScore}</span>{/if}
-			</span>
-		</h3>
-		<!-- Iteration bar chart -->
-		<div class="iter-chart">
-			<svg viewBox="0 0 {Math.max(400, iterations.length * 80)} 90" class="chart-svg" preserveAspectRatio="none">
-				{#each iterations as it, i}
-					{@const maxV = Math.max(targetScore || 200, iterBestScore, 1)}
-					{@const h = Math.max(4, (it.score / maxV) * 75)}
-					{@const w = Math.max(20, Math.min(60, 380 / Math.max(iterations.length, 1)))}
-					{@const x = 10 + i * (w + 4)}
-					<rect
-						{x} y={80 - h} width={w} height={h}
-						fill={it.score >= targetScore ? '#39d353' :
-							  it.score === iterBestScore && it.score > 0 ? '#58a6ff' : '#d29922'}
-						rx="3" opacity={activeIter === i ? 1 : 0.7}
-					/>
-					<text x={x + w/2} y={75 - h} fill="var(--text)" font-size="9"
-						text-anchor="middle" font-weight="600">{it.score || '...'}</text>
-					<text x={x + w/2} y={88} fill="var(--text-muted)" font-size="7"
-						text-anchor="middle">#{i+1}</text>
-				{/each}
-				<!-- Target line -->
-				{#if targetScore}
-					{@const maxV = Math.max(targetScore || 200, iterBestScore, 1)}
-					<line x1="0" y1={80 - (targetScore / maxV) * 75}
-						x2={Math.max(400, iterations.length * 80)} y2={80 - (targetScore / maxV) * 75}
-						stroke="#f85149" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
-				{/if}
-			</svg>
-		</div>
-		<!-- Iteration table -->
-		<div class="iter-table">
-			{#each iterations as it, i}
-			<div class="iter-row" class:active={activeIter === i}
-				onclick={() => activeIter = i}>
-				<span class="iter-num">#{i+1}</span>
-				<span class="iter-phase" class:done={it.phase === 'done'}
-					class:playing={it.phase === 'playing' || it.phase === 'live_play'}
-					class:optimizing={it.phase === 'optimize_replay'}>
-					{it.phase === 'live_play' || it.phase === 'playing' ? '🎮 live' :
-					 it.phase === 'optimize_replay' ? '🔥 opt+replay' :
-					 it.phase === 'done' ? '✓' : it.phase}
-				</span>
-				<span class="iter-score" class:best={it.score === iterBestScore && it.score > 0}
-					class:hit={it.score >= targetScore}>{it.score || '...'}</span>
-				{#if it.optScore > 0}
-					<span class="iter-opt muted">opt:{it.optScore}</span>
-				{/if}
-				{#if it.gameScore > 0}
-					<span class="iter-game muted">game:{it.gameScore}</span>
-				{/if}
-				<span class="iter-time muted">{it.elapsed ? it.elapsed.toFixed(0) + 's' : '...'}</span>
-				{#if it.capturedOrders}<span class="iter-captured">+{it.capturedOrders} ord</span>{/if}
-			</div>
-			{/each}
-		</div>
-	</div>
-	{/if}
-
 	<!-- ── Done summary (iterate mode) ────────────────────────────────────── -->
 	{#if phase === 'done' && mode === 'iterate' && iterations.length > 0}
 	<div class="panel done-panel">
@@ -1000,33 +1105,19 @@
 		</div>
 	{/if}
 
-	<!-- ── Log ───────────────────────────────────────────────────────────────── -->
-	<div class="panel log-panel">
-		<h3>Log <span class="muted" style="font-weight:400; font-size:0.75rem">({logs.length})</span></h3>
-		<div class="log-box">
-			{#each logs.slice().reverse() as entry}
-				<div class="log-line" class:error={entry.text?.startsWith('ERROR')}>
-					<span class="log-t">{entry.t}</span>
-					{#if entry.iter !== null && entry.iter !== undefined}
-						<span class="log-iter">#{entry.iter + 1}</span>
-					{/if}
-					<span>{entry.text}</span>
-				</div>
-			{/each}
-			{#if logs.length === 0}
-				<div class="muted">No activity yet</div>
-			{/if}
-		</div>
-	</div>
+	<!-- Log is now inside the three-col layout above -->
 </div>
 
 <style>
+	/* ═══════════════════════════════════════════════════════════════════════
+	   HACKER AESTHETIC — sharp edges, glowing cyan/green/magenta, scanlines
+	   ═══════════════════════════════════════════════════════════════════════ */
 	.page {
-		max-width: 1400px;
+		max-width: 1600px;
 		margin: 0 auto;
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 0.75rem;
 	}
 
 	.header {
@@ -1039,51 +1130,59 @@
 		align-items: center;
 		gap: 0.5rem;
 	}
-	h1 { font-size: 1.5rem; margin: 0 0 0.2rem; font-family: var(--font-mono); font-weight: 700; }
-	.sub { color: var(--text-muted); font-size: 0.82rem; margin: 0; }
+	h1 {
+		font-size: 1.5rem; margin: 0 0 0.2rem;
+		font-family: var(--font-mono); font-weight: 700;
+		color: #39d353;
+		text-shadow: 0 0 12px rgba(57,211,83,0.3);
+	}
+	.sub { color: #5a6270; font-size: 0.82rem; margin: 0; letter-spacing: 0.04em; }
 
 	.diff-badge {
 		padding: 0.2rem 0.6rem;
-		border-radius: 4px;
-		font-size: 0.75rem;
+		border-radius: 2px;
+		font-size: 0.72rem;
 		font-weight: 700;
 		color: #000;
 		text-transform: uppercase;
+		letter-spacing: 0.06em;
 	}
 	.target-label {
-		font-size: 0.75rem;
-		color: var(--text-muted);
+		font-size: 0.72rem;
+		color: #5a6270;
 		font-weight: 600;
+		font-family: var(--font-mono);
 	}
 
 	/* Phase badge */
 	.phase-badge {
-		padding: 0.3rem 0.8rem;
-		border-radius: 20px;
-		font-size: 0.8rem;
+		padding: 0.25rem 0.7rem;
+		border-radius: 2px;
+		font-size: 0.78rem;
 		font-weight: 600;
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-		backdrop-filter: blur(4px);
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+		background: rgba(0,0,0,0.6);
+		border: 1px solid #2a2f38;
+		color: #5a6270;
+		font-family: var(--font-mono);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 	}
-	.phase-badge.playing    { border-color: #39d353; color: #39d353; }
-	.phase-badge.post       { border-color: #56d364; color: #56d364; }
+	.phase-badge.playing    { border-color: #39d353; color: #39d353; box-shadow: 0 0 8px rgba(0,255,159,0.15); }
+	.phase-badge.post       { border-color: #56d364; color: #56d364; box-shadow: 0 0 8px rgba(57,255,20,0.15); }
 	.phase-badge.done       { border-color: #39d353; color: #39d353; }
-	.phase-badge.replaying  { border-color: #58a6ff; color: #58a6ff; }
+	.phase-badge.replaying  { border-color: #39d353; color: #39d353; box-shadow: 0 0 8px rgba(0,229,255,0.15); }
 
 	/* Timer bar */
 	.timer-bar {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
+		background: rgba(13,17,23,0.8);
+		border: 1px solid #1a1f28;
+		border-radius: 1px;
 		padding: 0.5rem 0.75rem;
 	}
 	.timer-track {
-		height: 6px;
-		background: var(--bg);
-		border-radius: 3px;
+		height: 4px;
+		background: #0d1117;
+		border-radius: 0;
 		overflow: hidden;
 		margin-bottom: 0.3rem;
 	}
@@ -1091,15 +1190,17 @@
 		height: 100%;
 		background: linear-gradient(90deg, #39d353, #56d364);
 		transition: width 0.3s;
-		border-radius: 3px;
+		border-radius: 0;
+		box-shadow: 0 0 6px rgba(0,229,255,0.4);
 	}
-	.timer-fill.warn { background: linear-gradient(90deg, #d29922, #facc15); }
-	.timer-fill.danger { background: linear-gradient(90deg, #f85149, #da3633); }
+	.timer-fill.warn { background: linear-gradient(90deg, #d29922, #ff6b00); box-shadow: 0 0 6px rgba(229,160,13,0.4); }
+	.timer-fill.danger { background: linear-gradient(90deg, #f85149, #da3633); box-shadow: 0 0 8px rgba(255,0,60,0.5); }
 	.timer-labels {
 		display: flex;
 		justify-content: space-between;
-		font-size: 0.72rem;
-		color: var(--text-muted);
+		font-size: 0.7rem;
+		color: #5a6270;
+		font-family: var(--font-mono);
 	}
 	.timer-remaining { font-weight: 600; }
 	.timer-remaining.warn { color: #d29922; }
@@ -1107,11 +1208,11 @@
 
 	/* Panel */
 	.panel {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 1rem;
-		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+		background: rgba(13,17,23,0.85);
+		border: 1px solid #1a1f28;
+		border-radius: 2px;
+		padding: 0.85rem;
+		box-shadow: 0 2px 16px rgba(0, 0, 0, 0.6);
 	}
 	.input-panel.collapsed {
 		padding: 0.4rem 0.75rem;
@@ -1119,13 +1220,13 @@
 	.expand-btn {
 		background: none;
 		border: none;
-		color: var(--text-muted);
-		font-size: 0.75rem;
+		color: #5a6270;
+		font-size: 0.72rem;
 		cursor: pointer;
-		font-family: inherit;
+		font-family: var(--font-mono);
 		padding: 0;
 	}
-	.expand-btn:hover { color: var(--accent); }
+	.expand-btn:hover { color: #39d353; }
 
 	/* Input */
 	.url-row {
@@ -1137,14 +1238,14 @@
 	.url-input {
 		flex: 1;
 		padding: 0.45rem 0.75rem;
-		background: var(--bg);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		color: var(--text);
+		background: #0a0e14;
+		border: 1px solid #1a1f28;
+		border-radius: 1px;
+		color: #39d353;
 		font-size: 0.82rem;
-		font-family: inherit;
+		font-family: var(--font-mono);
 	}
-	.url-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(57, 211, 83, 0.1); }
+	.url-input:focus { outline: none; border-color: #39d353; box-shadow: 0 0 0 1px rgba(0,229,255,0.2), 0 0 12px rgba(0,229,255,0.1); }
 	.controls-row {
 		display: flex;
 		gap: 0.75rem;
@@ -1155,394 +1256,497 @@
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
-		font-size: 0.8rem;
-		color: var(--text-muted);
+		font-size: 0.78rem;
+		color: #5a6270;
+		font-family: var(--font-mono);
 	}
 	.num-input {
-		width: 70px;
+		width: 65px;
 		padding: 0.3rem 0.5rem;
-		background: var(--bg);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		color: var(--text);
-		font-size: 0.8rem;
+		background: #0a0e14;
+		border: 1px solid #1a1f28;
+		border-radius: 1px;
+		color: #c9d1d9;
+		font-size: 0.78rem;
+		font-family: var(--font-mono);
 	}
 	.num-input.sm { width: 45px; }
 	.badge {
 		padding: 0.15rem 0.5rem;
-		border-radius: 4px;
-		font-size: 0.72rem;
-		font-weight: 600;
+		border-radius: 1px;
+		font-size: 0.7rem;
+		font-weight: 700;
 		color: #000;
 		white-space: nowrap;
+		letter-spacing: 0.04em;
 	}
 
 	/* Mode toggle */
 	.mode-toggle {
 		display: flex;
-		background: var(--bg);
-		border: 1px solid var(--border);
-		border-radius: 4px;
+		background: #0a0e14;
+		border: 1px solid #1a1f28;
+		border-radius: 1px;
 		overflow: hidden;
 	}
 	.mode-btn {
 		padding: 0.3rem 0.7rem;
 		border: none;
 		background: transparent;
-		color: var(--text-muted);
-		font-size: 0.78rem;
+		color: #5a6270;
+		font-size: 0.76rem;
 		font-weight: 600;
 		cursor: pointer;
-		font-family: inherit;
+		font-family: var(--font-mono);
 		transition: all 0.15s;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
 	}
-	.mode-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+	.mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 	.mode-btn.active {
-		background: var(--accent);
-		color: #0d1117;
+		background: #39d353;
+		color: #0a0e14;
+		box-shadow: 0 0 8px rgba(0,229,255,0.3);
 	}
 
 	/* Buttons */
 	.btn {
 		padding: 0.4rem 1rem;
-		border: none;
-		border-radius: 4px;
+		border: 1px solid transparent;
+		border-radius: 1px;
 		cursor: pointer;
-		font-size: 0.8rem;
-		font-weight: 600;
-		font-family: inherit;
-		letter-spacing: 0.02em;
+		font-size: 0.78rem;
+		font-weight: 700;
+		font-family: var(--font-mono);
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
 	}
-	.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-	.btn-start   { background: #39d353; color: #0d1117; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
-	.btn-iterate { background: #58a6ff; color: #0d1117; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
-	.btn-stop    { background: var(--red); color: #fff; }
-	.btn-replay  { background: #58a6ff; color: #0d1117; margin-top: 0.5rem; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
+	.btn:disabled { opacity: 0.3; cursor: not-allowed; }
+	.btn-start   { background: #56d364; color: #0a0e14; border-color: #56d364; box-shadow: 0 0 10px rgba(57,255,20,0.3); }
+	.btn-iterate { background: #39d353; color: #0a0e14; border-color: #39d353; box-shadow: 0 0 10px rgba(0,229,255,0.3); }
+	.btn-stop    { background: transparent; color: #f85149; border-color: #f85149; box-shadow: 0 0 8px rgba(255,0,60,0.2); }
+	.btn-replay  { background: #39d353; color: #0a0e14; margin-top: 0.5rem; box-shadow: 0 0 10px rgba(0,229,255,0.3); }
+	.btn-start:hover { box-shadow: 0 0 16px rgba(57,255,20,0.5); }
+	.btn-iterate:hover { box-shadow: 0 0 16px rgba(0,229,255,0.5); }
+	.btn-stop:hover { background: #f85149; color: #0a0e14; }
 	.running-pill {
-		font-size: 0.8rem;
-		color: var(--accent-light);
+		font-size: 0.78rem;
+		color: #39d353;
+		font-family: var(--font-mono);
 		animation: pulse 1.5s ease-in-out infinite;
 	}
 
 	/* Stats bar */
 	.stats-bar {
 		display: flex;
-		gap: 0.5rem;
+		gap: 0.4rem;
 		flex-wrap: wrap;
 	}
 	.stat {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 0.4rem 0.75rem;
+		background: rgba(10,14,20,0.9);
+		border: 1px solid #1a1f28;
+		border-radius: 1px;
+		padding: 0.35rem 0.7rem;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		min-width: 70px;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-		transition: all 0.15s ease;
+		flex: 1 1 0;
+		min-width: 68px;
+		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
 	}
-	.best-stat { border-color: #39d353; }
+	.best-stat { border-color: #39d353; box-shadow: 0 0 8px rgba(0,229,255,0.15); }
 	.stat-label {
-		font-size: 0.65rem;
-		color: var(--text-muted);
+		font-size: 0.6rem;
+		color: #4a5260;
 		text-transform: uppercase;
-		letter-spacing: 0.05em;
+		letter-spacing: 0.08em;
+		font-family: var(--font-mono);
 	}
-	.stat-val { font-size: 1.1rem; font-weight: 700; font-family: var(--font-mono); }
-	.stat-src { font-size: 0.78rem; font-weight: 600; }
-	.green  { color: #39d353; }
-	.accent { color: var(--accent-light); }
+	.stat-val { font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); }
+	.stat-src { font-size: 0.76rem; font-weight: 600; font-family: var(--font-mono); }
+	.green  { color: #56d364; }
+	.cyan   { color: #39d353; }
+	.accent { color: #39d353; }
 	.gold   { color: #d29922; }
 	.red    { color: #f85149; }
 
 	/* Progress */
 	.progress-bar {
-		height: 6px;
-		background: var(--bg-card);
-		border-radius: 3px;
+		height: 4px;
+		background: #0a0e14;
+		border-radius: 0;
 		overflow: hidden;
 	}
 	.progress-fill {
 		height: 100%;
-		background: linear-gradient(90deg, var(--green), var(--accent));
+		background: linear-gradient(90deg, #39d353, #56d364);
 		transition: width 0.2s;
+		box-shadow: 0 0 6px rgba(0,229,255,0.4);
 	}
-	.progress-fill.accent { background: var(--accent-light); }
+	.progress-fill.accent { background: #39d353; }
 	.progress-txt {
-		font-size: 0.7rem;
-		color: var(--text-muted);
+		font-size: 0.68rem;
+		color: #4a5260;
 		text-align: center;
 		margin-top: 0.2rem;
+		font-family: var(--font-mono);
 	}
 
 	/* Iteration tabs */
 	.iter-tabs {
 		display: flex;
-		gap: 4px;
+		gap: 2px;
 		flex-wrap: wrap;
+		align-items: center;
+	}
+	.iter-tabs-label {
+		font-size: 0.7rem;
+		color: #484f58;
+		font-family: var(--font-mono);
+		font-weight: 600;
+		padding-right: 0.3rem;
 	}
 	.iter-tab {
 		display: flex;
 		align-items: center;
-		gap: 0.3rem;
-		padding: 0.35rem 0.65rem;
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: 6px 6px 0 0;
+		gap: 0.25rem;
+		padding: 0.3rem 0.55rem;
+		background: rgba(10,14,20,0.8);
+		border: 1px solid #1a1f28;
+		border-radius: 1px 1px 0 0;
 		cursor: pointer;
-		font-family: inherit;
-		font-size: 0.78rem;
-		color: var(--text-muted);
-		transition: all 0.15s;
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		color: #4a5260;
+		transition: all 0.1s;
 	}
 	.iter-tab.active {
-		background: var(--bg);
-		border-bottom-color: var(--bg);
-		color: var(--text);
+		background: #0d1117;
+		border-bottom-color: #0d1117;
+		color: #c9d1d9;
+		border-top-color: #39d353;
 	}
 	.iter-tab.best {
 		border-color: #39d353;
+		box-shadow: 0 0 6px rgba(0,229,255,0.15);
 	}
 	.tab-num { font-weight: 600; }
-	.tab-score { font-weight: 700; font-family: var(--font-mono); }
-	.tab-score.best { color: #39d353; }
-	.tab-dots { color: var(--text-muted); animation: pulse 1s ease-in-out infinite; }
+	.tab-score { font-weight: 700; }
+	.tab-score.best { color: #39d353; text-shadow: 0 0 6px rgba(0,229,255,0.3); }
+	.tab-dots { color: #4a5260; animation: pulse 1s ease-in-out infinite; }
 
-	/* Game area */
-	.game-area {
-		display: flex;
-		gap: 1rem;
-		align-items: flex-start;
+	/* 2-row, 3-column equal-width layout */
+	.grid-row {
+		display: grid;
+		grid-template-columns: 1fr 1fr 1fr;
+		gap: 0.75rem;
+		align-items: start;
 	}
-	.grid-wrap { flex-shrink: 0; }
-	.sidebar {
-		flex: 1;
+	.grid-cell {
 		display: flex;
 		flex-direction: column;
-		gap: 0.75rem;
-		min-width: 220px;
-		max-width: 340px;
+		gap: 0.6rem;
+		min-width: 0;
+		max-height: 500px;
+		overflow-y: auto;
+	}
+	.grid-cell .log-box {
+		max-height: 440px;
+	}
+	.log-inline h3 { font-size: 0.72rem; }
+	.grid-cell .grid-wrap { flex-shrink: 0; }
+	.chart-svg-col {
+		width: 100%;
+		height: 140px;
+		background: #0a0e14;
+		border-radius: 1px;
+		display: block;
+	}
+	.chart-empty {
+		height: 140px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: #0a0e14;
+		border-radius: 1px;
+	}
+	.iter-chart-col { margin-bottom: 0.3rem; }
+	.iter-list-col {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		max-height: 300px;
+		overflow-y: auto;
 	}
 	.sidebar-section h3 {
-		font-size: 0.82rem;
+		font-size: 0.72rem;
 		font-weight: 600;
-		margin: 0 0 0.4rem;
-		color: var(--text-muted);
+		margin: 0 0 0.35rem;
+		color: #4a5260;
 		text-transform: uppercase;
-		letter-spacing: 0.05em;
+		letter-spacing: 0.08em;
+		font-family: var(--font-mono);
 	}
 
 	/* Orders */
 	.order {
-		background: var(--bg);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		padding: 0.35rem 0.5rem;
-		margin-bottom: 0.3rem;
+		background: #0a0e14;
+		border: 1px solid #1a1f28;
+		border-radius: 1px;
+		padding: 0.3rem 0.45rem;
+		margin-bottom: 0.25rem;
 	}
-	.order.active  { border-color: #facc15; }
-	.order.preview { border-color: #f472b6; opacity: 0.8; }
+	.order.active  { border-color: #d29922; border-left: 2px solid #d29922; }
+	.order.preview { border-color: #f472b6; opacity: 0.75; border-left: 2px solid #f472b6; }
 	.order-tag {
-		font-size: 0.6rem;
+		font-size: 0.58rem;
 		font-weight: 700;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		color: #4a5260;
 		display: block;
-		margin-bottom: 0.2rem;
+		margin-bottom: 0.15rem;
+		font-family: var(--font-mono);
+		letter-spacing: 0.06em;
 	}
-	.order-items { display: flex; flex-wrap: wrap; gap: 0.2rem; }
+	.order-items { display: flex; flex-wrap: wrap; gap: 0.15rem; }
 	.oitem {
-		font-size: 0.68rem;
-		padding: 0.1rem 0.3rem;
-		background: var(--bg-card);
-		border-radius: 3px;
+		font-size: 0.66rem;
+		padding: 0.1rem 0.25rem;
+		background: #161b22;
+		border-radius: 1px;
+		font-family: var(--font-mono);
 	}
-	.oitem.del { background: #39d353; color: #0d1117; }
+	.oitem.del { background: #56d364; color: #0a0e14; font-weight: 600; }
 
 	/* GPU passes */
 	.gpu-pass {
 		display: flex;
-		gap: 0.5rem;
+		gap: 0.4rem;
 		align-items: center;
-		padding: 0.25rem 0.4rem;
-		border-radius: 4px;
-		font-size: 0.78rem;
-		margin-bottom: 0.2rem;
+		padding: 0.2rem 0.35rem;
+		border-radius: 1px;
+		font-size: 0.74rem;
+		margin-bottom: 0.15rem;
+		font-family: var(--font-mono);
 	}
-	.gpu-pass.best { background: rgba(57,211,83,0.1); border: 1px solid #39d353; }
-	.pass-num   { font-weight: 700; color: var(--text-muted); min-width: 20px; }
-	.pass-states { color: var(--text-muted); font-size: 0.72rem; min-width: 30px; }
+	.gpu-pass.best { background: rgba(0,229,255,0.08); border: 1px solid #39d353; }
+	.pass-num   { font-weight: 700; color: #4a5260; min-width: 20px; }
+	.pass-states { color: #4a5260; font-size: 0.68rem; min-width: 30px; }
 	.pass-score { font-weight: 700; }
-	.pass-score.best { color: #39d353; }
-	.pass-time  { margin-left: auto; }
+	.pass-score.best { color: #39d353; text-shadow: 0 0 6px rgba(0,229,255,0.3); }
+	.pass-time  { margin-left: auto; color: #3a3f47; }
 
 	/* Bot rows */
 	.bot-row {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
-		padding: 0.2rem 0.35rem;
-		font-size: 0.75rem;
+		gap: 0.35rem;
+		padding: 0.15rem 0.3rem;
+		font-size: 0.72rem;
 		cursor: pointer;
-		border-radius: 3px;
+		border-radius: 1px;
 		transition: background 0.1s;
+		font-family: var(--font-mono);
 	}
-	.bot-row:hover { background: rgba(255,255,255,0.04); }
-	.bot-row.selected { background: rgba(57,211,83,0.1); }
-	.bot-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-	.bot-pos { color: var(--text-muted); font-family: var(--font-mono); min-width: 40px; }
-	.bot-inv { color: var(--text); }
+	.bot-row:hover { background: rgba(0,229,255,0.04); }
+	.bot-row.selected { background: rgba(0,229,255,0.08); border-left: 2px solid #39d353; }
+	.bot-dot { width: 7px; height: 7px; border-radius: 1px; flex-shrink: 0; }
+	.bot-pos { color: #4a5260; min-width: 40px; }
+	.bot-inv { color: #c9d1d9; }
 
 	/* Score chart */
-	.chart-panel h3 { font-size: 0.82rem; font-weight: 600; margin: 0 0 0.5rem; color: var(--text-muted); }
+	.chart-panel h3 { font-size: 0.72rem; font-weight: 600; margin: 0 0 0.5rem; color: #4a5260; }
 	.chart-svg {
 		width: 100%;
 		height: 120px;
-		background: var(--bg);
-		border-radius: 4px;
+		background: #0a0e14;
+		border-radius: 1px;
 		display: block;
 	}
 	.chart-svg-sm {
 		width: 100%;
 		height: 80px;
-		background: var(--bg);
-		border-radius: 4px;
+		background: #0a0e14;
+		border-radius: 1px;
 		display: block;
 	}
-	.chart-section { margin-bottom: 0.25rem; }
+	.chart-section { margin-bottom: 0.2rem; }
 	.chart-legend {
-		font-size: 0.72rem;
-		margin-top: 0.3rem;
-		color: var(--text-muted);
+		font-size: 0.68rem;
+		margin-top: 0.25rem;
+		color: #4a5260;
 		display: flex;
-		gap: 1rem;
+		gap: 0.8rem;
+		font-family: var(--font-mono);
 	}
 
-	/* Timeline */
-	.panel h3 { font-size: 0.82rem; font-weight: 600; margin: 0 0 0.5rem; color: var(--text-muted); }
-	.timeline {
+	/* Source transitions */
+	.transitions-panel h3 { font-size: 0.72rem; }
+	.transition-flow {
 		display: flex;
-		flex-direction: row;
 		flex-wrap: wrap;
-		gap: 0.4rem;
+		gap: 0.3rem;
 		align-items: center;
 	}
-	.tl-item { display: flex; align-items: center; gap: 0.3rem; }
-	.tl-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-	.tl-content { display: flex; gap: 0.3rem; align-items: baseline; flex-wrap: wrap; }
-	.tl-src  { font-size: 0.78rem; font-weight: 600; }
-	.tl-score { font-size: 0.72rem; color: #39d353; }
-	.tl-round { font-size: 0.68rem; }
-	.tl-line { width: 16px; height: 1px; background: var(--border); }
+	.tr-chip {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		background: #0a0e14;
+		border: 1px solid #1a1f28;
+		border-radius: 1px;
+		padding: 0.2rem 0.4rem;
+		font-size: 0.72rem;
+		font-family: var(--font-mono);
+	}
+	.tr-round { color: #3a3f47; font-size: 0.66rem; }
+	.tr-arrow-in { font-size: 0.6rem; }
+	.tr-to { font-weight: 700; }
+	.tr-score { color: #56d364; font-weight: 600; font-size: 0.7rem; }
+	.tr-sep { color: #2a2f38; font-size: 0.6rem; }
 
 	/* Post-optimize */
-	.opt-panel h3 { font-size: 0.82rem; font-weight: 600; margin: 0 0 0.5rem; }
+	.opt-panel h3 { font-size: 0.72rem; font-weight: 600; margin: 0 0 0.5rem; font-family: var(--font-mono); }
 	.opt-row { display: flex; gap: 1rem; flex-wrap: wrap; }
 	.opt-stat { display: flex; flex-direction: column; align-items: center; min-width: 80px; }
-	.opt-label { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; }
+	.opt-label { font-size: 0.6rem; color: #4a5260; text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; }
 	.opt-val   { font-size: 1.2rem; font-weight: 700; font-family: var(--font-mono); }
 
 	/* Done panel */
-	.done-panel { border-color: #39d353; }
+	.done-panel { border-color: #39d353; box-shadow: 0 0 20px rgba(0,229,255,0.1); }
 	.done-score {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
 		margin-bottom: 0.75rem;
 	}
-	.done-label { color: var(--text-muted); font-size: 0.85rem; }
-	.done-val   { font-size: 2.5rem; font-weight: 800; color: #39d353; font-family: var(--font-mono); }
-	.done-val.hit { color: #39d353; text-shadow: 0 0 20px rgba(57,211,83,0.3); }
+	.done-label { color: #4a5260; font-size: 0.82rem; font-family: var(--font-mono); text-transform: uppercase; }
+	.done-val   {
+		font-size: 2.5rem; font-weight: 800; color: #39d353;
+		font-family: var(--font-mono);
+		text-shadow: 0 0 20px rgba(0,229,255,0.3);
+	}
+	.done-val.hit { color: #56d364; text-shadow: 0 0 24px rgba(57,255,20,0.4); }
 	.done-meta {
 		display: flex;
 		gap: 0.5rem;
-		font-size: 0.8rem;
-		color: var(--text-muted);
-		margin-bottom: 0.75rem;
+		font-size: 0.78rem;
+		color: #4a5260;
+		font-family: var(--font-mono);
 	}
 	.hit-badge {
-		background: #39d353;
-		color: #0d1117;
+		background: #56d364;
+		color: #0a0e14;
 		padding: 0.2rem 0.6rem;
-		border-radius: 4px;
-		font-size: 0.72rem;
+		border-radius: 1px;
+		font-size: 0.7rem;
 		font-weight: 700;
-		animation: pulse 2s ease-in-out infinite;
+		font-family: var(--font-mono);
+		letter-spacing: 0.06em;
+		animation: glowPulse 2s ease-in-out infinite;
+		box-shadow: 0 0 12px rgba(57,255,20,0.4);
 	}
 
-	/* Iteration panel */
-	.iter-panel h3 { margin-bottom: 0.5rem; }
+	/* Sidebar iteration section */
+	.iter-sidebar h3 { margin-bottom: 0.3rem; }
 	.iter-meta {
 		font-weight: 400;
-		font-size: 0.75rem;
-		color: var(--text-muted);
+		font-size: 0.68rem;
+		color: #4a5260;
 	}
-	.iter-chart { margin-bottom: 0.5rem; }
-	.iter-table { display: flex; flex-direction: column; gap: 2px; max-height: 250px; overflow-y: auto; }
-	.iter-row {
-		display: flex; align-items: center; gap: 0.5rem;
-		padding: 0.3rem 0.5rem; font-size: 0.8rem;
-		background: rgba(255,255,255,0.02); border-radius: 3px;
+	.iter-chart-sm { margin-bottom: 0.3rem; }
+	.iter-list {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		max-height: 180px;
+		overflow-y: auto;
+	}
+	.iter-row-sm {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.2rem 0.35rem;
+		font-size: 0.72rem;
+		background: rgba(10,14,20,0.6);
 		cursor: pointer;
 		transition: background 0.1s;
+		font-family: var(--font-mono);
+		border-left: 2px solid transparent;
 	}
-	.iter-row:hover { background: rgba(255,255,255,0.05); }
-	.iter-row.active { background: rgba(57,211,83,0.08); border-left: 2px solid #39d353; }
-	.iter-num { font-family: var(--font-mono); color: var(--text-muted); min-width: 2rem; }
-	.iter-phase {
-		font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
-		padding: 0.1rem 0.4rem; border-radius: 3px; min-width: 3.5rem; text-align: center;
+	.iter-row-sm:hover { background: rgba(0,229,255,0.04); }
+	.iter-row-sm.active { background: rgba(0,229,255,0.06); border-left-color: #39d353; }
+	.iter-row-sm.best-row { border-left-color: #56d364; }
+	.ir-num { color: #3a3f47; min-width: 1.5rem; }
+	.ir-score { font-weight: 700; min-width: 2rem; color: #c9d1d9; }
+	.ir-score.best { color: #39d353; text-shadow: 0 0 4px rgba(0,229,255,0.3); }
+	.ir-score.hit { color: #56d364; text-shadow: 0 0 4px rgba(57,255,20,0.3); }
+	.ir-detail { color: #3a3f47; font-size: 0.66rem; }
+	.ir-time { color: #3a3f47; font-size: 0.66rem; margin-left: auto; }
+	.ir-cap { color: #56d364; font-size: 0.66rem; font-weight: 600; }
+
+	/* Panel h3 */
+	.panel h3 {
+		font-size: 0.72rem; font-weight: 600; margin: 0 0 0.5rem;
+		color: #4a5260; font-family: var(--font-mono);
+		text-transform: uppercase; letter-spacing: 0.06em;
 	}
-	.iter-phase.playing { background: #58a6ff20; color: #58a6ff; }
-	.iter-phase.optimizing { background: #f8514920; color: #f85149; }
-	.iter-phase.done { background: #39d35320; color: #39d353; }
-	.iter-score { font-family: var(--font-mono); font-weight: 600; min-width: 3rem; }
-	.iter-score.best { color: #39d353; }
-	.iter-score.hit { color: #39d353; font-weight: 800; }
-	.iter-game { font-size: 0.72rem; }
-	.iter-opt { font-size: 0.72rem; }
-	.iter-time { min-width: 3rem; }
-	.iter-orders { font-size: 0.72rem; }
-	.iter-captured { font-size: 0.72rem; color: #39d353; font-weight: 600; }
 
 	/* Log */
-	.log-panel h3 { font-size: 0.82rem; font-weight: 600; margin: 0 0 0.5rem; }
+	.log-panel h3 { font-size: 0.72rem; }
+	.log-count { font-weight: 400; font-size: 0.66rem; color: #3a3f47; }
 	.log-box {
-		background: var(--bg);
-		border-radius: 4px;
-		padding: 0.5rem;
-		max-height: 250px;
+		background: #0a0e14;
+		border-radius: 1px;
+		padding: 0.4rem;
+		max-height: 280px;
 		overflow-y: auto;
-		font-size: 0.72rem;
+		font-size: 0.68rem;
+		font-family: var(--font-mono);
+		border: 1px solid #1a1f28;
 	}
 	.log-line {
 		display: flex;
-		gap: 0.5rem;
+		gap: 0.4rem;
 		padding: 0.1rem 0;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid #0d1117;
 	}
 	.log-line:last-child { border-bottom: none; }
-	.log-line.error { color: #f85149; }
-	.log-t { color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+	.log-line.error { color: #f85149; text-shadow: 0 0 4px rgba(248,81,73,0.3); background: rgba(248,81,73,0.05); }
+	.log-line.desync { color: #da3633; text-shadow: 0 0 6px rgba(218,54,51,0.4); background: rgba(218,54,51,0.08); font-weight: 600; }
+	.log-line.upgrade { color: #56d364; }
+	.log-line.gpu-log { color: #58a6ff; }
+	.log-line.score-log { color: #39d353; font-weight: 600; }
+	.log-line.iter-start { color: #d29922; border-top: 1px solid #1a1f28; font-weight: 600; }
+	.log-line.seed-log { color: #bc8cff; }
+	.log-line.warn-log { color: #d29922; }
+	.log-line.greedy-log { color: #f472b6; font-weight: 600; }
+	.log-t { color: #2a2f38; white-space: nowrap; flex-shrink: 0; }
 	.log-iter {
-		color: #58a6ff;
+		color: #39d353;
 		font-weight: 600;
-		font-size: 0.68rem;
+		font-size: 0.64rem;
 		white-space: nowrap;
 		flex-shrink: 0;
 	}
-	.muted { color: var(--text-muted); }
+	.muted { color: #4a5260; }
 
 	.replay-section { margin-top: 0.5rem; }
 
 	@keyframes pulse {
 		0%, 100% { opacity: 1; }
-		50%       { opacity: 0.4; }
+		50%       { opacity: 0.3; }
+	}
+	@keyframes glowPulse {
+		0%, 100% { box-shadow: 0 0 12px rgba(57,255,20,0.4); }
+		50%       { box-shadow: 0 0 24px rgba(57,255,20,0.7); }
 	}
 
-	@media (max-width: 900px) {
-		.game-area { flex-direction: column; }
-		.sidebar { max-width: 100%; }
+	@media (max-width: 1200px) {
+		.grid-row { grid-template-columns: 1fr 1fr; }
+	}
+	@media (max-width: 800px) {
+		.grid-row { grid-template-columns: 1fr; }
+		.grid-cell { max-height: none; }
 	}
 </style>

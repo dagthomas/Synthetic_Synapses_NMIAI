@@ -42,7 +42,7 @@ from game_engine import (
 from replay_solution import predict_full_sim, extract_goals, bfs_next_action, build_walkable
 from live_solver import detect_difficulty, ws_to_capture
 from gpu_sequential_solver import solve_sequential, refine_from_solution, solve_multi_restart
-from solution_store import save_solution, save_capture as store_capture, load_meta
+from solution_store import save_solution, merge_capture, save_capture as store_capture, load_meta
 from precompute import PrecomputedTables
 
 # ── GPU pass state budgets per difficulty ──────────────────────────────────────
@@ -57,7 +57,7 @@ PASSES = {
 # max_states: state budget per bot per round, horizon: rounds to look ahead
 PR_PARAMS = {
     'easy':   {'max_states': 50_000, 'horizon': 80},
-    'medium': {'max_states': 15_000, 'horizon': 50},
+    'medium': {'max_states': 25_000, 'horizon': 55},
     'hard':   {'max_states': 40_000, 'horizon': 60},
     'expert': {'max_states': 20_000, 'horizon': 50},
 }
@@ -76,9 +76,11 @@ class PlanState:
 
 class AnytimeGPUStream:
     def __init__(self, ws_url, save=False, max_states=None, no_refine=False, device='cuda',
-                 post_optimize_time=0, json_stream=False, preload_capture=False, record=False):
+                 post_optimize_time=0, json_stream=False, preload_capture=False, record=False,
+                 pipeline_mode=False):
         self.ws_url = ws_url
         self.do_save = save
+        self.pipeline_mode = pipeline_mode  # skip heavy offline GPU (pipeline handles it separately)
         self.max_states_override = max_states
         self.no_refine = no_refine
         self.device = device
@@ -113,6 +115,13 @@ class AnytimeGPUStream:
         self._solve_gen = 0        # bumped when new orders arrive
         self._seen_order_ids = set()
         self._data_ready = threading.Event()  # set after round 0
+
+        # ── anti-congestion state (populated after round 0) ────────────────────
+        self._aisle_cols = set()         # x-coords of narrow aisle columns
+        self._corridor_rows = set()      # y-coords of wide horizontal corridors
+        self._bottom_corridor_y = 0      # max y in corridor rows
+        self._bot_pos_history = {}       # bot_id → list of last 6 positions
+        self._bot_stall_count = {}       # bot_id → rounds stuck at same position
 
         # ── seed cracking ─────────────────────────────────────────────────────
         self._cracked_seed: Optional[int] = None
@@ -350,19 +359,23 @@ class AnytimeGPUStream:
         # Progressive state budgets (cold start → warm refinements)
         # Sized so cold start finishes in ~15-30s on RTX 5090 for Hard
         _budgets = {
+            'medium': [50_000, 200_000, 1_000_000, 5_000_000],
             'hard':   [50_000, 200_000, 1_000_000, 5_000_000],
             'expert': [20_000, 100_000,   500_000, 2_000_000],
         }
         # Larger budgets when seed is cracked (full order foresight = better gradient)
         _budgets_with_seed = {
+            'medium': [50_000, 200_000, 1_000_000, 5_000_000],
             'hard':   [50_000, 200_000, 1_000_000, 5_000_000],
             'expert': [20_000, 100_000,   500_000, 2_000_000],
         }
         _extended_budget = {
+            'medium': 5_000_000,
             'hard': 5_000_000,
             'expert': 2_000_000,
         }
         _extended_budget_with_seed = {
+            'medium': 10_000_000,
             'hard': 10_000_000,
             'expert':  5_000_000,
         }
@@ -645,6 +658,35 @@ class AnytimeGPUStream:
             self._map_state = build_map_from_capture(capture)
             self._walkable = build_walkable(self._map_state)
 
+        # ── Aisle / corridor detection for anti-congestion ───────────────
+        ms = self._map_state
+        walkable = self._walkable
+        # Aisle columns: x where walkable cells are flanked by shelf/wall on both sides
+        self._aisle_cols = set()
+        for x in range(ms.width):
+            col_walkable = [(x, y) for y in range(ms.height) if (x, y) in walkable]
+            if len(col_walkable) < 2:
+                continue
+            flanked = 0
+            for (cx, cy) in col_walkable:
+                left = ms.grid[cy, cx - 1] if cx > 0 else CELL_WALL
+                right = ms.grid[cy, cx + 1] if cx < ms.width - 1 else CELL_WALL
+                if left in (CELL_WALL, CELL_SHELF) and right in (CELL_WALL, CELL_SHELF):
+                    flanked += 1
+            if flanked >= len(col_walkable) * 0.6:
+                self._aisle_cols.add(x)
+        # Corridor rows: y where >60% of cells are walkable (horizontal cross-aisles)
+        self._corridor_rows = set()
+        for y in range(ms.height):
+            row_walk = sum(1 for x in range(ms.width) if (x, y) in walkable)
+            if row_walk > ms.width * 0.6:
+                self._corridor_rows.add(y)
+        # Bottom corridor: max y in corridor rows (typically the main highway)
+        self._bottom_corridor_y = max(self._corridor_rows) if self._corridor_rows else ms.height - 2
+        # Per-bot position history and stall tracking
+        self._bot_pos_history = {}   # bot_id → list of last 6 positions
+        self._bot_stall_count = {}   # bot_id → rounds stuck at same position
+
         try:
             self._tables = PrecomputedTables.get(self._map_state)
         except Exception as e:
@@ -670,12 +712,19 @@ class AnytimeGPUStream:
 
         # Single-bot: full sequential GPU DP (completes in ~3s, optimal).
         # Multi-bot: GPU warm-start refinement from MAPF plan (much faster than full DP).
-        if self._num_bots == 1:
-            gpu_t = threading.Thread(target=self._gpu_worker, daemon=True)
-            gpu_t.start()
+        # Pipeline mode: skip offline GPU passes — they block the GIL for 3-4s per pass,
+        # causing the asyncio event loop to miss the server's 2s round timeout.
+        # The pipeline runs optimize_and_save.py in a separate process instead.
+        if self.pipeline_mode:
+            print(f"  [init] Pipeline mode: offline GPU disabled (greedy + per-round GPU only)",
+                  file=sys.stderr)
         else:
-            gpu_r = threading.Thread(target=self._gpu_refine_worker, daemon=True)
-            gpu_r.start()
+            if self._num_bots == 1:
+                gpu_t = threading.Thread(target=self._gpu_worker, daemon=True)
+                gpu_t.start()
+            else:
+                gpu_r = threading.Thread(target=self._gpu_refine_worker, daemon=True)
+                gpu_r.start()
         pr_t = threading.Thread(target=self._per_round_gpu_worker, daemon=True)
         pr_t.start()
 
@@ -1321,6 +1370,38 @@ class AnytimeGPUStream:
                 pass
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
+    def _build_aisle_blocked(self, my_pos, occupied):
+        """Block non-corridor cells in aisle columns that have other bots.
+
+        For each aisle column containing at least one bot (other than the bot at
+        my_pos), block walkable cells in that column that are NOT in corridor rows.
+        Corridor cells stay open so horizontal movement and dropoff access work.
+
+        This prevents bots from entering occupied aisle segments (the main cause
+        of 10-bot deadlocks) while preserving horizontal highway traffic.
+
+        Returns a new set: occupied | aisle_blocked_cells.
+        """
+        if not self._aisle_cols or self._num_bots < 5:
+            return occupied
+        blocked = set(occupied)
+        my_col = my_pos[0]
+        for ax in self._aisle_cols:
+            # Don't block our own aisle (we need to exit it)
+            if ax == my_col:
+                continue
+            # Check if any OTHER bot is in a non-corridor cell of this aisle
+            has_other_in_aisle = any(
+                ox == ax and oy not in self._corridor_rows and (ox, oy) != my_pos
+                for (ox, oy) in occupied
+            )
+            if has_other_in_aisle:
+                # Block non-corridor walkable cells in this aisle column
+                for y in range(self._map_state.height):
+                    if y not in self._corridor_rows and (ax, y) in self._walkable:
+                        blocked.add((ax, y))
+        return blocked
+
     @staticmethod
     def _bfs_strict(start, goal, walkable, blocked):
         """BFS avoiding `blocked` cells at EVERY step (not just first).
@@ -1460,8 +1541,10 @@ class AnytimeGPUStream:
                 if any(t in active_needs for t in inventory):
                     act = bfs_next_action((bx, by), drop_off, walkable, occupied, ms)
                 else:
-                    # All dead — just wait, don't route to spawn
-                    act = ACT_WAIT
+                    # Dead inventory — still go to dropoff.  If the active order
+                    # completes (another bot delivers), auto-delivery on the NEW
+                    # order may match some of our items.  Sitting idle wastes rounds.
+                    act = bfs_next_action((bx, by), drop_off, walkable, occupied, ms)
             return (act, -1, None)
 
         # 4. Pick up nearest target item.
@@ -1580,11 +1663,25 @@ class AnytimeGPUStream:
 
                     if synced:
                         ws_actions = []
+                        # Track occupied cells for greedy coordination of idle bots
+                        greedy_occ = set(tuple(b['position']) for b in live_bots)
+                        assigned_greedy = {}  # type -> count for greedy coordination
                         for bid_idx, bot in enumerate(live_bots):
                             if bid_idx < len(plan.actions[dp_rnd]):
                                 act, item_idx = plan.actions[dp_rnd][bid_idx]
                             else:
                                 act, item_idx = ACT_WAIT, -1
+                            # Override WAIT for bots with no future plan goals —
+                            # let them contribute via greedy instead of standing idle
+                            if act == ACT_WAIT and plan.goals is not None:
+                                bot_goals = plan.goals.get(bid_idx, [])
+                                if not any(g[0] >= dp_rnd for g in bot_goals):
+                                    g_act, g_item, g_claimed = self._greedy_action(
+                                        bot, data, greedy_occ)
+                                    if g_act != ACT_WAIT:
+                                        act, item_idx = g_act, g_item
+                                        if g_claimed:
+                                            assigned_greedy[g_claimed] = assigned_greedy.get(g_claimed, 0) + 1
                             ws_actions.append(self._format_ws(act, item_idx, bot['id']))
                         return ws_actions, plan.source
 
@@ -1603,11 +1700,20 @@ class AnytimeGPUStream:
                                 dp_rnd2 = rnd - (offset + 1)
                                 if 0 <= dp_rnd2 < len(plan.actions):
                                     ws_actions = []
+                                    greedy_occ2 = set(tuple(b['position']) for b in live_bots)
                                     for bid_idx, bot in enumerate(live_bots):
                                         if bid_idx < len(plan.actions[dp_rnd2]):
                                             act, item_idx = plan.actions[dp_rnd2][bid_idx]
                                         else:
                                             act, item_idx = ACT_WAIT, -1
+                                        # Override idle bots with greedy
+                                        if act == ACT_WAIT and plan.goals is not None:
+                                            bot_goals = plan.goals.get(bid_idx, [])
+                                            if not any(g[0] >= dp_rnd2 for g in bot_goals):
+                                                g_act, g_item, _ = self._greedy_action(
+                                                    bot, data, greedy_occ2)
+                                                if g_act != ACT_WAIT:
+                                                    act, item_idx = g_act, g_item
                                         ws_actions.append(self._format_ws(act, item_idx, bot['id']))
                                     return ws_actions, plan.source
 
@@ -1754,6 +1860,20 @@ class AnytimeGPUStream:
         drop_off = ms.drop_off
         spawn = ms.spawn
         drop_pos = tuple(drop_off)
+
+        # ── Update per-bot position history and stall counts ─────────────
+        for bot in live_bots:
+            bid = bot['id']
+            bpos = tuple(bot['position'])
+            hist = self._bot_pos_history.get(bid, [])
+            hist.append(bpos)
+            if len(hist) > 6:
+                hist = hist[-6:]
+            self._bot_pos_history[bid] = hist
+            if len(hist) >= 2 and hist[-1] == hist[-2]:
+                self._bot_stall_count[bid] = self._bot_stall_count.get(bid, 0) + 1
+            else:
+                self._bot_stall_count[bid] = 0
         # Staging cell: 1 step right of dropoff (bots queue here when dropoff occupied)
         staging_pos = (drop_pos[0] + 1, drop_pos[1])
         if staging_pos not in walkable:
@@ -1967,29 +2087,69 @@ class AnytimeGPUStream:
 
         final_score = 0
         last_source = 'none'
+        expected_rnd = 0  # track expected round for desync detection
 
         print(f"Connecting to {self.ws_url}", file=sys.stderr)
 
         try:
             async with websockets.connect(self.ws_url) as ws:
-                async for message in ws:
+                game_over = False
+                while not game_over:
+                    message = await ws.recv()
                     data = json.loads(message)
 
                     log_file.write(json.dumps(data) + '\n')
-                    log_file.flush()
 
                     if data['type'] == 'game_over':
                         final_score = data.get('score', 0)
                         print(f"GAME_OVER Score:{final_score}", file=sys.stderr)
                         self._emit({"type": "game_over", "score": final_score})
+                        log_file.flush()
                         break
 
                     if data['type'] != 'game_state':
                         continue
 
+                    # ── Drain stale messages: if server sent newer states while ──
+                    # ── we were busy, skip to the latest one.                   ──
+                    # This prevents a 1-round action offset when GPU threads hold
+                    # the GIL and delay our response past the server's 2s timeout.
+                    drained = 0
+                    while True:
+                        try:
+                            peek = await asyncio.wait_for(ws.recv(), timeout=0.002)
+                            peek_data = json.loads(peek)
+                            log_file.write(json.dumps(peek_data) + '\n')
+                            if peek_data.get('type') == 'game_over':
+                                final_score = peek_data.get('score', 0)
+                                print(f"GAME_OVER Score:{final_score}", file=sys.stderr)
+                                self._emit({"type": "game_over", "score": final_score})
+                                game_over = True
+                                break
+                            if peek_data.get('type') == 'game_state':
+                                drained += 1
+                                data = peek_data  # use the newer state
+                        except (asyncio.TimeoutError, asyncio.CancelledError):
+                            break
+                    if game_over:
+                        log_file.flush()
+                        break
+                    if drained > 0:
+                        print(f"R{data['round']}: Drained {drained} stale round(s)",
+                              file=sys.stderr)
+
+                    log_file.flush()
+
                     rnd = data['round']
                     max_rounds = data.get('max_rounds', 300)
                     score = data.get('score', 0)
+
+                    # Detect missed rounds (server advanced past us due to slow response)
+                    if rnd > expected_rnd and expected_rnd > 0:
+                        gap = rnd - expected_rnd
+                        print(f"R{rnd}: ROUND GAP detected (expected R{expected_rnd}, "
+                              f"missed {gap} rounds)", file=sys.stderr)
+                    expected_rnd = rnd + 1
 
                     if rnd == 0:
                         self._init_round0(data)
@@ -2025,7 +2185,13 @@ class AnytimeGPUStream:
                     else:
                         self._check_new_orders(data)
 
+                    t_recv = time.monotonic()
                     ws_actions, source = self._get_actions(rnd, data)
+                    t_compute = time.monotonic() - t_recv
+
+                    if t_compute > 0.5:
+                        print(f"R{rnd}: SLOW response {t_compute:.2f}s (source={source})",
+                              file=sys.stderr)
 
                     # Log: always on source change or every 10 rounds
                     plan_score = self._plan.score
@@ -2138,8 +2304,8 @@ class AnytimeGPUStream:
                           file=sys.stderr)
 
             if cap:
-                store_capture(self._difficulty, cap)
-                print(f"Saved capture: {len(cap.get('orders', []))} orders", file=sys.stderr)
+                merged, num_new, total = merge_capture(self._difficulty, cap)
+                print(f"Saved capture: {total} orders ({num_new} new)", file=sys.stderr)
 
         reported_score = self._plan.score if self._plan.score > 0 else final_score
         self._emit({"type": "pipeline_done",
@@ -2179,6 +2345,9 @@ def main():
                              'full order list immediately (prevents gen restarts per order).')
     parser.add_argument('--record', action='store_true',
                         help='Import game log to PostgreSQL after game ends (requires --save log).')
+    parser.add_argument('--pipeline-mode', action='store_true',
+                        help='Disable offline GPU passes (greedy + per-round GPU only). '
+                             'Use when the pipeline handles offline optimization separately.')
     args = parser.parse_args()
 
     device = 'cpu' if args.cpu else 'cuda'
@@ -2199,6 +2368,7 @@ def main():
         json_stream=args.json_stream,
         preload_capture=args.preload_capture,
         record=args.record,
+        pipeline_mode=args.pipeline_mode,
     )
     asyncio.run(solver.run())
 

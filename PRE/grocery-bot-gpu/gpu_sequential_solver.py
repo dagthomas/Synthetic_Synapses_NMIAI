@@ -39,8 +39,8 @@ except (ImportError, OSError):
 _DIFF_IDX = {'easy': 0, 'medium': 1, 'hard': 2, 'expert': 3}
 
 # Difficulty-aware defaults: more refinement for harder difficulties with more bots
-DEFAULT_REFINE_ITERS = {'easy': 0, 'medium': 3, 'hard': 6, 'expert': 12}
-DEFAULT_PASS1_ORDERINGS = {'easy': 1, 'medium': 1, 'hard': 3, 'expert': 5}
+DEFAULT_REFINE_ITERS = {'easy': 0, 'medium': 3, 'hard': 10, 'expert': 10}
+DEFAULT_PASS1_ORDERINGS = {'easy': 1, 'medium': 1, 'hard': 1, 'expert': 1}
 
 
 def pre_simulate_locked(gs_template, all_orders, bot_actions, locked_bot_ids,
@@ -180,9 +180,9 @@ def _fresh_gs(gs_orig, capture_data, no_filler=False):
 
 DEFAULT_MAX_STATES = {
     'easy': 500_000,
-    'medium': 1_000_000,
-    'hard': 2_000_000,
-    'expert': 5_000_000,
+    'medium': 500_000,
+    'hard': 100_000,
+    'expert': 100_000,
 }
 
 
@@ -412,6 +412,21 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
         n_pipeline_fixed = max(0, math.floor(num_bots * pipeline_fraction))
         n_pipeline = max(n_pipeline_dynamic, n_pipeline_fixed)
 
+    # --- Order cap: limit how many orders any single bot handles in Pass 1 ---
+    # Without this, bot 0 delivers 15+ orders, starving later bots of work.
+    # Cap = ceil(visible_orders / num_primary_bots) + 1 headroom.
+    # Pipeline bots get no cap (they pre-fetch, not deliver).
+    # Only applies to Pass 1 (refinement is uncapped).
+    _visible_orders = len(all_orders)
+    _primary_bots = max(1, num_bots - n_pipeline)
+    if num_bots >= 5 and _visible_orders > num_bots:
+        _order_cap = max(3, (_visible_orders + _primary_bots - 1) // _primary_bots + 1)
+    else:
+        _order_cap = None  # small bot count or few orders: no cap
+    if verbose and _order_cap is not None:
+        print(f"  Order cap: {_order_cap} per bot (visible={_visible_orders}, "
+              f"primary={_primary_bots})", file=sys.stderr)
+
     best_p1_score = -1
     best_p1_actions = None
     best_p1_pipeline_ids = {}
@@ -420,6 +435,13 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
     _ta_for_ordering = _type_assignments if use_type_specialization and num_bots >= 3 else {}
 
     for p1_idx, plan_order in enumerate(p1_orderings):
+        # Time check between pass1 orderings
+        if max_time_s is not None and (time.time() - t0) > max_time_s:
+            if verbose:
+                print(f"  [Pass 1] Time budget {max_time_s}s reached, skipping remaining orderings",
+                      file=sys.stderr)
+            break
+
         # Assign pipeline bots from the end of plan_order with cycling depths
         pipeline_bot_ids = {}  # bot_id -> pipeline_depth (0 = not pipeline)
         for i in range(1, n_pipeline + 1):
@@ -458,11 +480,13 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
             p_depth = pipeline_bot_ids.get(bot_id, 0)
             is_pipeline = p_depth > 0
             pref_types = _ta_for_ordering.get(bot_id) if _ta_for_ordering else None
+            # Order cap: non-pipeline bots in Pass 1 only
+            bot_order_cap = None if is_pipeline else _order_cap
             searcher = GPUBeamSearcher(
                 ms, all_orders, device=device, num_bots=num_bots,
                 locked_trajectories=locked, pipeline_mode=is_pipeline,
                 pipeline_depth=p_depth, preferred_types=pref_types,
-                no_compile=no_compile)
+                no_compile=no_compile, order_cap=bot_order_cap)
 
             # Verify on first bot of first ordering only
             if p1_idx == 0 and bot_id == plan_order[0] and verbose:
@@ -504,6 +528,13 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
             del searcher
             if device == 'cuda':
                 torch.cuda.empty_cache()
+
+            # Per-bot time check in pass1
+            if max_time_s is not None and (time.time() - t0) > max_time_s:
+                if verbose:
+                    print(f"  [Pass 1] Time budget {max_time_s}s reached after bot {bot_id}",
+                          file=sys.stderr)
+                break
 
         # CPU verify after this Pass 1 ordering
         combined = _make_combined(bot_actions, num_bots)
@@ -694,6 +725,13 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
                 if on_bot_progress:
                     on_bot_progress(bot_id, num_bots, best_score, time.time() - t0)
 
+                # Per-bot time check in refinement
+                if max_time_s is not None and (time.time() - t0) > max_time_s:
+                    if verbose:
+                        print(f"  [Refine] Time budget {max_time_s}s reached after bot {bot_id}",
+                              file=sys.stderr)
+                    break
+
             _refine_pool.shutdown(wait=True)
 
         if on_phase:
@@ -705,15 +743,21 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
 
         if not iter_improved:
             no_improve_iters += 1
-            _escape_limit = 2
+            _escape_limit = 4
             if no_improve_iters >= _escape_limit:
                 if verbose:
                     print(f"  Stopping refinement ({no_improve_iters} consecutive "
                           f"no-improvement iters)", file=sys.stderr)
                 break
-            elif verbose:
-                print(f"  No improvement, trying escape attempt "
-                      f"({no_improve_iters}/{_escape_limit - 1})...", file=sys.stderr)
+            else:
+                # Perturbation escape: fully reset a random bot to idle, then re-refine.
+                # This forces other bots to plan without that bot's contribution,
+                # creating a fundamentally different coordination pattern.
+                perturb_bot = _rng.choice(list(range(num_bots)))
+                bot_actions[perturb_bot] = [(ACT_WAIT, -1)] * MAX_ROUNDS
+                if verbose:
+                    print(f"  Perturbation escape: reset bot {perturb_bot} to idle "
+                          f"({no_improve_iters}/{_escape_limit - 1})...", file=sys.stderr)
         else:
             no_improve_iters = 0
 
@@ -1249,7 +1293,7 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
 
         if not iter_improved:
             no_improve_iters += 1
-            _escape_limit = 2
+            _escape_limit = 4
             if no_improve_iters >= _escape_limit:
                 if verbose:
                     print(f"  Stopping refinement ({no_improve_iters} consecutive "

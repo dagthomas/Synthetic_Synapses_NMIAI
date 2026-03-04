@@ -1157,41 +1157,19 @@ async def play_live(ws_url, log_dir=None, save_capture=False, fast_mode=False):
     # Save capture/solution
     active_solver = route_solver or reactive or solver
     if (save_capture or fast_mode) and active_solver:
-        from solution_store import save_capture as store_capture, save_solution
+        from solution_store import save_solution, merge_capture as do_merge, save_capture as store_capture
 
         capture = active_solver.capture if hasattr(active_solver, 'capture') else None
         difficulty = active_solver.difficulty if hasattr(active_solver, 'difficulty') else 'easy'
 
         if capture and all_orders_captured:
-            from solution_store import load_capture as load_existing_capture
-            existing = load_existing_capture(difficulty)
-            if existing:
-                # Merge: add new orders to existing capture
-                existing_ids = set(o.get('id', '') for o in existing.get('orders', []))
-                new_count = 0
-                for order in all_orders_captured:
-                    oid = order.get('id', '')
-                    if oid and oid not in existing_ids:
-                        order['status'] = 'future'
-                        existing['orders'].append(order)
-                        existing_ids.add(oid)
-                        new_count += 1
-                if new_count > 0:
-                    store_capture(difficulty, existing)
-                    print(f"  Capture merged: +{new_count} new orders ({len(existing['orders'])} total)",
-                          file=sys.stderr)
-                else:
-                    print(f"  Capture unchanged ({len(existing['orders'])} orders)",
-                          file=sys.stderr)
+            new_capture = dict(capture)
+            new_capture['orders'] = [{'items_required': o['items_required']} for o in all_orders_captured]
+            merged, num_new, total = do_merge(difficulty, new_capture)
+            if num_new > 0:
+                print(f"  Capture merged: +{num_new} new orders ({total} total)", file=sys.stderr)
             else:
-                # No existing capture — save fresh
-                for i, order in enumerate(all_orders_captured):
-                    if i == 0: order['status'] = 'active'
-                    elif i == 1: order['status'] = 'preview'
-                    else: order['status'] = 'future'
-                capture['orders'] = all_orders_captured
-                store_capture(difficulty, capture)
-                print(f"  Capture saved: {len(all_orders_captured)} orders", file=sys.stderr)
+                print(f"  Capture unchanged ({total} orders)", file=sys.stderr)
 
         actions_to_save = all_actions_recorded if all_actions_recorded else \
                           (solver.best_actions if solver else [])

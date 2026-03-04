@@ -37,7 +37,7 @@ const USE_MAPF = switch (DIFFICULTY) {
 /// Navigate from start to target using MAPF (ST-A*) when available, else BFS.
 fn navigateTo(state: *const GameState, start: Pos, target: Pos, bot_id: u8, bot_positions: *const [MAX_BOTS]Pos) pathfinding.BfsResult {
     if (USE_MAPF and state.bot_count >= 5) {
-        if (spacetime.planAndReserve(state, start, target, bot_id)) |result| {
+        if (spacetime.planAndReserve(state, start, target, bot_id, bot_positions)) |result| {
             // ST-A* found a path (first_dir may be null = wait)
             return .{ .dist = if (result.path_len > 0) result.path_len else 1, .first_dir = result.first_dir };
         }
@@ -270,6 +270,12 @@ fn escapeDir(state: *const GameState, pos: Pos, pb: *const PersistentBot, bot_id
         const new_corr = @min(@min(@abs(ny - corr_top), @abs(ny - mid_y)), @abs(ny - corr_bot));
         if (new_corr < cur_corr) score += 5; // Strong preference for corridor
         if (new_corr > cur_corr) score -= 2; // Avoid going deeper into aisle
+        // Extra bonus for moving toward bottom corridor (delivery highway) on Hard+
+        if (state.bot_count >= 5) {
+            const new_bot_dist = @abs(ny - corr_bot);
+            const cur_bot_dist = @abs(pos.y - corr_bot);
+            if (new_bot_dist < cur_bot_dist) score += 3;
+        }
         // Avoid crowded areas: prefer directions with fewer nearby bots
         if (state.bot_count >= 5) {
             var nearby: i16 = 0;
@@ -586,6 +592,42 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                         pb.stall_count = 0;
                     }
                     break;
+                }
+            }
+        }
+
+        // Same-aisle immediate escape: two bots in same aisle column, approaching each other
+        if (USE_MAPF and state.bot_count >= 5 and pb.escape_rounds == 0) {
+            const bx: u16 = @intCast(@max(bot.pos.x, 0));
+            if (spacetime.isInAisle(bx)) {
+                for (0..state.bot_count) |bk| {
+                    if (bk == bi) continue;
+                    const other = &state.bots[bk];
+                    const ox: u16 = @intCast(@max(other.pos.x, 0));
+                    if (ox != bx) continue; // Not same aisle column
+                    const dy = @abs(bot.pos.y - other.pos.y);
+                    if (dy > 2) continue; // Too far apart
+                    // Check approaching: one moving down, other moving up (or vice versa)
+                    const my_dir = pb.last_dir;
+                    const other_dir = pbots[bk].last_dir;
+                    const approaching = blk: {
+                        if (my_dir == null or other_dir == null) break :blk false;
+                        if (bot.pos.y < other.pos.y) {
+                            // I'm above, other is below
+                            break :blk (my_dir.? == .down and other_dir.? == .up);
+                        } else {
+                            // I'm below, other is above
+                            break :blk (my_dir.? == .up and other_dir.? == .down);
+                        }
+                    };
+                    if (approaching and bi > bk) {
+                        // Higher-ID bot escapes immediately (0-round threshold)
+                        pb.escape_rounds = 3;
+                        pb.has_trip = false;
+                        pb.stall_count = 0;
+                        std.debug.print("R{d} Bot{d} AISLE-ESCAPE from Bot{d} at ({d},{d})\n", .{ state.round, bot.id, other.id, bot.pos.x, bot.pos.y });
+                        break;
+                    }
                 }
             }
         }
@@ -1002,7 +1044,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
         // Reserve paths for delivering bots → picking bots will route around them
         for (del_bots[0..del_count]) |db| {
-            _ = spacetime.planAndReserve(state, eff_pos[db.bi], state.dropoff, db.bi);
+            _ = spacetime.planAndReserve(state, eff_pos[db.bi], state.dropoff, db.bi, &bot_positions);
         }
         // Reserve stalled bots as stationary obstacles (they won't move soon)
         for (0..state.bot_count) |bi| {
@@ -1370,6 +1412,30 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                             try writeMove(writer, bot.id, d);
                             updateBotPos(&bot_positions[bi], d);
                             claimed[det_ii] = @intCast(bi);
+                            pending_dirs[bi] = d;
+                            pending_is_move[bi] = true;
+                            continue;
+                        };
+                    }
+                }
+            }
+            // Bottom corridor waypoint: delivering bots in aisles exit via bottom corridor first
+            if (USE_MAPF and state.bot_count >= 5 and dropoff_priority[bi]) {
+                const bx_u: u16 = @intCast(@max(bpos.x, 0));
+                const by_u: u16 = @intCast(@max(bpos.y, 0));
+                const corr_y: i16 = @as(i16, @intCast(state.height)) - 2;
+                if (spacetime.isInAisle(bx_u) and !spacetime.isCorridorRow(by_u)) {
+                    // Navigate to bottom corridor at same x first, if detour cost <= 2
+                    const waypoint = Pos{ .x = bpos.x, .y = corr_y };
+                    const dm_wp = pathfinding.getPrecomputedDm(state, waypoint);
+                    const d_to_wp = dm_wp[@intCast(bpos.y)][@intCast(bpos.x)];
+                    const d_wp_to_drop = dm_drop[@intCast(corr_y)][@intCast(bpos.x)];
+                    const via_wp = @as(u32, d_to_wp) + @as(u32, d_wp_to_drop);
+                    if (d_to_wp < UNREACHABLE and d_wp_to_drop < UNREACHABLE and via_wp <= dist_to_drop + 2) {
+                        const wp_res = navigateTo(state, bpos, waypoint, @intCast(bi), &bot_positions);
+                        if (wp_res.dist < UNREACHABLE) if (wp_res.first_dir) |d| {
+                            try writeMove(writer, bot.id, d);
+                            updateBotPos(&bot_positions[bi], d);
                             pending_dirs[bi] = d;
                             pending_is_move[bi] = true;
                             continue;

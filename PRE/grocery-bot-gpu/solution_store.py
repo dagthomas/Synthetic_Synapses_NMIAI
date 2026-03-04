@@ -28,6 +28,41 @@ def save_capture(difficulty, capture_data):
     return path
 
 
+def merge_capture(difficulty, new_capture):
+    """Merge new capture with existing one, keeping ALL orders by position.
+
+    Orders are sequential and deterministic per seed — the longer list is
+    always the more complete one.  Map data (grid, items, drop_off) is
+    always taken from the new capture (latest game state).
+
+    Returns (merged_capture, num_new_orders, total_orders).
+    """
+    existing = load_capture(difficulty)
+    if existing is None:
+        save_capture(difficulty, new_capture)
+        n = len(new_capture.get('orders', []))
+        return new_capture, n, n
+
+    existing_orders = existing.get('orders', [])
+    new_orders = new_capture.get('orders', [])
+
+    # Positional merge: orders are sequential per seed.
+    # Take the longer list (more orders discovered = played further).
+    if len(new_orders) > len(existing_orders):
+        merged_orders = list(new_orders)
+        num_new = len(new_orders) - len(existing_orders)
+    else:
+        merged_orders = list(existing_orders)
+        num_new = 0
+
+    # Use new capture's map data (always fresh) but merged orders
+    merged = dict(new_capture)
+    merged['orders'] = merged_orders
+
+    save_capture(difficulty, merged)
+    return merged, num_new, len(merged_orders)
+
+
 def load_capture(difficulty):
     """Load capture data. Returns None if not found."""
     path = os.path.join(_dir(difficulty), 'capture.json')
@@ -126,6 +161,20 @@ def increment_optimizations(difficulty):
         path = os.path.join(_dir(difficulty), 'meta.json')
         with open(path, 'w') as f:
             json.dump(meta, f, indent=2)
+
+
+def clear_solutions(difficulty=None):
+    """Clear solution files (best.json, capture.json, meta.json) for a difficulty or all.
+
+    Used at the start of a new pipeline run since a new token = new game = old data invalid.
+    """
+    diffs = [difficulty] if difficulty else DIFFICULTIES
+    for d in diffs:
+        dirpath = _dir(d)
+        for fname in ['best.json', 'capture.json', 'meta.json']:
+            fpath = os.path.join(dirpath, fname)
+            if os.path.exists(fpath):
+                os.remove(fpath)
 
 
 def get_all_solutions():

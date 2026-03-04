@@ -83,7 +83,7 @@ pub const GameState = struct {
 
 // ── MAPF Constants ────────────────────────────────────────────────────
 pub const MAX_TIME_HORIZON: u16 = 12; // WHCA* planning window
-pub const WRONG_WAY_PENALTY: u16 = 2; // Soft cost for going against aisle flow
+pub const WRONG_WAY_PENALTY: u16 = 5; // Soft cost for going against aisle flow
 
 pub const AisleDir = enum { down, up }; // Preferred vertical direction in an aisle column
 

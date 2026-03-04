@@ -62,7 +62,7 @@
 		return map;
 	});
 
-	const TARGETS = { easy: 142, medium: 214, hard: 252, expert: 303 };
+	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310 };
 
 	// Chart constants
 	const chartW = 700;

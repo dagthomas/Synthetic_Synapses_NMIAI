@@ -18,7 +18,7 @@ import sys
 import time
 from collections import deque
 
-from solution_store import load_solution, load_capture, load_meta, save_capture as store_capture
+from solution_store import load_solution, load_capture, load_meta, merge_capture
 from game_engine import (build_map_from_capture, actions_to_ws_format,
                          ACT_WAIT, ACT_MOVE_UP, ACT_MOVE_DOWN,
                          ACT_MOVE_LEFT, ACT_MOVE_RIGHT, ACT_PICKUP, ACT_DROPOFF,
@@ -26,7 +26,7 @@ from game_engine import (build_map_from_capture, actions_to_ws_format,
                          CELL_FLOOR, CELL_DROPOFF, INV_CAP)
 from live_solver import detect_difficulty, ws_to_capture
 
-SEND_DELAY = 0.0  # Zero delay — send immediately for reliability
+SEND_DELAY = 0.005  # 5ms delay — fast enough to avoid missed rounds, enough to prevent server racing
 
 
 def predict_full_sim(actions_list, capture, map_state):
@@ -142,6 +142,47 @@ def build_walkable(map_state):
     return walkable
 
 
+def _find_item_center(map_state, walkable):
+    """Find walkable cell closest to the centroid of all items — good pre-position."""
+    if not map_state.items:
+        return None
+    cx = sum(it['position'][0] for it in map_state.items) / len(map_state.items)
+    cy = sum(it['position'][1] for it in map_state.items) / len(map_state.items)
+    best = None
+    best_d = 9999
+    for (wx, wy) in walkable:
+        d = abs(wx - cx) + abs(wy - cy)
+        if d < best_d:
+            best_d = d
+            best = (wx, wy)
+    return best
+
+
+def _find_nearest_item(bx, by, map_state, walkable, exclude_types=None):
+    """Find the nearest item of any type (or excluding certain types)."""
+    best_item = None
+    best_dist = 9999
+    for idx, it in enumerate(map_state.items):
+        if exclude_types and it['type'] in exclude_types:
+            continue
+        adj_cells = map_state.item_adjacencies.get(idx, [])
+        if not adj_cells:
+            ix, iy = it['position']
+            for ddx, ddy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+                nx, ny = ix + ddx, iy + ddy
+                if (nx, ny) in walkable:
+                    adj_cells.append((nx, ny))
+        for adj in adj_cells:
+            d = abs(adj[0] - bx) + abs(adj[1] - by)
+            if d < best_dist:
+                best_dist = d
+                best_item = (it, adj)
+    return best_item
+
+
+_ACT_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
+
+
 def greedy_action(bot, data, map_state, walkable, live_bots):
     """Greedy fallback: pick needed items, deliver to dropoff. Used after DP plan exhausted."""
     bid = bot['id']
@@ -179,23 +220,23 @@ def greedy_action(bot, data, map_state, walkable, live_bots):
                 inv_types.append(it['type'])
                 break
 
-    # If at dropoff and have items matching active order -> drop off
-    if bpos == drop_off and len(inv) > 0:
-        has_match = any(t in needed_types for t in inv_types)
-        if has_match:
-            return {'bot': bid, 'action': 'drop_off'}
+    all_target_types = needed_types | preview_types
 
-    # If inventory has items matching active order -> go to dropoff
+    # 1. At dropoff with ANY items -> always drop off (even non-matching — frees inventory,
+    #    and items might match a future order via auto-delivery)
+    if bpos == drop_off and len(inv) > 0:
+        return {'bot': bid, 'action': 'drop_off'}
+
+    # 2. Has items matching active order -> deliver to dropoff
     if len(inv) > 0:
         has_active_match = any(t in needed_types for t in inv_types)
         if has_active_match or len(inv) >= INV_CAP:
             nav = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
             if nav == ACT_WAIT and bpos == drop_off:
                 return {'bot': bid, 'action': 'drop_off'}
-            return {'bot': bid, 'action': ['wait', 'move_up', 'move_down',
-                     'move_left', 'move_right', 'pick_up', 'drop_off'][nav]}
+            return {'bot': bid, 'action': _ACT_NAMES[nav]}
 
-    # If inventory has space -> find nearest needed item to pick up
+    # 3. Find nearest needed/preview item to pick up
     if len(inv) < INV_CAP:
         target_types = needed_types if needed_types else preview_types
         if target_types:
@@ -220,20 +261,36 @@ def greedy_action(bot, data, map_state, walkable, live_bots):
                 item, adj_pos = best_item
                 adj_pos = tuple(adj_pos)
                 if bpos == adj_pos:
-                    # Adjacent to item -> pick up
                     return {'bot': bid, 'action': 'pick_up', 'item_id': item['id']}
                 else:
                     nav = bfs_next_action(bpos, adj_pos, walkable, occupied, map_state)
-                    return {'bot': bid, 'action': ['wait', 'move_up', 'move_down',
-                             'move_left', 'move_right', 'pick_up', 'drop_off'][nav]}
+                    return {'bot': bid, 'action': _ACT_NAMES[nav]}
 
-    # If bot has non-matching items, deliver them anyway (might match new order after delivery)
+    # 4. Has items but no match -> deliver anyway (frees inv for future orders)
     if len(inv) > 0:
         nav = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
         if nav == ACT_WAIT and bpos == drop_off:
             return {'bot': bid, 'action': 'drop_off'}
-        return {'bot': bid, 'action': ['wait', 'move_up', 'move_down',
-                 'move_left', 'move_right', 'pick_up', 'drop_off'][nav]}
+        return {'bot': bid, 'action': _ACT_NAMES[nav]}
+
+    # 5. No orders, no items -> speculatively pick up nearest item (any type).
+    #    Having items ready means faster delivery when a new order appears.
+    if len(inv) < INV_CAP:
+        best = _find_nearest_item(bx, by, map_state, walkable)
+        if best:
+            item, adj_pos = best
+            adj_pos = tuple(adj_pos)
+            if bpos == adj_pos:
+                return {'bot': bid, 'action': 'pick_up', 'item_id': item['id']}
+            else:
+                nav = bfs_next_action(bpos, adj_pos, walkable, occupied, map_state)
+                return {'bot': bid, 'action': _ACT_NAMES[nav]}
+
+    # 6. Inventory full, no orders -> pre-position near item center
+    center = _find_item_center(map_state, walkable)
+    if center and bpos != center:
+        nav = bfs_next_action(bpos, center, walkable, occupied, map_state)
+        return {'bot': bid, 'action': _ACT_NAMES[nav]}
 
     return {'bot': bid, 'action': 'wait'}
 
@@ -262,6 +319,9 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
     desync_rounds = 0  # rounds with at least one desynced bot
     synced_rounds = 0
     round_offset = 0  # Track cumulative round shift (genuine missed rounds only)
+    last_round_synced = True  # Only detect missed rounds when transitioning from synced
+    bot_consecutive_desync = {}  # bid -> consecutive desynced rounds (for greedy fallback)
+    MAX_DESYNC_BEFORE_GREEDY = 8  # Fall back to greedy after this many consecutive desyncs
     seen_order_ids = set()
     all_orders_captured = []
     bot_prev_inv = {}       # bid -> list of item types in inventory last round
@@ -273,7 +333,6 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
             data = json.loads(message)
 
             log_file.write(json.dumps(data) + '\n')
-            log_file.flush()
 
             if data["type"] == "game_over":
                 final_score = data.get('score', 0)
@@ -319,6 +378,26 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                     cap = ws_to_capture(data)
                     map_state = build_map_from_capture(cap)
 
+                # Reconcile item IDs: capture may have stale IDs from a different
+                # game session. The actual game's items (by position) are authoritative.
+                if capture and 'items' in data:
+                    actual_items = {}
+                    for it in data['items']:
+                        pos = tuple(it['position'])
+                        actual_items[pos] = it['id']
+                    mismatches = 0
+                    for i, item in enumerate(map_state.items):
+                        pos = tuple(item['position'])
+                        actual_id = actual_items.get(pos)
+                        if actual_id and actual_id != item['id']:
+                            item['id'] = actual_id
+                            mismatches += 1
+                    if mismatches > 0:
+                        print(f"  WARNING: {mismatches} item ID mismatches reconciled "
+                              f"(capture vs actual game)", file=sys.stderr)
+                    else:
+                        print(f"  Item IDs validated: 0 mismatches", file=sys.stderr)
+
                 walkable = build_walkable(map_state)
 
                 if meta:
@@ -357,15 +436,13 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                                 all_match = False
                                 break
 
-                    if not all_match:
-                        # Check if positions match dp_rnd-1 (missed 1 round).
-                        # Only trigger if the bot was expected to MOVE in dp_rnd —
-                        # if expected[dp_rnd] == expected[dp_rnd-1] the bot was
-                        # stationary, so a position match is ambiguous and we must
-                        # NOT increment the offset (would be a false positive).
+                    # Only detect missed rounds when TRANSITIONING from synced to desynced.
+                    # When already desynced, the bot's position can coincidentally match
+                    # expected[dp_rnd-1], causing false positive offset increments that
+                    # cascade and make recovery impossible.
+                    if not all_match and last_round_synced:
                         check_rnd = dp_rnd - 1
                         if check_rnd >= 0 and check_rnd < len(expected_positions):
-                            # Require at least one bot to have moved between check_rnd and dp_rnd
                             expected_moved = False
                             for bid in range(len(expected_positions[dp_rnd])):
                                 if bid < len(expected_positions[check_rnd]):
@@ -385,9 +462,11 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                                 if prev_match:
                                     round_offset += 1
                                     dp_rnd = rnd - round_offset
-                                    if round_offset <= 5:
+                                    if round_offset <= 10:
                                         print(f"R{rnd}: Detected missed round, offset now {round_offset} "
                                               f"(dp_rnd={dp_rnd})", file=sys.stderr)
+
+                    last_round_synced = all_match
             else:
                 dp_rnd = rnd
 
@@ -402,11 +481,6 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                     while gi < len(goals):
                         goal_rnd, goal_pos, goal_act, goal_item = goals[gi]
 
-                        # Skip stale goals: dp_rnd has passed planned round by >15
-                        if dp_rnd > goal_rnd + 15:
-                            gi += 1
-                            continue
-
                         # Pickup completed: bot's inventory grew
                         if goal_act == ACT_PICKUP and len(cur_inv) > len(prev_inv):
                             gi += 1
@@ -414,6 +488,11 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
 
                         # Dropoff completed: bot's inventory shrank
                         if goal_act == ACT_DROPOFF and len(cur_inv) < len(prev_inv):
+                            gi += 1
+                            continue
+
+                        # Skip dropoff goals when inventory is empty (nothing to deliver)
+                        if goal_act == ACT_DROPOFF and len(cur_inv) == 0:
                             gi += 1
                             continue
 
@@ -428,6 +507,7 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
             for bid, bot in enumerate(live_bots):
                 lx, ly = bot['position']
                 bpos = (lx, ly)
+                inv = bot.get('inventory', [])
 
                 # Check sync with offset-corrected round
                 is_synced = True
@@ -437,6 +517,12 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                         is_synced = False
                         desync_count += 1
                         round_has_desync = True
+
+                # Track consecutive desync per bot
+                if is_synced:
+                    bot_consecutive_desync[bid] = 0
+                else:
+                    bot_consecutive_desync[bid] = bot_consecutive_desync.get(bid, 0) + 1
 
                 if is_synced:
                     # SYNCED: execute raw DP action
@@ -466,8 +552,15 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                     else:
                         # DP plan exhausted -> greedy fallback for new orders
                         ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
+                elif bot_consecutive_desync.get(bid, 0) > MAX_DESYNC_BEFORE_GREEDY:
+                    # PERSISTENT DESYNC: goal-based recovery wastes rounds navigating
+                    # toward stale goals. Greedy is more productive.
+                    if bot_consecutive_desync[bid] == MAX_DESYNC_BEFORE_GREEDY + 1:
+                        print(f"R{rnd}: Bot {bid} switched to GREEDY (desync>{MAX_DESYNC_BEFORE_GREEDY} rounds, "
+                              f"score={score})", file=sys.stderr)
+                    ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
                 else:
-                    # DESYNCED: navigate toward current goal via BFS
+                    # SHORT DESYNC: navigate toward current goal via BFS
                     gi = bot_goal_idx.get(bid, 0) if bot_goal_idx else 0
                     goals = (bot_goals or {}).get(bid, [])
 
@@ -475,8 +568,17 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                         goal_rnd, goal_pos, goal_act, goal_item = goals[gi]
                         goal_pos_t = tuple(goal_pos)
                         occupied = {tuple(b['position']) for b in live_bots if b['id'] != bot['id']}
+                        drop_off = tuple(map_state.drop_off)
 
-                        if bpos == goal_pos_t:
+                        # Full inventory at pickup goal -> deliver first to clear space
+                        if goal_act == ACT_PICKUP and len(inv) >= INV_CAP:
+                            if bpos == drop_off:
+                                ws_actions.append({'bot': bot['id'], 'action': 'drop_off'})
+                            else:
+                                nav_act = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
+                                ws_actions.append({'bot': bot['id'],
+                                                   'action': _ACT_NAMES[nav_act]})
+                        elif bpos == goal_pos_t:
                             # Already at goal position — execute goal action
                             a = {'bot': bot['id'], 'action': ['wait', 'move_up', 'move_down',
                                  'move_left', 'move_right', 'pick_up', 'drop_off'][goal_act]}
@@ -489,9 +591,7 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                             # Navigate toward goal position
                             nav_act = bfs_next_action(bpos, goal_pos_t, walkable, occupied, map_state)
                             ws_actions.append({'bot': bot['id'],
-                                               'action': ['wait', 'move_up', 'move_down',
-                                                          'move_left', 'move_right',
-                                                          'pick_up', 'drop_off'][nav_act]})
+                                               'action': _ACT_NAMES[nav_act]})
                     else:
                         # No more goals -> greedy fallback for new orders
                         ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
@@ -512,12 +612,12 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
 
             response = {"actions": ws_actions}
             log_file.write(json.dumps(response) + '\n')
-            log_file.flush()
+            # Flush periodically instead of every line to avoid blocking asyncio
+            if rnd % 25 == 0 or rnd >= max_rounds - 5:
+                log_file.flush()
 
-            # Small delay to prevent timing issues
-            if SEND_DELAY > 0:
-                await asyncio.sleep(SEND_DELAY)
-
+            # Send response with small delay to prevent server from racing ahead
+            await asyncio.sleep(SEND_DELAY)
             await ws.send(json.dumps(response))
 
             # Update state tracking for next round's goal advancement
@@ -525,6 +625,7 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
             for bid, bot in enumerate(live_bots):
                 bot_prev_inv[bid] = list(bot.get('inventory', []))
 
+    log_file.flush()
     log_file.close()
     print(f"Log saved: {log_path}", file=sys.stderr)
     print(f"Stats: synced_rounds={synced_rounds} desync_rounds={desync_rounds} "
@@ -545,24 +646,15 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
     except Exception as e:
         print(f"  DB import error: {e}", file=sys.stderr)
 
-    # Update capture with newly seen orders
+    # Update capture with newly seen orders (merge, never lose existing orders)
     if all_orders_captured and difficulty:
         capture = load_capture(difficulty)
         if capture:
-            existing_ids = set()
-            for i, o in enumerate(capture.get('orders', [])):
-                existing_ids.add(o.get('id', f'order_{i}'))
-
-            new_count = 0
-            for o in all_orders_captured:
-                if o['id'] not in existing_ids:
-                    capture['orders'].append(o)
-                    existing_ids.add(o['id'])
-                    new_count += 1
-
-            if new_count > 0:
-                store_capture(difficulty, capture)
-                print(f"  Capture updated: +{new_count} new orders ({len(capture['orders'])} total)",
+            new_capture = dict(capture)
+            new_capture['orders'] = [{'items_required': o['items_required']} for o in all_orders_captured]
+            merged, num_new, total = merge_capture(difficulty, new_capture)
+            if num_new > 0:
+                print(f"  Capture updated: +{num_new} new orders ({total} total)",
                       file=sys.stderr)
 
     return final_score

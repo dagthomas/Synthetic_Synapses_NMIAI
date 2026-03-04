@@ -372,11 +372,24 @@
 		{@const color = botColors[bot.id % botColors.length]}
 		{@const isSelected = selectedBot === bot.id}
 
-		<!-- Animated wrapper: CSS transform transitions smoothly each round -->
+		<!-- Bot wrapper: instant position updates for real-time accuracy -->
 		<g
-			style="transform: translate({bx}px, {by}px); transition: transform 0.25s ease-out; cursor: pointer;"
+			style="transform: translate({bx}px, {by}px); cursor: pointer;"
 			onclick={() => onSelectBot(bot.id)}
 		>
+			<!-- Cell position highlight — always visible so you know which cell the bot occupies -->
+			<rect
+				x={0}
+				y={0}
+				width={cellSize}
+				height={cellSize}
+				fill={color}
+				opacity={isSelected ? 0.15 : 0.08}
+				stroke={color}
+				stroke-width={isSelected ? 1.5 : 0.5}
+				stroke-opacity={isSelected ? 0.6 : 0.3}
+			/>
+
 			<!-- Selection highlight -->
 			{#if isSelected}
 				<rect
@@ -384,7 +397,7 @@
 					y={-2}
 					width={cellSize + 4}
 					height={cellSize + 4}
-					rx="4"
+					rx="1"
 					fill="none"
 					stroke={color}
 					stroke-width="2"
@@ -667,11 +680,7 @@
 
 	/* Cyber Drone bot animations */
 	.bot-cyber-hover {
-		animation: cyberBotHover 3s ease-in-out infinite;
-	}
-	@keyframes cyberBotHover {
-		0%, 100% { transform: translateY(0); }
-		50% { transform: translateY(-3px); }
+		/* No hover animation — instant positions for accurate tracking */
 	}
 
 	.bot-scanner {

@@ -42,7 +42,7 @@
 	let orders = $derived(roundData?.orders || []);
 	let actions = $derived(roundData?.actions || []);
 	let events = $derived(roundData?.events || []);
-	let score = $derived(roundData?.score || 0);
+	let score = $derived(rounds[currentRound]?.score ?? 0);
 
 	let botPositions = $derived(new Map(bots.map(b => [`${b.position[0]},${b.position[1]}`, b])));
 
@@ -624,7 +624,7 @@ void main(){
 		</div>
 		<div class="score-display">
 			<span class="score-label">score&gt;</span>
-			<span class="score-value">{score}</span>
+			<span class="score-value">{rounds[currentRound]?.score ?? '?'}</span>
 			<span class="score-final">/{run.final_score}</span>
 		</div>
 	</div>
