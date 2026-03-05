@@ -5,6 +5,7 @@ const strategy = @import("strategy.zig");
 const queue_strategy = @import("queue_strategy.zig");
 const parser = @import("parser.zig");
 const precomputed = @import("precomputed.zig");
+const dp_replay = @import("dp_replay.zig");
 
 const GameState = types.GameState;
 const Pos = types.Pos;
@@ -228,16 +229,34 @@ fn runLive(url: []const u8) !void {
             }
         }
 
-        const response = if (use_queue_strategy)
-            queue_strategy.decideActions(&state, &action_buf) catch |err| {
+        // DP replay: if plan loaded and positions match, send cached DP response
+        var response: []const u8 = undefined;
+        var used_dp = false;
+        if (dp_replay.isActive() and dp_replay.isRoundSynced(&state, state.round)) {
+            if (dp_replay.getResponse(state.round)) |dp_resp| {
+                response = dp_resp;
+                used_dp = true;
+                if (state.round % 25 == 0 or state.round < 5) {
+                    std.debug.print("R{d} [DP] Score:{d}\n", .{ state.round, state.score });
+                }
+            }
+        }
+
+        if (!used_dp) {
+            if (dp_replay.isActive() and state.round < dp_replay.getRoundCount()) {
+                std.debug.print("R{d} [REACTIVE] desync detected, falling back\n", .{state.round});
+            }
+            response = if (use_queue_strategy)
+                queue_strategy.decideActions(&state, &action_buf) catch |err| {
+                    std.debug.print("Decision error: {any}\n", .{err});
+                    continue;
+                }
+            else
+                strategy.decideActions(&state, &action_buf) catch |err| {
                 std.debug.print("Decision error: {any}\n", .{err});
                 continue;
-            }
-        else
-            strategy.decideActions(&state, &action_buf) catch |err| {
-            std.debug.print("Decision error: {any}\n", .{err});
-            continue;
-        };
+            };
+        }
 
         log_file.writeAll(response) catch {};
         log_file.writeAll("\n") catch {};
@@ -265,7 +284,7 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage:\n  grocery-bot <wss://...> [--precomputed capture.json] [--queue]  Live mode\n  grocery-bot --replay <logfile> [--queue]                          Replay mode\n", .{});
+        std.debug.print("Usage:\n  grocery-bot <wss://...> [--dp-plan dp_plan.json] [--precomputed capture.json] [--queue]  Live mode\n  grocery-bot --replay <logfile> [--queue]                          Replay mode\n", .{});
         return;
     }
 
@@ -287,7 +306,10 @@ pub fn main() !void {
         // Parse optional flags after the URL
         var i: usize = 2;
         while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--precomputed") and i + 1 < args.len) {
+            if (std.mem.eql(u8, args[i], "--dp-plan") and i + 1 < args.len) {
+                _ = dp_replay.load(args[i + 1]);
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--precomputed") and i + 1 < args.len) {
                 _ = precomputed.load(args[i + 1]);
                 i += 1;
             } else if (std.mem.eql(u8, args[i], "--queue")) {
