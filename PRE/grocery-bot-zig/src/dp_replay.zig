@@ -158,26 +158,82 @@ pub fn load(path: []const u8) bool {
     }
 
     is_loaded = plan_rounds > 0;
+    plan_cursor = 0;
+    consecutive_miss = 0;
     std.debug.print("DP replay: loaded {d} rounds for {d} bots from {s}\n", .{ plan_rounds, plan_bots, path });
     return is_loaded;
 }
 
 /// Check if all bots match expected positions for this round.
+/// On mismatch: sends a wait (via returning false) and scans nearby plan
+/// rounds next time to re-sync. This handles dropped/late packets gracefully.
+var plan_cursor: u32 = 0; // which plan round we're currently at
+var consecutive_miss: u16 = 0;
+const MAX_MISS_BEFORE_ABANDON: u16 = 5;
+
 pub fn isRoundSynced(state: *const GameState, round: u32) bool {
-    if (!is_loaded or round >= plan_rounds) return false;
-    const rp = &plan[round];
-    if (state.bot_count != rp.num_bots) return false;
+    if (!is_loaded) return false;
+    if (state.bot_count != plan_bots) return false;
+
+    // On round 0, always reset cursor
+    if (round == 0) {
+        plan_cursor = 0;
+        consecutive_miss = 0;
+    }
+
+    // Try exact cursor position first
+    if (plan_cursor < plan_rounds and positionsMatch(state, plan_cursor)) {
+        consecutive_miss = 0;
+        return true;
+    }
+
+    // Search nearby plan rounds (cursor-1 to cursor+3) for re-sync
+    // This handles: dropped packets (cursor behind), or server lag (cursor ahead)
+    const search_range: i32 = 4;
+    var delta: i32 = -1;
+    while (delta <= search_range) : (delta += 1) {
+        if (delta == 0) continue; // already tried
+        const try_cursor: i32 = @as(i32, @intCast(plan_cursor)) + delta;
+        if (try_cursor >= 0 and try_cursor < plan_rounds) {
+            const tc: u32 = @intCast(try_cursor);
+            if (positionsMatch(state, tc)) {
+                if (delta != 0) {
+                    std.debug.print("DP replay: re-synced at R{d}, cursor {d} -> {d} (delta={d})\n", .{ round, plan_cursor, tc, delta });
+                }
+                plan_cursor = tc;
+                consecutive_miss = 0;
+                return true;
+            }
+        }
+    }
+
+    // No match in search window
+    consecutive_miss += 1;
+    if (consecutive_miss <= MAX_MISS_BEFORE_ABANDON) {
+        // Don't advance cursor — wait for positions to catch up
+        return false;
+    }
+
+    // Too many consecutive misses — plan is truly desynced
+    return false;
+}
+
+fn positionsMatch(state: *const GameState, plan_round: u32) bool {
+    const rp = &plan[plan_round];
     for (0..state.bot_count) |bi| {
         if (!state.bots[bi].pos.eql(rp.expected_pos[bi])) return false;
     }
     return true;
 }
 
-/// Get the cached DP response for this round (pre-built JSON string).
-/// Returns null if not loaded or round out of range.
+/// Get the cached DP response for the current cursor position.
+/// Advances cursor for next round. Returns null if desynced.
 pub fn getResponse(round: u32) ?[]const u8 {
-    if (!is_loaded or round >= plan_rounds) return null;
-    return cached_responses[round][0..cached_response_lens[round]];
+    _ = round;
+    if (!is_loaded or plan_cursor >= plan_rounds) return null;
+    const resp = cached_responses[plan_cursor][0..cached_response_lens[plan_cursor]];
+    plan_cursor += 1; // advance for next round
+    return resp;
 }
 
 /// Check if plan is loaded.

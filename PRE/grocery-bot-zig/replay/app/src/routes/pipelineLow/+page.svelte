@@ -12,6 +12,12 @@
 	let postOptTime    = $state(60);
 	let gpuOptTime     = $state(20);
 
+	// ── Multi-key continuation ───────────────────────────────────────────────────
+	let waitingForKey  = $state(false);
+	let keyCount       = $state(0);
+	let cumulativeBest = $state(0);
+	let totalOrders    = $state(0);
+
 	// ── Timer ────────────────────────────────────────────────────────────────────
 	let timerStart     = $state(null);
 	let timerNow       = $state(null);
@@ -71,6 +77,17 @@
 	function resetAll() {
 		bestScore = 0; currentScore = 0; detectedDiff = null;
 		iterCount = 0; currentPhase = ''; lastStatus = ''; logs = [];
+		waitingForKey = false; keyCount = 0; cumulativeBest = 0; totalOrders = 0;
+	}
+
+	function resetForContinuation() {
+		// Keep cumulative state, reset per-key state
+		waitingForKey = false;
+		keyCount++;
+		currentScore = 0;
+		iterCount = 0;
+		currentPhase = '';
+		lastStatus = '';
 	}
 
 	// ── Event Handler ────────────────────────────────────────────────────────────
@@ -95,7 +112,8 @@
 
 			case 'iter_start':
 				currentPhase = event.phase || 'playing';
-				phase = event.phase === 'optimize_replay' ? 'optimizing' : 'playing';
+				phase = event.phase === 'optimize_replay' || event.phase === 'deep_training' || event.phase === 'initial_optimize'
+					? 'optimizing' : event.phase === 'replay_discover' ? 'replaying' : 'playing';
 				lastStatus = `Iter ${(event.iter||0)+1}: ${event.phase}`;
 				addLog(`--- ${lastStatus} (${Math.floor(event.remaining||0)}s left) ---`);
 				break;
@@ -129,8 +147,11 @@
 				if (event.difficulty) detectedDiff = event.difficulty;
 				currentScore = event.score || 0;
 				if (currentScore > bestScore) bestScore = currentScore;
+				if (bestScore > cumulativeBest) cumulativeBest = bestScore;
 				iterCount = (event.iter || 0) + 1;
+				if (event.orders_total) totalOrders = event.orders_total;
 				lastStatus = `Iter ${iterCount}: score=${event.score}`;
+				if (event.is_deep) lastStatus += ' [DEEP]';
 				addLog(lastStatus);
 				break;
 
@@ -140,7 +161,19 @@
 
 			case 'iter_summary':
 				bestScore = event.best_score || bestScore;
-				addLog(`Best: ${event.best_score} after ${event.iterations_done} iters`);
+				if (bestScore > cumulativeBest) cumulativeBest = bestScore;
+				if (event.orders) totalOrders = event.orders;
+				addLog(`Best: ${event.best_score} after ${event.iterations_done} iters (${event.orders || '?'} orders)`);
+				break;
+
+			case 'orders_update':
+				totalOrders = event.count || totalOrders;
+				addLog(`Orders: ${event.count} total (+${event.new_orders || 0} new)`);
+				break;
+
+			case 'mode_change':
+				addLog(`Mode: ${event.mode} (${event.reason})`);
+				phase = 'deep_training';
 				break;
 
 			case 'pipeline_start':
@@ -149,16 +182,25 @@
 
 			case 'pipeline_complete':
 				bestScore = event.best_score || bestScore;
+				if (bestScore > cumulativeBest) cumulativeBest = bestScore;
 				iterCount = event.iterations || iterCount;
-				phase = 'done';
+				if (event.orders) totalOrders = event.orders;
+				// Don't set phase=done yet — wait for need_new_key
 				running = false;
 				stopTimer();
-				lastStatus = `Done! Best=${event.best_score} in ${event.iterations} iters`;
+				lastStatus = `Done! Best=${event.best_score} in ${event.iterations} iters (${event.orders || '?'} orders)`;
 				addLog(lastStatus);
 				break;
 
+			case 'need_new_key':
+				waitingForKey = true;
+				phase = 'waiting_for_key';
+				if (event.best_score > cumulativeBest) cumulativeBest = event.best_score;
+				if (event.orders) totalOrders = event.orders;
+				addLog(`Token depleted. Paste new key to continue. Best: ${cumulativeBest}, Orders: ${totalOrders}`);
+				break;
+
 			case 'log':
-				// Show WebSocket and important logs
 				if (event.text) {
 					const t = event.text;
 					if (t.includes('WebSocket') || t.includes('ERROR') || t.includes('WARNING')
@@ -168,6 +210,9 @@
 						|| t.includes('Connecting') || t.includes('Connected')
 						|| t.includes('[zig]') || t.includes('Replaying')
 						|| t.includes('DESYNC') || t.includes('GREEDY')
+						|| t.includes('orders') || t.includes('Orders')
+						|| t.includes('solution') || t.includes('Difficulty')
+						|| t.includes('[zig-replay]') || t.includes('[export]')
 						|| t.includes('failed') || t.includes('error')) {
 						addLog(t);
 					}
@@ -192,7 +237,11 @@
 	async function startIterate() {
 		if (!wsUrl.trim()) return;
 		if (abortCtrl) abortCtrl.abort();
-		resetAll();
+		if (!waitingForKey) {
+			resetAll();
+		} else {
+			resetForContinuation();
+		}
 		running = true;
 		phase = 'playing';
 		abortCtrl = new AbortController();
@@ -231,7 +280,7 @@
 				addLog(`Connection error: ${e.message}`);
 			}
 		}
-		if (phase !== 'done') phase = 'done';
+		if (phase !== 'done' && phase !== 'waiting_for_key') phase = 'done';
 		running = false;
 		stopTimer();
 	}
@@ -239,7 +288,9 @@
 	function stop() {
 		if (abortCtrl) abortCtrl.abort();
 		running = false;
+		waitingForKey = false;
 		stopTimer();
+		phase = 'done';
 		addLog('Stopped.');
 	}
 
@@ -256,7 +307,7 @@
 </script>
 
 <div class="page">
-	<h1>Pipeline Low</h1>
+	<h1>Pipeline Low {#if keyCount > 0}<span class="key-count">Key #{keyCount + 1}</span>{/if}</h1>
 
 	<!-- Controls -->
 	<div class="controls">
@@ -279,6 +330,11 @@
 
 		{#if running}
 			<button class="btn stop" onclick={stop}>Stop</button>
+		{:else if waitingForKey}
+			<div class="new-key-prompt">
+				<span class="new-key-label">Token depleted. Paste new key to continue:</span>
+				<button class="btn start" disabled={!wsUrl.trim()} onclick={startIterate}>Continue</button>
+			</div>
 		{:else}
 			<button class="btn start" disabled={!wsUrl.trim()} onclick={startIterate}>Start</button>
 		{/if}
@@ -288,7 +344,7 @@
 	<div class="score-box">
 		<div class="score-main">
 			<span class="label">Best Score</span>
-			<span class="value" class:hit={bestScore >= targetScore}>{bestScore}</span>
+			<span class="value" class:hit={cumulativeBest >= targetScore || bestScore >= targetScore}>{cumulativeBest || bestScore}</span>
 			{#if detectedDiff}
 				<span class="diff" style="color:{diffColors[detectedDiff]||'#aaa'}">{detectedDiff}</span>
 			{/if}
@@ -297,23 +353,37 @@
 			{/if}
 		</div>
 
+		<!-- Orders counter -->
+		{#if totalOrders > 0}
+		<div class="orders-row">
+			<span class="orders-label">Orders discovered:</span>
+			<span class="orders-count">{totalOrders}</span>
+		</div>
+		{/if}
+
 		{#if running}
 			<div class="status-row">
 				<span class="phase-pill"
 					class:playing={phase === 'playing'}
 					class:optimizing={phase === 'optimizing'}
-					class:replaying={phase === 'replaying'}>
+					class:replaying={phase === 'replaying'}
+					class:deep={phase === 'deep_training'}>
 					{phase === 'playing' ? 'Playing' :
 					 phase === 'optimizing' ? 'Optimizing' :
-					 phase === 'replaying' ? 'Replaying' : phase}
+					 phase === 'replaying' ? 'Replaying' :
+					 phase === 'deep_training' ? 'Deep Training' : phase}
 				</span>
 				<span class="iter-count">Iter {iterCount + 1}</span>
 				<span class="current">Current: {currentScore}</span>
 				<span class="timer">{fmtSecs(timerRemaining)} left</span>
 			</div>
+		{:else if waitingForKey}
+			<div class="status-row waiting">
+				Waiting for new key &mdash; {keyCount + 1} key{keyCount > 0 ? 's' : ''} used, best: {cumulativeBest}
+			</div>
 		{:else if phase === 'done'}
 			<div class="status-row done">
-				Done — {iterCount} iterations in {fmtSecs(timerElapsed)}
+				Done &mdash; {iterCount} iterations in {fmtSecs(timerElapsed)}
 			</div>
 		{/if}
 	</div>
@@ -323,7 +393,9 @@
 		{#each logs as log}
 			<div class="log-line" class:err={log.text.includes('ERROR') || log.text.includes('failed')}
 				class:warn={log.text.includes('WARNING') || log.text.includes('timeout')}
-				class:ws={log.text.includes('WebSocket') || log.text.includes('connect')}>
+				class:ws={log.text.includes('WebSocket') || log.text.includes('connect')}
+				class:orders={log.text.includes('Orders:') || log.text.includes('orders')}
+				class:deep={log.text.includes('DEEP') || log.text.includes('deep')}>
 				<span class="log-time">{log.t}</span> {log.text}
 			</div>
 		{/each}
@@ -345,6 +417,11 @@
 		font-size: 1.4em;
 		margin: 0 0 16px;
 		color: #8b949e;
+	}
+	.key-count {
+		font-size: 0.7em;
+		color: #58a6ff;
+		margin-left: 8px;
 	}
 	.controls {
 		display: flex;
@@ -414,6 +491,20 @@
 		color: #fff;
 	}
 
+	.new-key-prompt {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 8px 12px;
+		background: #1c2d4f;
+		border: 1px solid #1f6feb;
+		border-radius: 6px;
+	}
+	.new-key-label {
+		font-size: 13px;
+		color: #58a6ff;
+	}
+
 	.score-box {
 		background: #161b22;
 		border: 1px solid #30363d;
@@ -449,6 +540,22 @@
 		color: #484f58;
 	}
 
+	.orders-row {
+		margin-top: 8px;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 13px;
+	}
+	.orders-label {
+		color: #8b949e;
+	}
+	.orders-count {
+		color: #58a6ff;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+
 	.status-row {
 		margin-top: 12px;
 		display: flex;
@@ -459,6 +566,9 @@
 	}
 	.status-row.done {
 		color: #39d353;
+	}
+	.status-row.waiting {
+		color: #58a6ff;
 	}
 	.phase-pill {
 		padding: 2px 10px;
@@ -471,6 +581,7 @@
 	.phase-pill.playing { background: #1f3a2d; color: #39d353; }
 	.phase-pill.optimizing { background: #3b2a0f; color: #d29922; }
 	.phase-pill.replaying { background: #1c2d4f; color: #58a6ff; }
+	.phase-pill.deep { background: #3b1a0f; color: #f85149; }
 	.iter-count { font-weight: 600; }
 	.current { font-variant-numeric: tabular-nums; }
 	.timer { margin-left: auto; font-variant-numeric: tabular-nums; }
@@ -495,6 +606,8 @@
 	.log-line.err { color: #f85149; }
 	.log-line.warn { color: #d29922; }
 	.log-line.ws { color: #58a6ff; }
+	.log-line.orders { color: #bc8cff; }
+	.log-line.deep { color: #f85149; font-weight: 600; }
 	.log-line.dim { color: #484f58; }
 	.log-time {
 		color: #484f58;

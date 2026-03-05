@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, unlinkSync, copyFileSync } from 'fs';
+import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, copyFileSync } from 'fs';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -15,6 +15,9 @@ const GPU_PARAMS = {
 	hard:   { coldTime: 45,  warmTime: 25, coldOrd: 3, coldRef: 5,  warmRef: 3, maxStates: 50000,  plateau: 8 },
 	expert: { coldTime: 45,  warmTime: 25, coldOrd: 1, coldRef: 3,  warmRef: 2, maxStates: 50000,  plateau: 8 },
 };
+
+// Deep mode: when order discovery stalls, use bigger search
+const DEEP_PARAMS = { maxStates: 100000, orderings: 3, refineIters: 8 };
 
 export async function POST({ request }) {
 	const {
@@ -97,7 +100,6 @@ export async function POST({ request }) {
 								if (botCount === 3) return 'medium';
 								if (botCount === 5) return 'hard';
 								if (botCount >= 10) return 'expert';
-								// Fallback: grid width
 								const w = state.grid?.width || 0;
 								if (w <= 12) return 'easy';
 								if (w <= 16) return 'medium';
@@ -122,7 +124,35 @@ export async function POST({ request }) {
 				} catch (e) { return null; }
 			}
 
-			// ── Phase: Zig bot play (iteration 0) ───────────────────────
+			// ── Parse difficulty from JWT in WebSocket URL ──────────────
+			function parseDifficultyFromUrl(wsUrl) {
+				try {
+					const m = wsUrl.match(/[?&]token=([^&]+)/);
+					if (!m) return null;
+					const parts = m[1].split('.');
+					if (parts.length < 2) return null;
+					const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+					return payload.difficulty || null;
+				} catch (e) { return null; }
+			}
+
+			// ── Count orders in capture.json ────────────────────────────
+			function getOrderCount(diff) {
+				if (!diff) return 0;
+				const captureFile = resolve(GPU_DIR, 'solutions', diff, 'capture.json');
+				try {
+					const data = JSON.parse(readFileSync(captureFile, 'utf-8'));
+					return (data.orders || []).length;
+				} catch (e) { return 0; }
+			}
+
+			// ── Check if a GPU solution exists ──────────────────────────
+			function solutionExists(diff) {
+				if (!diff) return false;
+				return existsSync(resolve(GPU_DIR, 'solutions', diff, 'best.json'));
+			}
+
+			// ── Phase: Zig bot play (fallback for iter 0) ───────────────
 			function runZigBot(iter) {
 				return new Promise((resolvePhase) => {
 					sendEvent('iter_start', {
@@ -149,21 +179,17 @@ export async function POST({ request }) {
 							if (!line.trim()) continue;
 							sendEvent('log', { text: `[zig] ${line.trim()}`, _iter: iter });
 
-							// Parse score updates: "R150/300 Score:45"
 							const roundMatch = line.match(/R(\d+)\/(\d+)\s+Score:(\d+)/);
 							if (roundMatch) {
 								const rnd = parseInt(roundMatch[1]);
 								const maxR = parseInt(roundMatch[2]);
 								score = parseInt(roundMatch[3]);
-								// Emit round-like events for the dashboard
 								if (rnd % 10 === 0 || rnd === maxR) {
 									sendEvent('round', { round: rnd, score, _iter: iter });
 								}
 							}
-							// Parse game over
 							const gameOver = line.match(/GAME_OVER\s+Score:(\d+)/);
 							if (gameOver) score = parseInt(gameOver[1]);
-							// Parse difficulty from grid dimensions
 							const dimMatch = line.match(/width=(\d+)\s+height=(\d+)\s+bots=(\d+)/);
 							if (dimMatch) {
 								const bots = parseInt(dimMatch[3]);
@@ -180,15 +206,12 @@ export async function POST({ request }) {
 					ctx.process.on('close', (code) => {
 						sendEvent('log', { text: `[zig] Process exited with code ${code}`, _iter: iter });
 
-						// Find the game log created by Zig bot
 						const logPath = findNewestLog(ZIG_BOT_DIR, spawnMs);
 						if (logPath) {
-							// Detect difficulty from log if not found in stderr
 							if (!difficulty) {
 								difficulty = detectDifficultyFromLog(logPath);
 							}
 
-							// Parse first game_state from log to emit init event for grid visualization
 							try {
 								const logContent = readFileSync(logPath, 'utf8');
 								const firstLine = logContent.split('\n')[0];
@@ -197,7 +220,6 @@ export async function POST({ request }) {
 									if (state.type === 'game_state' && state.grid) {
 										const w = state.grid.width, h = state.grid.height;
 										const walls = state.grid.walls || [];
-										// Build shelf positions from items (unique positions)
 										const shelfSet = new Set();
 										const items = (state.items || []).map(it => ({
 											id: it.id, type: it.type, position: it.position
@@ -223,7 +245,6 @@ export async function POST({ request }) {
 								sendEvent('log', { text: `[zig] Failed to parse log for grid: ${e.message}`, _iter: iter });
 							}
 
-							// Copy game log to GPU_DIR so captureOrders can find it
 							const destPath = resolve(GPU_DIR, logPath.split(/[\\/]/).pop());
 							try {
 								copyFileSync(logPath, destPath);
@@ -390,7 +411,6 @@ export async function POST({ request }) {
 					let logPath = null;
 					let stderrBuf = '';
 
-					// Poll game log for grid events (like the optimize/replay endpoint)
 					let pollLogFile = null;
 					let lineCount = 0;
 					let initSent = false;
@@ -407,7 +427,6 @@ export async function POST({ request }) {
 							while (lineCount < lines.length) {
 								const line = lines[lineCount];
 								lineCount++;
-								// Even lines = game state, odd lines = bot response
 								if ((lineCount - 1) % 2 === 0) {
 									let state;
 									try { state = JSON.parse(line); } catch (e) { continue; }
@@ -459,7 +478,6 @@ export async function POST({ request }) {
 						for (const line of lines) {
 							if (!line.trim()) continue;
 							sendEvent('log', { text: `[replay] ${line.trim()}`, _iter: iter });
-							// Parse score from stderr
 							const gameOver = line.match(/GAME_OVER Score:(\d+)/);
 							if (gameOver) score = parseInt(gameOver[1]);
 							const logMatch = line.match(/Log saved: (.+)/);
@@ -471,7 +489,6 @@ export async function POST({ request }) {
 
 					ctx.process.on('close', (code) => {
 						clearInterval(pollInterval);
-						// Final poll
 						if (pollLogFile) {
 							try {
 								const content = readFileSync(pollLogFile, 'utf-8');
@@ -501,6 +518,122 @@ export async function POST({ request }) {
 				});
 			}
 
+			// ── Phase: Export DP plan for Zig replay ─────────────────────
+			function exportDpPlan(difficulty) {
+				return new Promise((res) => {
+					const proc = spawn('python', [
+						'-u', 'export_plan_for_zig.py', difficulty,
+					], { cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
+
+					proc.stderr.on('data', (d) => {
+						const t = d.toString().trim();
+						if (t) sendEvent('log', { text: `[export] ${t}` });
+					});
+					proc.on('close', (code) => res(code === 0));
+					proc.on('error', () => res(false));
+				});
+			}
+
+			// ── Phase: Zig bot with DP replay ────────────────────────────
+			// Much faster and more reliable than Python replay on slow connections.
+			// Zig sends cached DP responses when synced, falls back to reactive strategy when desynced.
+			function runZigDpReplay(difficulty, iter) {
+				return new Promise((resolvePhase) => {
+					sendEvent('replay_phase_start', {
+						_iter: iter, difficulty,
+						_elapsed: elapsedSecs(), _remaining: remaining(),
+					});
+
+					const dpPlan = resolve(GPU_DIR, 'solutions', difficulty, 'dp_plan.json');
+					const captureJson = resolve(GPU_DIR, 'solutions', difficulty, 'capture.json');
+					const exe = resolve(ZIG_BOT_DIR, 'zig-out', 'bin', 'grocery-bot.exe');
+
+					if (!existsSync(exe) || !existsSync(dpPlan)) {
+						sendEvent('log', { text: `[zig-replay] Missing exe or dp_plan, falling back to Python replay`, _iter: iter });
+						resolvePhase({ score: 0, logPath: null, fallback: true });
+						return;
+					}
+
+					const args = [exe, url, '--dp-plan', dpPlan];
+					if (existsSync(captureJson)) {
+						args.push('--precomputed', captureJson);
+					}
+
+					const spawnMs = Date.now();
+					ctx.process = spawn(args[0], args.slice(1), {
+						cwd: ZIG_BOT_DIR, stdio: ['pipe', 'pipe', 'pipe'],
+					});
+
+					let score = 0;
+					let initSent = false;
+
+					ctx.process.stderr.on('data', (data) => {
+						for (const line of data.toString().split('\n')) {
+							if (!line.trim()) continue;
+							sendEvent('log', { text: `[zig-replay] ${line.trim()}`, _iter: iter });
+
+							const roundMatch = line.match(/R(\d+)\/(\d+)\s+Score:(\d+)/);
+							if (roundMatch) {
+								const rnd = parseInt(roundMatch[1]);
+								score = parseInt(roundMatch[3]);
+								if (rnd % 10 === 0 || rnd === parseInt(roundMatch[2])) {
+									sendEvent('round', { round: rnd, score, _iter: iter });
+								}
+							}
+							const gameOver = line.match(/GAME_OVER\s+Score:(\d+)/);
+							if (gameOver) score = parseInt(gameOver[1]);
+
+							// Grid init from Zig output
+							const dimMatch = line.match(/width=(\d+)\s+height=(\d+)\s+bots=(\d+)/);
+							if (dimMatch && !initSent) {
+								sendEvent('init', {
+									width: parseInt(dimMatch[1]),
+									height: parseInt(dimMatch[2]),
+									num_bots: parseInt(dimMatch[3]),
+									difficulty,
+									_iter: iter,
+								});
+								initSent = true;
+							}
+						}
+					});
+
+					ctx.process.stdout.on('data', () => {});
+
+					ctx.process.on('close', (code) => {
+						// Find game log for order capture
+						const logPath = findNewestLog(ZIG_BOT_DIR, spawnMs);
+						if (logPath) {
+							// Copy log to GPU_DIR for captureOrders
+							const destPath = resolve(GPU_DIR, logPath.split(/[\\/]/).pop());
+							try { copyFileSync(logPath, destPath); } catch (e) { /* ok */ }
+						}
+
+						sendEvent('replay_phase_done', {
+							_iter: iter, score, exit_code: code,
+							_elapsed: elapsedSecs(), _remaining: remaining(),
+						});
+						resolvePhase({ score, logPath, fallback: false });
+					});
+					ctx.process.on('error', (err) => {
+						sendEvent('error', { message: `Zig DP replay failed: ${err.message}` });
+						resolvePhase({ score: 0, logPath: null, fallback: true });
+					});
+				});
+			}
+
+			// ── Smart replay: Zig DP replay (fast) with Python fallback ──
+			async function smartReplay(difficulty, iter) {
+				// Try Zig DP replay first (needs dp_plan.json)
+				const dpPlan = resolve(GPU_DIR, 'solutions', difficulty, 'dp_plan.json');
+				if (existsSync(dpPlan)) {
+					const result = await runZigDpReplay(difficulty, iter);
+					if (!result.fallback) return result;
+				}
+				// Fallback to Python replay
+				return await runReplay(difficulty, iter);
+			}
+
 			// ── Import game log to PostgreSQL (best-effort, fire-and-forget)
 			function importLogToDb(logPath, runType, iter) {
 				if (!logPath) return;
@@ -520,14 +653,9 @@ export async function POST({ request }) {
 					gpu_optimize_time: gpuOptimizeTime,
 				});
 
-				// Clear old solutions but KEEP capture.json � orders are deterministic per day
+				// Keep existing solutions for replay-first strategy.
+				// Solutions persist across keys (same day = same seed).
 				const solDir = resolve(GPU_DIR, "solutions");
-				for (const diff of ["easy", "medium", "hard", "expert"]) {
-					for (const fname of ["best.json", "meta.json"]) {
-						const fpath = resolve(solDir, diff, fname);
-						try { if (existsSync(fpath)) unlinkSync(fpath); } catch (e) { /* file may already be deleted */ }
-					}
-				}
 
 				// Seed capture from order_lists if available (persistent known orders)
 				const orderListsDir = resolve(GPU_DIR, "order_lists");
@@ -553,46 +681,125 @@ export async function POST({ request }) {
 				}
 
 				let bestScore = 0;
-				let difficulty = null;
+				let difficulty = parseDifficultyFromUrl(url);
 				let iterCount = 0;
+				let orderCount = getOrderCount(difficulty);
+				let staleOrderIters = 0;
 
-				// ── ITERATION 0: Zig bot for initial capture ────────────
-				// Zig bot has built-in anti-congestion and plays the full game.
-				// Its score is decent (60-120 on Expert) and it captures all
-				// visible orders for the GPU optimizer to work with.
-				{
+				sendEvent('log', {
+					text: `[pipeline] Difficulty: ${difficulty || 'unknown'}, known orders: ${orderCount}, solution: ${solutionExists(difficulty) ? 'yes' : 'no'}`,
+				});
+
+				// ── ITERATION 0: Initial discovery ──────────────────────
+				// Strategy: replay existing solution if available (fastest
+				// way to discover orders), else optimize from known orders,
+				// else fall back to Zig bot.
+				if (solutionExists(difficulty)) {
+					// Replay existing solution via Zig — discovers orders from game
+					sendEvent('iter_start', {
+						iter: 0, phase: 'replay_discover',
+						elapsed: elapsedSecs(), remaining: remaining(),
+					});
+
+					// Export dp_plan.json for Zig replay
+					await exportDpPlan(difficulty);
+
+					const replayResult = await smartReplay(difficulty, 0);
+					if (replayResult.score > bestScore) bestScore = replayResult.score;
+					if (replayResult.logPath) importLogToDb(replayResult.logPath, 'replay', 0);
+
+					const captured = await captureOrders(difficulty, 0);
+					const newCount = getOrderCount(difficulty);
+
+					sendEvent('orders_update', {
+						count: newCount, new_orders: newCount - orderCount, _iter: 0,
+					});
+					orderCount = newCount;
+
+					sendEvent('iter_done', {
+						iter: 0, phase: 'replay_discover',
+						score: replayResult.score, game_score: replayResult.score,
+						difficulty, captured_orders: captured, orders_total: orderCount,
+						elapsed: elapsedSecs(), remaining: remaining(),
+					});
+					sendEvent('iter_summary', {
+						iter: 0, score: replayResult.score, best_score: bestScore,
+						iterations_done: 1, remaining: remaining(), orders: orderCount,
+					});
+					iterCount = 1;
+
+				} else if (orderCount > 0) {
+					// Have orders but no solution — optimize first, then replay
+					sendEvent('iter_start', {
+						iter: 0, phase: 'initial_optimize',
+						elapsed: elapsedSecs(), remaining: remaining(),
+					});
+
+					const p = GPU_PARAMS[difficulty] || GPU_PARAMS.easy;
+					const optResult = await runGpuOptimize(difficulty, 0, p.coldTime, {
+						orderings: p.coldOrd, refineIters: p.coldRef,
+						maxStates: p.maxStates, speedBonus: 50,
+					});
+					if (optResult.score > bestScore) bestScore = optResult.score;
+
+					let replayScore = 0;
+					if (!ctx.closed && remaining() > 6) {
+						await exportDpPlan(difficulty);
+						const replayResult = await smartReplay(difficulty, 0);
+						replayScore = replayResult.score;
+						if (replayScore > bestScore) bestScore = replayScore;
+						if (replayResult.logPath) importLogToDb(replayResult.logPath, 'replay', 0);
+						await captureOrders(difficulty, 0);
+						const newCount = getOrderCount(difficulty);
+						sendEvent('orders_update', {
+							count: newCount, new_orders: newCount - orderCount, _iter: 0,
+						});
+						orderCount = newCount;
+					}
+
+					sendEvent('iter_done', {
+						iter: 0, phase: 'initial_optimize',
+						score: Math.max(optResult.score, replayScore),
+						opt_score: optResult.score, game_score: replayScore,
+						difficulty, orders_total: orderCount,
+						elapsed: elapsedSecs(), remaining: remaining(),
+					});
+					sendEvent('iter_summary', {
+						iter: 0, score: bestScore, best_score: bestScore,
+						iterations_done: 1, remaining: remaining(), orders: orderCount,
+					});
+					iterCount = 1;
+
+				} else {
+					// No orders, no solution — fall back to Zig bot
 					const result = await runZigBot(0);
-					difficulty = result.difficulty;
+					difficulty = result.difficulty || difficulty;
 					if (result.score > bestScore) bestScore = result.score;
-
-					// Import Zig game log to PostgreSQL
 					if (result.logPath) importLogToDb(result.logPath, 'zig', 0);
 
-					// Capture orders from game log (log was copied to GPU_DIR)
 					const captured = await captureOrders(difficulty, 0);
+					orderCount = getOrderCount(difficulty);
 
 					sendEvent('iter_done', {
 						iter: 0, phase: 'zig_bot',
 						score: result.score, game_score: result.score,
-						difficulty,
-						captured_orders: captured,
+						difficulty, captured_orders: captured, orders_total: orderCount,
 						elapsed: elapsedSecs(), remaining: remaining(),
 					});
 					sendEvent('iter_summary', {
 						iter: 0, score: result.score, best_score: bestScore,
-						iterations_done: 1, remaining: remaining(),
+						iterations_done: 1, remaining: remaining(), orders: orderCount,
 					});
 					iterCount = 1;
 				}
 
-				// ── ITERATIONS 1+: GPU optimize → replay → capture ───────
-				// Difficulty-aware: Hard/Expert get more time, orderings, and refine iters.
-				// Replays are ~3s (5ms × 300 rounds), not 120s games.
-				// Each cycle discovers 1-3 more orders → snowball effect.
+				// ── ITERATIONS 1+: Optimize -> Replay -> Capture ────────
+				// Each cycle discovers orders. When discovery stalls for 2+
+				// iterations, switch to deep mode (more states/orderings).
 				const params = GPU_PARAMS[difficulty] || GPU_PARAMS.easy;
 				const minIterBudget = difficulty === 'expert' ? 30 : difficulty === 'hard' ? 30 : 20;
 				let lastImprovementIter = 0;
-				let replayFailed = false; // true if replay scored << expected
+				let replayFailed = false;
 
 				while (!ctx.closed && remaining() > minIterBudget && difficulty) {
 					const i = iterCount;
@@ -603,7 +810,7 @@ export async function POST({ request }) {
 						break;
 					}
 
-					// Plateau detection: stop if no improvement for N consecutive iterations
+					// Plateau detection
 					if (i - lastImprovementIter > params.plateau) {
 						sendEvent('iter_skip', {
 							iter: i, reason: 'score_plateau',
@@ -613,52 +820,56 @@ export async function POST({ request }) {
 						break;
 					}
 
+					const prevOrderCount = orderCount;
+					const isDeep = staleOrderIters >= 2;
+					const isCold = (i === 1);
+
+					if (isDeep && staleOrderIters === 2) {
+						sendEvent('mode_change', {
+							mode: 'deep', reason: 'no_new_orders',
+							stale_iters: staleOrderIters, _iter: i,
+						});
+					}
+
 					sendEvent('iter_start', {
-						iter: i, phase: 'optimize_replay',
+						iter: i, phase: isDeep ? 'deep_training' : 'optimize_replay',
 						elapsed: elapsedSecs(), remaining: timeLeft,
 					});
 
-					// GPU optimize: difficulty-aware time budget
-					const isCold = (i === 1);
-					const baseTime = isCold ? params.coldTime : params.warmTime;
+					// GPU optimize with adaptive params
+					const baseTime = isCold ? params.coldTime : (isDeep ? Math.min(60, timeLeft - 10) : params.warmTime);
 					const gpuTime = Math.min(baseTime, Math.max(10, timeLeft - 8));
-
-					// Phase A: Offline GPU optimize
-					// Iter 1: cold-start; Iter 2+: warm-only refine
-					// Speed bonus decays per iteration: 50, 35, 24.5, ...
 					const speedBonus = 50 * Math.pow(0.7, i - 1);
+
 					const optResult = await runGpuOptimize(difficulty, i, gpuTime, {
 						warmOnly: !isCold,
-						orderings: isCold ? params.coldOrd : 1,
-						refineIters: isCold ? params.coldRef : params.warmRef,
-						maxStates: params.maxStates,
+						orderings: isDeep ? DEEP_PARAMS.orderings : (isCold ? params.coldOrd : 1),
+						refineIters: isDeep ? DEEP_PARAMS.refineIters : (isCold ? params.coldRef : params.warmRef),
+						maxStates: isDeep ? DEEP_PARAMS.maxStates : params.maxStates,
 						speedBonus,
 					});
 
 					if (ctx.closed || remaining() < 6) {
+						if (optResult.score > bestScore) bestScore = optResult.score;
 						sendEvent('iter_done', {
 							iter: i, phase: 'optimize_only',
 							score: optResult.score, game_score: 0,
-							difficulty, elapsed: elapsedSecs(), remaining: remaining(),
+							difficulty, orders_total: orderCount,
+							elapsed: elapsedSecs(), remaining: remaining(),
 						});
-						if (optResult.score > bestScore) bestScore = optResult.score;
 						iterCount++;
 						break;
 					}
 
-					// Skip replay if previous replay failed catastrophically
-					let replayResult = { score: 0 };
+					// Replay + capture
+					let replayResult = { score: 0, logPath: null };
 					let captured = 0;
 					if (!replayFailed) {
-						// Phase B: Replay optimized solution with same URL
-						replayResult = await runReplay(difficulty, i);
-
-						// Import replay log to PostgreSQL
+						await exportDpPlan(difficulty);
+						replayResult = await smartReplay(difficulty, i);
 						if (replayResult.logPath) importLogToDb(replayResult.logPath, 'replay', i);
-
 						if (ctx.closed) break;
 
-						// Detect replay failure: score < 30% of optimize score
 						if (optResult.score > 10 && replayResult.score < optResult.score * 0.3) {
 							replayFailed = true;
 							sendEvent('log', {
@@ -667,14 +878,22 @@ export async function POST({ request }) {
 							});
 						}
 
-						// Phase C: Capture new orders from replay
 						captured = await captureOrders(difficulty, i);
 					} else {
-						sendEvent('log', {
-							text: `[pipeline] Skipping replay (previous replay failed)`,
-							_iter: i,
-						});
+						sendEvent('log', { text: `[pipeline] Skipping replay (previous failed)`, _iter: i });
 					}
+
+					// Track order discovery
+					const newCount = getOrderCount(difficulty);
+					if (newCount > prevOrderCount) {
+						staleOrderIters = 0;
+						sendEvent('orders_update', {
+							count: newCount, new_orders: newCount - prevOrderCount, _iter: i,
+						});
+					} else {
+						staleOrderIters++;
+					}
+					orderCount = newCount;
 
 					const iterScore = Math.max(optResult.score, replayResult.score);
 					if (iterScore > bestScore) {
@@ -683,33 +902,45 @@ export async function POST({ request }) {
 					}
 
 					sendEvent('iter_done', {
-						iter: i, phase: 'optimize_replay',
+						iter: i, phase: isDeep ? 'deep_training' : 'optimize_replay',
 						score: iterScore, game_score: replayResult.score,
 						opt_score: optResult.score,
 						difficulty, captured_orders: captured,
+						orders_total: orderCount, is_deep: isDeep,
 						replay_skipped: replayFailed && replayResult.score === 0,
 						elapsed: elapsedSecs(), remaining: remaining(),
 					});
 					sendEvent('iter_summary', {
 						iter: i, score: iterScore, best_score: bestScore,
 						iterations_done: i + 1, remaining: remaining(),
+						orders: orderCount,
 					});
 
 					iterCount++;
 				}
 
-				// ── Final replay if time remains and replay hasn't failed ──
+				// Final replay if time remains
 				if (!ctx.closed && remaining() > 5 && difficulty && !replayFailed) {
 					sendEvent('log', { text: `[pipeline] Final replay with ${remaining().toFixed(0)}s remaining` });
-					const finalReplay = await runReplay(difficulty, iterCount);
+					await exportDpPlan(difficulty);
+					const finalReplay = await smartReplay(difficulty, iterCount);
 					if (finalReplay.score > bestScore) bestScore = finalReplay.score;
 					await captureOrders(difficulty, iterCount);
+					orderCount = getOrderCount(difficulty);
 				}
 
 				sendEvent('pipeline_complete', {
 					best_score: bestScore,
 					iterations: iterCount,
 					total_elapsed: elapsedSecs(),
+					difficulty,
+					orders: orderCount,
+				});
+
+				// Signal frontend to request new key for continuation
+				sendEvent('need_new_key', {
+					best_score: bestScore,
+					orders: orderCount,
 					difficulty,
 				});
 

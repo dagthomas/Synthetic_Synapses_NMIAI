@@ -124,6 +124,12 @@
 	let iterTotalTime  = $derived(iterations.reduce((s, i) => s + (i.elapsed || 0), 0));
 	let detectedDiff   = $state(null);
 
+	// ── Multi-key continuation ───────────────────────────────────────────────────
+	let waitingForKey  = $state(false);
+	let keyCount       = $state(0);
+	let cumulativeBest = $state(0);
+	let totalOrders    = $state(0);
+
 	// ── Log ──────────────────────────────────────────────────────────────────────
 	let logs           = $state([]);
 
@@ -184,6 +190,20 @@
 		postOptFinal = null; pipelineDone = null; logs = [];
 		iterations = []; activeIter = 0; currentIterData = null;
 		detectedDiff = null; iterSnapshots = {};
+		waitingForKey = false; keyCount = 0; cumulativeBest = 0; totalOrders = 0;
+	}
+
+	function resetForContinuation() {
+		// Keep cumulative state and grid, reset per-key state
+		waitingForKey = false;
+		keyCount++;
+		currentRound = 0; liveScore = 0;
+		planScore = 0; planSource = 'none';
+		finalScore = null; scoreHistory = []; gpuPasses = [];
+		planUpgrades = []; postOptStart = null; postOptProgress = null;
+		postOptFinal = null; pipelineDone = null;
+		iterations = []; activeIter = 0; currentIterData = null;
+		iterSnapshots = {};
 	}
 
 	function snapshotIter(iter) {
@@ -320,7 +340,13 @@
 					orders: 0,
 					startTime: event.elapsed,
 				}];
-				phase = event.phase === 'optimize_replay' ? 'optimizing' : 'playing';
+				if (event.phase === 'optimize_replay' || event.phase === 'deep_training' || event.phase === 'initial_optimize') {
+					phase = 'optimizing';
+				} else if (event.phase === 'replay_discover') {
+					phase = 'replaying';
+				} else {
+					phase = 'playing';
+				}
 				addLog(`--- Iter ${event.iter + 1} (${event.phase || 'live'}) ${Math.floor(event.remaining)}s left ---`, event.iter);
 				break;
 
@@ -380,12 +406,16 @@
 						optScore: event.opt_score || 0,
 						orders: event.orders || 0,
 						capturedOrders: event.captured_orders || 0,
+						ordersTotal: event.orders_total || 0,
+						isDeep: event.is_deep || false,
 						elapsed: event.elapsed - (updated[idx].startTime || 0),
 						difficulty: event.difficulty,
 					};
 					iterations = updated;
 				}
-				addLog(`Iter ${event.iter + 1}: score=${event.score} (${Math.floor(event.remaining)}s left)`, event.iter);
+				if ((event.score || 0) > cumulativeBest) cumulativeBest = event.score;
+				if (event.orders_total) totalOrders = event.orders_total;
+				addLog(`Iter ${event.iter + 1}: score=${event.score}${event.is_deep ? ' [DEEP]' : ''} (${Math.floor(event.remaining)}s left)`, event.iter);
 				snapshotIter(event.iter);
 				break;
 			}
@@ -395,15 +425,37 @@
 				break;
 
 			case 'iter_summary':
-				addLog(`Best: ${event.best_score} after ${event.iterations_done} iters`, event.iter);
+				if (event.best_score > cumulativeBest) cumulativeBest = event.best_score;
+				if (event.orders) totalOrders = event.orders;
+				addLog(`Best: ${event.best_score} after ${event.iterations_done} iters (${event.orders || '?'} orders)`, event.iter);
+				break;
+
+			case 'orders_update':
+				totalOrders = event.count || totalOrders;
+				addLog(`Orders: ${event.count} total (+${event.new_orders || 0} new)`, iter);
+				break;
+
+			case 'mode_change':
+				addLog(`Mode: ${event.mode} (${event.reason})`, iter);
+				if (event.mode === 'deep') phase = 'optimizing';
 				break;
 
 			case 'pipeline_complete':
 				snapshotIter(activeIter);
-				phase = 'done';
+				if (event.best_score > cumulativeBest) cumulativeBest = event.best_score;
+				if (event.orders) totalOrders = event.orders;
+				// Don't set phase=done yet — wait for need_new_key
 				running = false;
 				stopTimer();
-				addLog(`Complete! Best=${event.best_score} in ${event.iterations} iters, ${Math.floor(event.total_elapsed)}s`);
+				addLog(`Complete! Best=${event.best_score} in ${event.iterations} iters, ${Math.floor(event.total_elapsed)}s (${event.orders || '?'} orders)`);
+				break;
+
+			case 'need_new_key':
+				waitingForKey = true;
+				phase = 'waiting_for_key';
+				if (event.best_score > cumulativeBest) cumulativeBest = event.best_score;
+				if (event.orders) totalOrders = event.orders;
+				addLog(`Token depleted. Paste new key to continue. Best: ${cumulativeBest}, Orders: ${totalOrders}`);
 				break;
 
 			case 'seed_cracked':
@@ -479,7 +531,11 @@
 	async function startIterate() {
 		if (!wsUrl.trim()) return;
 		if (abortCtrl) abortCtrl.abort();
-		resetAll();
+		if (!waitingForKey) {
+			resetAll();
+		} else {
+			resetForContinuation();
+		}
 		running = true;
 		phase = 'playing';
 		mode = 'iterate';
@@ -519,7 +575,7 @@
 		} catch (e) {
 			if (e.name !== 'AbortError') addLog(`Connection error: ${e.message}`);
 		}
-		if (phase !== 'done') phase = 'done';
+		if (phase !== 'done' && phase !== 'waiting_for_key') phase = 'done';
 		running = false;
 		stopTimer();
 	}
@@ -569,7 +625,9 @@
 	function stop() {
 		if (abortCtrl) abortCtrl.abort();
 		running = false;
+		waitingForKey = false;
 		stopTimer();
+		phase = 'done';
 		addLog('Stopped.');
 	}
 
@@ -588,8 +646,8 @@
 <div class="page stagger">
 	<div class="header">
 		<div>
-			<h1>GPU Pipeline</h1>
-			<p class="sub">Live game -> GPU optimization -> Iterative replay</p>
+			<h1>GPU Pipeline {#if keyCount > 0}<span style="font-size:0.6em;color:#58a6ff">Key #{keyCount + 1}</span>{/if}</h1>
+			<p class="sub">Replay -> Discover orders -> Optimize -> Repeat {#if totalOrders > 0}<span style="color:#bc8cff">| {totalOrders} orders</span>{/if}</p>
 		</div>
 		<div class="header-right">
 			{#if detectedDiff}
@@ -599,14 +657,16 @@
 			<div class="phase-badge" class:playing={phase === 'playing'}
 				class:post={phase === 'post_optimizing' || phase === 'optimizing'}
 				class:done={phase === 'done'}
-				class:replaying={phase === 'replaying'}>
+				class:replaying={phase === 'replaying'}
+				class:waiting={phase === 'waiting_for_key'}>
 				{#if phase === 'idle'}Idle
-				{:else if phase === 'playing'}🎮 Playing
-				{:else if phase === 'optimizing'}🔥 GPU Optimizing
-				{:else if phase === 'post_optimizing'}🔥 Post-Optimizing
-				{:else if phase === 'replaying' && greedyMode}🧠 Thinking
-				{:else if phase === 'replaying'}▶ Replaying
-				{:else}✓ Done
+				{:else if phase === 'playing'}Playing
+				{:else if phase === 'optimizing'}GPU Optimizing
+				{:else if phase === 'post_optimizing'}Post-Optimizing
+				{:else if phase === 'replaying' && greedyMode}Thinking
+				{:else if phase === 'replaying'}Replaying
+				{:else if phase === 'waiting_for_key'}Waiting for Key
+				{:else}Done
 				{/if}
 			</div>
 		</div>
@@ -680,15 +740,22 @@
 			{#if running}
 				<button class="btn btn-stop" onclick={stop}>Stop</button>
 				<span class="running-pill">
-					{phase === 'playing' ? '🎮 Playing...' :
-					 phase === 'optimizing' ? '🔥 GPU optimizing...' :
-					 phase === 'post_optimizing' ? '🔥 Post-optimizing...' :
-					 phase === 'replaying' && greedyMode ? '🧠 Thinking...' :
-					 phase === 'replaying' ? '▶ Replaying...' : 'Running...'}
+					{phase === 'playing' ? 'Playing...' :
+					 phase === 'optimizing' ? 'GPU optimizing...' :
+					 phase === 'post_optimizing' ? 'Post-optimizing...' :
+					 phase === 'replaying' && greedyMode ? 'Thinking...' :
+					 phase === 'replaying' ? 'Replaying...' : 'Running...'}
 					{#if mode === 'iterate' && iterations.length > 0}
 						(iter {activeIter + 1}, {fmtSecs(timerRemaining)} left)
 					{/if}
 				</span>
+			{:else if waitingForKey}
+				<div class="new-key-prompt">
+					<span class="new-key-label">Token depleted — paste new key to continue ({totalOrders} orders, best: {cumulativeBest})</span>
+					<button class="btn btn-iterate" disabled={!wsUrl.trim()} onclick={startIterate}>
+						Continue
+					</button>
+				</div>
 			{:else}
 				{#if mode === 'single'}
 					<button class="btn btn-start" disabled={!wsUrl.trim()} onclick={startPipeline}>
@@ -737,11 +804,17 @@
 			<span class="stat-val gold">{finalScore}</span>
 		</div>
 		{/if}
-		{#if mode === 'iterate' && iterBestScore > 0}
+		{#if mode === 'iterate' && (iterBestScore > 0 || cumulativeBest > 0)}
 		<div class="stat best-stat">
 			<span class="stat-label">Best</span>
-			<span class="stat-val" class:green={iterBestScore >= targetScore}
-				class:gold={iterBestScore > 0 && iterBestScore < targetScore}>{iterBestScore}</span>
+			<span class="stat-val" class:green={Math.max(iterBestScore, cumulativeBest) >= targetScore}
+				class:gold={Math.max(iterBestScore, cumulativeBest) > 0 && Math.max(iterBestScore, cumulativeBest) < targetScore}>{Math.max(iterBestScore, cumulativeBest)}</span>
+		</div>
+		{/if}
+		{#if totalOrders > 0}
+		<div class="stat">
+			<span class="stat-label">Orders</span>
+			<span class="stat-val" style="color:#bc8cff">{totalOrders}</span>
 		</div>
 		{/if}
 		{#if targetScore}
@@ -1230,6 +1303,7 @@
 	.phase-badge.post       { border-color: #56d364; color: #56d364; box-shadow: 0 0 8px rgba(57,255,20,0.15); }
 	.phase-badge.done       { border-color: #39d353; color: #39d353; }
 	.phase-badge.replaying  { border-color: #39d353; color: #39d353; box-shadow: 0 0 8px rgba(0,229,255,0.15); }
+	.phase-badge.waiting    { border-color: #58a6ff; color: #58a6ff; box-shadow: 0 0 8px rgba(88,166,255,0.15); animation: pulse 2s ease-in-out infinite; }
 
 	/* Timer bar */
 	.timer-bar {
@@ -1393,6 +1467,21 @@
 		color: #39d353;
 		font-family: var(--font-mono);
 		animation: pulse 1.5s ease-in-out infinite;
+	}
+	.new-key-prompt {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 8px 12px;
+		background: #1c2d4f;
+		border: 1px solid #1f6feb;
+		border-radius: 6px;
+		flex-wrap: wrap;
+	}
+	.new-key-label {
+		font-size: 0.78rem;
+		color: #58a6ff;
+		font-family: var(--font-mono);
 	}
 
 	/* Stats bar */
