@@ -1,0 +1,642 @@
+{
+  "difficulty": "hard",
+  "total_orders_discovered": 13,
+  "orders": [
+    {
+      "id": "order_0",
+      "items_required": [
+        "butter",
+        "pasta",
+        "yogurt"
+      ]
+    },
+    {
+      "id": "order_1",
+      "items_required": [
+        "milk",
+        "cheese",
+        "butter",
+        "cream"
+      ]
+    },
+    {
+      "id": "order_2",
+      "items_required": [
+        "butter",
+        "eggs",
+        "cereal"
+      ]
+    },
+    {
+      "id": "order_3",
+      "items_required": [
+        "eggs",
+        "butter",
+        "oats",
+        "flour"
+      ]
+    },
+    {
+      "id": "order_4",
+      "items_required": [
+        "flour",
+        "cheese",
+        "milk"
+      ]
+    },
+    {
+      "id": "order_5",
+      "items_required": [
+        "rice",
+        "bread",
+        "flour",
+        "butter",
+        "cereal"
+      ]
+    },
+    {
+      "id": "order_6",
+      "items_required": [
+        "milk",
+        "oats",
+        "butter",
+        "oats"
+      ]
+    },
+    {
+      "id": "order_7",
+      "items_required": [
+        "eggs",
+        "pasta",
+        "butter"
+      ]
+    },
+    {
+      "id": "order_8",
+      "items_required": [
+        "bread",
+        "pasta",
+        "bread",
+        "yogurt"
+      ]
+    },
+    {
+      "id": "order_9",
+      "items_required": [
+        "yogurt",
+        "cheese",
+        "eggs"
+      ]
+    },
+    {
+      "id": "order_10",
+      "items_required": [
+        "flour",
+        "flour",
+        "cream",
+        "yogurt"
+      ]
+    },
+    {
+      "id": "order_11",
+      "items_required": [
+        "flour",
+        "butter",
+        "cheese"
+      ]
+    },
+    {
+      "id": "order_12",
+      "items_required": [
+        "bread",
+        "yogurt",
+        "milk",
+        "bread",
+        "yogurt"
+      ]
+    }
+  ],
+  "grid": {
+    "width": 22,
+    "height": 14
+  },
+  "drop_off": [
+    1,
+    12
+  ],
+  "num_bots": 5,
+  "items": [
+    {
+      "id": "item_0",
+      "type": "bread",
+      "position": [
+        3,
+        2
+      ]
+    },
+    {
+      "id": "item_1",
+      "type": "milk",
+      "position": [
+        5,
+        2
+      ]
+    },
+    {
+      "id": "item_2",
+      "type": "cereal",
+      "position": [
+        3,
+        3
+      ]
+    },
+    {
+      "id": "item_3",
+      "type": "rice",
+      "position": [
+        5,
+        3
+      ]
+    },
+    {
+      "id": "item_4",
+      "type": "yogurt",
+      "position": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "item_5",
+      "type": "eggs",
+      "position": [
+        5,
+        4
+      ]
+    },
+    {
+      "id": "item_6",
+      "type": "cheese",
+      "position": [
+        3,
+        5
+      ]
+    },
+    {
+      "id": "item_7",
+      "type": "cream",
+      "position": [
+        5,
+        5
+      ]
+    },
+    {
+      "id": "item_8",
+      "type": "oats",
+      "position": [
+        3,
+        6
+      ]
+    },
+    {
+      "id": "item_9",
+      "type": "pasta",
+      "position": [
+        5,
+        6
+      ]
+    },
+    {
+      "id": "item_10",
+      "type": "butter",
+      "position": [
+        7,
+        2
+      ]
+    },
+    {
+      "id": "item_11",
+      "type": "flour",
+      "position": [
+        9,
+        2
+      ]
+    },
+    {
+      "id": "item_12",
+      "type": "bread",
+      "position": [
+        7,
+        3
+      ]
+    },
+    {
+      "id": "item_13",
+      "type": "milk",
+      "position": [
+        9,
+        3
+      ]
+    },
+    {
+      "id": "item_14",
+      "type": "cereal",
+      "position": [
+        7,
+        4
+      ]
+    },
+    {
+      "id": "item_15",
+      "type": "rice",
+      "position": [
+        9,
+        4
+      ]
+    },
+    {
+      "id": "item_16",
+      "type": "yogurt",
+      "position": [
+        7,
+        5
+      ]
+    },
+    {
+      "id": "item_17",
+      "type": "eggs",
+      "position": [
+        9,
+        5
+      ]
+    },
+    {
+      "id": "item_18",
+      "type": "cheese",
+      "position": [
+        7,
+        6
+      ]
+    },
+    {
+      "id": "item_19",
+      "type": "cream",
+      "position": [
+        9,
+        6
+      ]
+    },
+    {
+      "id": "item_20",
+      "type": "oats",
+      "position": [
+        11,
+        2
+      ]
+    },
+    {
+      "id": "item_21",
+      "type": "pasta",
+      "position": [
+        13,
+        2
+      ]
+    },
+    {
+      "id": "item_22",
+      "type": "butter",
+      "position": [
+        11,
+        3
+      ]
+    },
+    {
+      "id": "item_23",
+      "type": "flour",
+      "position": [
+        13,
+        3
+      ]
+    },
+    {
+      "id": "item_24",
+      "type": "bread",
+      "position": [
+        11,
+        4
+      ]
+    },
+    {
+      "id": "item_25",
+      "type": "milk",
+      "position": [
+        13,
+        4
+      ]
+    },
+    {
+      "id": "item_26",
+      "type": "cereal",
+      "position": [
+        11,
+        5
+      ]
+    },
+    {
+      "id": "item_27",
+      "type": "rice",
+      "position": [
+        13,
+        5
+      ]
+    },
+    {
+      "id": "item_28",
+      "type": "yogurt",
+      "position": [
+        11,
+        6
+      ]
+    },
+    {
+      "id": "item_29",
+      "type": "eggs",
+      "position": [
+        13,
+        6
+      ]
+    },
+    {
+      "id": "item_30",
+      "type": "cheese",
+      "position": [
+        15,
+        2
+      ]
+    },
+    {
+      "id": "item_31",
+      "type": "cream",
+      "position": [
+        17,
+        2
+      ]
+    },
+    {
+      "id": "item_32",
+      "type": "oats",
+      "position": [
+        15,
+        3
+      ]
+    },
+    {
+      "id": "item_33",
+      "type": "pasta",
+      "position": [
+        17,
+        3
+      ]
+    },
+    {
+      "id": "item_34",
+      "type": "butter",
+      "position": [
+        15,
+        4
+      ]
+    },
+    {
+      "id": "item_35",
+      "type": "flour",
+      "position": [
+        17,
+        4
+      ]
+    },
+    {
+      "id": "item_36",
+      "type": "bread",
+      "position": [
+        15,
+        5
+      ]
+    },
+    {
+      "id": "item_37",
+      "type": "milk",
+      "position": [
+        17,
+        5
+      ]
+    },
+    {
+      "id": "item_38",
+      "type": "cereal",
+      "position": [
+        15,
+        6
+      ]
+    },
+    {
+      "id": "item_39",
+      "type": "rice",
+      "position": [
+        17,
+        6
+      ]
+    },
+    {
+      "id": "item_40",
+      "type": "rice",
+      "position": [
+        3,
+        8
+      ]
+    },
+    {
+      "id": "item_41",
+      "type": "yogurt",
+      "position": [
+        5,
+        8
+      ]
+    },
+    {
+      "id": "item_42",
+      "type": "eggs",
+      "position": [
+        3,
+        9
+      ]
+    },
+    {
+      "id": "item_43",
+      "type": "cheese",
+      "position": [
+        5,
+        9
+      ]
+    },
+    {
+      "id": "item_44",
+      "type": "cream",
+      "position": [
+        3,
+        10
+      ]
+    },
+    {
+      "id": "item_45",
+      "type": "oats",
+      "position": [
+        5,
+        10
+      ]
+    },
+    {
+      "id": "item_46",
+      "type": "pasta",
+      "position": [
+        7,
+        8
+      ]
+    },
+    {
+      "id": "item_47",
+      "type": "butter",
+      "position": [
+        9,
+        8
+      ]
+    },
+    {
+      "id": "item_48",
+      "type": "flour",
+      "position": [
+        7,
+        9
+      ]
+    },
+    {
+      "id": "item_49",
+      "type": "rice",
+      "position": [
+        9,
+        9
+      ]
+    },
+    {
+      "id": "item_50",
+      "type": "yogurt",
+      "position": [
+        7,
+        10
+      ]
+    },
+    {
+      "id": "item_51",
+      "type": "eggs",
+      "position": [
+        9,
+        10
+      ]
+    },
+    {
+      "id": "item_52",
+      "type": "cheese",
+      "position": [
+        11,
+        8
+      ]
+    },
+    {
+      "id": "item_53",
+      "type": "cream",
+      "position": [
+        13,
+        8
+      ]
+    },
+    {
+      "id": "item_54",
+      "type": "oats",
+      "position": [
+        11,
+        9
+      ]
+    },
+    {
+      "id": "item_55",
+      "type": "pasta",
+      "position": [
+        13,
+        9
+      ]
+    },
+    {
+      "id": "item_56",
+      "type": "butter",
+      "position": [
+        11,
+        10
+      ]
+    },
+    {
+      "id": "item_57",
+      "type": "flour",
+      "position": [
+        13,
+        10
+      ]
+    },
+    {
+      "id": "item_58",
+      "type": "rice",
+      "position": [
+        15,
+        8
+      ]
+    },
+    {
+      "id": "item_59",
+      "type": "yogurt",
+      "position": [
+        17,
+        8
+      ]
+    },
+    {
+      "id": "item_60",
+      "type": "eggs",
+      "position": [
+        15,
+        9
+      ]
+    },
+    {
+      "id": "item_61",
+      "type": "cheese",
+      "position": [
+        17,
+        9
+      ]
+    },
+    {
+      "id": "item_62",
+      "type": "cream",
+      "position": [
+        15,
+        10
+      ]
+    },
+    {
+      "id": "item_63",
+      "type": "oats",
+      "position": [
+        17,
+        10
+      ]
+    }
+  ]
+}

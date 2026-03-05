@@ -245,7 +245,7 @@ fn runLive(url: []const u8) !void {
         // Small delay before sending to prevent 1-round action offset desync.
         // Without this, the server may not have finished processing the previous
         // round before we send, causing our action to apply to the wrong round.
-        std.Thread.sleep(45 * std.time.ns_per_ms);
+        std.Thread.sleep(25 * std.time.ns_per_ms);
 
         client.sendMessage(response) catch |err| {
             std.debug.print("Send error: {any}\n", .{err});

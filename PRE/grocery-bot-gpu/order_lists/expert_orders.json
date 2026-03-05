@@ -1,0 +1,124 @@
+{
+  "difficulty": "expert",
+  "date": "2026-03-05",
+  "seed": 7002,
+  "total_orders": 11,
+  "orders": [
+    {
+      "index": 0,
+      "items_required": [
+        "milk",
+        "bananas",
+        "bread",
+        "milk",
+        "oats",
+        "cereal"
+      ]
+    },
+    {
+      "index": 1,
+      "items_required": [
+        "flour",
+        "onions",
+        "yogurt",
+        "eggs"
+      ]
+    },
+    {
+      "index": 2,
+      "items_required": [
+        "butter",
+        "cereal",
+        "yogurt",
+        "bananas",
+        "cream",
+        "milk"
+      ]
+    },
+    {
+      "index": 3,
+      "items_required": [
+        "onions",
+        "oats",
+        "bread",
+        "apples",
+        "butter",
+        "pasta"
+      ]
+    },
+    {
+      "index": 4,
+      "items_required": [
+        "onions",
+        "pasta",
+        "yogurt",
+        "cereal",
+        "butter"
+      ]
+    },
+    {
+      "index": 5,
+      "items_required": [
+        "oats",
+        "bread",
+        "pasta",
+        "tomatoes",
+        "tomatoes",
+        "onions"
+      ]
+    },
+    {
+      "index": 6,
+      "items_required": [
+        "cereal",
+        "cream",
+        "bread",
+        "oats",
+        "oats",
+        "eggs"
+      ]
+    },
+    {
+      "index": 7,
+      "items_required": [
+        "rice",
+        "cereal",
+        "yogurt",
+        "cheese",
+        "oats",
+        "cream"
+      ]
+    },
+    {
+      "index": 8,
+      "items_required": [
+        "bananas",
+        "bananas",
+        "rice",
+        "cereal",
+        "apples"
+      ]
+    },
+    {
+      "index": 9,
+      "items_required": [
+        "butter",
+        "butter",
+        "rice",
+        "bread",
+        "cheese",
+        "tomatoes"
+      ]
+    },
+    {
+      "index": 10,
+      "items_required": [
+        "eggs",
+        "bananas",
+        "eggs",
+        "cream",
+        "yogurt"
+      ]
+    }
+  ]
+}

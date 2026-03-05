@@ -121,8 +121,10 @@ Per-bot priority cascade each round:
 - Bots block each other on all tiles **except the spawn tile**.
 
 ### Deterministic Per Day
-- Same day = same map layout, item placement, and order sequence.
-- Can replay to learn optimal routes for the day's configuration.
+- Same day = same map layout, item placement, **and full order sequence** (all 50 orders are fixed).
+- Orders are NOT random per game — they are deterministic for the day's seed.
+- Can pre-capture order sequences from prior runs and reuse. Each run that progresses further discovers more orders to add to the master list.
+- Within a single day, all games on the same difficulty see identical orders in identical sequence.
 
 ### Limits
 - 300 rounds max, 120s wall-clock, 2s response timeout per round

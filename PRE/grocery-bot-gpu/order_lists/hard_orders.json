@@ -1,0 +1,121 @@
+{
+  "difficulty": "hard",
+  "date": "2026-03-05",
+  "seed": 7002,
+  "total_orders": 13,
+  "orders": [
+    {
+      "index": 0,
+      "items_required": [
+        "butter",
+        "pasta",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 1,
+      "items_required": [
+        "milk",
+        "cheese",
+        "butter",
+        "cream"
+      ]
+    },
+    {
+      "index": 2,
+      "items_required": [
+        "butter",
+        "eggs",
+        "cereal"
+      ]
+    },
+    {
+      "index": 3,
+      "items_required": [
+        "eggs",
+        "butter",
+        "oats",
+        "flour"
+      ]
+    },
+    {
+      "index": 4,
+      "items_required": [
+        "flour",
+        "cheese",
+        "milk"
+      ]
+    },
+    {
+      "index": 5,
+      "items_required": [
+        "rice",
+        "bread",
+        "flour",
+        "butter",
+        "cereal"
+      ]
+    },
+    {
+      "index": 6,
+      "items_required": [
+        "milk",
+        "oats",
+        "butter",
+        "oats"
+      ]
+    },
+    {
+      "index": 7,
+      "items_required": [
+        "eggs",
+        "pasta",
+        "butter"
+      ]
+    },
+    {
+      "index": 8,
+      "items_required": [
+        "bread",
+        "pasta",
+        "bread",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 9,
+      "items_required": [
+        "yogurt",
+        "cheese",
+        "eggs"
+      ]
+    },
+    {
+      "index": 10,
+      "items_required": [
+        "flour",
+        "flour",
+        "cream",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 11,
+      "items_required": [
+        "flour",
+        "butter",
+        "cheese"
+      ]
+    },
+    {
+      "index": 12,
+      "items_required": [
+        "bread",
+        "yogurt",
+        "milk",
+        "bread",
+        "yogurt"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { readdirSync, statSync, readFileSync, existsSync, unlinkSync, copyFileSync } from 'fs';
+import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, unlinkSync, copyFileSync } from 'fs';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -520,12 +520,35 @@ export async function POST({ request }) {
 					gpu_optimize_time: gpuOptimizeTime,
 				});
 
-				// Clear old solutions - new token = new game, old data is invalid
+				// Clear old solutions but KEEP capture.json � orders are deterministic per day
 				const solDir = resolve(GPU_DIR, "solutions");
 				for (const diff of ["easy", "medium", "hard", "expert"]) {
-					for (const fname of ["best.json", "capture.json", "meta.json"]) {
+					for (const fname of ["best.json", "meta.json"]) {
 						const fpath = resolve(solDir, diff, fname);
 						try { if (existsSync(fpath)) unlinkSync(fpath); } catch (e) { /* file may already be deleted */ }
+					}
+				}
+
+				// Seed capture from order_lists if available (persistent known orders)
+				const orderListsDir = resolve(GPU_DIR, "order_lists");
+				for (const diff2 of ["easy", "medium", "hard", "expert"]) {
+					const orderFile = resolve(orderListsDir, diff2 + "_orders.json");
+					const captureFile = resolve(solDir, diff2, "capture.json");
+					if (existsSync(orderFile)) {
+						try {
+							const orderData = JSON.parse(readFileSync(orderFile, "utf-8"));
+							const knownOrders = (orderData.orders || []).map(o => ({
+								items_required: o.items_required,
+							}));
+							if (existsSync(captureFile)) {
+								const capture = JSON.parse(readFileSync(captureFile, "utf-8"));
+								const existingCount = (capture.orders || []).length;
+								if (knownOrders.length > existingCount) {
+									capture.orders = knownOrders;
+									writeFileSync(captureFile, JSON.stringify(capture, null, 2));
+								}
+							}
+						} catch (e) { /* order seed failed */ }
 					}
 				}
 
