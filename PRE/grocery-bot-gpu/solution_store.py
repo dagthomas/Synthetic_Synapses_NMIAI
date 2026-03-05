@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from game_engine import CaptureData
 
 SOLUTIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'solutions')
+ORDER_LISTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'order_lists')
 DIFFICULTIES = ['easy', 'medium', 'hard', 'expert']
 
 
@@ -51,6 +52,27 @@ def save_capture(difficulty: str, capture_data: CaptureData) -> str:
     return path
 
 
+def _save_order_list(difficulty: str, orders: list) -> None:
+    """Auto-save orders to order_lists/<difficulty>_orders.json."""
+    if not orders:
+        return
+    os.makedirs(ORDER_LISTS_DIR, exist_ok=True)
+    path = os.path.join(ORDER_LISTS_DIR, f'{difficulty}_orders.json')
+    data = {
+        'difficulty': difficulty,
+        'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+        'total_orders': len(orders),
+        'orders': [
+            {'index': i, 'items_required': o.get('items_required', [])}
+            for i, o in enumerate(orders)
+        ],
+    }
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+    import sys
+    print(f"  Auto-saved {len(orders)} orders to {path}", file=sys.stderr)
+
+
 def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureData, int, int]:
     """Merge new capture with existing one, keeping ALL orders by position.
 
@@ -68,6 +90,7 @@ def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureDat
     if existing is None:
         save_capture(difficulty, new_capture)
         n = len(new_capture.get('orders', []))
+        _save_order_list(difficulty, new_capture.get('orders', []))
         return new_capture, n, n
 
     # Build set of valid item types from the NEW map
@@ -91,6 +114,7 @@ def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureDat
         _clear_solution_files(difficulty)
         save_capture(difficulty, new_capture)
         n = len(new_capture.get('orders', []))
+        _save_order_list(difficulty, new_capture.get('orders', []))
         return new_capture, n, n
 
     new_orders = new_capture.get('orders', [])
@@ -104,6 +128,7 @@ def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureDat
         _clear_solution_files(difficulty)
         save_capture(difficulty, new_capture)
         n = len(new_orders)
+        _save_order_list(difficulty, new_orders)
         return new_capture, n, n
 
     # Positional merge: orders are sequential per seed.
@@ -120,6 +145,7 @@ def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureDat
     merged['orders'] = merged_orders
 
     save_capture(difficulty, merged)
+    _save_order_list(difficulty, merged_orders)
     return merged, num_new, len(merged_orders)
 
 

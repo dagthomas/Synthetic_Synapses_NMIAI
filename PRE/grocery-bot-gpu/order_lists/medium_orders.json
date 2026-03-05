@@ -1,8 +1,7 @@
 {
   "difficulty": "medium",
   "date": "2026-03-05",
-  "seed": 7002,
-  "total_orders": 22,
+  "total_orders": 16,
   "orders": [
     {
       "index": 0,
@@ -142,60 +141,6 @@
         "yogurt",
         "cheese",
         "butter"
-      ]
-    },
-    {
-      "index": 16,
-      "items_required": [
-        "milk",
-        "cream",
-        "cheese",
-        "bread"
-      ]
-    },
-    {
-      "index": 17,
-      "items_required": [
-        "eggs",
-        "butter",
-        "butter",
-        "eggs"
-      ]
-    },
-    {
-      "index": 18,
-      "items_required": [
-        "pasta",
-        "milk",
-        "butter",
-        "pasta"
-      ]
-    },
-    {
-      "index": 19,
-      "items_required": [
-        "pasta",
-        "cream",
-        "eggs",
-        "yogurt"
-      ]
-    },
-    {
-      "index": 20,
-      "items_required": [
-        "yogurt",
-        "milk",
-        "eggs",
-        "yogurt",
-        "yogurt"
-      ]
-    },
-    {
-      "index": 21,
-      "items_required": [
-        "cream",
-        "pasta",
-        "bread"
       ]
     }
   ]

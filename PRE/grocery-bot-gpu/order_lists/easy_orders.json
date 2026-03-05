@@ -1,0 +1,41 @@
+{
+  "difficulty": "easy",
+  "date": "2026-03-05",
+  "total_orders": 4,
+  "orders": [
+    {
+      "index": 0,
+      "items_required": [
+        "cheese",
+        "milk",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 1,
+      "items_required": [
+        "cheese",
+        "cheese",
+        "cheese",
+        "cheese"
+      ]
+    },
+    {
+      "index": 2,
+      "items_required": [
+        "milk",
+        "cheese",
+        "yogurt",
+        "cheese"
+      ]
+    },
+    {
+      "index": 3,
+      "items_required": [
+        "milk",
+        "yogurt",
+        "milk"
+      ]
+    }
+  ]
+}
