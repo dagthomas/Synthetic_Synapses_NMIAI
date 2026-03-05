@@ -9,7 +9,7 @@ Usage:
     python import_logs.py ../game_log_1772318764.jsonl ../game_log_1772318765.jsonl
 
     # Import with custom DB
-    python import_logs.py --db postgres://grocery:grocery123@localhost:5433/grocery_bot ../game_log.jsonl
+    python import_logs.py --db "$GROCERY_DB_URL" ../game_log.jsonl
 """
 import argparse
 import glob
@@ -18,8 +18,9 @@ import os
 import sys
 
 import psycopg2
+from psycopg2.extras import execute_values
 
-DEFAULT_DB = "postgres://grocery:grocery123@localhost:5433/grocery_bot"
+DEFAULT_DB = os.environ.get("GROCERY_DB_URL", "postgres://grocery@localhost:5433/grocery_bot")
 
 # Difficulty detection by grid size and bot count
 DIFFICULTY_MAP = {
@@ -206,22 +207,16 @@ def save_to_db(db_url, record, run_type='live'):
         run_id = cur.fetchone()[0]
 
         # Batch insert rounds
-        values = []
-        for r in record["rounds"]:
-            values.append(cur.mogrify(
-                "(%s, %s, %s, %s, %s, %s, %s)",
+        if record["rounds"]:
+            round_tuples = [
                 (run_id, r["round"], json.dumps(r["bots"]), json.dumps(r["orders"]),
                  json.dumps(r["actions"]), r["score"], json.dumps(r["events"]))
-            ).decode())
-
-        if values:
-            # Insert in batches of 100 to avoid query size limits
-            batch_size = 100
-            for i in range(0, len(values), batch_size):
-                batch = values[i:i + batch_size]
-                cur.execute("""
-                    INSERT INTO rounds (run_id, round_number, bots, orders, actions, score, events)
-                    VALUES """ + ",".join(batch))
+                for r in record["rounds"]
+            ]
+            execute_values(cur, """
+                INSERT INTO rounds (run_id, round_number, bots, orders, actions, score, events)
+                VALUES %s
+            """, round_tuples, page_size=100)
 
         conn.commit()
         return run_id

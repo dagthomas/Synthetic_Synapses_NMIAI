@@ -16,12 +16,12 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import psycopg2
+from psycopg2.extras import execute_values
+from configs import parse_seeds
 from gpu_sequential_solver import solve_sequential
 
-DB_URL = "postgres://grocery:grocery123@localhost:5433/grocery_bot"
+DB_URL = os.environ.get("GROCERY_DB_URL", "postgres://grocery@localhost:5433/grocery_bot")
 
 DEFAULT_BUDGETS = {
     'easy':   [200_000, 500_000],
@@ -38,22 +38,6 @@ DEFAULT_ORDERINGS = {
     'easy': 1, 'medium': 1, 'hard': 3, 'expert': 5,
 }
 
-
-def parse_seeds(seeds_str):
-    """Parse seed specification: '7001-7003', '42,7001', or '3' (count from 7001)."""
-    if '-' in seeds_str and ',' not in seeds_str:
-        parts = seeds_str.split('-')
-        if len(parts) == 2:
-            start, end = int(parts[0]), int(parts[1])
-            if end < 100:
-                end = start + end - 1
-            return list(range(start, end + 1))
-    if ',' in seeds_str:
-        return [int(s.strip()) for s in seeds_str.split(',')]
-    n = int(seeds_str)
-    if n < 100:
-        return list(range(7001, 7001 + n))
-    return [n]
 
 
 _map_cache = {}  # difficulty -> map data dict
@@ -176,20 +160,15 @@ def record_synthetic_score(difficulty, seed, score, max_states, refine_iters,
 
         # Insert rounds in batches
         if round_records:
-            values = []
-            for r in round_records:
-                values.append(cur.mogrify(
-                    "(%s, %s, %s, %s, %s, %s, %s)",
-                    (run_id, r["round"], json.dumps(r["bots"]), json.dumps(r["orders"]),
-                     json.dumps(r["actions"]), r["score"], json.dumps(r["events"]))
-                ).decode())
-
-            batch_size = 100
-            for i in range(0, len(values), batch_size):
-                batch = values[i:i + batch_size]
-                cur.execute("""
-                    INSERT INTO rounds (run_id, round_number, bots, orders, actions, score, events)
-                    VALUES """ + ",".join(batch))
+            round_tuples = [
+                (run_id, r["round"], json.dumps(r["bots"]), json.dumps(r["orders"]),
+                 json.dumps(r["actions"]), r["score"], json.dumps(r["events"]))
+                for r in round_records
+            ]
+            execute_values(cur, """
+                INSERT INTO rounds (run_id, round_number, bots, orders, actions, score, events)
+                VALUES %s
+            """, round_tuples, page_size=100)
 
         conn.commit()
         conn.close()

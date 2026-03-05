@@ -16,8 +16,7 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
+from configs import parse_seeds
 from gpu_sequential_solver import solve_sequential
 
 
@@ -50,21 +49,6 @@ DEFAULT_GRIDS = {
 }
 
 
-def parse_seeds(seeds_str):
-    """Parse seed specification: '7001-7003', '42,7001', or '3' (count from 7001)."""
-    if '-' in seeds_str and ',' not in seeds_str:
-        parts = seeds_str.split('-')
-        if len(parts) == 2:
-            start, end = int(parts[0]), int(parts[1])
-            if end < 100:  # range like 7001-3 means 7001 to 7003
-                end = start + end - 1
-            return list(range(start, end + 1))
-    if ',' in seeds_str:
-        return [int(s.strip()) for s in seeds_str.split(',')]
-    n = int(seeds_str)
-    if n < 100:
-        return list(range(7001, 7001 + n))
-    return [n]
 
 
 def run_sweep(difficulty, seeds, param_grid, device='cuda', verbose_solve=False):

@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """Run sim_server and bot together, capture output."""
-import subprocess, sys, time, threading, os
+import subprocess, sys, time, threading, os  # nosec B404
 
 diff = sys.argv[1] if len(sys.argv) > 1 else "easy"
 port = 9883
 
 # Start server
-srv = subprocess.Popen(
+srv = subprocess.Popen(  # nosec B603 B607
     [sys.executable, "sim_server.py", str(port), diff],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     cwd=os.path.dirname(os.path.abspath(__file__))
@@ -16,7 +16,7 @@ time.sleep(2)
 
 # Start bot
 bot_exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zig-out", "bin", "grocery-bot.exe")
-bot = subprocess.Popen(
+bot = subprocess.Popen(  # nosec B603 B607
     [bot_exe, f"ws://localhost:{port}"],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     cwd=os.path.dirname(os.path.abspath(__file__))

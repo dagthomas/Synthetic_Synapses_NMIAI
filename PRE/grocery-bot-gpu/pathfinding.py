@@ -79,7 +79,7 @@ def precompute_all_distances(map_state):
         tables = PrecomputedTables.get(map_state)
         return tables.as_dist_maps()
     except ImportError:
-        pass
+        pass  # precompute module unavailable; fall back to per-cell BFS below
 
     # Fallback: original per-cell BFS
     grid = map_state.grid

@@ -20,7 +20,7 @@
 		gpu_refine: '#39d353',
 		none:   '#484f58',
 	};
-	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310 };
+	const TARGETS = { easy: 142, medium: 200, hard: 250, expert: 305 };
 	function sourceColor(s) {
 		return SOURCE_COLORS[s] || '#74b9ff';
 	}
@@ -40,7 +40,7 @@
 	// ── Iteration config ─────────────────────────────────────────────────────────
 	let maxIters       = $state(99);   // safety cap; time budget is the real limit
 	let timeBudget     = $state(280);  // seconds
-	let gpuOptTime     = $state(45);   // seconds per offline GPU optimize pass
+	let gpuOptTime     = $state(60);   // seconds per offline GPU optimize pass
 
 	// ── Timer ────────────────────────────────────────────────────────────────────
 	let timerStart     = $state(null);
@@ -463,7 +463,8 @@
 				buf = lines.pop() || '';
 				for (const line of lines) {
 					if (!line.startsWith('data: ')) continue;
-					try { handleEvent(JSON.parse(line.slice(6))); } catch (e) {}
+					try { handleEvent(JSON.parse(line.slice(6))); } catch (e) { // Stream closed — client disconnected
+					}
 				}
 			}
 		} catch (e) {
@@ -511,7 +512,8 @@
 				buf = lines.pop() || '';
 				for (const line of lines) {
 					if (!line.startsWith('data: ')) continue;
-					try { handleEvent(JSON.parse(line.slice(6))); } catch (e) {}
+					try { handleEvent(JSON.parse(line.slice(6))); } catch (e) { // Stream closed — client disconnected
+					}
 				}
 			}
 		} catch (e) {
@@ -553,7 +555,8 @@
 				buf = lines.pop() || '';
 				for (const line of lines) {
 					if (!line.startsWith('data: ')) continue;
-					try { handleEvent(JSON.parse(line.slice(6))); } catch (e) {}
+					try { handleEvent(JSON.parse(line.slice(6))); } catch (e) { // Stream closed — client disconnected
+					}
 				}
 			}
 		} catch (e) {
@@ -945,37 +948,93 @@
 
 	<!-- ── Iterations (full width, shown when available) ───────────────────── -->
 	{#if iterations.length > 0}
+	{@const IC_W = 360}
+	{@const IC_H = 100}
+	{@const IC_PAD = { top: 14, right: 8, bottom: 16, left: 32 }}
+	{@const icMaxV = Math.max(targetScore || 200, iterBestScore, 1)}
+	{@const icMinV = Math.max(0, Math.min(...iterations.filter(it => it.score > 0).map(it => it.score), icMaxV) - 10)}
+	{@const icRange = Math.max(icMaxV - icMinV, 1)}
+	{@const icPlotW = IC_W - IC_PAD.left - IC_PAD.right}
+	{@const icPlotH = IC_H - IC_PAD.top - IC_PAD.bottom}
 	<div class="sidebar-section iter-sidebar">
 		<h3>Iterations
 			<span class="iter-meta">
 				Best: <span class="cyan">{iterBestScore}</span>
-				| {iterations.length} runs
+				&middot; {iterations.length} runs
 			</span>
 		</h3>
 		<div class="iter-chart-col">
-			<svg viewBox="0 0 {Math.max(200, iterations.length * 36)} 70" class="chart-svg-col" preserveAspectRatio="none">
+			<svg viewBox="0 0 {IC_W} {IC_H}" class="iter-chart-svg" preserveAspectRatio="xMidYMid meet">
+				<!-- Y-axis gridlines + labels -->
+				{#each [0, 0.25, 0.5, 0.75, 1] as frac}
+					{@const val = Math.round(icMinV + icRange * (1 - frac))}
+					{@const y = IC_PAD.top + frac * icPlotH}
+					<line x1={IC_PAD.left} y1={y} x2={IC_W - IC_PAD.right} y2={y}
+						stroke="#1a1f28" stroke-width="0.5"/>
+					<text x={IC_PAD.left - 4} y={y + 3} fill="#3a3f47" font-size="7"
+						text-anchor="end" font-family="var(--font-mono)">{val}</text>
+				{/each}
+
+				<!-- Target line -->
+				{#if targetScore && targetScore >= icMinV && targetScore <= icMaxV}
+					{@const tY = IC_PAD.top + ((icMaxV - targetScore) / icRange) * icPlotH}
+					<line x1={IC_PAD.left} y1={tY} x2={IC_W - IC_PAD.right} y2={tY}
+						stroke="#f85149" stroke-width="0.8" stroke-dasharray="4 2" opacity="0.5"/>
+					<text x={IC_W - IC_PAD.right + 2} y={tY + 3} fill="#f85149" font-size="6"
+						font-family="var(--font-mono)" opacity="0.7">tgt</text>
+				{/if}
+
+				<!-- Area fill under line -->
+				{#if iterations.filter(it => it.score > 0).length >= 2}
+					{@const pts = iterations.map((it, i) => {
+						const x = IC_PAD.left + (i / Math.max(iterations.length - 1, 1)) * icPlotW;
+						const y = it.score > 0
+							? IC_PAD.top + ((icMaxV - it.score) / icRange) * icPlotH
+							: IC_PAD.top + icPlotH;
+						return `${x},${y}`;
+					})}
+					<polygon
+						points="{IC_PAD.left},{IC_PAD.top + icPlotH} {pts.join(' ')} {IC_PAD.left + ((iterations.length - 1) / Math.max(iterations.length - 1, 1)) * icPlotW},{IC_PAD.top + icPlotH}"
+						fill="url(#iterGrad)" opacity="0.3"/>
+					<polyline points={pts.join(' ')}
+						fill="none" stroke="#39d353" stroke-width="1.5" stroke-linejoin="round"/>
+				{/if}
+
+				<!-- Data points -->
 				{#each iterations as it, i}
-					{@const maxV = Math.max(targetScore || 200, iterBestScore, 1)}
-					{@const h = Math.max(3, (it.score / maxV) * 55)}
-					{@const w = Math.max(12, Math.min(28, 190 / Math.max(iterations.length, 1)))}
-					{@const x = 4 + i * (w + 3)}
-					<rect
-						{x} y={60 - h} width={w} height={h}
+					{@const x = IC_PAD.left + (i / Math.max(iterations.length - 1, 1)) * icPlotW}
+					{@const y = it.score > 0
+						? IC_PAD.top + ((icMaxV - it.score) / icRange) * icPlotH
+						: IC_PAD.top + icPlotH}
+					<circle cx={x} cy={y} r={activeIter === i ? 4 : 2.5}
 						fill={it.score >= targetScore ? '#56d364' :
 							  it.score === iterBestScore && it.score > 0 ? '#39d353' : '#d29922'}
-						rx="0" opacity={activeIter === i ? 1 : 0.6}
-					/>
-					<text x={x + w/2} y={56 - h} fill="#c9d1d9" font-size="8"
-						text-anchor="middle" font-weight="700" font-family="var(--font-mono)">{it.score || ''}</text>
-					<text x={x + w/2} y={69} fill="#484f58" font-size="6"
-						text-anchor="middle" font-family="var(--font-mono)">Iter {i+1}</text>
+						stroke={activeIter === i ? '#fff' : 'none'} stroke-width="1"
+						style="cursor:pointer" opacity={it.score > 0 ? 1 : 0.3}
+						onclick={() => { if (it.phase === 'done') restoreIterSnapshot(i); activeIter = i; }}/>
+					<!-- Score label on best point -->
+					{#if it.score === iterBestScore && it.score > 0}
+						<text x={x} y={y - 6} fill="#39d353" font-size="8" font-weight="700"
+							text-anchor="middle" font-family="var(--font-mono)">{it.score}</text>
+					{/if}
 				{/each}
-				{#if targetScore}
-					{@const maxV = Math.max(targetScore || 200, iterBestScore, 1)}
-					<line x1="0" y1={60 - (targetScore / maxV) * 55}
-						x2={Math.max(200, iterations.length * 36)} y2={60 - (targetScore / maxV) * 55}
-						stroke="#f85149" stroke-width="1" stroke-dasharray="3 2" opacity="0.6"/>
-				{/if}
+
+				<!-- X-axis labels -->
+				{#each iterations as _, i}
+					{#if iterations.length <= 6 || i === 0 || i === iterations.length - 1 || (i + 1) % Math.ceil(iterations.length / 5) === 0}
+						{@const x = IC_PAD.left + (i / Math.max(iterations.length - 1, 1)) * icPlotW}
+						<text x={x} y={IC_H - 2} fill="#3a3f47" font-size="6.5"
+							text-anchor="middle" font-family="var(--font-mono)">{i + 1}</text>
+					{/if}
+				{/each}
+
+				<!-- Gradient def -->
+				<defs>
+					<linearGradient id="iterGrad" x1="0" y1="0" x2="0" y2="1">
+						<stop offset="0%" stop-color="#39d353" stop-opacity="0.4"/>
+						<stop offset="100%" stop-color="#39d353" stop-opacity="0.02"/>
+					</linearGradient>
+				</defs>
 			</svg>
 		</div>
 		<div class="iter-list-col">
@@ -983,12 +1042,12 @@
 			<div class="iter-row-sm" class:active={activeIter === i}
 				class:best-row={it.score === iterBestScore && it.score > 0}
 				onclick={() => { if (it.phase === 'done') restoreIterSnapshot(i); activeIter = i; }}>
-				<span class="ir-num">Iter {i+1}</span>
+				<span class="ir-num">{i+1}</span>
 				<span class="ir-score" class:best={it.score === iterBestScore && it.score > 0}
-					class:hit={it.score >= targetScore}>{it.score ? it.score + 'pts' : '...'}</span>
-				{#if it.optScore > 0}<span class="ir-detail">opt:{it.optScore}</span>{/if}
+					class:hit={it.score >= targetScore}>{it.score || '—'}</span>
+				{#if it.optScore > 0}<span class="ir-detail">opt {it.optScore}</span>{/if}
 				<span class="ir-time">{it.elapsed ? it.elapsed.toFixed(0) + 's' : ''}</span>
-				{#if it.capturedOrders}<span class="ir-cap">+{it.capturedOrders} orders</span>{/if}
+				{#if it.capturedOrders}<span class="ir-cap">+{it.capturedOrders}</span>{/if}
 			</div>
 			{/each}
 		</div>
@@ -1470,12 +1529,19 @@
 		background: #0a0e14;
 		border-radius: 1px;
 	}
-	.iter-chart-col { margin-bottom: 0.3rem; }
+	.iter-chart-col { margin-bottom: 0.4rem; }
+	.iter-chart-svg {
+		width: 100%;
+		height: 110px;
+		background: #0a0e14;
+		border-radius: 2px;
+		display: block;
+	}
 	.iter-list-col {
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
-		max-height: 300px;
+		max-height: 200px;
 		overflow-y: auto;
 	}
 	.sidebar-section h3 {
@@ -1648,11 +1714,12 @@
 	}
 
 	/* Sidebar iteration section */
-	.iter-sidebar h3 { margin-bottom: 0.3rem; }
+	.iter-sidebar h3 { margin-bottom: 0.4rem; }
 	.iter-meta {
 		font-weight: 400;
 		font-size: 0.68rem;
 		color: #4a5260;
+		margin-left: 0.3rem;
 	}
 	.iter-chart-sm { margin-bottom: 0.3rem; }
 	.iter-list {
@@ -1677,13 +1744,13 @@
 	.iter-row-sm:hover { background: rgba(0,229,255,0.04); }
 	.iter-row-sm.active { background: rgba(0,229,255,0.06); border-left-color: #39d353; }
 	.iter-row-sm.best-row { border-left-color: #56d364; }
-	.ir-num { color: #3a3f47; min-width: 1.5rem; }
-	.ir-score { font-weight: 700; min-width: 2rem; color: #c9d1d9; }
-	.ir-score.best { color: #39d353; text-shadow: 0 0 4px rgba(0,229,255,0.3); }
-	.ir-score.hit { color: #56d364; text-shadow: 0 0 4px rgba(57,255,20,0.3); }
-	.ir-detail { color: #3a3f47; font-size: 0.66rem; }
-	.ir-time { color: #3a3f47; font-size: 0.66rem; margin-left: auto; }
-	.ir-cap { color: #56d364; font-size: 0.66rem; font-weight: 600; }
+	.ir-num { color: #3a3f47; min-width: 1.2rem; text-align: right; font-size: 0.65rem; }
+	.ir-score { font-weight: 700; min-width: 2.2rem; color: #c9d1d9; }
+	.ir-score.best { color: #39d353; text-shadow: 0 0 6px rgba(57,211,83,0.3); }
+	.ir-score.hit { color: #56d364; text-shadow: 0 0 6px rgba(57,255,20,0.3); }
+	.ir-detail { color: #484f58; font-size: 0.64rem; }
+	.ir-time { color: #484f58; font-size: 0.64rem; margin-left: auto; }
+	.ir-cap { color: #39d353; font-size: 0.64rem; font-weight: 600; opacity: 0.8; }
 
 	/* Panel h3 */
 	.panel h3 {

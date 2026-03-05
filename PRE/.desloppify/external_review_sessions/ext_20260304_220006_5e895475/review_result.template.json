@@ -1,0 +1,14 @@
+{
+  "session": {
+    "id": "ext_20260304_220006_5e895475",
+    "token": "bbc06c5304dd2498431bfd744c2c9318"
+  },
+  "assessments": {
+    "type_safety": 0,
+    "design_coherence": 0,
+    "incomplete_migration": 0,
+    "cross_module_architecture": 0,
+    "structure_navigation": 0
+  },
+  "findings": []
+}

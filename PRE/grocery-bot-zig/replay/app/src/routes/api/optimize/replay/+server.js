@@ -3,6 +3,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { query } from '$lib/db.server.js';
+import { createCleanup, createSendEvent } from '$lib/sse.server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BOT_DIR = resolve(__dirname, '..', '..', '..', '..', '..', '..', '..');
@@ -16,21 +17,8 @@ export async function POST({ request }) {
 	}
 
 	const encoder = new TextEncoder();
+	const ctx = { closed: false, safetyTimeout: null, heartbeatInterval: null, process: null };
 	let pollInterval = null;
-	let botProcess = null;
-	let closed = false;
-	let safetyTimeout = null;
-
-	function cleanupShared(controller) {
-		if (closed) return;
-		closed = true;
-		if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-		if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-		if (botProcess && !botProcess.killed) {
-			try { botProcess.kill(); } catch (e) {}
-		}
-		try { controller?.close(); } catch (e) {}
-	}
 
 	const stream = new ReadableStream({
 		start(controller) {
@@ -45,19 +33,17 @@ export async function POST({ request }) {
 			const startTime = Date.now();
 			const MAX_RUNTIME = 180000;
 
-			function cleanup() { cleanupShared(controller); }
+			const _cleanup = createCleanup(ctx, controller);
+			function cleanup() {
+				if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+				_cleanup();
+			}
+			const sendEvent = createSendEvent(ctx, controller, encoder);
 
-			safetyTimeout = setTimeout(() => {
+			ctx.safetyTimeout = setTimeout(() => {
 				sendEvent('error', { message: 'Timeout: replay took too long' });
 				cleanup();
 			}, MAX_RUNTIME);
-
-			function sendEvent(type, data) {
-				if (closed) return;
-				try {
-					controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`));
-				} catch (e) {}
-			}
 
 			function findLogFile() {
 				try {
@@ -67,7 +53,7 @@ export async function POST({ request }) {
 						.filter(f => f.mtime >= startTime)
 						.sort((a, b) => b.mtime - a.mtime);
 					if (files.length > 0) return resolve(GPU_DIR, files[0].name);
-				} catch (e) {}
+				} catch (e) { /* directory may not exist yet */ }
 				return null;
 			}
 
@@ -158,10 +144,10 @@ export async function POST({ request }) {
 										actions: resp.actions,
 									});
 								}
-							} catch (e) {}
+							} catch (e) { /* ignore malformed action response */ }
 						}
 					}
-				} catch (e) {}
+				} catch (e) { /* log file may not be readable yet */ }
 			}
 
 			sendEvent('status', { message: `Replaying best solution...` });
@@ -171,13 +157,13 @@ export async function POST({ request }) {
 				args.push('--difficulty', difficulty);
 			}
 
-			botProcess = spawn('python', args, {
+			ctx.process = spawn('python', args, {
 				cwd: GPU_DIR,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});
 
 			let stderrBuffer = '';
-			botProcess.stderr.on('data', (data) => {
+			ctx.process.stderr.on('data', (data) => {
 				stderrBuffer += data.toString();
 				const lines = stderrBuffer.split('\n');
 				stderrBuffer = lines.pop() || '';
@@ -202,9 +188,9 @@ export async function POST({ request }) {
 				}
 			});
 
-			botProcess.stdout.on('data', () => {});
+			ctx.process.stdout.on('data', () => {});
 
-			botProcess.on('close', async (code) => {
+			ctx.process.on('close', async (code) => {
 				pollLogFile();
 				sendEvent('done', { code, message: `Replay finished (exit ${code})` });
 
@@ -213,7 +199,7 @@ export async function POST({ request }) {
 				cleanup();
 			});
 
-			botProcess.on('error', (err) => {
+			ctx.process.on('error', (err) => {
 				sendEvent('error', { message: `Failed to spawn: ${err.message}` });
 				cleanup();
 			});
@@ -221,7 +207,8 @@ export async function POST({ request }) {
 			pollInterval = setInterval(pollLogFile, 150);
 		},
 		cancel() {
-			cleanupShared(null);
+			if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+			createCleanup(ctx, null)();
 		}
 	});
 

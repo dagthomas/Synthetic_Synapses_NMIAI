@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createCleanup, createSendEvent } from '$lib/sse.server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BOT_DIR = resolve(__dirname, '..', '..', '..', '..', '..', '..', '..');
@@ -15,59 +16,39 @@ export async function POST({ request }) {
 
 	const diff = difficulty || 'easy';
 	const encoder = new TextEncoder();
-	let botProcess = null;
-	let closed = false;
-	let safetyTimeout = null;
-	let heartbeatInterval = null;
-
-	function cleanupShared(controller) {
-		if (closed) return;
-		closed = true;
-		if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-		if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
-		if (botProcess && !botProcess.killed) {
-			try { botProcess.kill(); } catch (e) {}
-		}
-		try { controller?.close(); } catch (e) {}
-	}
+	const ctx = { closed: false, safetyTimeout: null, heartbeatInterval: null, process: null };
 
 	const stream = new ReadableStream({
 		start(controller) {
 			const MAX_RUNTIME = 900000; // 15 min: Zig capture (120s) + GPU solve (up to 600s)
 
-			function cleanup() { cleanupShared(controller); }
+			const cleanup = createCleanup(ctx, controller);
+			const sendEvent = createSendEvent(ctx, controller, encoder);
 
-			safetyTimeout = setTimeout(() => {
+			ctx.safetyTimeout = setTimeout(() => {
 				sendEvent('error', { message: 'Timeout: pipeline took too long (15 min limit)' });
 				cleanup();
 			}, MAX_RUNTIME);
 
-			function sendEvent(type, data) {
-				if (closed) return;
-				try {
-					controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`));
-				} catch (e) {}
-			}
-
 			// SSE heartbeat: send a comment every 15s to keep the connection alive
 			// through proxies and browser idle timers
-			heartbeatInterval = setInterval(() => {
-				if (closed) return;
+			ctx.heartbeatInterval = setInterval(() => {
+				if (ctx.closed) return;
 				try {
 					controller.enqueue(encoder.encode(': ping\n\n'));
-				} catch (e) {}
+				} catch (e) { /* stream closed by client */ }
 			}, 15000);
 
 			sendEvent('status', { message: `Zig capture → GPU solve pipeline (${diff})` });
 
-			botProcess = spawn('python', ['-u', 'capture_and_solve_stream.py', url, diff, '--capture', 'zig', '--time', '300'], {
+			ctx.process = spawn('python', ['-u', 'capture_and_solve_stream.py', url, diff, '--capture', 'zig', '--time', '300'], {
 				cwd: GPU_DIR,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});
 
 			let stdoutBuffer = '';
 
-			botProcess.stdout.on('data', (data) => {
+			ctx.process.stdout.on('data', (data) => {
 				stdoutBuffer += data.toString();
 				const lines = stdoutBuffer.split('\n');
 				stdoutBuffer = lines.pop() || '';
@@ -79,11 +60,11 @@ export async function POST({ request }) {
 						const type = evt.type;
 						delete evt.type;
 						sendEvent(type, evt);
-					} catch (e) {}
+					} catch (e) { /* ignore malformed JSON output */ }
 				}
 			});
 
-			botProcess.stderr.on('data', (data) => {
+			ctx.process.stderr.on('data', (data) => {
 				const text = data.toString().trim();
 				if (text) {
 					for (const line of text.split('\n')) {
@@ -94,17 +75,17 @@ export async function POST({ request }) {
 				}
 			});
 
-			botProcess.on('close', (code) => {
+			ctx.process.on('close', (code) => {
 				cleanup();
 			});
 
-			botProcess.on('error', (err) => {
+			ctx.process.on('error', (err) => {
 				sendEvent('error', { message: `Failed to start: ${err.message}` });
 				cleanup();
 			});
 		},
 		cancel() {
-			cleanupShared(null);
+			createCleanup(ctx, null)();
 		}
 	});
 

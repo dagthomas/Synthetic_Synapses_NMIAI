@@ -4,11 +4,21 @@ Stores per-difficulty solutions in solutions/<difficulty>/:
   - best.json: Action sequence [[action, item_idx], ...] per round
   - capture.json: Full game capture (grid, items, orders, drop_off) for re-optimization
   - meta.json: Score, date, seed, difficulty, timestamps, optimization count
+
+Error contract:
+  - All load_* functions return Optional values (None when file missing or corrupt).
+  - save_* functions raise on I/O errors (let caller handle).
+  - Never overwrites a better score unless force=True.
 """
+from __future__ import annotations
+
 import json
 import os
 import time
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+from game_engine import CaptureData
 
 SOLUTIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'solutions')
 DIFFICULTIES = ['easy', 'medium', 'hard', 'expert']
@@ -20,22 +30,39 @@ def _dir(difficulty):
     return d
 
 
-def save_capture(difficulty, capture_data):
-    """Save capture data for re-optimization."""
+def _clear_solution_files(difficulty: str) -> None:
+    """Clear best.json and meta.json (but NOT capture.json) for a difficulty.
+
+    Called when merge_capture detects stale data — the old solution is
+    incompatible with the new capture (different seed/map/types).
+    """
+    d = _dir(difficulty)
+    for fname in ['best.json', 'meta.json']:
+        fpath = os.path.join(d, fname)
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def save_capture(difficulty: str, capture_data: CaptureData) -> str:
+    """Save capture data for re-optimization. Returns the file path."""
     path = os.path.join(_dir(difficulty), 'capture.json')
     with open(path, 'w') as f:
         json.dump(capture_data, f)
     return path
 
 
-def merge_capture(difficulty, new_capture):
+def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureData, int, int]:
     """Merge new capture with existing one, keeping ALL orders by position.
 
-    Orders are sequential and deterministic per seed — the longer list is
+    Orders are sequential and deterministic per seed -- the longer list is
     always the more complete one.  Map data (grid, items, drop_off) is
     always taken from the new capture (latest game state).
 
-    Returns (merged_capture, num_new_orders, total_orders).
+    If the existing capture's orders reference item types not present on
+    the new map, the existing capture is discarded (server changed types).
+
+    Returns:
+        (merged_capture, num_new_orders, total_orders) tuple.
     """
     existing = load_capture(difficulty)
     if existing is None:
@@ -43,8 +70,41 @@ def merge_capture(difficulty, new_capture):
         n = len(new_capture.get('orders', []))
         return new_capture, n, n
 
+    # Build set of valid item types from the NEW map
+    new_types = {item['type'] for item in new_capture.get('items', [])}
+
+    # Check if existing orders reference types that don't exist on the new map
     existing_orders = existing.get('orders', [])
+    stale = False
+    for order in existing_orders:
+        for item_name in order.get('items_required', []):
+            if item_name not in new_types:
+                stale = True
+                break
+        if stale:
+            break
+
+    if stale:
+        import sys
+        print(f"  WARNING: Existing capture has stale item types (map changed), discarding old data",
+              file=sys.stderr)
+        _clear_solution_files(difficulty)
+        save_capture(difficulty, new_capture)
+        n = len(new_capture.get('orders', []))
+        return new_capture, n, n
+
     new_orders = new_capture.get('orders', [])
+
+    # Check if first order matches (same seed = same order sequence)
+    if (existing_orders and new_orders
+            and existing_orders[0].get('items_required') != new_orders[0].get('items_required')):
+        import sys
+        print(f"  WARNING: First order mismatch (seed changed), discarding old data",
+              file=sys.stderr)
+        _clear_solution_files(difficulty)
+        save_capture(difficulty, new_capture)
+        n = len(new_orders)
+        return new_capture, n, n
 
     # Positional merge: orders are sequential per seed.
     # Take the longer list (more orders discovered = played further).
@@ -63,8 +123,8 @@ def merge_capture(difficulty, new_capture):
     return merged, num_new, len(merged_orders)
 
 
-def load_capture(difficulty):
-    """Load capture data. Returns None if not found."""
+def load_capture(difficulty: str) -> CaptureData | None:
+    """Load capture data. Returns None if file not found."""
     path = os.path.join(_dir(difficulty), 'capture.json')
     if not os.path.exists(path):
         return None
@@ -79,16 +139,22 @@ def _capture_hash(difficulty):
     if not os.path.exists(path):
         return None
     with open(path, 'rb') as f:
-        return hashlib.md5(f.read()).hexdigest()[:12]
+        return hashlib.md5(f.read()).hexdigest()[:12]  # nosec B324
 
 
-def save_solution(difficulty, score, actions, seed=0, force=False):
+def save_solution(difficulty: str, score: int, actions: List[List[Tuple[int, int]]],
+                   seed: int = 0, force: bool = False) -> bool:
     """Save solution if it beats existing best (or no existing solution).
 
     Args:
-        force: Always save (used when capture just changed, e.g., new game)
+        difficulty: Game difficulty level.
+        score: Achieved score.
+        actions: Per-round action list, each is [(act, item)] * num_bots.
+        seed: Game seed (0 if unknown).
+        force: Always save (used when capture just changed, e.g., new game).
 
-    Returns True if saved (new best), False if existing is better.
+    Returns:
+        True if saved (new best), False if existing is better.
     """
     d = _dir(difficulty)
     meta_path = os.path.join(d, 'meta.json')
@@ -130,8 +196,8 @@ def save_solution(difficulty, score, actions, seed=0, force=False):
     return True
 
 
-def load_solution(difficulty):
-    """Load best action sequence. Returns None if not found."""
+def load_solution(difficulty: str) -> Optional[List[List[Tuple[int, int]]]]:
+    """Load best action sequence. Returns None if file not found."""
     path = os.path.join(_dir(difficulty), 'best.json')
     if not os.path.exists(path):
         return None
@@ -140,8 +206,13 @@ def load_solution(difficulty):
     return [[(a, i) for a, i in round_actions] for round_actions in data]
 
 
-def load_meta(difficulty):
-    """Load solution metadata. Returns None if not found."""
+def load_meta(difficulty: str) -> Optional[Dict[str, Any]]:
+    """Load solution metadata.
+
+    Returns:
+        Parsed meta dict, or None if file not found or corrupt (JSONDecodeError/IOError).
+        Callers should always handle the None case.
+    """
     path = os.path.join(_dir(difficulty), 'meta.json')
     if not os.path.exists(path):
         return None
@@ -152,8 +223,8 @@ def load_meta(difficulty):
         return None
 
 
-def increment_optimizations(difficulty):
-    """Increment the optimization counter in meta.json."""
+def increment_optimizations(difficulty: str) -> None:
+    """Increment the optimization counter in meta.json. No-op if no meta exists."""
     meta = load_meta(difficulty)
     if meta:
         meta['optimizations_run'] = meta.get('optimizations_run', 0) + 1
@@ -163,7 +234,7 @@ def increment_optimizations(difficulty):
             json.dump(meta, f, indent=2)
 
 
-def clear_solutions(difficulty=None):
+def clear_solutions(difficulty: Optional[str] = None) -> None:
     """Clear solution files (best.json, capture.json, meta.json) for a difficulty or all.
 
     Used at the start of a new pipeline run since a new token = new game = old data invalid.
@@ -177,6 +248,6 @@ def clear_solutions(difficulty=None):
                 os.remove(fpath)
 
 
-def get_all_solutions():
+def get_all_solutions() -> Dict[str, Optional[Dict[str, Any]]]:
     """Get meta for all difficulties. Returns dict {difficulty: meta_or_None}."""
     return {d: load_meta(d) for d in DIFFICULTIES}

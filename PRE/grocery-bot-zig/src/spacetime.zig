@@ -68,6 +68,139 @@ pub fn reserveStationary(x: u16, y: u16, t_start: u16, t_end: u16, bot_id: u8) v
     }
 }
 
+// ── Stored Plans (Multi-Step Commitment) ─────────────────────────────
+// Instead of replanning every round, follow committed ST-A* paths for
+// multiple steps. Other bots see committed paths via re-reserved entries.
+const MAX_PLAN_LEN = MAX_TIME_HORIZON; // 12
+
+const StoredPlan = struct {
+    positions: [MAX_PLAN_LEN + 1]Pos, // [0]=start, [i]=after step i
+    dirs: [MAX_PLAN_LEN]?Dir, // direction at each step (null=wait)
+    goal: Pos,
+    len: u16, // total steps in plan
+    step: u16, // next step to take (0=first step)
+    valid: bool,
+};
+
+var stored_plans: [MAX_BOTS]StoredPlan = undefined;
+var plans_initialized: bool = false;
+
+pub fn initPlans() void {
+    for (0..MAX_BOTS) |i| {
+        stored_plans[i].valid = false;
+    }
+    plans_initialized = true;
+}
+
+fn dirBetween(from: Pos, to: Pos) ?Dir {
+    if (to.x > from.x) return .right;
+    if (to.x < from.x) return .left;
+    if (to.y > from.y) return .down;
+    if (to.y < from.y) return .up;
+    return null; // same position = wait
+}
+
+var max_commit_len: u16 = MAX_PLAN_LEN;
+
+/// Set max commitment length. Disable for Expert (10 bots) where
+/// reservation pressure from committed paths hurts mean score.
+pub fn setMaxCommitLen(bot_count: u8) void {
+    // 5 bots (Hard): full 12 steps — tested +9.5% mean, +5% max.
+    // 10 bots (Expert): disabled — commitment hurts mean by ~4%.
+    max_commit_len = if (bot_count >= 8) 0 else MAX_PLAN_LEN;
+}
+
+fn storePlan(bot_id: u8, path: []const Pos, goal: Pos) void {
+    if (!plans_initialized or bot_id >= MAX_BOTS or max_commit_len == 0) return;
+    const plan = &stored_plans[bot_id];
+    const path_steps = @as(u16, @intCast(path.len)) -| 1;
+    if (path_steps == 0) {
+        plan.valid = false;
+        return;
+    }
+    const len = @min(path_steps, max_commit_len);
+    for (0..len + 1) |i| {
+        plan.positions[i] = path[i];
+    }
+    for (0..len) |i| {
+        plan.dirs[i] = dirBetween(path[i], path[i + 1]);
+    }
+    plan.goal = goal;
+    plan.len = len;
+    plan.step = 0;
+    plan.valid = true;
+}
+
+pub const CommittedResult = struct {
+    dir: ?Dir,
+    remaining: u16,
+};
+
+/// Get committed direction for a bot going to a specific goal.
+/// Returns null if no committed plan exists for this goal.
+pub fn getCommitted(bot_id: u8, goal: Pos) ?CommittedResult {
+    if (!plans_initialized or bot_id >= MAX_BOTS) return null;
+    const plan = &stored_plans[bot_id];
+    if (!plan.valid) return null;
+    if (!plan.goal.eql(goal)) return null;
+    if (plan.step >= plan.len) return null;
+    return CommittedResult{
+        .dir = plan.dirs[plan.step],
+        .remaining = plan.len - plan.step,
+    };
+}
+
+/// Invalidate a bot's committed plan (goal changed, new order, etc.)
+pub fn invalidatePlan(bot_id: u8) void {
+    if (bot_id < MAX_BOTS) stored_plans[bot_id].valid = false;
+}
+
+/// Called after clearReservations(). Checks if bots followed their
+/// committed paths, advances step counters, and re-reserves remaining
+/// future positions so subsequently-planning bots see them.
+///
+/// Semantics: step = index of the NEXT action to take.
+/// After taking dirs[step], bot ends up at positions[step+1].
+/// So on the next round, we check positions[step+1] to verify the bot moved correctly.
+pub fn advanceAndReReserve(bot_positions: *const [MAX_BOTS]Pos, bot_count: u8) void {
+    if (!plans_initialized) return;
+    for (0..bot_count) |bi| {
+        const plan = &stored_plans[bi];
+        if (!plan.valid) continue;
+
+        // After last round, bot should have taken dirs[step] and arrived at positions[step+1]
+        if (plan.step + 1 > plan.len) {
+            plan.valid = false; // Plan exhausted
+            continue;
+        }
+        const expected = plan.positions[plan.step + 1];
+        if (!bot_positions[bi].eql(expected)) {
+            plan.valid = false; // Bot deviated (collision or different action)
+            continue;
+        }
+
+        // Advance: the bot took dirs[step], now ready for dirs[step+1]
+        plan.step += 1;
+
+        // Plan exhausted? (no more steps to take)
+        if (plan.step >= plan.len) {
+            plan.valid = false;
+            continue;
+        }
+
+        // Re-reserve remaining path from current position onward
+        // positions[step] = current pos, positions[step+1..len] = future
+        var path_buf: [MAX_PLAN_LEN + 1]Pos = undefined;
+        var pi: u16 = 0;
+        var si = plan.step;
+        while (si <= plan.len) : (si += 1) {
+            path_buf[pi] = plan.positions[si];
+            pi += 1;
+        }
+        reservePath(path_buf[0..pi], @intCast(bi), MAX_TIME_HORIZON);
+    }
+}
+
 // ── Aisle Detection ───────────────────────────────────────────────────
 var aisle_dir: [MAX_H][MAX_W]?AisleDir = undefined;
 var aisles_initialized: bool = false;
@@ -286,6 +419,9 @@ fn spaceTimeAStar(state: *const GameState, start: Pos, goal: Pos, bot_id: u8, bo
                 };
             }
             reservePath(path_buf[0..pi], bot_id, MAX_TIME_HORIZON);
+
+            // Store full path as committed plan for multi-step following
+            storePlan(bot_id, path_buf[0..pi], goal);
 
             return STResult{ .first_dir = first_dir, .path_len = cur.t };
         }

@@ -17,17 +17,7 @@ from solution_store import merge_capture, save_solution
 from game_engine import (build_map_from_capture,
                          ACT_WAIT, ACT_MOVE_UP, ACT_MOVE_DOWN,
                          ACT_MOVE_LEFT, ACT_MOVE_RIGHT, ACT_PICKUP, ACT_DROPOFF)
-
-DIFFICULTY_DIMS = {
-    (12, 10, 1): 'easy',
-    (16, 12, 3): 'medium',
-    (22, 14, 5): 'hard',
-    (28, 18, 10): 'expert',
-}
-
-
-def detect_difficulty(width, height, num_bots):
-    return DIFFICULTY_DIMS.get((width, height, num_bots))
+from configs import detect_difficulty
 
 
 def find_latest_game_log(search_dirs=None):
@@ -72,7 +62,7 @@ def extract_capture(game_log_path, difficulty=None):
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
-                continue
+                continue  # JSONL log may contain non-JSON lines (stderr, partial writes)
 
             # Skip action lines
             if 'actions' in data and 'type' not in data:
@@ -110,7 +100,7 @@ def extract_capture(game_log_path, difficulty=None):
 
     # Auto-detect difficulty if not provided
     if difficulty is None:
-        difficulty = detect_difficulty(width, height, num_bots)
+        difficulty = detect_difficulty(num_bots, width=width, height=height)
         if difficulty is None:
             raise ValueError(
                 f"Cannot auto-detect difficulty for {width}x{height} with {num_bots} bots")
@@ -163,7 +153,7 @@ def extract_game_actions(game_log_path, map_state):
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
-                continue
+                continue  # JSONL log may contain non-JSON lines (stderr, partial writes)
 
             # Detect num_bots from first game_state
             if data.get('type') == 'game_state' and num_bots is None:
@@ -256,18 +246,18 @@ def main():
 
     # Import game log to PostgreSQL in background
     try:
-        import subprocess as _subprocess
+        import subprocess as _subprocess  # nosec B404
         _import_script = os.path.normpath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
         ))
         if os.path.exists(_import_script):
-            _subprocess.Popen(
+            _subprocess.Popen(  # nosec B603 B607
                 ['python', _import_script, log_path, '--run-type', 'live'],
                 stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
             )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Warning: background DB import failed: {e}", file=sys.stderr)
 
     # Output summary as JSON for pipeline consumption
     result = {

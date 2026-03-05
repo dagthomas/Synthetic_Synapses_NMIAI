@@ -282,7 +282,8 @@
 					try {
 						const data = JSON.parse(line.slice(6));
 						handleEvent(data);
-					} catch (e) {}
+					} catch (e) { // Stream closed — client disconnected
+					}
 				}
 			}
 		} catch (e) {
@@ -397,7 +398,8 @@
 						} else if (data.type === 'status') {
 							addTerminal(`[STATUS] ${data.message}`, 'system');
 						}
-					} catch (e) {}
+					} catch (e) { // Stream closed — client disconnected
+					}
 				}
 			}
 		} catch (e) {
@@ -456,7 +458,8 @@
 							addTerminal(`[ERROR] ${data.message || data.msg}`, 'error');
 							status = 'error';
 						}
-					} catch (e) {}
+					} catch (e) { // Stream closed — client disconnected
+					}
 				}
 			}
 		} catch (e) {
@@ -593,7 +596,8 @@
 		try {
 			const res = await fetch('/api/optimize/solutions');
 			if (res.ok) solutions = await res.json();
-		} catch (e) {}
+		} catch (e) { // Stream closed — client disconnected
+		}
 	}
 
 	async function clearSolutions(difficulty = 'all') {

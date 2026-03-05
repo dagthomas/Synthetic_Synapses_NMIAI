@@ -22,7 +22,8 @@ from game_engine import (
     actions_to_ws_format, ACT_WAIT,
 )
 from gpu_beam_search import GPUBeamSearcher
-from live_solver import detect_difficulty, ws_to_capture
+from configs import detect_difficulty
+from live_solver import ws_to_capture
 
 
 async def live_gpu_dp(ws_url, difficulty=None, log_dir=None):

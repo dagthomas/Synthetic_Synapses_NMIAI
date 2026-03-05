@@ -16,8 +16,6 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from game_engine import (
     init_game, step, state_to_ws_format,
     ACT_WAIT, ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT,
@@ -58,7 +56,7 @@ def run_seed(difficulty, seed, device='cuda', max_states=None, no_refine=False,
     record: if True, write a JSONL log and import to PostgreSQL as 'synthetic'.
     """
     import json as _json
-    import subprocess as _subprocess
+    import subprocess as _subprocess  # nosec B404
 
     solver = AnytimeGPUStream(
         ws_url='sim://in-process',
@@ -124,7 +122,7 @@ def run_seed(difficulty, seed, device='cuda', max_states=None, no_refine=False,
             '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
         ))
         if os.path.exists(_import_script):
-            _subprocess.Popen(
+            _subprocess.Popen(  # nosec B603 B607
                 ['python', _import_script, log_path, '--run-type', 'synthetic'],
                 stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
             )
@@ -170,7 +168,7 @@ def run_greedy_baseline(difficulty, seed):
             try:
                 solver._tables = PrecomputedTables.get(solver._map_state)
             except Exception:
-                solver._tables = None
+                solver._tables = None  # PrecomputedTables unavailable; solver works without them
             for order in data.get('orders', []):
                 oid = order.get('id', f'order_{len(solver._seen_order_ids)}')
                 solver._seen_order_ids.add(oid)
@@ -187,21 +185,12 @@ def run_greedy_baseline(difficulty, seed):
     return state.score
 
 
-def parse_seeds(seed_arg, seed_single):
+def parse_seeds_args(seed_arg, seed_single):
+    """Parse seed CLI args, delegating to configs.parse_seeds for string parsing."""
+    from configs import parse_seeds
     if seed_single is not None:
         return [seed_single]
-    s = str(seed_arg)
-    if '-' in s:
-        a, b = s.split('-', 1)
-        return list(range(int(a), int(b) + 1))
-    try:
-        n = int(s)
-        if n < 1000:
-            # treat as count from 7001
-            return list(range(7001, 7001 + n))
-        return [n]
-    except ValueError:
-        return [7001]
+    return parse_seeds(str(seed_arg))
 
 
 def main():
@@ -227,7 +216,7 @@ def main():
     args = parser.parse_args()
 
     device = 'cpu' if args.cpu else 'cuda'
-    seeds = parse_seeds(args.seeds, args.seed)
+    seeds = parse_seeds_args(args.seeds, args.seed)
 
     print(f"\nBenchmark: {args.difficulty}, device={device}, "
           f"seeds={seeds[0]}-{seeds[-1]} ({len(seeds)} total)", file=sys.stderr)

@@ -15,7 +15,7 @@ import json
 import os
 import sys
 import time
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 
 from game_engine import (
@@ -70,7 +70,7 @@ async def reactive_replay(ws_url, difficulty, verbose=True):
     try:
         os.remove(solve_result_path)
     except FileNotFoundError:
-        pass
+        pass  # No stale result file to clean up
 
     def check_solve_done():
         """Check if solver subprocess finished by testing result file existence."""
@@ -90,13 +90,13 @@ async def reactive_replay(ws_url, difficulty, verbose=True):
             try:
                 solve_proc.wait(timeout=1)
             except Exception:
-                pass
+                pass  # Process may have already exited; proceed to cleanup
             solve_proc = None
             # Remove result file so we don't re-read it
             try:
                 os.remove(solve_result_path)
             except Exception:
-                pass
+                pass  # Best-effort cleanup; file may already be removed
             return [[(a, i) for a, i in r] for r in result]
         except (json.JSONDecodeError, ValueError):
             return None  # File exists but still being written
@@ -120,7 +120,7 @@ async def reactive_replay(ws_url, difficulty, verbose=True):
         try:
             os.remove(solve_result_path)
         except FileNotFoundError:
-            pass
+            pass  # No old result file to clean up
 
         # Write updated capture
         updated = dict(capture)
@@ -131,7 +131,7 @@ async def reactive_replay(ws_url, difficulty, verbose=True):
         worker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               '_reactive_solve_worker.py')
 
-        solve_proc = subprocess.Popen(
+        solve_proc = subprocess.Popen(  # nosec B603 B607
             [sys.executable, worker, solve_capture_path, difficulty, solve_result_path],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,  # Worker logs to file, not pipes

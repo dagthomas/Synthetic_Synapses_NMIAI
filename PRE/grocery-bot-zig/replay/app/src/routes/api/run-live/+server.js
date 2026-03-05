@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, readdirSync, statSync } from 'fs';
+import { createCleanup, createSendEvent } from '$lib/sse.server.js';
 
 // Resolve BOT_DIR from this file's location (6 levels up from src/routes/api/run-live/)
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -52,23 +53,8 @@ export async function POST({ request }) {
 	}
 
 	const encoder = new TextEncoder();
-
-	// Shared state accessible from both start() and cancel()
+	const ctx = { closed: false, safetyTimeout: null, heartbeatInterval: null, process: null };
 	let pollInterval = null;
-	let botProcess = null;
-	let closed = false;
-	let safetyTimeout = null;
-
-	function cleanupShared(controller) {
-		if (closed) return;
-		closed = true;
-		if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-		if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-		if (botProcess && !botProcess.killed) {
-			try { botProcess.kill(); } catch (e) {}
-		}
-		try { controller.close(); } catch (e) {}
-	}
 
 	const stream = new ReadableStream({
 		start(controller) {
@@ -90,19 +76,17 @@ export async function POST({ request }) {
 			const startTime = Date.now();
 			const MAX_RUNTIME = solver === 'gpu' ? 600000 : 180000; // GPU: 10min, others: 3min
 
-			function cleanup() { cleanupShared(controller); }
+			const _cleanup = createCleanup(ctx, controller);
+			function cleanup() {
+				if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+				_cleanup();
+			}
+			const sendEvent = createSendEvent(ctx, controller, encoder);
 
-			safetyTimeout = setTimeout(() => {
+			ctx.safetyTimeout = setTimeout(() => {
 				sendEvent('error', { message: 'Timeout: game took too long' });
 				cleanup();
 			}, MAX_RUNTIME);
-
-			function sendEvent(type, data) {
-				if (closed) return;
-				try {
-					controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`));
-				} catch (e) {}
-			}
 
 			const botInfo = getBotCommand(difficulty || 'auto', solver || 'zig');
 
@@ -117,7 +101,7 @@ export async function POST({ request }) {
 					if (files.length > 0) {
 						return resolve(searchDir, files[0].name);
 					}
-				} catch (e) {}
+				} catch (e) { /* directory may not exist yet */ }
 				return null;
 			}
 
@@ -232,10 +216,10 @@ export async function POST({ request }) {
 										actions: resp.actions,
 									});
 								}
-							} catch (e) {}
+							} catch (e) { /* ignore malformed action response */ }
 						}
 					}
-				} catch (e) {}
+				} catch (e) { /* log file may not be readable yet */ }
 			}
 
 			const solverLabels = { zig: 'Zig', python: 'Python', gpu: 'GPU' };
@@ -276,13 +260,13 @@ export async function POST({ request }) {
 			}
 
 			const spawnArgs = [...botInfo.args, url, ...(botInfo.extraArgs || [])];
-			botProcess = spawn(botInfo.cmd, spawnArgs, {
+			ctx.process = spawn(botInfo.cmd, spawnArgs, {
 				cwd: botInfo.cwd,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});
 
 			let stderrBuffer = '';
-			botProcess.stderr.on('data', (data) => {
+			ctx.process.stderr.on('data', (data) => {
 				stderrBuffer += data.toString();
 				const lines = stderrBuffer.split('\n');
 				stderrBuffer = lines.pop() || '';
@@ -309,7 +293,7 @@ export async function POST({ request }) {
 
 			// GPU solver streams JSON lines on stdout; others use log file polling
 			let stdoutBuffer = '';
-			botProcess.stdout.on('data', (data) => {
+			ctx.process.stdout.on('data', (data) => {
 				if (!botInfo.streaming) return;
 				stdoutBuffer += data.toString();
 				const lines = stdoutBuffer.split('\n');
@@ -333,11 +317,11 @@ export async function POST({ request }) {
 						} else if (event.type === 'done') {
 							sendEvent('final_score', { score: event.solver_score || event.score || 0 });
 						}
-					} catch (e) {}
+					} catch (e) { /* ignore malformed JSON output */ }
 				}
 			});
 
-			botProcess.on('close', (code) => {
+			ctx.process.on('close', (code) => {
 				if (!botInfo.streaming) pollLogFile();
 				sendEvent('done', { code, message: `Bot exited with code ${code}` });
 
@@ -354,7 +338,7 @@ export async function POST({ request }) {
 								logFile = resolve(searchDir, files[0].name);
 								break;
 							}
-						} catch (e) {}
+						} catch (e) { /* directory may not exist */ }
 					}
 				}
 
@@ -371,7 +355,7 @@ export async function POST({ request }) {
 				cleanup();
 			});
 
-			botProcess.on('error', (err) => {
+			ctx.process.on('error', (err) => {
 				sendEvent('error', { message: `Failed to spawn bot: ${err.message}` });
 				cleanup();
 			});
@@ -382,7 +366,8 @@ export async function POST({ request }) {
 		},
 		cancel() {
 			// Client disconnected — kill the bot process
-			cleanupShared(null);
+			if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+			createCleanup(ctx, null)();
 		}
 	});
 

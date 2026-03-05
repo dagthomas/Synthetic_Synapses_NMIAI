@@ -1,0 +1,74 @@
+{
+  "assessments": {
+    "test_strategy": 52,
+    "initialization_coupling": 88,
+    "incomplete_migration": 55,
+    "contract_coherence": 82,
+    "mid_level_elegance": 72
+  },
+  "findings": [
+    {
+      "dimension": "test_strategy",
+      "identifier": "no-gpu-code-tests",
+      "summary": "GPU solver code (gpu_beam_search.py, gpu_sequential_solver.py, live_gpu_stream.py) has zero unit tests",
+      "related_files": [
+        "grocery-bot-gpu/gpu_beam_search.py",
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/live_gpu_stream.py"
+      ],
+      "evidence": "The three most complex files (2266+1450+2388 = 6100 lines) have no unit tests. CPU-testable functions like cpu_verify(), pre_simulate_locked(), SolveConfig/SolveCallbacks construction remain untested.",
+      "suggestion": "Add CPU-only tests for cpu_verify(), cpu_verify_detailed(), pre_simulate_locked(), SolveConfig/SolveCallbacks construction. Mock torch.cuda for GPU-dependent paths.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "incomplete_migration",
+      "identifier": "stale-cpu-solver-files",
+      "summary": "At least 15 Python files are stale solver generations without DEPRECATED markers",
+      "related_files": [
+        "grocery-bot-gpu/beam_search.py",
+        "grocery-bot-gpu/optimizer.py",
+        "grocery-bot-gpu/seq_solver.py",
+        "grocery-bot-gpu/gpu_optimizer.py",
+        "grocery-bot-gpu/gpu_sim.py",
+        "grocery-bot-gpu/smart_policy.py",
+        "grocery-bot-gpu/pipeline_solver.py"
+      ],
+      "evidence": "Multiple solver generations from CPU beam search to Numba CUDA exist without deprecation markers. Only planner_v2.py and planner_v3.py have DEPRECATED notices. These files form stale dependency clusters.",
+      "suggestion": "Add DEPRECATED module-level docstrings to all stale solver files (beam_search.py, optimizer.py, seq_solver.py, gpu_optimizer.py, gpu_sim.py, smart_policy.py, order_solver.py, trip_solver.py, pipeline_solver.py, two_phase_planner.py, solve.py, solve_and_save.py, pipeline.py).",
+      "confidence": "high"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "refine-no-config-object",
+      "summary": "refine_from_solution uses raw kwargs while solve_sequential migrated to SolveConfig/SolveCallbacks",
+      "related_files": [
+        "grocery-bot-gpu/gpu_sequential_solver.py"
+      ],
+      "evidence": "solve_sequential() accepts SolveConfig and SolveCallbacks dataclass objects with legacy kwargs bridge. refine_from_solution() still uses 15 individual keyword arguments with no config object support.",
+      "suggestion": "Add SolveConfig/SolveCallbacks support to refine_from_solution() with the same legacy kwargs bridge as solve_sequential().",
+      "confidence": "high"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "difficulty-detection-duplication-js",
+      "summary": "Difficulty detection logic duplicated in JS endpoints and Python configs.py",
+      "related_files": [
+        "grocery-bot-zig/replay/app/src/routes/api/pipeline/iterate/+server.js",
+        "grocery-bot-zig/replay/app/src/routes/api/optimize/replay/+server.js"
+      ],
+      "evidence": "iterate/+server.js detectDifficultyFromLog() hardcodes bot-count-to-difficulty mapping (1=easy, 3=medium, 5=hard, 10=expert) that duplicates Python configs.py detect_difficulty().",
+      "suggestion": "Extract difficulty detection into a shared JS constant or have the Python scripts emit difficulty in their JSON output, eliminating the JS-side reimplementation.",
+      "confidence": "high"
+    }
+  ],
+  "provenance": {
+    "kind": "blind_review_batch_import",
+    "blind": true,
+    "runner": "claude",
+    "run_stamp": "ext_20260304_215002_fbce4b5c",
+    "created_at": "2026-03-04T21:55:57+00:00",
+    "packet_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\review_packet_blind.json",
+    "packet_sha256": "68bf1e05bfcb976741e7b64c379cfbb40dd1bf2bdc45df70e7d4a813fed12f95",
+    "external_session_id": "ext_20260304_215002_fbce4b5c"
+  }
+}

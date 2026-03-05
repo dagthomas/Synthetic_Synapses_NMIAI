@@ -23,7 +23,8 @@
 		try {
 			const saved = localStorage.getItem(PANEL_KEY);
 			if (saved) Object.assign(panels, JSON.parse(saved));
-		} catch {}
+		} catch { // Stream closed — client disconnected
+		}
 		// Delay so layout scrambleIn finishes before we allow page-level scramble
 		requestAnimationFrame(() => { mounted = true; });
 	});

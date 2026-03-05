@@ -5,10 +5,7 @@ Usage:
 """
 import json
 import os
-import subprocess
 import sys
-import glob
-import time
 
 ZIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'grocery-bot-zig')
 
@@ -25,26 +22,13 @@ def run_zig_bot(ws_url, difficulty):
 
     print(f"Running Zig bot: {os.path.basename(exe)}", file=sys.stderr)
 
-    # Find existing game logs before run
-    existing_logs = set(glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl')))
+    from subprocess_helpers import run_bot_game
 
-    # Run bot
-    result = subprocess.run([exe, ws_url], cwd=ZIG_DIR,
-                           capture_output=True, text=True, timeout=180)
+    return_code, stderr_output, log_path = run_bot_game(exe, ws_url, cwd=ZIG_DIR, timeout=180)
 
-    print(result.stderr, file=sys.stderr)
+    print(stderr_output, file=sys.stderr)
 
-    # Find new game log
-    new_logs = set(glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl'))) - existing_logs
-    if new_logs:
-        return max(new_logs, key=os.path.getmtime)
-
-    # Fallback: newest game log
-    all_logs = glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl'))
-    if all_logs:
-        return max(all_logs, key=os.path.getmtime)
-
-    return None
+    return log_path
 
 
 def parse_game_log(log_path):
@@ -65,7 +49,7 @@ def parse_game_log(log_path):
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
-                continue
+                continue  # JSONL log may contain non-JSON lines (stderr, partial writes)
 
             if data.get('type') == 'game_over':
                 final_score = data.get('score', 0)
@@ -153,10 +137,10 @@ if __name__ == '__main__':
 
     # Auto-import to PostgreSQL as a 'live' run
     try:
-        import subprocess
+        import subprocess  # nosec B404
         import_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                      '..', 'grocery-bot-zig', 'replay', 'import_logs.py')
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 B607
             [sys.executable, import_script, '--run-type', 'live', log_path],
             capture_output=True, text=True, timeout=30)
         if result.returncode == 0:

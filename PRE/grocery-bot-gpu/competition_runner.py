@@ -27,7 +27,7 @@ def order_hash(capture_data):
     """Hash the order sequence for caching."""
     orders = capture_data.get('orders', [])
     order_str = json.dumps(orders, sort_keys=True)
-    return hashlib.md5(order_str.encode()).hexdigest()[:12]
+    return hashlib.md5(order_str.encode()).hexdigest()[:12]  # nosec B324
 
 
 def get_cached_solution(difficulty, ohash):

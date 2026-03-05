@@ -1,0 +1,339 @@
+{
+  "assessments": {
+    "type_safety": 52,
+    "design_coherence": 58,
+    "incomplete_migration": 62,
+    "cross_module_architecture": 74,
+    "structure_navigation": 38
+  },
+  "findings": [
+    {
+      "dimension": "type_safety",
+      "identifier": "zig-ffi-no-annotations",
+      "summary": "zig_ffi.py has 0/5 public functions annotated despite being a critical FFI boundary",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\zig_ffi.py"
+      ],
+      "evidence": [
+        "zig_verify, zig_presim_locked, zig_verify_live, zig_presim_locked_live, test_ffi_vs_python -- all 5 public functions have zero type hints",
+        "This file marshals Python types to ctypes pointers -- the highest-risk boundary in the codebase for type errors"
+      ],
+      "suggestion": "Add full type annotations to all 5 public functions in zig_ffi.py. E.g. zig_verify(difficulty_idx: int, seed: int, all_orders: list[Order], combined_actions: list[list[tuple[int, int]]], num_bots: int) -> int",
+      "confidence": "high"
+    },
+    {
+      "dimension": "type_safety",
+      "identifier": "live-solver-no-annotations",
+      "summary": "live_solver.py has 0/10 public functions annotated despite active use as ws_to_capture import",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\live_solver.py"
+      ],
+      "evidence": [
+        "ws_to_capture, quick_multi_solve, play_live, ReactiveSolver.__init__, ReactiveSolver.decide, etc. -- 10 public functions with no type hints",
+        "ws_to_capture is imported by replay_solution.py and live_gpu_stream.py -- it is an active cross-module boundary"
+      ],
+      "suggestion": "At minimum annotate ws_to_capture(data: dict[str, Any]) -> CaptureData since it is imported by 2+ other active modules",
+      "confidence": "high"
+    },
+    {
+      "dimension": "type_safety",
+      "identifier": "capture-game-no-annotations",
+      "summary": "capture_game.py has 0/8 public functions annotated",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\capture_game.py"
+      ],
+      "evidence": [
+        "bfs_first_step, bfs_distance, find_adj_cells, get_order_needs, decide_action, get_capture_path, load_capture, capture_and_play -- all 8 unannotated",
+        "capture_and_play is used from pipeline scripts"
+      ],
+      "suggestion": "Add type annotations to all public functions, especially capture_and_play and load_capture which are called from pipeline orchestration",
+      "confidence": "high"
+    },
+    {
+      "dimension": "type_safety",
+      "identifier": "optimize-and-save-no-annotations",
+      "summary": "optimize_and_save.py has 0/4 public functions annotated despite being a pipeline entry point",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\optimize_and_save.py"
+      ],
+      "evidence": [
+        "emit, main, on_bot_progress, on_phase -- 0/4 annotated",
+        "This is a subprocess entry point called by SvelteKit pipeline; type clarity matters for maintainability"
+      ],
+      "suggestion": "Add annotations: emit(event: dict[str, Any]) -> None, main() -> None, and the callback signatures",
+      "confidence": "high"
+    },
+    {
+      "dimension": "type_safety",
+      "identifier": "ws-client-no-annotations",
+      "summary": "ws_client.py has 0/4 public functions annotated",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\ws_client.py"
+      ],
+      "evidence": [
+        "replay, replay_with_validation, save_actions, load_actions -- all 4 unannotated"
+      ],
+      "suggestion": "Add full type annotations to all 4 public functions",
+      "confidence": "high"
+    },
+    {
+      "dimension": "type_safety",
+      "identifier": "precompute-partial-annotations",
+      "summary": "precompute.py has only 8/15 (53%) public functions annotated, including unannotated __init__ on TripTable and PrecomputedTables",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\precompute.py"
+      ],
+      "evidence": [
+        "Unannotated: show_info, PrecomputedTables.__init__, TripTable.__init__, get_cost, order_cost, to_gpu, TripTable.compute",
+        "TripTable.__init__ takes 7 parameters with no type hints -- easy to pass wrong types"
+      ],
+      "suggestion": "Add type annotations to all __init__ methods and public methods (get_cost, order_cost, to_gpu, compute)",
+      "confidence": "high"
+    },
+    {
+      "dimension": "type_safety",
+      "identifier": "mapstate-empty-init",
+      "summary": "MapState.__init__ is empty (pass) with all attributes set externally via assignment, defeating __slots__ type safety",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\game_engine.py"
+      ],
+      "evidence": [
+        "Line 69: def __init__(self): pass -- MapState has 12 slots but no constructor parameters",
+        "Lines 290-303: All attributes set externally (ms.width = w, ms.height = h, etc.) in build_map() -- no constructor enforcement"
+      ],
+      "suggestion": "Add a proper __init__ with typed parameters, or at minimum add type annotations to the __slots__ as a comment or use @dataclass",
+      "confidence": "high"
+    },
+    {
+      "dimension": "type_safety",
+      "identifier": "annotated-core-files-strong",
+      "summary": "Core solver files (gpu_beam_search, configs, solution_store, replay_solution, iterate_local) achieve 100% annotation coverage",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\gpu_beam_search.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\configs.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\solution_store.py"
+      ],
+      "evidence": [
+        "gpu_beam_search.py: 6/6 annotated (100%)",
+        "configs.py: 2/2 (100%), solution_store.py: 9/9 (100%), replay_solution.py: 6/6 (100%), iterate_local.py: 5/5 (100%)"
+      ],
+      "suggestion": "Good progress. Extend same discipline to remaining active files (zig_ffi, live_solver, capture_game, optimize_and_save, ws_client)",
+      "confidence": "high"
+    },
+    {
+      "dimension": "design_coherence",
+      "identifier": "clean-core-pipeline",
+      "summary": "Core pipeline (gpu_beam_search -> gpu_sequential_solver -> precompute -> game_engine -> configs) is architecturally clean and well-documented",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\gpu_beam_search.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\gpu_sequential_solver.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\precompute.py"
+      ],
+      "evidence": [
+        "Each file has clear docstrings documenting purpose, error contracts, and usage",
+        "SolveConfig/SolveCallbacks dataclasses centralize configuration with backward-compat kwargs bridge",
+        "CaptureData TypedDict provides structured interchange format"
+      ],
+      "suggestion": "No action needed for core pipeline -- it is well-designed",
+      "confidence": "high"
+    },
+    {
+      "dimension": "design_coherence",
+      "identifier": "stale-file-mass-drags-design",
+      "summary": "21 non-deprecated stale/utility files in flat directory obscure the clean core architecture",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\parallel_optimizer.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\multi_solve.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\action_gen.py"
+      ],
+      "evidence": [
+        "21 files without DEPRECATED notices: planner.py, parallel_optimizer.py, gpu_solve_stream.py, gpu_multi_solve_stream.py, parallel_solve_stream.py, sweep_params.py, sweep_all.py, multi_solve.py, learn_from_capture.py, live_bot.py, reactive_replay.py, capture_and_solve_stream.py, benchmark_stream.py, compare_runs.py, action_gen.py, route_table.py, trip_scheduler.py, seed_crack.py, pathfinding.py, synthetic_optimize.py, production_run.py",
+        "3 of these (planner.py, parallel_optimizer.py, multi_solve.py) import DEPRECATED modules, confirming they are stale"
+      ],
+      "suggestion": "Add DEPRECATED notices to planner.py, parallel_optimizer.py, multi_solve.py (they import deprecated modules). Audit remaining 18 files and either add DEPRECATED or move to a scripts/ subdirectory",
+      "confidence": "high"
+    },
+    {
+      "dimension": "design_coherence",
+      "identifier": "solve-sequential-kwargs-bridge",
+      "summary": "solve_sequential has a legacy kwargs bridge that accepts 11 kwargs and remaps to SolveConfig/SolveCallbacks, creating dual API surface",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\gpu_sequential_solver.py"
+      ],
+      "evidence": [
+        "Lines 306-322: solve_sequential accepts both config=SolveConfig() AND legacy **kwargs like max_states=, no_filler=, on_bot_progress=",
+        "optimize_and_save.py (line 73-85) still passes kwargs directly instead of using SolveConfig/SolveCallbacks"
+      ],
+      "suggestion": "Migrate optimize_and_save.py and live_gpu_stream.py to use SolveConfig/SolveCallbacks, then remove the kwargs bridge",
+      "confidence": "high"
+    },
+    {
+      "dimension": "design_coherence",
+      "identifier": "115-game-log-files",
+      "summary": "115 game_log_*.jsonl files sitting in the flat GPU directory add noise and make the directory unnavigable",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu"
+      ],
+      "evidence": [
+        "115 game_log_*.jsonl files in grocery-bot-gpu/ root directory",
+        "Total non-hidden items: 198, meaning >58% of directory entries are game logs"
+      ],
+      "suggestion": "Add game_log_*.jsonl to .gitignore and move existing logs to a logs/ subdirectory or delete them",
+      "confidence": "high"
+    },
+    {
+      "dimension": "incomplete_migration",
+      "identifier": "three-files-import-deprecated",
+      "summary": "3 files without DEPRECATED notices import DEPRECATED modules, proving they are stale",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\planner.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\parallel_optimizer.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\multi_solve.py"
+      ],
+      "evidence": [
+        "planner.py imports beam_search.py (DEPRECATED)",
+        "parallel_optimizer.py imports planner_optimizer.py (DEPRECATED)",
+        "multi_solve.py imports beam_search.py and planner_optimizer.py (both DEPRECATED)"
+      ],
+      "suggestion": "Add DEPRECATED docstring notices to all 3 files immediately -- they are clearly stale since their dependencies are deprecated",
+      "confidence": "high"
+    },
+    {
+      "dimension": "incomplete_migration",
+      "identifier": "18-unclear-status-files",
+      "summary": "18 files have no DEPRECATED notice and do not import deprecated modules, but their active/stale status is unclear",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\gpu_solve_stream.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\gpu_multi_solve_stream.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\action_gen.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\route_table.py"
+      ],
+      "evidence": [
+        "gpu_solve_stream.py, gpu_multi_solve_stream.py: superseded by optimize_and_save.py but no notice",
+        "action_gen.py, route_table.py, trip_scheduler.py: utility files that may be unused by current production pipeline",
+        "parallel_solve_stream.py: uses parallel_optimizer which imports DEPRECATED planner_optimizer",
+        "live_bot.py, reactive_replay.py, capture_and_solve_stream.py: older live game approaches superseded by live_gpu_stream.py"
+      ],
+      "suggestion": "Audit each file: if not imported by any active module, add DEPRECATED notice. Consider running a dead-code analysis tool.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "incomplete_migration",
+      "identifier": "deprecated-files-still-exist",
+      "summary": "18 files with DEPRECATED notices remain in the repository instead of being deleted or moved",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\planner_v2.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\planner_v3.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\beam_search.py"
+      ],
+      "evidence": [
+        "18 files have DEPRECATED notices: planner_v2, planner_v3, beam_search, optimizer, seq_solver, smart_policy, order_solver, trip_solver, pipeline_solver, two_phase_planner, gpu_optimizer, gpu_sim, planner_optimizer, solve, solve_and_save, solve_all, solve_from_capture, pipeline",
+        "These files are dead code -- they exist only as historical artifacts"
+      ],
+      "suggestion": "Move deprecated files to a deprecated/ subdirectory, or delete them entirely (git preserves history). This alone reduces the .py file count from 69 to 51.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "svelte-python-subprocess-clean",
+      "summary": "SvelteKit-to-Python boundary uses clean subprocess+JSON SSE protocol with shared helpers",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-zig\\replay\\app\\src\\routes\\api\\pipeline\\iterate\\+server.js",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-zig\\replay\\app\\src\\lib\\sse.server.js",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\subprocess_helpers.py"
+      ],
+      "evidence": [
+        "sse.server.js provides createCleanup/createSendEvent shared across all SSE endpoints",
+        "Python scripts emit JSON lines to stdout, JS reads them as SSE events",
+        "subprocess_helpers.py centralizes run_bot_game, find_latest_game_log, parse_game_score"
+      ],
+      "suggestion": "Good architecture. Consider documenting the JSON event schema (type, fields) as a shared contract between JS and Python",
+      "confidence": "high"
+    },
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "difficulty-detection-duplicated",
+      "summary": "Difficulty detection logic is duplicated between Python configs.py and JavaScript +server.js",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\configs.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-zig\\replay\\app\\src\\routes\\api\\pipeline\\iterate\\+server.js"
+      ],
+      "evidence": [
+        "configs.py detect_difficulty() uses _BOTS_TO_DIFF lookup (line 52-65)",
+        "+server.js detectDifficultyFromLog() has inline bot-count-to-difficulty mapping (lines 87-98) with grid-width fallback"
+      ],
+      "suggestion": "Extract difficulty constants to a shared JSON file or have JS call a Python helper for detection instead of reimplementing the logic",
+      "confidence": "high"
+    },
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "capture-data-implicit-contract",
+      "summary": "CaptureData TypedDict documents the interchange format but JSON files on disk have no schema validation",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\game_engine.py",
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\solution_store.py"
+      ],
+      "evidence": [
+        "CaptureData TypedDict (game_engine.py lines 20-37) defines expected keys",
+        "load_capture in solution_store.py does json.load with no validation -- corrupt or incomplete JSON returns silently as dict",
+        "Multiple producers (ws_to_capture, capture_from_game_log, zig_capture) each build CaptureData differently"
+      ],
+      "suggestion": "Add a validate_capture(data: dict) -> CaptureData function that checks required keys exist and have correct types, called at load_capture boundary",
+      "confidence": "high"
+    },
+    {
+      "dimension": "structure_navigation",
+      "identifier": "flat-69-py-files",
+      "summary": "69 Python files in a single flat directory with no subdirectory organization",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu"
+      ],
+      "evidence": [
+        "69 .py files (63 non-test + 6 test) all in grocery-bot-gpu/ root",
+        "No subdirectories for solvers/, live/, pipeline/, deprecated/, tests/",
+        "Active production files (gpu_beam_search.py, game_engine.py) sit alongside stale experiments (smart_policy.py, trip_scheduler.py)"
+      ],
+      "suggestion": "Create subdirectories: core/ (game_engine, configs, precompute), solvers/ (gpu_beam_search, gpu_sequential_solver), live/ (live_gpu_stream, replay_solution), pipeline/ (optimize_and_save, production_run), tests/ (test_*.py), deprecated/ (18 deprecated files)",
+      "confidence": "high"
+    },
+    {
+      "dimension": "structure_navigation",
+      "identifier": "115-game-logs-clutter",
+      "summary": "115 game_log_*.jsonl files make directory listing unusable -- 58% of entries are transient log files",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu"
+      ],
+      "evidence": [
+        "198 total non-hidden items in directory, 115 are game_log files",
+        "ls output shows 80+ lines of game_log_ files before any .py files"
+      ],
+      "suggestion": "Add game_log_*.jsonl to .gitignore, move to logs/ subdirectory, and clean up existing ones from the repo",
+      "confidence": "high"
+    },
+    {
+      "dimension": "structure_navigation",
+      "identifier": "no-index-or-manifest",
+      "summary": "No file index, __init__.py exports, or manifest distinguishes active from deprecated code",
+      "related_files": [
+        "X:\\KODE\\AINM\\PRE\\grocery-bot-gpu\\__init__.py"
+      ],
+      "evidence": [
+        "__init__.py exists but likely empty or minimal -- no public API exports",
+        "New developers must read CLAUDE.md or MEMORY.md to know which files are active",
+        "The Key GPU Files table in MEMORY.md lists 10 active files, but 59 others exist without explanation"
+      ],
+      "suggestion": "Add __all__ to __init__.py listing the active public modules, or create a MANIFEST.md that clearly lists active vs deprecated vs utility files",
+      "confidence": "high"
+    }
+  ],
+  "provenance": {
+    "kind": "blind_review_batch_import",
+    "blind": true,
+    "runner": "claude",
+    "run_stamp": "ext_20260304_220006_5e895475",
+    "created_at": "2026-03-04T22:05:05+00:00",
+    "packet_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\review_packet_blind.json",
+    "packet_sha256": "eae8bd4c03306be46b0f51bf68d3505e58549530f03a6fb67d3df5f8ce568854",
+    "external_session_id": "ext_20260304_220006_5e895475"
+  }
+}

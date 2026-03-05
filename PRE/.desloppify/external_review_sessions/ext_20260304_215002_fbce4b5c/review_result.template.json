@@ -1,0 +1,14 @@
+{
+  "session": {
+    "id": "ext_20260304_215002_fbce4b5c",
+    "token": "70f32e2424b50dc9cf15953ae9d758a8"
+  },
+  "assessments": {
+    "test_strategy": 0,
+    "initialization_coupling": 0,
+    "incomplete_migration": 0,
+    "contract_coherence": 0,
+    "mid_level_elegance": 0
+  },
+  "findings": []
+}

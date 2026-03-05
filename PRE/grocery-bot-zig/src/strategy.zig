@@ -27,16 +27,25 @@ const INV_CAP = types.INV_CAP;
 const UNREACHABLE = types.UNREACHABLE;
 
 // ── MAPF Configuration ───────────────────────────────────────────────
-// Enable Space-Time A* with reservation table for Hard/Expert only.
-// Easy/Medium keep current behavior (compile-time eliminated).
+// Enable Space-Time A* with reservation table for Hard/Expert/Auto.
+// Auto includes MAPF code but gates on bot_count >= 5 at runtime.
 const USE_MAPF = switch (DIFFICULTY) {
-    .easy, .medium, .auto => false,
-    .hard, .expert => true,
+    .easy, .medium => false,
+    .hard, .expert, .auto => true,
 };
 
 /// Navigate from start to target using MAPF (ST-A*) when available, else BFS.
+/// Checks for committed multi-step plans first to avoid unnecessary replanning.
 fn navigateTo(state: *const GameState, start: Pos, target: Pos, bot_id: u8, bot_positions: *const [MAX_BOTS]Pos) pathfinding.BfsResult {
     if (USE_MAPF and state.bot_count >= 5) {
+        // Check committed plan first — follow existing ST-A* path if goal matches
+        if (spacetime.getCommitted(bot_id, target)) |committed| {
+            return .{
+                .dist = if (committed.remaining > 0) committed.remaining else 1,
+                .first_dir = committed.dir,
+            };
+        }
+        // No committed plan or different goal — full ST-A* replan
         if (spacetime.planAndReserve(state, start, target, bot_id, bot_positions)) |result| {
             // ST-A* found a path (first_dir may be null = wait)
             return .{ .dist = if (result.path_len > 0) result.path_len else 1, .first_dir = result.first_dir };
@@ -370,7 +379,11 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     // Pre-compute all BFS distance maps once at game start (walls never change)
     if (state.round == 0) {
         pathfinding.precomputeAllDistances(state);
-        if (USE_MAPF) spacetime.init(state);
+        if (USE_MAPF) {
+            spacetime.init(state);
+            spacetime.initPlans();
+            spacetime.setMaxCommitLen(state.bot_count);
+        }
         // Verify precomputed order data matches current game seed
         if (precomputed.isLoaded()) {
             for (0..state.order_count) |oi| {
@@ -382,7 +395,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
     }
 
-    // Clear reservations at start of each round (MAPF replans every round)
+    // Clear reservations at start of each round
     if (USE_MAPF and state.bot_count >= 5) {
         spacetime.clearReservations();
     }
@@ -431,7 +444,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     }
     // Max bots allowed to carry preview items: limit to reduce dead inventory risk
     // CRITICAL: increasing this causes catastrophic dead-inv in Expert (10 bots)
-    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else if (state.bot_count >= 8) 4 else if (state.bot_count >= 5) 2 else 1;
+    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else if (state.bot_count >= 8) 6 else if (state.bot_count >= 5) 3 else 1;
 
     // ── Fix 6: Track score changes for diagnostic logging ──
     if (state.score != last_score) {
@@ -537,6 +550,11 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     // Bot positions for collision (use effective positions)
     var bot_positions: [MAX_BOTS]Pos = undefined;
     for (0..state.bot_count) |bi| bot_positions[bi] = eff_pos[bi];
+
+    // Advance committed MAPF plans and re-reserve their future positions
+    if (USE_MAPF and state.bot_count >= 5) {
+        spacetime.advanceAndReReserve(&bot_positions, state.bot_count);
+    }
 
     // Claimed items
     var claimed: [MAX_ITEMS]i8 = undefined;
@@ -815,8 +833,8 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             .easy => state.bot_count,
             .medium => state.bot_count,
             .hard => 4,
-            .expert => 4,
-            .auto => if (state.bot_count >= 8) 8 else if (state.bot_count >= 5) 3 else state.bot_count,
+            .expert => 7,
+            .auto => if (state.bot_count >= 8) 7 else if (state.bot_count >= 5) 4 else state.bot_count,
         };
 
         // Greedily assign: for each type, find closest (bot, item) pair
@@ -879,10 +897,10 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 type_track[ti].assigned += 1;
             }
 
-            // Block excess unclaimed instances of fully-covered types
+            // Block excess unclaimed instances of fully-covered active types
             // Prevents duplicate type picking which creates dead inventory when orders change
-            // Only for <=3 bots — larger bot counts benefit from backup pickers
-            if (type_track[ti].assigned >= type_track[ti].needed and state.bot_count <= 3) {
+            // Extended to 5+ bots: unassigned bots were picking same active types → dead inventory
+            if (type_track[ti].assigned >= type_track[ti].needed and (state.bot_count <= 3 or state.bot_count >= 5)) {
                 for (0..state.item_count) |ii| {
                     if (claimed[ii] >= 0) continue;
                     if (state.items[ii].item_type.eql(type_track[ti].t)) {
@@ -900,7 +918,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // the next order's active items. No risk of permanent dead inventory.
         const all_active_covered_orch = pick_remaining.count == 0;
         var total_preview_assigned: u8 = 0;
-        const max_orch_preview: u8 = if (all_active_covered_orch) preview.count else if (state.bot_count <= 2) 4 else if (state.bot_count <= 4) 2 else if (state.bot_count >= 8) 4 else 2;
+        const max_orch_preview: u8 = if (all_active_covered_orch) preview.count else if (state.bot_count <= 2) 4 else if (state.bot_count <= 4) 2 else if (state.bot_count >= 8) 6 else 2;
         if (preview.count > 0 and (all_active_covered_orch or bots_with_preview_only < max_preview_carriers)) {
             var prev_track: [16]TypeTrack = undefined;
             var prev_track_len: u8 = 0;
@@ -1043,8 +1061,11 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             }
         }
         // Reserve paths for delivering bots → picking bots will route around them
+        // Skip bots with committed plans to dropoff (already re-reserved)
         for (del_bots[0..del_count]) |db| {
-            _ = spacetime.planAndReserve(state, eff_pos[db.bi], state.dropoff, db.bi, &bot_positions);
+            if (spacetime.getCommitted(db.bi, state.dropoff) == null) {
+                _ = spacetime.planAndReserve(state, eff_pos[db.bi], state.dropoff, db.bi, &bot_positions);
+            }
         }
         // Reserve stalled bots as stationary obstacles (they won't move soon)
         for (0..state.bot_count) |bi| {
@@ -1776,6 +1797,19 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 const spawn = Pos{ .x = @as(i16, @intCast(state.width)) - 2, .y = @as(i16, @intCast(state.height)) - 2 };
                 if (!bpos.eql(spawn)) {
                     const res = navigateTo(state, bpos, spawn, @intCast(bi), &bot_positions);
+                    if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
+                        try writeMove(writer, bot.id, d);
+                        updateBotPos(&bot_positions[bi], d);
+                        pending_dirs[bi] = d;
+                        pending_is_move[bi] = true;
+                        continue;
+                    };
+                }
+            } else if (effective_slots == 0) {
+                // Full dead-inv bots (<5 bots): camp near dropoff for auto-delivery when order cycles
+                // Being near dropoff means instant auto-delivery if next order includes dead items
+                if (dd_dist > 3) {
+                    const res = navigateTo(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                         try writeMove(writer, bot.id, d);
                         updateBotPos(&bot_positions[bi], d);

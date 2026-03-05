@@ -90,14 +90,45 @@ Per-bot priority cascade each round:
 - **Anti-oscillation**: Position history (24 rounds), stall detection (threshold 6), escape mode (4 rounds), near-dropoff patience (dist<=2, max 3 waits).
 - **Desync detection** (main.zig): Detects 1-round action offset via position mismatch. Shifts to effective positions when triggered.
 
-## Game Rules
-- 300 rounds, 120s wall clock
-- INV_CAP = 3 items per bot
-- Items stay on shelves permanently (never deplete)
+## Game Mechanics
+
+### Scoring
+- **+1 per item** delivered to active order
+- **+5 bonus** per completed order
+- 4-item order completed = 4 + 5 = **9 points**
+- 3-item order completed = 3 + 5 = **8 points**
+- Key metric: **rounds per completed order** (lower = more orders = higher score)
+
+### Items Are Infinite
+- Shelves never deplete. The items list stays constant throughout 300 rounds.
+- Same `item_id` can be picked up repeatedly from the same shelf tile.
+- No scarcity — optimize purely for shortest round-trip loops.
+
+### Drop-Off Chain Reaction
+- When the active order completes via drop_off, the preview order becomes active **immediately**.
+- Any items already in inventory matching the NEW active order are **auto-delivered** on the same drop_off action.
+- This can **cascade**: if auto-delivered items complete the new order, the next preview also activates.
+- **Exploit**: On the final pickup trip for an active order, fill spare inventory slots with preview-order items. They deliver for free on the same drop-off.
+
+### Pickup Directions
+- Pickup works from **all 4 cardinal directions** (Manhattan distance 1).
+- Some shelves sandwiched between other shelves have only 1 accessible side.
+- Choose the pickup tile that minimizes the **TOTAL trip**, not just the approach distance.
+
+### Action Resolution
+- Bot 0 moves first, then bot 1, etc. **Lower IDs have collision priority.**
+- Invalid actions silently become wait — no penalty, but wastes a round.
+- Bots block each other on all tiles **except the spawn tile**.
+
+### Deterministic Per Day
+- Same day = same map layout, item placement, and order sequence.
+- Can replay to learn optimal routes for the day's configuration.
+
+### Limits
+- 300 rounds max, 120s wall-clock, 2s response timeout per round
+- Max 3 items per bot inventory (INV_CAP = 3)
+- 60s cooldown between games
 - Sequential orders: active + preview visible
-- Score: +1 per item delivered, +5 per order completed
-- Auto-delivery: when order completes at dropoff, ALL bots on dropoff tile get inventory checked against NEW active order
-- Bot collision: 1 bot per tile (except spawn)
 - Drop-off at (1, h-2), spawn at (w-2, h-2)
 
 ## Token & Session Rules (CRITICAL for iterate pipeline)
@@ -174,16 +205,17 @@ These parameters are tightly coupled. Changes often cause cascading regressions.
 - Trip diversity +1 for all modes → single-bot picks duplicate types (2 yogurts when order needs 1)
 - Trip diversity removed for all modes → Hard -3, Expert -6 (multi-bot needs alternatives)
 - `far_with_few` expansion for non-priority bots (dist>5) → Hard -7, Expert -9 (restricts delivery)
+- MAPF multi-step commitment for Expert (10 bots) → Expert -4% mean (over-constraining, too many reserved cells)
 
 ## Current Best Scores (40-seed sweep, seeds 7001-7040, production-style aisle walls)
 | Difficulty | Mean | Max | Target |
 |---|---|---|---|
 | Easy | 115.1 | 131 | 175 |
 | Medium | 108.4 | 131 | 175 |
-| Hard | 86.5 | 119 | 175 |
+| Hard | **94.7** | **125** | 175 |
 | Expert | 65.8 | 96 | 175 |
 
-Note: Sim server now generates production-style aisle walls. These scores are with accurate maps (tighter corridors than previous open-aisle layout).
+Note: Hard improved via multi-step MAPF commitment (spacetime.zig). Expert unchanged (commitment disabled for 10 bots).
 
 ## Live Game Performance
 - 15ms response delay in main.zig prevents 1-round action offset desync
@@ -238,7 +270,8 @@ python capture_from_game_log.py game_log_YYYY.jsonl hard
 
 ### Critical Notes
 - `--no-filler` is MANDATORY for GPU DP: without it, DP wastes moves on fake orders
-- `no_compile=True` required for all live/threaded GPU calls (prevents torch.compile FX dynamo crash)
+- `no_compile=True` required for all live/threaded GPU calls (prevents torch.compile FX dynamo crash in multi-threaded contexts)
+- Offline single-threaded solves use `torch.compile(mode='default')` with Triton for 3.5x speedup
 - Each capture-optimize-replay cycle discovers ~2-3 new orders
 - `solution_store.py` NEVER overwrites better scores
 - `replay_solution.py` has greedy fallback: after DP plan exhausts, switches to reactive item pickup
@@ -246,14 +279,23 @@ python capture_from_game_log.py game_log_YYYY.jsonl hard
 ### GPU DP Solver (`grocery-bot-gpu/`)
 | File | Purpose |
 |------|---------|
-| `gpu_beam_search.py` | Core GPU DP solver (CUDA, RTX 5090) |
+| `gpu_beam_search.py` | Core GPU DP solver (CUDA, RTX 5090, Triton-compiled) |
 | `gpu_sequential_solver.py` | Multi-bot sequential DP with refinement |
+| `precompute.py` | All-pairs shortest paths + TripTable (GPU BFS, TF32) |
 | `live_gpu_stream.py` | Live game: GPU actions at every round |
 | `optimize_and_save.py` | Offline GPU optimize: load capture → solve → save (JSON events) |
 | `capture_from_game_log.py` | Extract orders from game logs |
 | `replay_solution.py` | Replay GPU solutions with greedy fallback |
 | `solution_store.py` | Score-safe solution storage |
 | `production_run.py` | CLI iterative pipeline (token fetch + optimize + replay) |
+| `profile_gpu.py` | torch.profiler bottleneck analysis |
+
+### GPU Compile Notes
+- **Triton 3.6.0 works on Windows** with PyTorch 2.10+cu128
+- `torch.compile(mode='default')`: Triton kernel fusion (3.5x faster than aot_eager)
+- `reduce-overhead` mode (CUDA graphs) blocked by tensor lifetime issue — use `default`
+- TF32 enabled: `allow_tf32=True` in both `precompute.py` and `gpu_beam_search.py`
+- Out-of-place ops in `_vectorized_deliver`/pickup loop (`torch.stack()` not slice assign)
 
 ## File Dependencies
 ```

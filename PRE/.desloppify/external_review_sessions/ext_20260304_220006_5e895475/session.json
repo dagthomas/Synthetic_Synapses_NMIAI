@@ -1,0 +1,20 @@
+{
+  "session_id": "ext_20260304_220006_5e895475",
+  "status": "submitted",
+  "runner": "claude",
+  "created_at": "2026-03-04T22:00:06+00:00",
+  "expires_at": "2026-03-05T22:00:06+00:00",
+  "ttl_hours": 24,
+  "token": "bbc06c5304dd2498431bfd744c2c9318",
+  "attest": "I validated this review was completed without awareness of overall score and is unbiased.",
+  "packet_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\review_packets\\holistic_packet_20260304_220006.json",
+  "blind_packet_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\review_packet_blind.json",
+  "packet_sha256": "eae8bd4c03306be46b0f51bf68d3505e58549530f03a6fb67d3df5f8ce568854",
+  "template_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\external_review_sessions\\ext_20260304_220006_5e895475\\review_result.template.json",
+  "launch_prompt_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\external_review_sessions\\ext_20260304_220006_5e895475\\claude_launch_prompt.md",
+  "instructions_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\external_review_sessions\\ext_20260304_220006_5e895475\\reviewer_instructions.md",
+  "expected_output_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\external_review_sessions\\ext_20260304_220006_5e895475\\review_result.json",
+  "submitted_at": "2026-03-04T22:05:48+00:00",
+  "submitted_input_file": ".desloppify\\external_review_sessions\\ext_20260304_220006_5e895475\\review_result.json",
+  "submitted_canonical_file": "X:\\KODE\\AINM\\PRE\\.desloppify\\external_review_sessions\\ext_20260304_220006_5e895475\\canonical_import_20260304_220548.json"
+}

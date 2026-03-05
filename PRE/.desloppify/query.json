@@ -1,0 +1,628 @@
+{
+  "command": "issues",
+  "action": "list",
+  "count": 21,
+  "items": [
+    {
+      "id": "review::.::holistic::cross_module_architecture::capture-data-implicit-contract::a2b1617b",
+      "summary": "CaptureData TypedDict documents the interchange format but JSON files on disk have no schema validation",
+      "dimension": "cross_module_architecture",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::cross_module_architecture::difficulty-detection-duplicated::f2855332",
+      "summary": "Difficulty detection logic is duplicated between Python configs.py and JavaScript +server.js",
+      "dimension": "cross_module_architecture",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::cross_module_architecture::svelte-python-subprocess-clean::b7e760f2",
+      "summary": "SvelteKit-to-Python boundary uses clean subprocess+JSON SSE protocol with shared helpers",
+      "dimension": "cross_module_architecture",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::design_coherence::115-game-log-files::760d67f1",
+      "summary": "115 game_log_*.jsonl files sitting in the flat GPU directory add noise and make the directory unnavigable",
+      "dimension": "design_coherence",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::design_coherence::clean-core-pipeline::8a71d3fb",
+      "summary": "Core pipeline (gpu_beam_search -> gpu_sequential_solver -> precompute -> game_engine -> configs) is architecturally clean and well-documented",
+      "dimension": "design_coherence",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::design_coherence::solve-sequential-kwargs-bridge::45545a8e",
+      "summary": "solve_sequential has a legacy kwargs bridge that accepts 11 kwargs and remaps to SolveConfig/SolveCallbacks, creating dual API surface",
+      "dimension": "design_coherence",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::design_coherence::stale-file-mass-drags-design::a0d06ec0",
+      "summary": "21 non-deprecated stale/utility files in flat directory obscure the clean core architecture",
+      "dimension": "design_coherence",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::incomplete_migration::18-unclear-status-files::6d84060f",
+      "summary": "18 files have no DEPRECATED notice and do not import deprecated modules, but their active/stale status is unclear",
+      "dimension": "incomplete_migration",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::incomplete_migration::deprecated-files-still-exist::5980750a",
+      "summary": "18 files with DEPRECATED notices remain in the repository instead of being deleted or moved",
+      "dimension": "incomplete_migration",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::incomplete_migration::three-files-import-deprecated::b09a323f",
+      "summary": "3 files without DEPRECATED notices import DEPRECATED modules, proving they are stale",
+      "dimension": "incomplete_migration",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::package_organization::115-game-logs-clutter::e8e9bca6",
+      "summary": "115 game_log_*.jsonl files make directory listing unusable -- 58% of entries are transient log files",
+      "dimension": "package_organization",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::package_organization::flat-69-py-files::69eb2517",
+      "summary": "69 Python files in a single flat directory with no subdirectory organization",
+      "dimension": "package_organization",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::package_organization::no-index-or-manifest::61635059",
+      "summary": "No file index, __init__.py exports, or manifest distinguishes active from deprecated code",
+      "dimension": "package_organization",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::type_safety::annotated-core-files-strong::b649eec4",
+      "summary": "Core solver files (gpu_beam_search, configs, solution_store, replay_solution, iterate_local) achieve 100% annotation coverage",
+      "dimension": "type_safety",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::type_safety::capture-game-no-annotations::38c3be92",
+      "summary": "capture_game.py has 0/8 public functions annotated",
+      "dimension": "type_safety",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::type_safety::live-solver-no-annotations::cc599eed",
+      "summary": "live_solver.py has 0/10 public functions annotated despite active use as ws_to_capture import",
+      "dimension": "type_safety",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::type_safety::mapstate-empty-init::5a7222b3",
+      "summary": "MapState.__init__ is empty (pass) with all attributes set externally via assignment, defeating __slots__ type safety",
+      "dimension": "type_safety",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::type_safety::optimize-and-save-no-annotations::bf990734",
+      "summary": "optimize_and_save.py has 0/4 public functions annotated despite being a pipeline entry point",
+      "dimension": "type_safety",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::type_safety::precompute-partial-annotations::ba6aaa56",
+      "summary": "precompute.py has only 8/15 (53%) public functions annotated, including unannotated __init__ on TripTable and PrecomputedTables",
+      "dimension": "type_safety",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::type_safety::ws-client-no-annotations::d8f688ed",
+      "summary": "ws_client.py has 0/4 public functions annotated",
+      "dimension": "type_safety",
+      "investigated": false
+    },
+    {
+      "id": "review::.::holistic::type_safety::zig-ffi-no-annotations::673e8c84",
+      "summary": "zig_ffi.py has 0/5 public functions annotated despite being a critical FFI boundary",
+      "dimension": "type_safety",
+      "investigated": false
+    }
+  ],
+  "next_command": "desloppify issues show 1",
+  "narrative": {
+    "phase": "middle_grind",
+    "headline": "\u26a0 310 security findings \u2014 review before other cleanup. 935 findings open. Test health (16.2%) needs attention \u2014 run `desloppify next` to start. (21 review findings \u2014 run `desloppify issues`)",
+    "dimensions": {
+      "lowest_dimensions": [
+        {
+          "name": "Test health",
+          "strict": 16.2,
+          "issues": 123,
+          "impact": 0.0
+        },
+        {
+          "name": "Structure nav",
+          "strict": 38.0,
+          "issues": 3,
+          "impact": 0.0,
+          "subjective": true,
+          "impact_description": "re-review to improve"
+        },
+        {
+          "name": "Code quality",
+          "strict": 49.8,
+          "issues": 377,
+          "impact": 0.0
+        }
+      ],
+      "biggest_gap_dimensions": [
+        {
+          "name": "Test health",
+          "lenient": 46.6,
+          "strict": 16.2,
+          "gap": 30.4,
+          "wontfix_count": 32
+        },
+        {
+          "name": "Duplication",
+          "lenient": 99.9,
+          "strict": 83.7,
+          "gap": 16.2,
+          "wontfix_count": 245
+        },
+        {
+          "name": "Code quality",
+          "lenient": 64.7,
+          "strict": 49.8,
+          "gap": 14.9,
+          "wontfix_count": 185
+        }
+      ],
+      "stagnant_dimensions": [
+        {
+          "name": "Security",
+          "strict": 95.4,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Error consistency",
+          "strict": 68.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Abstraction fit",
+          "strict": 78.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "AI generated debt",
+          "strict": 80.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "High elegance",
+          "strict": 55.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Mid elegance",
+          "strict": 72.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Low elegance",
+          "strict": 78.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Convention drift",
+          "strict": 80.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Dep health",
+          "strict": 85.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Test strategy",
+          "strict": 52.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Naming quality",
+          "strict": 82.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Logic clarity",
+          "strict": 85.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Contracts",
+          "strict": 82.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Init coupling",
+          "strict": 88.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "API coherence",
+          "strict": 65.0,
+          "stuck_scans": 5
+        },
+        {
+          "name": "Auth consistency",
+          "strict": 90.0,
+          "stuck_scans": 5
+        }
+      ]
+    },
+    "actions": [
+      {
+        "type": "issue_queue",
+        "detector": "review",
+        "count": 21,
+        "description": "21 review findings need investigation \u2014 run `desloppify issues` to see the work queue",
+        "command": "desloppify issues",
+        "impact": 0.0,
+        "dimension": "Unknown",
+        "priority": 1,
+        "lane": "refactor"
+      },
+      {
+        "type": "auto_fix",
+        "detector": "unused",
+        "count": 118,
+        "description": "118 unused findings \u2014 run `desloppify fix unused-imports --dry-run` to preview, then apply",
+        "command": "desloppify fix unused-imports --dry-run",
+        "impact": 0.0,
+        "dimension": "Code quality",
+        "priority": 2,
+        "lane": "cleanup"
+      },
+      {
+        "type": "reorganize",
+        "detector": "orphaned",
+        "count": 68,
+        "description": "68 orphaned findings \u2014 delete dead files or relocate with `desloppify move`",
+        "command": "desloppify show orphaned --status open",
+        "impact": 0.0,
+        "dimension": "Code quality",
+        "priority": 3,
+        "lane": "restructure"
+      },
+      {
+        "type": "reorganize",
+        "detector": "flat_dirs",
+        "count": 1,
+        "description": "1 flat_dirs findings \u2014 create subdirectories and use `desloppify move`",
+        "command": "desloppify show flat_dirs --status open",
+        "impact": 0.0,
+        "dimension": "Code quality",
+        "priority": 4,
+        "lane": "restructure"
+      },
+      {
+        "type": "refactor",
+        "detector": "structural",
+        "count": 76,
+        "description": "76 structural findings \u2014 decompose large files \u2014 extract logic into focused modules",
+        "command": "desloppify show structural --status open",
+        "impact": 0.0,
+        "dimension": "File health",
+        "priority": 5,
+        "lane": "refactor"
+      },
+      {
+        "type": "refactor",
+        "detector": "dupes",
+        "count": 5,
+        "description": "5 dupes findings \u2014 extract shared utility or consolidate duplicates",
+        "command": "desloppify show dupes --status open",
+        "impact": 0.0,
+        "dimension": "Duplication",
+        "priority": 6,
+        "lane": "refactor"
+      },
+      {
+        "type": "refactor",
+        "detector": "dict_keys",
+        "count": 21,
+        "description": "21 dict_keys findings \u2014 fix dict key mismatches \u2014 dead writes are likely dead code, schema drift suggests a typo or missed rename",
+        "command": "desloppify show dict_keys --status open",
+        "impact": 0.0,
+        "dimension": "Code quality",
+        "priority": 7,
+        "lane": "refactor"
+      },
+      {
+        "type": "refactor",
+        "detector": "test_coverage",
+        "count": 67,
+        "description": "67 test_coverage findings \u2014 add tests for untested production modules \u2014 prioritize by import count",
+        "command": "desloppify show test_coverage --status open",
+        "impact": 0.0,
+        "dimension": "Test health",
+        "priority": 8,
+        "lane": "test_coverage"
+      },
+      {
+        "type": "refactor",
+        "detector": "signature",
+        "count": 14,
+        "description": "14 signature findings \u2014 consolidate inconsistent function signatures",
+        "command": "desloppify show signature --status open",
+        "impact": 0.0,
+        "dimension": "Unknown",
+        "priority": 9,
+        "lane": "refactor"
+      },
+      {
+        "type": "refactor",
+        "detector": "responsibility_cohesion",
+        "count": 11,
+        "description": "11 responsibility_cohesion findings \u2014 split modules with too many responsibilities \u2014 extract focused sub-modules",
+        "command": "desloppify show responsibility_cohesion --status open",
+        "impact": 0.0,
+        "dimension": "Code quality",
+        "priority": 10,
+        "lane": "refactor"
+      },
+      {
+        "type": "manual_fix",
+        "detector": "smells",
+        "count": 160,
+        "description": "160 smells findings \u2014 inspect with `desloppify next` and fix manually",
+        "command": "desloppify show smells --status open",
+        "impact": 0.0,
+        "dimension": "Code quality",
+        "priority": 11,
+        "lane": "refactor"
+      },
+      {
+        "type": "manual_fix",
+        "detector": "global_mutable_config",
+        "count": 7,
+        "description": "7 global_mutable_config findings \u2014 refactor module-level mutable state \u2014 use explicit init functions or dependency injection",
+        "command": "desloppify show global_mutable_config --status open",
+        "impact": 0.0,
+        "dimension": "Code quality",
+        "priority": 12,
+        "lane": "refactor"
+      },
+      {
+        "type": "manual_fix",
+        "detector": "security",
+        "count": 310,
+        "description": "310 security findings \u2014 review and fix security findings \u2014 prioritize by severity",
+        "command": "desloppify show security --status open",
+        "impact": 0.0,
+        "dimension": "Security",
+        "priority": 13,
+        "lane": "refactor"
+      },
+      {
+        "type": "manual_fix",
+        "detector": "subjective_review",
+        "count": 56,
+        "description": "56 files need design review \u2014 run design review with dimension templates",
+        "command": "desloppify fix review",
+        "impact": 0.0,
+        "dimension": "Test health",
+        "priority": 14,
+        "lane": "refactor"
+      },
+      {
+        "type": "debt_review",
+        "detector": null,
+        "description": "2.3 pts of wontfix debt \u2014 review stale decisions",
+        "command": "desloppify show --status wontfix",
+        "gap": 2.3,
+        "priority": 15,
+        "lane": "debt_review"
+      }
+    ],
+    "strategy": {
+      "fixer_leverage": {
+        "auto_fixable_count": 118,
+        "total_count": 977,
+        "coverage": 0.121,
+        "impact_ratio": 0.0,
+        "recommendation": "moderate"
+      },
+      "lanes": {
+        "cleanup": {
+          "actions": [
+            2
+          ],
+          "file_count": 66,
+          "total_impact": 0.0,
+          "automation": "full",
+          "run_first": true
+        },
+        "restructure": {
+          "actions": [
+            3,
+            4
+          ],
+          "file_count": 69,
+          "total_impact": 0.0,
+          "automation": "manual",
+          "run_first": false
+        },
+        "refactor": {
+          "actions": [
+            1,
+            5,
+            6,
+            7,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ],
+          "file_count": 118,
+          "total_impact": 0.0,
+          "automation": "manual",
+          "run_first": false
+        },
+        "test_coverage": {
+          "actions": [
+            8
+          ],
+          "file_count": 67,
+          "total_impact": 0.0,
+          "automation": "manual",
+          "run_first": false
+        },
+        "debt_review": {
+          "actions": [
+            15
+          ],
+          "file_count": 0,
+          "total_impact": 0.0,
+          "automation": "manual",
+          "run_first": false
+        }
+      },
+      "can_parallelize": true,
+      "hint": "3 independent workstreams, safe to parallelize. Rescan after each phase to verify. Review: 21 finding(s) \u2014 `desloppify issues`."
+    },
+    "tools": {
+      "fixers": [
+        {
+          "name": "unused-imports",
+          "detector": "unused",
+          "open_count": 118,
+          "command": "desloppify fix unused-imports --dry-run"
+        },
+        {
+          "name": "unused-vars",
+          "detector": "unused",
+          "open_count": 118,
+          "command": "desloppify fix unused-vars --dry-run"
+        },
+        {
+          "name": "unused-params",
+          "detector": "unused",
+          "open_count": 118,
+          "command": "desloppify fix unused-params --dry-run"
+        },
+        {
+          "name": "dead-useeffect",
+          "detector": "smells",
+          "open_count": 160,
+          "command": "desloppify fix dead-useeffect --dry-run"
+        },
+        {
+          "name": "empty-if-chain",
+          "detector": "smells",
+          "open_count": 160,
+          "command": "desloppify fix empty-if-chain --dry-run"
+        }
+      ],
+      "move": {
+        "available": true,
+        "relevant": true,
+        "reason": "68 orphaned files + 1 flat directories",
+        "usage": "desloppify move <source> <dest> [--dry-run]"
+      },
+      "plan": {
+        "command": "desloppify plan",
+        "description": "Generate prioritized markdown cleanup plan"
+      },
+      "badge": {
+        "generated": true,
+        "in_readme": false,
+        "path": "scorecard.png",
+        "recommendation": "Add to README: <img src=\"scorecard.png\" width=\"100%\">"
+      }
+    },
+    "debt": {
+      "overall_gap": 2.3,
+      "wontfix_count": 465,
+      "worst_dimension": "Test health",
+      "worst_gap": 30.4,
+      "trend": "stable"
+    },
+    "milestone": null,
+    "primary_action": {
+      "command": "desloppify issues",
+      "description": "21 review findings need investigation \u2014 run `desloppify issues` to see the work queue"
+    },
+    "why_now": "3 independent workstreams, safe to parallelize. Rescan after each phase to verify. Review: 21 finding(s) \u2014 `desloppify issues`.",
+    "verification_step": {
+      "command": "desloppify scan",
+      "reason": "revalidate after changes"
+    },
+    "risk_flags": [
+      {
+        "type": "wontfix_gap",
+        "severity": "high",
+        "message": "Strict/lenient gap is 2.3 pts with 465 wontfix findings"
+      }
+    ],
+    "strict_target": {
+      "target": 95.0,
+      "current": 66.1,
+      "gap": 28.9,
+      "state": "below",
+      "warning": null
+    },
+    "reminders": [
+      {
+        "type": "auto_fixers_available",
+        "message": "118 findings are auto-fixable. Run `desloppify fix unused-imports --dry-run`.",
+        "command": "desloppify fix unused-imports --dry-run",
+        "priority": 2,
+        "severity": "medium"
+      }
+    ],
+    "reminder_history": {
+      "zone_classification": 3,
+      "report_scores": 17,
+      "feedback_nudge": 3,
+      "stagnant_nudge": 17,
+      "wontfix_growing": 3,
+      "review_findings_pending": 3,
+      "auto_fixers_available": 1
+    }
+  },
+  "config": {
+    "target_strict_score": 95,
+    "review_max_age_days": 30,
+    "review_batch_max_files": 80,
+    "holistic_max_age_days": 30,
+    "generate_scorecard": true,
+    "badge_path": "scorecard.png",
+    "exclude": [
+      "__pycache__",
+      "zig-out",
+      "zig-pkg",
+      "node_modules",
+      "cache",
+      "solutions",
+      "captures",
+      ".svelte-kit",
+      "logs",
+      "deprecated"
+    ],
+    "ignore": [],
+    "ignore_metadata": {},
+    "zone_overrides": {},
+    "review_dimensions": [],
+    "large_files_threshold": 0,
+    "props_threshold": 0,
+    "finding_noise_budget": 10,
+    "finding_noise_global_budget": 0,
+    "languages": {}
+  }
+}

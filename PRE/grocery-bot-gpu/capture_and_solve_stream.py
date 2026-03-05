@@ -20,10 +20,10 @@ def emit(data):
 
 def capture_phase_zig(ws_url, difficulty):
     """Phase 1: Run Zig bot to capture orders. Streams progress via emit()."""
-    import subprocess
+    import subprocess  # nosec B404
     import glob
-    import re
     from zig_capture import parse_game_log
+    from subprocess_helpers import find_latest_game_log, parse_game_score, parse_round_progress
 
     ZIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'grocery-bot-zig')
     exe = os.path.join(ZIG_DIR, 'zig-out', 'bin', f'grocery-bot-{difficulty}.exe')
@@ -39,34 +39,30 @@ def capture_phase_zig(ws_url, difficulty):
 
     existing_logs = set(glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl')))
 
-    proc = subprocess.Popen([exe, ws_url], cwd=ZIG_DIR,
+    proc = subprocess.Popen([exe, ws_url], cwd=ZIG_DIR,  # nosec B603 B607
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
-    round_re = re.compile(r'R(\d+)/(\d+) Score:(\d+)')
-    gameover_re = re.compile(r'GAME_OVER Score:(\d+)')
-    capture_score = 0
-
+    stderr_text = []
     for line in proc.stderr:
         line = line.strip()
         if not line:
             continue
-        m = round_re.search(line)
-        if m:
-            rnd, max_rnd, score = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        stderr_text.append(line)
+        progress = parse_round_progress(line)
+        if progress:
+            rnd, max_rnd, score = progress
             if rnd % 20 == 0 or rnd <= 2 or rnd >= 295:
                 emit({"type": "progress", "round": rnd, "max_rounds": max_rnd, "score": score})
-        gm = gameover_re.search(line)
-        if gm:
-            capture_score = int(gm.group(1))
 
-    proc.wait()
+    try:
+        proc.wait(timeout=180)  # Game is max 120s; 180s gives margin
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
-    new_logs = set(glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl'))) - existing_logs
-    log_path = max(new_logs, key=os.path.getmtime) if new_logs else None
-    if not log_path:
-        all_logs = glob.glob(os.path.join(ZIG_DIR, 'game_log_*.jsonl'))
-        log_path = max(all_logs, key=os.path.getmtime) if all_logs else None
+    capture_score = parse_game_score('\n'.join(stderr_text))
 
+    log_path = find_latest_game_log(ZIG_DIR, existing_logs=existing_logs)
     if not log_path:
         emit({"type": "error", "msg": "No game log produced by Zig bot"})
         return None
@@ -266,9 +262,7 @@ def solve_phase_gpu(captured):
             on_phase=on_phase,
         )
     except Exception as e:
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        emit({"type": "solver_error", "msg": f"GPU solver failed: {e}"})
+        emit({"type": "solver_error", "msg": f"GPU solver failed: {e}", "detail": str(e)})
         return 0, []
 
     elapsed = time.time() - t0

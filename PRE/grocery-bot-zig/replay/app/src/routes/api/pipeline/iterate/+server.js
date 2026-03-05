@@ -2,18 +2,26 @@ import { spawn, spawnSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readdirSync, statSync, readFileSync, existsSync, unlinkSync, copyFileSync } from 'fs';
+import { createCleanup, createSendEvent } from '$lib/sse.server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BOT_DIR = resolve(__dirname, '..', '..', '..', '..', '..', '..', '..', '..');
-const GPU_DIR = resolve(BOT_DIR, 'grocery-bot-gpu');
-const ZIG_BOT_DIR = resolve(BOT_DIR, 'grocery-bot-zig');
+const BOT_DIR = resolve(__dirname, '..', '..', '..', '..', '..', '..', '..');
+const GPU_DIR = resolve(BOT_DIR, '..', 'grocery-bot-gpu');
+const ZIG_BOT_DIR = BOT_DIR;
+
+const GPU_PARAMS = {
+	easy:   { coldTime: 20,  warmTime: 15, coldOrd: 1, coldRef: 5,  warmRef: 2, maxStates: null,   plateau: 3 },
+	medium: { coldTime: 25,  warmTime: 20, coldOrd: 1, coldRef: 5,  warmRef: 3, maxStates: null,   plateau: 3 },
+	hard:   { coldTime: 45,  warmTime: 25, coldOrd: 3, coldRef: 5,  warmRef: 3, maxStates: 50000,  plateau: 8 },
+	expert: { coldTime: 45,  warmTime: 25, coldOrd: 1, coldRef: 3,  warmRef: 2, maxStates: 50000,  plateau: 8 },
+};
 
 export async function POST({ request }) {
 	const {
 		url,
 		timeBudget = 280,       // seconds total (~288s token window, leave margin)
 		postOptimizeTime = 30,  // post-opt for initial live game
-		gpuOptimizeTime = 45,   // time per offline GPU optimize pass (keep short to allow more iterations)
+		gpuOptimizeTime = 20,   // time per offline GPU optimize pass (keep short to allow more iterations)
 	} = await request.json();
 
 	if (!url) {
@@ -21,45 +29,25 @@ export async function POST({ request }) {
 	}
 
 	const encoder = new TextEncoder();
-	let currentProcess = null;
-	let closed = false;
-	let safetyTimeout = null;
-	let heartbeatInterval = null;
-
-	function cleanupShared(controller) {
-		if (closed) return;
-		closed = true;
-		if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-		if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
-		if (currentProcess && !currentProcess.killed) {
-			try { currentProcess.kill(); } catch (e) {}
-		}
-		try { controller?.close(); } catch (e) {}
-	}
+	const ctx = { closed: false, safetyTimeout: null, heartbeatInterval: null, process: null };
 
 	const stream = new ReadableStream({
 		start(controller) {
 			const pipelineStart = Date.now();
 			const MAX_RUNTIME = (timeBudget + 300) * 1000;
 
-			function cleanup() { cleanupShared(controller); }
+			const cleanup = createCleanup(ctx, controller);
+			const sendEvent = createSendEvent(ctx, controller, encoder);
 
-			safetyTimeout = setTimeout(() => {
+			ctx.safetyTimeout = setTimeout(() => {
 				sendEvent('error', { message: 'Pipeline safety timeout reached' });
 				cleanup();
 			}, MAX_RUNTIME);
 
-			heartbeatInterval = setInterval(() => {
-				if (closed) return;
-				try { controller.enqueue(encoder.encode(': ping\n\n')); } catch (e) {}
+			ctx.heartbeatInterval = setInterval(() => {
+				if (ctx.closed) return;
+				try { controller.enqueue(encoder.encode(': ping\n\n')); } catch (e) { /* stream closed by client */ }
 			}, 10000);
-
-			function sendEvent(type, data) {
-				if (closed) return;
-				try {
-					controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`));
-				} catch (e) {}
-			}
 
 			function elapsedSecs() {
 				return (Date.now() - pipelineStart) / 1000;
@@ -69,22 +57,10 @@ export async function POST({ request }) {
 				return Math.max(0, timeBudget - elapsedSecs());
 			}
 
-			// ── Find latest game log ─────────────────────────────────────
-			function findLatestLog(afterMs = 0) {
-				try {
-					const files = readdirSync(GPU_DIR)
-						.filter(f => f.startsWith('game_log_') && f.endsWith('.jsonl'))
-						.map(f => ({ name: f, mtime: statSync(resolve(GPU_DIR, f)).mtimeMs }))
-						.filter(f => f.mtime >= afterMs)
-						.sort((a, b) => b.mtime - a.mtime);
-					return files.length > 0 ? resolve(GPU_DIR, files[0].name) : null;
-				} catch (e) { return null; }
-			}
-
 			// ── Capture orders from game log (synchronous) ───────────────
 			function captureOrders(difficulty, iter) {
 				return new Promise((res) => {
-					const logPath = findLatestLog(pipelineStart);
+					const logPath = findNewestLog(GPU_DIR,pipelineStart);
 					if (!logPath || !difficulty) { res(0); return; }
 
 					sendEvent('log', { text: `[capture] Extracting orders from ${logPath.split(/[\\/]/).pop()}...`, _iter: iter });
@@ -128,9 +104,9 @@ export async function POST({ request }) {
 								if (w <= 22) return 'hard';
 								return 'expert';
 							}
-						} catch (e) {}
+						} catch (e) { /* ignore malformed JSON line */ }
 					}
-				} catch (e) {}
+				} catch (e) { /* log file may not exist yet */ }
 				return null;
 			}
 
@@ -162,13 +138,13 @@ export async function POST({ request }) {
 					}
 
 					const spawnMs = Date.now();
-					currentProcess = spawn(exe, [url], {
+					ctx.process = spawn(exe, [url], {
 						cwd: ZIG_BOT_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
 					let score = 0, difficulty = null;
 
-					currentProcess.stderr.on('data', (data) => {
+					ctx.process.stderr.on('data', (data) => {
 						for (const line of data.toString().split('\n')) {
 							if (!line.trim()) continue;
 							sendEvent('log', { text: `[zig] ${line.trim()}`, _iter: iter });
@@ -199,9 +175,9 @@ export async function POST({ request }) {
 						}
 					});
 
-					currentProcess.stdout.on('data', () => {});
+					ctx.process.stdout.on('data', () => {});
 
-					currentProcess.on('close', (code) => {
+					ctx.process.on('close', (code) => {
 						sendEvent('log', { text: `[zig] Process exited with code ${code}`, _iter: iter });
 
 						// Find the game log created by Zig bot
@@ -261,7 +237,7 @@ export async function POST({ request }) {
 
 						resolvePhase({ score, difficulty, logPath });
 					});
-					currentProcess.on('error', (err) => {
+					ctx.process.on('error', (err) => {
 						sendEvent('error', { message: `Zig bot failed: ${err.message}` });
 						resolvePhase({ score: 0, difficulty: null, logPath: null });
 					});
@@ -285,14 +261,14 @@ export async function POST({ request }) {
 					];
 					if (opts.preloadCapture) args.push('--preload-capture');
 
-					currentProcess = spawn('python', args, {
+					ctx.process = spawn('python', args, {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
 					let buf = '';
 					let score = 0, gameScore = 0, difficulty = null, orders = 0;
 
-					currentProcess.stdout.on('data', (data) => {
+					ctx.process.stdout.on('data', (data) => {
 						buf += data.toString();
 						const lines = buf.split('\n');
 						buf = lines.pop() || '';
@@ -312,20 +288,20 @@ export async function POST({ request }) {
 								if (type === 'init') difficulty = evt.difficulty;
 								if (type === 'round' && evt.orders) orders = evt.orders.length;
 								sendEvent(type, evt);
-							} catch (e) {}
+							} catch (e) { /* ignore malformed JSON output */ }
 						}
 					});
 
-					currentProcess.stderr.on('data', (data) => {
+					ctx.process.stderr.on('data', (data) => {
 						for (const line of data.toString().trim().split('\n')) {
 							if (line.trim()) sendEvent('log', { text: line.trim(), _iter: iter });
 						}
 					});
 
-					currentProcess.on('close', (code) => {
+					ctx.process.on('close', (code) => {
 						resolvePhase({ score, gameScore, difficulty, orders, exitCode: code });
 					});
-					currentProcess.on('error', (err) => {
+					ctx.process.on('error', (err) => {
 						sendEvent('error', { message: `Live play failed: ${err.message}` });
 						resolvePhase({ score: 0, gameScore: 0, difficulty: null, orders: 0, exitCode: 1 });
 					});
@@ -333,10 +309,12 @@ export async function POST({ request }) {
 			}
 
 			// ── Phase: Offline GPU optimize ──────────────────────────────
-			function runGpuOptimize(difficulty, iter, maxTime) {
+			function runGpuOptimize(difficulty, iter, maxTime, opts = {}) {
 				return new Promise((resolvePhase) => {
 					sendEvent('optimize_phase_start', {
 						_iter: iter, difficulty, max_time: maxTime,
+						warm_only: !!opts.warmOnly,
+						speed_bonus: opts.speedBonus || 0,
 						_elapsed: elapsedSecs(), _remaining: remaining(),
 					});
 
@@ -344,15 +322,20 @@ export async function POST({ request }) {
 						'-u', 'optimize_and_save.py', difficulty,
 						'--max-time', String(Math.floor(maxTime)),
 					];
+					if (opts.warmOnly) args.push('--warm-only');
+					if (opts.orderings) args.push('--orderings', String(opts.orderings));
+					if (opts.refineIters) args.push('--refine-iters', String(opts.refineIters));
+					if (opts.maxStates) args.push('--max-states', String(opts.maxStates));
+					if (opts.speedBonus) args.push('--speed-bonus', String(opts.speedBonus));
 
-					currentProcess = spawn('python', args, {
+					ctx.process = spawn('python', args, {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
 					let buf = '';
 					let score = 0, prevScore = 0;
 
-					currentProcess.stdout.on('data', (data) => {
+					ctx.process.stdout.on('data', (data) => {
 						buf += data.toString();
 						const lines = buf.split('\n');
 						buf = lines.pop() || '';
@@ -368,20 +351,20 @@ export async function POST({ request }) {
 									prevScore = evt.prev_score || 0;
 								}
 								sendEvent(evt.type, evt);
-							} catch (e) {}
+							} catch (e) { /* ignore malformed JSON output */ }
 						}
 					});
 
-					currentProcess.stderr.on('data', (data) => {
+					ctx.process.stderr.on('data', (data) => {
 						for (const line of data.toString().trim().split('\n')) {
 							if (line.trim()) sendEvent('log', { text: `[gpu] ${line.trim()}`, _iter: iter });
 						}
 					});
 
-					currentProcess.on('close', () => {
+					ctx.process.on('close', () => {
 						resolvePhase({ score, prevScore });
 					});
-					currentProcess.on('error', (err) => {
+					ctx.process.on('error', (err) => {
 						sendEvent('error', { message: `GPU optimize failed: ${err.message}` });
 						resolvePhase({ score: 0, prevScore: 0 });
 					});
@@ -399,7 +382,7 @@ export async function POST({ request }) {
 					const replayArgs = ['replay_solution.py', url, '--difficulty', difficulty];
 
 					const replayStartMs = Date.now();
-					currentProcess = spawn('python', replayArgs, {
+					ctx.process = spawn('python', replayArgs, {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
@@ -415,7 +398,7 @@ export async function POST({ request }) {
 
 					const pollInterval = setInterval(() => {
 						if (!pollLogFile) {
-							pollLogFile = findLatestLog(replayStartMs);
+							pollLogFile = findNewestLog(GPU_DIR,replayStartMs);
 							if (!pollLogFile) return;
 						}
 						try {
@@ -466,10 +449,10 @@ export async function POST({ request }) {
 									});
 								}
 							}
-						} catch (e) {}
+						} catch (e) { /* log file may not be readable yet */ }
 					}, 200);
 
-					currentProcess.stderr.on('data', (data) => {
+					ctx.process.stderr.on('data', (data) => {
 						stderrBuf += data.toString();
 						const lines = stderrBuf.split('\n');
 						stderrBuf = lines.pop() || '';
@@ -484,9 +467,9 @@ export async function POST({ request }) {
 						}
 					});
 
-					currentProcess.stdout.on('data', () => {});
+					ctx.process.stdout.on('data', () => {});
 
-					currentProcess.on('close', (code) => {
+					ctx.process.on('close', (code) => {
 						clearInterval(pollInterval);
 						// Final poll
 						if (pollLogFile) {
@@ -499,10 +482,10 @@ export async function POST({ request }) {
 										try {
 											const state = JSON.parse(line);
 											if (state.type === 'game_over') score = state.score || score;
-										} catch (e) {}
+										} catch (e) { /* ignore malformed JSON line */ }
 									}
 								}
-							} catch (e) {}
+							} catch (e) { /* log file may have been removed */ }
 						}
 						sendEvent('replay_phase_done', {
 							_iter: iter, score, exit_code: code,
@@ -510,12 +493,23 @@ export async function POST({ request }) {
 						});
 						resolvePhase({ score, logPath });
 					});
-					currentProcess.on('error', (err) => {
+					ctx.process.on('error', (err) => {
 						clearInterval(pollInterval);
 						sendEvent('error', { message: `Replay failed: ${err.message}` });
 						resolvePhase({ score: 0, logPath: null });
 					});
 				});
+			}
+
+			// ── Import game log to PostgreSQL (best-effort, fire-and-forget)
+			function importLogToDb(logPath, runType, iter) {
+				if (!logPath) return;
+				const importScript = resolve(BOT_DIR, 'replay', 'import_logs.py');
+				try {
+					spawn('python', [importScript, logPath, '--run-type', runType], { stdio: 'ignore' })
+						.on('error', () => {});
+					sendEvent('log', { text: `[db] Importing as ${runType}`, _iter: iter });
+				} catch (e) { /* best-effort */ }
 			}
 
 			// ── Main pipeline loop ───────────────────────────────────────
@@ -531,16 +525,13 @@ export async function POST({ request }) {
 				for (const diff of ["easy", "medium", "hard", "expert"]) {
 					for (const fname of ["best.json", "capture.json", "meta.json"]) {
 						const fpath = resolve(solDir, diff, fname);
-						try { if (existsSync(fpath)) unlinkSync(fpath); } catch (e) {}
+						try { if (existsSync(fpath)) unlinkSync(fpath); } catch (e) { /* file may already be deleted */ }
 					}
 				}
 
 				let bestScore = 0;
 				let difficulty = null;
 				let iterCount = 0;
-
-				// Game duration by difficulty (fixed estimates, not measured)
-				const GAME_TIMES = { easy: 20, medium: 30, hard: 120, expert: 120 };
 
 				// ── ITERATION 0: Zig bot for initial capture ────────────
 				// Zig bot has built-in anti-congestion and plays the full game.
@@ -550,6 +541,9 @@ export async function POST({ request }) {
 					const result = await runZigBot(0);
 					difficulty = result.difficulty;
 					if (result.score > bestScore) bestScore = result.score;
+
+					// Import Zig game log to PostgreSQL
+					if (result.logPath) importLogToDb(result.logPath, 'zig', 0);
 
 					// Capture orders from game log (log was copied to GPU_DIR)
 					const captured = await captureOrders(difficulty, 0);
@@ -569,12 +563,15 @@ export async function POST({ request }) {
 				}
 
 				// ── ITERATIONS 1+: GPU optimize → replay → capture ───────
-				// Optimize offline with all captured orders, then replay the exact
-				// plan. After the plan runs out, replay falls back to greedy which
-				// discovers new orders for the next iteration.
-				const gameTime = GAME_TIMES[difficulty] || 120;
-				const minIterBudget = gameTime + gpuOptimizeTime + 10;
-				while (!closed && remaining() > minIterBudget && difficulty) {
+				// Difficulty-aware: Hard/Expert get more time, orderings, and refine iters.
+				// Replays are ~3s (5ms × 300 rounds), not 120s games.
+				// Each cycle discovers 1-3 more orders → snowball effect.
+				const params = GPU_PARAMS[difficulty] || GPU_PARAMS.easy;
+				const minIterBudget = difficulty === 'expert' ? 30 : difficulty === 'hard' ? 30 : 20;
+				let lastImprovementIter = 0;
+				let replayFailed = false; // true if replay scored << expected
+
+				while (!ctx.closed && remaining() > minIterBudget && difficulty) {
 					const i = iterCount;
 					const timeLeft = remaining();
 
@@ -583,18 +580,39 @@ export async function POST({ request }) {
 						break;
 					}
 
+					// Plateau detection: stop if no improvement for N consecutive iterations
+					if (i - lastImprovementIter > params.plateau) {
+						sendEvent('iter_skip', {
+							iter: i, reason: 'score_plateau',
+							remaining: timeLeft, best_score: bestScore,
+							stale_iters: i - lastImprovementIter,
+						});
+						break;
+					}
+
 					sendEvent('iter_start', {
 						iter: i, phase: 'optimize_replay',
 						elapsed: elapsedSecs(), remaining: timeLeft,
 					});
 
-					// GPU optimize: use configured time, but leave room for replay + capture
-					const gpuTime = Math.min(gpuOptimizeTime, Math.max(10, timeLeft - gameTime - 10));
+					// GPU optimize: difficulty-aware time budget
+					const isCold = (i === 1);
+					const baseTime = isCold ? params.coldTime : params.warmTime;
+					const gpuTime = Math.min(baseTime, Math.max(10, timeLeft - 8));
 
 					// Phase A: Offline GPU optimize
-					const optResult = await runGpuOptimize(difficulty, i, gpuTime);
+					// Iter 1: cold-start; Iter 2+: warm-only refine
+					// Speed bonus decays per iteration: 50, 35, 24.5, ...
+					const speedBonus = 50 * Math.pow(0.7, i - 1);
+					const optResult = await runGpuOptimize(difficulty, i, gpuTime, {
+						warmOnly: !isCold,
+						orderings: isCold ? params.coldOrd : 1,
+						refineIters: isCold ? params.coldRef : params.warmRef,
+						maxStates: params.maxStates,
+						speedBonus,
+					});
 
-					if (closed || remaining() < gameTime + 5) {
+					if (ctx.closed || remaining() < 6) {
 						sendEvent('iter_done', {
 							iter: i, phase: 'optimize_only',
 							score: optResult.score, game_score: 0,
@@ -605,22 +623,48 @@ export async function POST({ request }) {
 						break;
 					}
 
-					// Phase B: Replay optimized solution with same URL
-					const replayResult = await runReplay(difficulty, i);
+					// Skip replay if previous replay failed catastrophically
+					let replayResult = { score: 0 };
+					let captured = 0;
+					if (!replayFailed) {
+						// Phase B: Replay optimized solution with same URL
+						replayResult = await runReplay(difficulty, i);
 
-					if (closed) break;
+						// Import replay log to PostgreSQL
+						if (replayResult.logPath) importLogToDb(replayResult.logPath, 'replay', i);
 
-					// Phase C: Capture new orders from replay
-					const captured = await captureOrders(difficulty, i);
+						if (ctx.closed) break;
+
+						// Detect replay failure: score < 30% of optimize score
+						if (optResult.score > 10 && replayResult.score < optResult.score * 0.3) {
+							replayFailed = true;
+							sendEvent('log', {
+								text: `[pipeline] Replay failed (${replayResult.score} vs expected ${optResult.score}), skipping future replays`,
+								_iter: i,
+							});
+						}
+
+						// Phase C: Capture new orders from replay
+						captured = await captureOrders(difficulty, i);
+					} else {
+						sendEvent('log', {
+							text: `[pipeline] Skipping replay (previous replay failed)`,
+							_iter: i,
+						});
+					}
 
 					const iterScore = Math.max(optResult.score, replayResult.score);
-					if (iterScore > bestScore) bestScore = iterScore;
+					if (iterScore > bestScore) {
+						bestScore = iterScore;
+						lastImprovementIter = i;
+					}
 
 					sendEvent('iter_done', {
 						iter: i, phase: 'optimize_replay',
 						score: iterScore, game_score: replayResult.score,
 						opt_score: optResult.score,
 						difficulty, captured_orders: captured,
+						replay_skipped: replayFailed && replayResult.score === 0,
 						elapsed: elapsedSecs(), remaining: remaining(),
 					});
 					sendEvent('iter_summary', {
@@ -629,6 +673,14 @@ export async function POST({ request }) {
 					});
 
 					iterCount++;
+				}
+
+				// ── Final replay if time remains and replay hasn't failed ──
+				if (!ctx.closed && remaining() > 5 && difficulty && !replayFailed) {
+					sendEvent('log', { text: `[pipeline] Final replay with ${remaining().toFixed(0)}s remaining` });
+					const finalReplay = await runReplay(difficulty, iterCount);
+					if (finalReplay.score > bestScore) bestScore = finalReplay.score;
+					await captureOrders(difficulty, iterCount);
 				}
 
 				sendEvent('pipeline_complete', {
@@ -642,7 +694,7 @@ export async function POST({ request }) {
 			})();
 		},
 		cancel() {
-			cleanupShared(null);
+			createCleanup(ctx, null)();
 		}
 	});
 

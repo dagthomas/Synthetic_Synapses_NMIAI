@@ -35,3 +35,42 @@ CREATE TABLE IF NOT EXISTS rounds (
 CREATE INDEX IF NOT EXISTS idx_rounds_run_id ON rounds(run_id);
 CREATE INDEX IF NOT EXISTS idx_runs_difficulty ON runs(difficulty);
 CREATE INDEX IF NOT EXISTS idx_runs_seed ON runs(seed);
+
+CREATE TABLE IF NOT EXISTS tokens (
+    id SERIAL PRIMARY KEY,
+    ws_url TEXT NOT NULL UNIQUE,
+    difficulty TEXT,
+    map_seed INTEGER,
+    token_raw TEXT,
+    label TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tokens_difficulty ON tokens(difficulty);
+CREATE INDEX IF NOT EXISTS idx_tokens_created_at ON tokens(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ws_sessions (
+    id SERIAL PRIMARY KEY,
+    token_id INTEGER REFERENCES tokens(id) ON DELETE SET NULL,
+    ws_url TEXT NOT NULL,
+    difficulty TEXT,
+    map_seed INTEGER,
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    ended_at TIMESTAMPTZ,
+    final_score INTEGER,
+    rounds_received INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'connecting'
+);
+
+CREATE TABLE IF NOT EXISTS ws_messages (
+    id SERIAL PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES ws_sessions(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    msg_type TEXT NOT NULL,
+    round_num INTEGER,
+    raw JSONB NOT NULL,
+    received_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ws_messages_session ON ws_messages(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_ws_sessions_token ON ws_sessions(token_id);

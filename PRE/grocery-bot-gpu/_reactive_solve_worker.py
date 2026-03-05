@@ -22,16 +22,14 @@ def main():
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # Redirect all output to a log file to avoid stdout/stderr buffer blocking
+    # Dedicated log handle — avoids reassigning global stderr/stdout
     log_path = result_path + '.log'
-    log_file = open(log_path, 'w', buffering=1)  # Line-buffered
-    sys.stderr = log_file
-    sys.stdout = log_file
+    _log_fh = open(log_path, 'w', buffering=1)  # Line-buffered
 
     t0 = time.time()
     try:
         print(f"Re-solving {difficulty} with {len(capture['orders'])} orders on {device}...",
-              flush=True)
+              file=_log_fh, flush=True)
 
         score, actions = solve_sequential(
             capture_data=capture,
@@ -43,16 +41,16 @@ def main():
         )
 
         elapsed = time.time() - t0
-        print(f"Re-solve done: score={score}, time={elapsed:.1f}s", flush=True)
+        print(f"Re-solve done: score={score}, time={elapsed:.1f}s", file=_log_fh, flush=True)
     except Exception as e:
         import traceback
-        print(f"WORKER ERROR: {e}", flush=True)
-        traceback.print_exc()
-        log_file.flush()
-        log_file.close()
+        print(f"WORKER ERROR: {e}", file=_log_fh, flush=True)
+        traceback.print_exc(file=_log_fh)
+        _log_fh.close()
         sys.exit(1)
-
-    log_file.close()
+    finally:
+        if not _log_fh.closed:
+            _log_fh.close()
 
     # Save result as JSON
     serializable = [[(int(a), int(i)) for a, i in round_acts] for round_acts in actions]

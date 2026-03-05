@@ -6,7 +6,7 @@ and the sim_server WebSocket, comparing scores.
 import asyncio
 import json
 import sys
-import subprocess
+import subprocess  # nosec B404
 import time
 import os
 
@@ -28,7 +28,7 @@ async def verify_vs_sim_server(seed, difficulty, action_log, port=9990):
     # Start sim_server
     sim_dir = os.path.join(os.path.dirname(__file__), '..', 'grocery-bot-zig')
     sim_script = os.path.join(sim_dir, 'sim_server.py')
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # nosec B603 B607
         [sys.executable, sim_script, str(port), difficulty, '--seed', str(seed)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -55,7 +55,11 @@ async def verify_vs_sim_server(seed, difficulty, action_log, port=9990):
             return data.get("score", 0), len(action_log)
     finally:
         proc.terminate()
-        proc.wait()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
 
 def verify_engine_standalone(seed, difficulty):

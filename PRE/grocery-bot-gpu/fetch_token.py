@@ -47,7 +47,7 @@ def fetch_token(difficulty='hard', headed=False, setup=False):
                 overlay.first.click()
                 time.sleep(0.5)
         except Exception:
-            pass
+            pass  # Overlay may not exist; safe to ignore
 
         # Click the difficulty button/card
         btns = page.get_by_role('button', name=re.compile(difficulty, re.IGNORECASE))
@@ -79,7 +79,7 @@ def fetch_token(difficulty='hard', headed=False, setup=False):
                 ctx.close()
                 return js_url
         except Exception:
-            pass
+            pass  # JS extraction is a fallback; continue to HTML parsing
 
         # Search page HTML for the token URL
         content = page.content()
@@ -105,7 +105,7 @@ def fetch_token(difficulty='hard', headed=False, setup=False):
                         ctx.close()
                         return m.group(0)
             except Exception:
-                pass
+                pass  # Element may be detached or hidden; skip to next
 
         ctx.close()
         return None

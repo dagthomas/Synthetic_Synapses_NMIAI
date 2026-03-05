@@ -18,8 +18,11 @@ Usage:
     python live_gpu_stream.py "wss://..." --no-refine
     python live_gpu_stream.py "wss://..." --cpu
 """
+from __future__ import annotations
+
 import argparse
 import asyncio
+import base64
 import copy
 import json
 import os
@@ -27,7 +30,8 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
+from urllib.parse import urlparse, parse_qs
 
 import websockets
 
@@ -38,9 +42,11 @@ from game_engine import (
     ACT_WAIT, ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT,
     ACT_PICKUP, ACT_DROPOFF, INV_CAP, MAX_ROUNDS, MAX_ORDER_SIZE,
     CELL_FLOOR, CELL_WALL, CELL_SHELF, CELL_DROPOFF, DX, DY,
+    MapState, CaptureData, Order,
 )
 from replay_solution import predict_full_sim, extract_goals, bfs_next_action, build_walkable
-from live_solver import detect_difficulty, ws_to_capture
+from configs import detect_difficulty
+from live_solver import ws_to_capture
 from gpu_sequential_solver import solve_sequential, refine_from_solution, solve_multi_restart
 from solution_store import save_solution, merge_capture, save_capture as store_capture, load_meta
 from precompute import PrecomputedTables
@@ -65,6 +71,21 @@ PR_PARAMS = {
 ACTION_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
 
 
+def decode_jwt_from_url(ws_url: str) -> dict | None:
+    """Extract and decode JWT payload from a wss:// game URL."""
+    try:
+        parsed = urlparse(ws_url)
+        qs = parse_qs(parsed.query)
+        token = qs.get('token', [None])[0]
+        if not token:
+            return None
+        payload_b64 = token.split('.')[1]
+        payload_b64 += '=' * (4 - len(payload_b64) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload_b64))
+    except Exception:
+        return None
+
+
 @dataclass
 class PlanState:
     score: int = 0
@@ -75,9 +96,11 @@ class PlanState:
 
 
 class AnytimeGPUStream:
-    def __init__(self, ws_url, save=False, max_states=None, no_refine=False, device='cuda',
-                 post_optimize_time=0, json_stream=False, preload_capture=False, record=False,
-                 pipeline_mode=False):
+    def __init__(self, ws_url: str, save: bool = False,
+                 max_states: int | None = None, no_refine: bool = False,
+                 device: str = 'cuda', post_optimize_time: int = 0,
+                 json_stream: bool = False, preload_capture: bool = False,
+                 record: bool = False, pipeline_mode: bool = False) -> None:
         self.ws_url = ws_url
         self.do_save = save
         self.pipeline_mode = pipeline_mode  # skip heavy offline GPU (pipeline handles it separately)
@@ -129,7 +152,7 @@ class AnytimeGPUStream:
 
     # ── JSON streaming (for SvelteKit SSE dashboard) ─────────────────────────
 
-    def _emit(self, event: dict):
+    def _emit(self, event: dict) -> None:
         """Emit a JSON event to stdout for SSE consumption (only in json_stream mode)."""
         if self.json_stream:
             import json as _json
@@ -137,7 +160,8 @@ class AnytimeGPUStream:
 
     # ── plan upgrade ──────────────────────────────────────────────────────────
 
-    def _update_plan(self, score, actions, expected_pos, goals, source, gen):
+    def _update_plan(self, score: int, actions: list, expected_pos: list | None,
+                     goals: dict | None, source: str, gen: int) -> bool:
         """Upgrade plan if score improved.
 
         Called from background threads. Resets round_offset on upgrade.
@@ -164,14 +188,14 @@ class AnytimeGPUStream:
                   file=sys.stderr)
             return False
 
-    def _capture_snapshot(self):
+    def _capture_snapshot(self) -> CaptureData | None:
         """Thread-safe deep copy of current capture."""
         with self._lock:
             if self._capture is None:
                 return None
             return copy.deepcopy(self._capture)
 
-    def _map_ref(self):
+    def _map_ref(self) -> MapState | None:
         """MapState reference (read-only, safe without lock)."""
         return self._map_state
 
@@ -601,11 +625,19 @@ class AnytimeGPUStream:
 
     # ── round 0 initialization ────────────────────────────────────────────────
 
-    def _init_round0(self, data):
+    def _init_round0(self, data: dict) -> None:
         """Initialize from round 0 WebSocket data. Starts background threads."""
         capture = ws_to_capture(data)
         self._difficulty = capture['difficulty']
         self._num_bots = capture['num_bots']
+
+        # Decode and store JWT payload (map_id, map_seed, etc.)
+        jwt_payload = decode_jwt_from_url(self.ws_url)
+        if jwt_payload:
+            capture['jwt'] = jwt_payload
+            print(f"  [jwt] map_id={jwt_payload.get('map_id')} "
+                  f"map_seed={jwt_payload.get('map_seed')} "
+                  f"exp={jwt_payload.get('exp')}", file=sys.stderr)
 
         # Track order IDs seen so far (ws_to_capture doesn't store ids)
         for i, order in enumerate(data.get('orders', [])):
@@ -730,7 +762,7 @@ class AnytimeGPUStream:
 
     # ── seed cracking ─────────────────────────────────────────────────────────
 
-    def _crack_seed_async(self, ws_data):
+    def _crack_seed_async(self, ws_data: dict) -> None:
         """Start seed cracking in a daemon thread from round-0 WS data."""
         orders = ws_data.get('orders', [])
         if len(orders) < 2:
@@ -767,7 +799,7 @@ class AnytimeGPUStream:
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
-    def _on_seed_cracked(self, seed):
+    def _on_seed_cracked(self, seed: int) -> None:
         """Called when seed is successfully cracked. Generates all 100 orders."""
         from game_engine import generate_all_orders
 
@@ -859,6 +891,7 @@ class AnytimeGPUStream:
                     exp_pos = predict_full_sim(combined_actions, cap_r, ms_r)
                     goals = extract_goals(combined_actions, ms_r, exp_pos)
                 except Exception as e:
+                    # Prediction sim failed; plan still usable without expected positions
                     exp_pos = None
                     goals = None
                 self._update_plan(score, combined_actions, exp_pos, goals,
@@ -871,7 +904,7 @@ class AnytimeGPUStream:
 
     # ── order tracking ────────────────────────────────────────────────────────
 
-    def _check_new_orders(self, data):
+    def _check_new_orders(self, data: dict) -> None:
         """Detect new orders in incoming data. Update capture and bump gen."""
         new_count = 0
         for order in data.get('orders', []):
@@ -902,7 +935,7 @@ class AnytimeGPUStream:
 
     # ── per-round GPU DP ──────────────────────────────────────────────────────
 
-    def _rebuild_pr_searcher(self):
+    def _rebuild_pr_searcher(self) -> None:
         """Build a fresh GPUBeamSearcher (no locked bots) from current capture.
 
         Called at round 0 and whenever new orders arrive. Fast because
@@ -951,8 +984,11 @@ class AnytimeGPUStream:
             import traceback
             traceback.print_exc(file=sys.stderr)
 
-    def _build_bot_gpu_state(self, bot, ws_data, device=None,
-                             locked_positions=None, locked_inventories=None):
+    def _build_bot_gpu_state(self, bot: dict, ws_data: dict,
+                             device: str | None = None,
+                             locked_positions: list[tuple[int, int]] | None = None,
+                             locked_inventories: list[list[int]] | None = None
+                             ) -> dict[str, Any] | None:
         """Convert WS bot data to GPU initial state dict for per-round DP.
 
         Args:
@@ -1140,6 +1176,7 @@ class AnytimeGPUStream:
                 try:
                     dist = int(tables.get_distance(bpos, drop_pos))
                 except Exception:
+                    # Table lookup can fail if position is outside precomputed grid; fall back to Manhattan
                     dist = abs(bpos[0] - drop_pos[0]) + abs(bpos[1] - drop_pos[1])
             else:
                 dist = abs(bpos[0] - drop_pos[0]) + abs(bpos[1] - drop_pos[1])
@@ -1367,7 +1404,7 @@ class AnytimeGPUStream:
             try:
                 return int(self._tables.get_distance(a, b))
             except Exception:
-                pass
+                pass  # Table lookup failed; fall back to Manhattan distance below
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
     def _build_aisle_blocked(self, my_pos, occupied):
@@ -2078,7 +2115,7 @@ class AnytimeGPUStream:
 
     # ── main async game loop ──────────────────────────────────────────────────
 
-    async def run(self):
+    async def run(self) -> int:
         """Connect to game server and play. Returns final score."""
         timestamp = int(time.time())
         log_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2091,11 +2128,48 @@ class AnytimeGPUStream:
 
         print(f"Connecting to {self.ws_url}", file=sys.stderr)
 
+        WS_CONNECT_TIMEOUT = 15
+        WS_RECV_TIMEOUT = 10
+        WS_SEND_TIMEOUT = 5
+
         try:
-            async with websockets.connect(self.ws_url) as ws:
+            ws = await asyncio.wait_for(
+                websockets.connect(self.ws_url),
+                timeout=WS_CONNECT_TIMEOUT
+            )
+            print(f"WebSocket connected", file=sys.stderr)
+            last_recv_time = time.time()
+            recv_count = 0
+        except asyncio.TimeoutError:
+            print(f"ERROR: WebSocket connection timed out after {WS_CONNECT_TIMEOUT}s", file=sys.stderr)
+            log_file.close()
+            return
+        except Exception as e:
+            print(f"ERROR: WebSocket connection failed: {e}", file=sys.stderr)
+            log_file.close()
+            return
+
+        try:
+            async with ws:
                 game_over = False
                 while not game_over:
-                    message = await ws.recv()
+                    try:
+                        message = await asyncio.wait_for(ws.recv(), timeout=WS_RECV_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        elapsed_since = time.time() - last_recv_time
+                        print(f"WARNING: No message for {elapsed_since:.1f}s (recv_count={recv_count})",
+                              file=sys.stderr)
+                        if elapsed_since > 30:
+                            print(f"ERROR: WebSocket stalled for {elapsed_since:.1f}s, aborting",
+                                  file=sys.stderr)
+                            break
+                        continue
+                    except websockets.exceptions.ConnectionClosed as e:
+                        print(f"WebSocket closed: {e} (recv_count={recv_count})", file=sys.stderr)
+                        break
+
+                    recv_count += 1
+                    last_recv_time = time.time()
                     data = json.loads(message)
 
                     log_file.write(json.dumps(data) + '\n')
@@ -2221,7 +2295,13 @@ class AnytimeGPUStream:
                     log_file.write(json.dumps(response) + '\n')
                     log_file.flush()
 
-                    await ws.send(json.dumps(response))
+                    try:
+                        await asyncio.wait_for(ws.send(json.dumps(response)), timeout=WS_SEND_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        print(f"WARNING: WebSocket send timed out at R{rnd}", file=sys.stderr)
+                    except websockets.exceptions.ConnectionClosed as e:
+                        print(f"WebSocket closed during send at R{rnd}: {e}", file=sys.stderr)
+                        game_over = True
 
         except websockets.exceptions.ConnectionClosed as e:
             print(f"Connection closed: {e}", file=sys.stderr)
@@ -2236,13 +2316,13 @@ class AnytimeGPUStream:
         # Import game log to PostgreSQL (controlled by --record flag)
         if self.do_record:
             try:
-                import subprocess as _subprocess
+                import subprocess as _subprocess  # nosec B404
                 _import_script = os.path.normpath(os.path.join(
                     os.path.dirname(os.path.abspath(__file__)),
                     '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
                 ))
                 if os.path.exists(_import_script):
-                    _subprocess.Popen(
+                    _subprocess.Popen(  # nosec B603 B607
                         ['python', _import_script, log_path, '--run-type', 'live'],
                         stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
                     )
@@ -2318,7 +2398,7 @@ class AnytimeGPUStream:
         return final_score
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description='Anytime online GPU stream solver for Grocery Bot')
     parser.add_argument('ws_url', help='WebSocket URL')

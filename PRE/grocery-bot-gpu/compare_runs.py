@@ -19,8 +19,6 @@ import sys
 import os
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import websockets
 
 ACTION_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']

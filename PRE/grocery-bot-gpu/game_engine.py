@@ -2,10 +2,39 @@
 
 Replicates sim_server.py logic exactly, with integer-based state for GPU readiness.
 """
+from __future__ import annotations
+
 import random
 import copy
+from typing import Any, Callable, List, TypedDict
+
 import numpy as np
 from configs import CONFIGS, ALL_TYPES, MAX_ROUNDS, INV_CAP, MAX_ORDER_SIZE
+
+
+class CaptureOrder(TypedDict):
+    """Schema for a single captured order."""
+    items_required: List[str]
+
+
+class CaptureData(TypedDict, total=False):
+    """Schema for the capture_data interchange dict.
+
+    Required keys are always present. Optional keys may be omitted
+    depending on the capture source (live game, game log, or seed-based).
+    """
+    # Required
+    difficulty: str
+    grid: Any  # {"width": int, "height": int, "walls": list[list[int]]}
+    items: List[Any]  # [{"type": str, "x": int, "y": int}, ...]
+    drop_off: Any  # {"x": int, "y": int} or [x, y]
+    num_bots: int
+    orders: List[CaptureOrder]
+    # Optional
+    seed: int
+    spawn: Any  # {"x": int, "y": int} or [x, y]
+    captured_at: str
+    probe_score: int
 
 
 # Action encoding
@@ -44,21 +73,21 @@ class MapState:
 class Order:
     __slots__ = ['id', 'required', 'delivered', 'complete', 'status', '_required_names']
 
-    def __init__(self, order_id, required, status='active'):
+    def __init__(self, order_id: int, required: list[int], status: str = 'active') -> None:
         self.id = order_id
         self.required = np.array(required, dtype=np.int8)  # item type IDs
         self.delivered = np.zeros(len(required), dtype=np.int8)  # 0=not delivered, 1=delivered
         self.complete = False
         self.status = status  # 'active' or 'preview'
-        self._required_names = None
+        self._required_names: list[str] | None = None
 
-    def needs(self):
+    def needs(self) -> list[int]:
         """Return list of item type IDs still needed."""
         req = self.required
         delv = self.delivered
         return [int(req[i]) for i in range(len(req)) if delv[i] == 0]
 
-    def needs_type(self, type_id):
+    def needs_type(self, type_id: int) -> bool:
         """Check if this order still needs the given type."""
         req = self.required
         delv = self.delivered
@@ -67,7 +96,7 @@ class Order:
                 return True
         return False
 
-    def deliver_type(self, type_id):
+    def deliver_type(self, type_id: int) -> bool:
         """Deliver one item of given type. Returns True if accepted."""
         for i, r in enumerate(self.required):
             if r == type_id and self.delivered[i] == 0:
@@ -75,10 +104,10 @@ class Order:
                 return True
         return False
 
-    def is_complete(self):
+    def is_complete(self) -> bool:
         return all(self.delivered)
 
-    def copy(self):
+    def copy(self) -> Order:
         o = Order.__new__(Order)
         o.id = self.id
         o.required = self.required.copy()
@@ -98,19 +127,19 @@ class GameState:
         'map_state',  # reference to static map (not copied)
     ]
 
-    def __init__(self, map_state):
+    def __init__(self, map_state: MapState) -> None:
         self.map_state = map_state
         self.round = 0
         self.score = 0
         self.items_delivered = 0
         self.orders_completed = 0
-        self.bot_positions = None    # int16[N_bots, 2]
-        self.bot_inventories = None  # int8[N_bots, INV_CAP], -1 = empty
-        self.orders = []             # list of Order objects
+        self.bot_positions: np.ndarray | None = None    # int16[N_bots, 2]
+        self.bot_inventories: np.ndarray | None = None  # int8[N_bots, INV_CAP], -1 = empty
+        self.orders: list[Order] = []             # list of Order objects
         self.active_idx = 0
         self.next_order_idx = 0
 
-    def copy(self):
+    def copy(self) -> GameState:
         s = GameState.__new__(GameState)
         s.map_state = self.map_state  # shared reference
         s.round = self.round
@@ -124,19 +153,19 @@ class GameState:
         s.next_order_idx = self.next_order_idx
         return s
 
-    def get_active_order(self):
+    def get_active_order(self) -> Order | None:
         for o in self.orders:
             if not o.complete and o.status == 'active':
                 return o
         return None
 
-    def get_preview_order(self):
+    def get_preview_order(self) -> Order | None:
         for o in self.orders:
             if not o.complete and o.status == 'preview':
                 return o
         return None
 
-    def bot_inv_list(self, bot_id):
+    def bot_inv_list(self, bot_id: int) -> list[int]:
         """Get list of item type IDs in bot inventory (excluding -1 empties)."""
         inv = self.bot_inventories[bot_id]
         # Unrolled for INV_CAP=3 — avoids list comprehension overhead
@@ -146,13 +175,13 @@ class GameState:
         if inv[2] >= 0: result.append(int(inv[2]))
         return result
 
-    def bot_inv_count(self, bot_id):
+    def bot_inv_count(self, bot_id: int) -> int:
         """Count items in bot inventory."""
         inv = self.bot_inventories[bot_id]
         # Unrolled for INV_CAP=3 — avoids numpy.sum overhead
         return (1 if inv[0] >= 0 else 0) + (1 if inv[1] >= 0 else 0) + (1 if inv[2] >= 0 else 0)
 
-    def bot_inv_add(self, bot_id, type_id):
+    def bot_inv_add(self, bot_id: int, type_id: int) -> bool:
         """Add item to bot inventory. Returns True if successful."""
         for i in range(INV_CAP):
             if self.bot_inventories[bot_id, i] < 0:
@@ -160,8 +189,8 @@ class GameState:
                 return True
         return False
 
-    def bot_inv_remove_matching(self, bot_id, order):
-        """Remove items matching order needs, deliver them. Returns (delivered_count, remaining_inv)."""
+    def bot_inv_remove_matching(self, bot_id: int, order: Order) -> int:
+        """Remove items matching order needs, deliver them. Returns delivered count."""
         delivered = 0
         new_inv = []
         for i in range(INV_CAP):
@@ -179,7 +208,7 @@ class GameState:
         return delivered
 
 
-def build_map(difficulty):
+def build_map(difficulty: str) -> MapState:
     """Build static map state from difficulty config. Returns MapState."""
     cfg = CONFIGS[difficulty]
     w, h = cfg['w'], cfg['h']
@@ -298,7 +327,7 @@ def generate_order_from_rng(rng, order_id, item_type_names, order_size, status, 
     return required
 
 
-def generate_all_orders(seed, map_state, difficulty, count=100):
+def generate_all_orders(seed: int, map_state: MapState, difficulty: str, count: int = 100) -> list[Order]:
     """Pre-generate ALL orders using the same RNG sequence as sim_server.py.
 
     The RNG is seeded with `seed` and then generates orders in the exact same
@@ -336,7 +365,7 @@ def generate_all_orders(seed, map_state, difficulty, count=100):
     return orders
 
 
-def init_game(seed, difficulty, num_orders=100):
+def init_game(seed: int, difficulty: str, num_orders: int = 100) -> tuple[GameState, list[Order]]:
     """Initialize a game. Returns (GameState, all_orders)."""
     map_state = build_map(difficulty)
     all_orders = generate_all_orders(seed, map_state, difficulty, num_orders)
@@ -361,7 +390,7 @@ def init_game(seed, difficulty, num_orders=100):
     return state, all_orders
 
 
-def step(state, actions, all_orders):
+def step(state: GameState, actions: list[tuple[int, int]], all_orders: list[Order]) -> int:
     """Apply one round of actions to state. Mutates state in-place.
 
     actions: list of (action_type, item_idx) tuples per bot.
@@ -463,7 +492,12 @@ def step(state, actions, all_orders):
     return score_delta
 
 
-def simulate_game(seed, difficulty, action_fn, verbose=False):
+def simulate_game(
+    seed: int,
+    difficulty: str,
+    action_fn: Callable[[GameState, list[Order], int], list[tuple[int, int]]],
+    verbose: bool = False,
+) -> tuple[int, list[list[tuple[int, int]]]]:
     """Run a full game with the given action function.
 
     action_fn(state, all_orders, round_num) -> list of (action_type, item_idx) per bot
@@ -488,7 +522,7 @@ def simulate_game(seed, difficulty, action_fn, verbose=False):
     return state.score, action_log
 
 
-def state_to_ws_format(state, all_orders):
+def state_to_ws_format(state: GameState, all_orders: list[Order]) -> dict[str, Any]:
     """Convert internal state to the WebSocket JSON format for replay client compatibility."""
     ms = state.map_state
     wall_list = []
@@ -549,7 +583,7 @@ def state_to_ws_format(state, all_orders):
     }
 
 
-def build_map_from_capture(capture_data):
+def build_map_from_capture(capture_data: dict[str, Any]) -> MapState:
     """Build MapState from captured server data (real item positions/types)."""
     width = capture_data['grid']['width']
     height = capture_data['grid']['height']
@@ -630,7 +664,7 @@ def build_map_from_capture(capture_data):
     return ms
 
 
-def init_game_from_capture(capture_data, num_orders=100):
+def init_game_from_capture(capture_data: dict[str, Any], num_orders: int = 100) -> tuple[GameState, list[Order]]:
     """Initialize a game from captured server state.
 
     Uses captured orders first, then appends random filler orders
@@ -686,7 +720,7 @@ def init_game_from_capture(capture_data, num_orders=100):
     return state, all_orders
 
 
-def actions_to_ws_format(actions, map_state):
+def actions_to_ws_format(actions: list[tuple[int, int]], map_state: MapState) -> list[dict[str, Any]]:
     """Convert internal action tuples to WebSocket JSON format."""
     ws_actions = []
     action_names = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
@@ -698,3 +732,18 @@ def actions_to_ws_format(actions, map_state):
             a['action'] = 'wait'  # Invalid item index → wait instead of crash
         ws_actions.append(a)
     return ws_actions
+
+
+def make_game_factory(capture_data: dict[str, Any], num_orders: int | None = None) -> Callable[[], tuple[GameState, list[Order]]]:
+    """Create a game factory closure from capture data.
+
+    Returns a callable that creates a fresh GameState each time.
+    Use instead of defining ``def game_factory(): return init_game_from_capture(...)``
+    in every orchestrator script.
+    """
+    def factory():
+        kwargs = {}
+        if num_orders is not None:
+            kwargs['num_orders'] = num_orders
+        return init_game_from_capture(capture_data, **kwargs)
+    return factory

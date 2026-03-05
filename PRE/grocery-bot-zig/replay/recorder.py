@@ -9,17 +9,18 @@ Usage:
     python recorder.py expert --seeds 40
 
     # Custom port and DB
-    python recorder.py hard --seeds 10 --port 9870 --db postgres://grocery:grocery123@localhost:5433/grocery_bot
+    python recorder.py hard --seeds 10 --port 9870 --db "$GROCERY_DB_URL"
 """
 import asyncio
 import json
 import os
 import random
-import subprocess
+import subprocess  # nosec B404
 import sys
 import time
 
 import psycopg2
+from psycopg2.extras import execute_values
 import websockets
 
 # Add parent dir to path for sim_server imports
@@ -30,12 +31,12 @@ from sim_server import (
 )
 
 BOT_PATH = os.path.join(os.path.dirname(__file__), "..", "zig-out", "bin", "grocery-bot.exe")
-DEFAULT_DB = "postgres://grocery:grocery123@localhost:5433/grocery_bot"
+DEFAULT_DB = os.environ.get("GROCERY_DB_URL", "postgres://grocery@localhost:5433/grocery_bot")
 
 
 async def run_game_recorded(websocket, cfg, seed):
     """Run a game and return full recording data."""
-    random.seed(seed)
+    random.seed(seed)  # nosec B311
     w, h, walls, shelves, drop_off, spawn, items, item_types = build_map(cfg)
     num_bots = cfg["bots"]
     order_size = cfg["order_size"]
@@ -273,18 +274,16 @@ def save_to_db(db_url, difficulty, record):
         run_id = cur.fetchone()[0]
 
         # Batch insert rounds
-        values = []
-        for r in record["rounds"]:
-            values.append(cur.mogrify(
-                "(%s, %s, %s, %s, %s, %s, %s)",
+        if record["rounds"]:
+            round_tuples = [
                 (run_id, r["round"], json.dumps(r["bots"]), json.dumps(r["orders"]),
                  json.dumps(r["actions"]), r["score"], json.dumps(r["events"]))
-            ).decode())
-
-        if values:
-            cur.execute("""
+                for r in record["rounds"]
+            ]
+            execute_values(cur, """
                 INSERT INTO rounds (run_id, round_number, bots, orders, actions, score, events)
-                VALUES """ + ",".join(values))
+                VALUES %s
+            """, round_tuples, page_size=100)
 
         conn.commit()
         return run_id
@@ -302,7 +301,7 @@ async def record_single(port, difficulty, seed, db_url):
         try:
             result["data"] = await run_game_recorded(ws, cfg, seed)
         except websockets.exceptions.ConnectionClosed:
-            pass
+            pass  # Bot disconnected after game ended; recording is already captured
         finally:
             done.set()
 
@@ -310,14 +309,18 @@ async def record_single(port, difficulty, seed, db_url):
 
     # Start the bot
     bot_url = f"ws://localhost:{port}"
-    proc = await asyncio.create_subprocess_exec(
+    proc = await asyncio.create_subprocess_exec(  # nosec B603 B607
         BOT_PATH, bot_url,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
 
     await done.wait()
-    await proc.wait()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=300)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
     server.close()
     await server.wait_closed()
 

@@ -10,6 +10,8 @@ Two replay modes:
 Usage:
     python replay_solution.py <wss://...token> [--difficulty auto]
 """
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -23,18 +25,20 @@ from game_engine import (build_map_from_capture, actions_to_ws_format,
                          ACT_WAIT, ACT_MOVE_UP, ACT_MOVE_DOWN,
                          ACT_MOVE_LEFT, ACT_MOVE_RIGHT, ACT_PICKUP, ACT_DROPOFF,
                          step, init_game_from_capture, DX, DY,
-                         CELL_FLOOR, CELL_DROPOFF, INV_CAP)
-from live_solver import detect_difficulty, ws_to_capture
+                         CELL_FLOOR, CELL_DROPOFF, INV_CAP,
+                         MapState, CaptureData)
+from configs import detect_difficulty
+from live_solver import ws_to_capture
 
-SEND_DELAY = 0.005  # 5ms delay — fast enough to avoid missed rounds, enough to prevent server racing
+SEND_DELAY = 0.0  # Zero delay — cached responses are pre-built, no computation in hot loop
 
 
-def predict_full_sim(actions_list, capture, map_state):
-    """Simulate full game from capture to predict positions + game state per round.
+def predict_full_sim(actions_list: list[list[tuple[int, int]]],
+                     capture: CaptureData, map_state: MapState) -> list[list[tuple[int, int]]]:
+    """Simulate full game from capture to predict positions per round.
 
     Returns:
         positions: list of [(bx, by), ...] per round (before actions applied)
-        game_states: GameState snapshots per round (for order/inventory tracking)
     """
     gs, all_orders = init_game_from_capture(capture)
     positions = []
@@ -49,7 +53,8 @@ def predict_full_sim(actions_list, capture, map_state):
     return positions
 
 
-def extract_goals(actions_list, map_state, expected_positions):
+def extract_goals(actions_list: list[list[tuple[int, int]]], map_state: MapState,
+                  expected_positions: list[list[tuple[int, int]]]) -> dict[int, list[tuple]]:
     """Extract high-level goal sequence per bot from DP action plan.
 
     A goal is a PICKUP or DROPOFF action. Between goals, the bot is navigating.
@@ -79,7 +84,10 @@ def extract_goals(actions_list, map_state, expected_positions):
     return bot_goals
 
 
-def bfs_next_action(start, goal, walkable, occupied, map_state):
+def bfs_next_action(start: tuple[int, int], goal: tuple[int, int],
+                    walkable: set[tuple[int, int]],
+                    occupied: set[tuple[int, int]],
+                    map_state: MapState) -> int:
     """BFS from start toward goal, avoiding occupied cells. Returns action constant."""
     if start == goal:
         return ACT_WAIT
@@ -131,7 +139,7 @@ def bfs_next_action(start, goal, walkable, occupied, map_state):
     return best_act
 
 
-def build_walkable(map_state):
+def build_walkable(map_state: MapState) -> set[tuple[int, int]]:
     """Build set of walkable cells from map grid."""
     walkable = set()
     for y in range(map_state.height):
@@ -183,8 +191,59 @@ def _find_nearest_item(bx, by, map_state, walkable, exclude_types=None):
 _ACT_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
 
 
-def greedy_action(bot, data, map_state, walkable, live_bots):
-    """Greedy fallback: pick needed items, deliver to dropoff. Used after DP plan exhausted."""
+def find_dp_last_meaningful_round(actions: list) -> int:
+    """Find the last round where any bot does a PICKUP or DROPOFF.
+
+    After this round, the DP plan has no more scoring events and bots should
+    switch to greedy mode to continue scoring. We look for pickup/dropoff
+    specifically (not just any move) because movement after the last scoring
+    action is wasted effort — greedy would be more productive.
+    """
+    last_meaningful = -1
+    for rnd in range(len(actions)):
+        for act, item_idx in actions[rnd]:
+            if act == ACT_PICKUP or act == ACT_DROPOFF:
+                last_meaningful = rnd
+                break
+    return last_meaningful
+
+
+def build_cached_responses(actions: list, map_state: MapState) -> list[str]:
+    """Pre-build all WS response JSON strings from DP actions.
+
+    Returns list of JSON strings, one per round. Sent directly via ws.send()
+    with zero computation in the hot loop.
+    """
+    num_rounds = len(actions)
+    num_bots = len(actions[0]) if actions else 0
+    cached = []
+
+    for rnd in range(num_rounds):
+        ws_actions = []
+        for bid in range(num_bots):
+            act, item_idx = actions[rnd][bid]
+            a = {'bot': bid, 'action': _ACT_NAMES[act]}
+            if act == ACT_PICKUP and 0 <= item_idx < len(map_state.items):
+                a['item_id'] = map_state.items[item_idx]['id']
+            elif act == ACT_PICKUP:
+                a['action'] = 'wait'  # invalid item index -> wait
+            ws_actions.append(a)
+        cached.append(json.dumps({"actions": ws_actions}))
+
+    return cached
+
+
+def greedy_action(bot: dict, data: dict, map_state: MapState,
+                  walkable: set[tuple[int, int]], live_bots: list[dict],
+                  claimed_items: dict | None = None) -> dict:
+    """Greedy fallback: pick needed items, deliver to dropoff. Used after DP plan exhausted.
+
+    Args:
+        claimed_items: Optional dict mapping item_idx -> bot_id. Bots skip items
+            claimed by other bots (avoids all bots targeting same item).
+            Caller should pass a shared dict across all bots in the same round
+            and update it with this bot's target after calling.
+    """
     bid = bot['id']
     bx, by = bot['position']
     bpos = (bx, by)
@@ -200,9 +259,15 @@ def greedy_action(bot, data, map_state, walkable, live_bots):
             active_order = order
             break
     if active_order:
-        delivered = active_order.get('items_delivered', [])
-        for i, item_type in enumerate(active_order.get('items_required', [])):
-            if i >= len(delivered) or not delivered[i]:
+        # items_delivered is a list of type names already delivered
+        delivered_counts = {}
+        for t in active_order.get('items_delivered', []):
+            delivered_counts[t] = delivered_counts.get(t, 0) + 1
+        for item_type in active_order.get('items_required', []):
+            remaining = delivered_counts.get(item_type, 0)
+            if remaining > 0:
+                delivered_counts[item_type] = remaining - 1
+            else:
                 needed_types.add(item_type)
 
     # Also consider preview order items for pre-fetching
@@ -220,8 +285,6 @@ def greedy_action(bot, data, map_state, walkable, live_bots):
                 inv_types.append(it['type'])
                 break
 
-    all_target_types = needed_types | preview_types
-
     # 1. At dropoff with ANY items -> always drop off (even non-matching — frees inventory,
     #    and items might match a future order via auto-delivery)
     if bpos == drop_off and len(inv) > 0:
@@ -236,30 +299,39 @@ def greedy_action(bot, data, map_state, walkable, live_bots):
                 return {'bot': bid, 'action': 'drop_off'}
             return {'bot': bid, 'action': _ACT_NAMES[nav]}
 
-    # 3. Find nearest needed/preview item to pick up
+    # 3. Find nearest needed/preview item to pick up (skip items claimed by other bots)
     if len(inv) < INV_CAP:
         target_types = needed_types if needed_types else preview_types
         if target_types:
             best_item = None
+            best_item_idx = -1
             best_dist = 9999
             for idx, it in enumerate(map_state.items):
-                if it['type'] in target_types:
-                    adj_cells = map_state.item_adjacencies.get(idx, [])
-                    if not adj_cells:
-                        ix, iy = it['position']
-                        for ddx, ddy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
-                            nx, ny = ix + ddx, iy + ddy
-                            if (nx, ny) in walkable:
-                                adj_cells.append((nx, ny))
-                    for adj in adj_cells:
-                        d = abs(adj[0] - bx) + abs(adj[1] - by)
-                        if d < best_dist:
-                            best_dist = d
-                            best_item = (it, adj)
+                if it['type'] not in target_types:
+                    continue
+                # Skip items already claimed by another bot this round
+                if claimed_items and idx in claimed_items and claimed_items[idx] != bid:
+                    continue
+                adj_cells = map_state.item_adjacencies.get(idx, [])
+                if not adj_cells:
+                    ix, iy = it['position']
+                    for ddx, ddy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+                        nx, ny = ix + ddx, iy + ddy
+                        if (nx, ny) in walkable:
+                            adj_cells.append((nx, ny))
+                for adj in adj_cells:
+                    d = abs(adj[0] - bx) + abs(adj[1] - by)
+                    if d < best_dist:
+                        best_dist = d
+                        best_item = (it, adj)
+                        best_item_idx = idx
 
             if best_item:
                 item, adj_pos = best_item
                 adj_pos = tuple(adj_pos)
+                # Claim this item for this bot
+                if claimed_items is not None and best_item_idx >= 0:
+                    claimed_items[best_item_idx] = bid
                 if bpos == adj_pos:
                     return {'bot': bid, 'action': 'pick_up', 'item_id': item['id']}
                 else:
@@ -295,7 +367,8 @@ def greedy_action(bot, data, map_state, walkable, live_bots):
     return {'bot': bid, 'action': 'wait'}
 
 
-async def replay_best(ws_url, difficulty=None, log_dir=None):
+async def replay_best(ws_url: str, difficulty: str | None = None,
+                      log_dir: str | None = None) -> int:
     """Replay saved best solution with adaptive desync correction."""
     import websockets
 
@@ -306,30 +379,117 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
     log_path = os.path.join(log_dir, f'game_log_{timestamp}.jsonl')
     log_file = open(log_path, 'w')
 
-    print(f"Connecting to server...", file=sys.stderr)
-
+    # ── Pre-compute BEFORE connecting (avoids server timeout at R0) ────
+    # For expert (10 bots), predict_full_sim takes ~10s inside the WS loop,
+    # causing the server to advance 5+ rounds with WAIT actions.
     actions = None
     map_state = None
-    final_score = 0
     expected_positions = None
     bot_goals = None
-    bot_goal_idx = None  # per-bot: which goal index we are working toward
     walkable = None
+    capture = None
+    meta = None
+    num_bots = 0
+
+    if difficulty and difficulty != 'auto':
+        actions = load_solution(difficulty)
+        capture = load_capture(difficulty)
+        meta = load_meta(difficulty)
+
+        if actions is None:
+            print(f"ERROR: No solution found for {difficulty}", file=sys.stderr)
+
+        if capture:
+            map_state = build_map_from_capture(capture)
+            walkable = build_walkable(map_state)
+
+            if meta:
+                print(f"Replaying {difficulty}: expected_score={meta.get('score', '?')} "
+                      f"optimizations={meta.get('optimizations_run', 0)}", file=sys.stderr)
+
+            if actions:
+                try:
+                    t0 = time.time()
+                    expected_positions = predict_full_sim(actions, capture, map_state)
+                    bot_goals = extract_goals(actions, map_state, expected_positions)
+                    num_bots = len(actions[0]) if actions else 0
+                    dp_last_meaningful = find_dp_last_meaningful_round(actions)
+                    for bid in range(num_bots):
+                        print(f"  Bot {bid}: {len(bot_goals[bid])} goals "
+                              f"(pickups+dropoffs)", file=sys.stderr)
+                    print(f"  DP plan ends at round {dp_last_meaningful} "
+                          f"(greedy after)", file=sys.stderr)
+                    print(f"  Pre-compute done in {time.time() - t0:.1f}s", file=sys.stderr)
+                except Exception as e:
+                    print(f"  Warning: Could not pre-compute goals: {e}", file=sys.stderr)
+                    expected_positions = None
+                    bot_goals = None
+
+    print(f"Connecting to server...", file=sys.stderr)
+
+    final_score = 0
+    bot_goal_idx = None
     desync_count = 0
-    desync_rounds = 0  # rounds with at least one desynced bot
+    desync_rounds = 0
     synced_rounds = 0
-    round_offset = 0  # Track cumulative round shift (genuine missed rounds only)
-    last_round_synced = True  # Only detect missed rounds when transitioning from synced
-    bot_consecutive_desync = {}  # bid -> consecutive desynced rounds (for greedy fallback)
-    MAX_DESYNC_BEFORE_GREEDY = 8  # Fall back to greedy after this many consecutive desyncs
+    round_offset = 0
+    last_round_synced = True
+    bot_consecutive_desync = {}
+    MAX_DESYNC_BEFORE_GREEDY = 1  # Switch to greedy immediately — wrong DP actions create dead inventory
     seen_order_ids = set()
     all_orders_captured = []
-    bot_prev_inv = {}       # bid -> list of item types in inventory last round
-    bot_prev_score = 0      # score last round (for delivery detection)
-    greedy_mode_logged = False  # log once when switching to greedy
+    bot_prev_inv = {}
+    bot_prev_score = 0
+    greedy_mode_logged = False
+    greedy_after_dp_logged = False
+    cached_responses = None  # Pre-built JSON strings for zero-delay sending
+    dp_last_meaningful = -1  # Last round with non-WAIT DP action; greedy after this (computed later)
 
-    async with websockets.connect(ws_url) as ws:
-        async for message in ws:
+    WS_CONNECT_TIMEOUT = 15  # seconds to establish connection
+    WS_RECV_TIMEOUT = 10     # seconds to wait for each message (server has 2s round timeout)
+    WS_SEND_TIMEOUT = 5      # seconds to send a message
+
+    try:
+        ws = await asyncio.wait_for(
+            websockets.connect(ws_url),
+            timeout=WS_CONNECT_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        print(f"ERROR: WebSocket connection timed out after {WS_CONNECT_TIMEOUT}s", file=sys.stderr)
+        log_file.close()
+        return 0
+    except Exception as e:
+        print(f"ERROR: WebSocket connection failed: {e}", file=sys.stderr)
+        log_file.close()
+        return 0
+
+    print(f"WebSocket connected", file=sys.stderr)
+    ws_start = time.time()
+    recv_count = 0
+    last_recv = time.time()
+
+    try:
+      async with ws:
+        while True:
+            try:
+                message = await asyncio.wait_for(ws.recv(), timeout=WS_RECV_TIMEOUT)
+            except asyncio.TimeoutError:
+                elapsed_since = time.time() - last_recv
+                print(f"WARNING: No message for {elapsed_since:.1f}s (recv_count={recv_count}, "
+                      f"score={final_score})", file=sys.stderr)
+                if elapsed_since > 30:
+                    print(f"ERROR: WebSocket stalled for {elapsed_since:.1f}s, aborting", file=sys.stderr)
+                    break
+                continue
+            except websockets.exceptions.ConnectionClosed as e:
+                print(f"WebSocket closed: {e} (recv_count={recv_count})", file=sys.stderr)
+                break
+            except Exception as e:
+                print(f"WebSocket recv error: {e}", file=sys.stderr)
+                break
+
+            recv_count += 1
+            last_recv = time.time()
             data = json.loads(message)
 
             log_file.write(json.dumps(data) + '\n')
@@ -360,26 +520,27 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
 
             if rnd == 0:
                 num_bots = len(data['bots'])
-                if difficulty is None or difficulty == 'auto':
-                    difficulty = detect_difficulty(num_bots)
 
-                actions = load_solution(difficulty)
-                capture = load_capture(difficulty)
-                meta = load_meta(difficulty)
+                # If not pre-computed (difficulty was auto), do it now
+                if actions is None:
+                    if difficulty is None or difficulty == 'auto':
+                        difficulty = detect_difficulty(num_bots)
+                    actions = load_solution(difficulty)
+                    capture = load_capture(difficulty)
+                    meta = load_meta(difficulty)
 
                 if actions is None:
-                    print(f"ERROR: No solution found for {difficulty}", file=sys.stderr)
-                    # Fall back to all-wait
                     actions = [[(ACT_WAIT, -1)] * num_bots] * 300
 
-                if capture:
-                    map_state = build_map_from_capture(capture)
-                else:
-                    cap = ws_to_capture(data)
-                    map_state = build_map_from_capture(cap)
+                if map_state is None:
+                    if capture:
+                        map_state = build_map_from_capture(capture)
+                    else:
+                        cap = ws_to_capture(data)
+                        map_state = build_map_from_capture(cap)
+                    walkable = build_walkable(map_state)
 
-                # Reconcile item IDs: capture may have stale IDs from a different
-                # game session. The actual game's items (by position) are authoritative.
+                # Reconcile item IDs (fast — just a dict lookup per item)
                 if capture and 'items' in data:
                     actual_items = {}
                     for it in data['items']:
@@ -398,36 +559,34 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                     else:
                         print(f"  Item IDs validated: 0 mismatches", file=sys.stderr)
 
-                walkable = build_walkable(map_state)
+                # Build cached responses AFTER item ID reconciliation
+                # This is the key optimization: all 300 JSON strings pre-built,
+                # zero computation in the hot WS loop
+                cached_responses = build_cached_responses(actions, map_state)
+                dp_last_meaningful = find_dp_last_meaningful_round(actions)
+                print(f"  Cached {len(cached_responses)} responses, "
+                      f"DP plan ends at round {dp_last_meaningful}", file=sys.stderr)
 
-                if meta:
-                    print(f"  Replaying {difficulty}: expected_score={meta.get('score', '?')} "
-                          f"optimizations={meta.get('optimizations_run', 0)}", file=sys.stderr)
-
-                # Pre-compute expected positions and goals
-                if actions and capture:
+                # Compute goals/positions for desync detection (lightweight, used for logging)
+                if expected_positions is None and actions and capture:
                     try:
                         expected_positions = predict_full_sim(actions, capture, map_state)
                         bot_goals = extract_goals(actions, map_state, expected_positions)
-                        bot_goal_idx = {bid: 0 for bid in range(num_bots)}
-                        for bid in range(num_bots):
-                            print(f"  Bot {bid}: {len(bot_goals[bid])} goals "
-                                  f"(pickups+dropoffs)", file=sys.stderr)
                     except Exception as e:
-                        print(f"  Warning: Could not pre-compute goals: {e}", file=sys.stderr)
-                        expected_positions = None
-                        bot_goals = None
+                        print(f"  Warning: Could not compute goals: {e}", file=sys.stderr)
+
+                if bot_goals:
+                    bot_goal_idx = {bid: 0 for bid in range(num_bots)}
 
             # Determine effective DP round (accounting for missed rounds)
             live_bots = data.get('bots', [])
             num_bots = len(live_bots)
 
-            # Detect round offset: check if bots match expected positions
-            # for the current offset, or if we need to increase offset
+            # ── Fast path: use cached response (zero computation) ──
+            # Detect round offset first
             if expected_positions and actions:
                 dp_rnd = rnd - round_offset
                 if 0 <= dp_rnd < len(expected_positions):
-                    # Check if current positions match expected for dp_rnd
                     all_match = True
                     for bid, bot in enumerate(live_bots):
                         if bid < len(expected_positions[dp_rnd]):
@@ -436,172 +595,130 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                                 all_match = False
                                 break
 
-                    # Only detect missed rounds when TRANSITIONING from synced to desynced.
-                    # When already desynced, the bot's position can coincidentally match
-                    # expected[dp_rnd-1], causing false positive offset increments that
-                    # cascade and make recovery impossible.
+                    # Detect missed rounds on sync→desync transition
                     if not all_match and last_round_synced:
-                        check_rnd = dp_rnd - 1
-                        if check_rnd >= 0 and check_rnd < len(expected_positions):
-                            expected_moved = False
-                            for bid in range(len(expected_positions[dp_rnd])):
+                        found_offset = 0
+                        for k in range(1, min(6, dp_rnd + 1)):
+                            check_rnd = dp_rnd - k
+                            if check_rnd < 0:
+                                break
+                            moved_count = 0
+                            for bid2 in range(min(len(expected_positions[dp_rnd]),
+                                                  len(expected_positions[check_rnd]))):
+                                if expected_positions[dp_rnd][bid2] != expected_positions[check_rnd][bid2]:
+                                    moved_count += 1
+                            min_moved = max(num_bots // 4, 2) if num_bots >= 5 else 1
+                            if moved_count < min_moved:
+                                continue
+                            prev_match = True
+                            for bid, bot in enumerate(live_bots):
                                 if bid < len(expected_positions[check_rnd]):
-                                    ex_cur = expected_positions[dp_rnd][bid]
-                                    ex_prv = expected_positions[check_rnd][bid]
-                                    if ex_cur != ex_prv:
-                                        expected_moved = True
+                                    ex, ey = expected_positions[check_rnd][bid]
+                                    if tuple(bot['position']) != (ex, ey):
+                                        prev_match = False
                                         break
-                            if expected_moved:
-                                prev_match = True
-                                for bid, bot in enumerate(live_bots):
-                                    if bid < len(expected_positions[check_rnd]):
-                                        ex, ey = expected_positions[check_rnd][bid]
-                                        if tuple(bot['position']) != (ex, ey):
-                                            prev_match = False
-                                            break
-                                if prev_match:
-                                    round_offset += 1
-                                    dp_rnd = rnd - round_offset
-                                    if round_offset <= 10:
-                                        print(f"R{rnd}: Detected missed round, offset now {round_offset} "
-                                              f"(dp_rnd={dp_rnd})", file=sys.stderr)
+                            if prev_match:
+                                found_offset = k
+                                break
+                        if found_offset > 0:
+                            round_offset += found_offset
+                            dp_rnd = rnd - round_offset
+                            # Rebuild cached responses shifted by new offset
+                            print(f"R{rnd}: Detected {found_offset} missed round(s), "
+                                  f"offset now {round_offset} (dp_rnd={dp_rnd})",
+                                  file=sys.stderr)
+                            all_match = True
+                            for bid, bot in enumerate(live_bots):
+                                if bid < len(expected_positions[dp_rnd]):
+                                    ex, ey = expected_positions[dp_rnd][bid]
+                                    if tuple(bot['position']) != (ex, ey):
+                                        all_match = False
+                                        break
 
-                    last_round_synced = all_match
+                    if all_match:
+                        synced_rounds += 1
+                        last_round_synced = True
+                        for bid in range(num_bots):
+                            bot_consecutive_desync[bid] = 0
+                    else:
+                        desync_rounds += 1
+                        last_round_synced = False
+                        for bid, bot in enumerate(live_bots):
+                            if bid < len(expected_positions[dp_rnd]):
+                                ex, ey = expected_positions[dp_rnd][bid]
+                                if tuple(bot['position']) != (ex, ey):
+                                    bot_consecutive_desync[bid] = bot_consecutive_desync.get(bid, 0) + 1
+                                    desync_count += 1
+                                else:
+                                    bot_consecutive_desync[bid] = 0
+                else:
+                    dp_rnd = rnd
+                    synced_rounds += 1
+                    last_round_synced = True
             else:
                 dp_rnd = rnd
-
-            # ---- Goal advancement: detect completed goals from last round ----
-            if bot_goals and bot_goal_idx is not None:
-                for bid, bot in enumerate(live_bots):
-                    cur_inv = bot.get('inventory', [])
-                    prev_inv = bot_prev_inv.get(bid, cur_inv)  # default to cur on first round
-                    gi = bot_goal_idx.get(bid, 0)
-                    goals = bot_goals.get(bid, [])
-
-                    while gi < len(goals):
-                        goal_rnd, goal_pos, goal_act, goal_item = goals[gi]
-
-                        # Pickup completed: bot's inventory grew
-                        if goal_act == ACT_PICKUP and len(cur_inv) > len(prev_inv):
-                            gi += 1
-                            continue
-
-                        # Dropoff completed: bot's inventory shrank
-                        if goal_act == ACT_DROPOFF and len(cur_inv) < len(prev_inv):
-                            gi += 1
-                            continue
-
-                        # Skip dropoff goals when inventory is empty (nothing to deliver)
-                        if goal_act == ACT_DROPOFF and len(cur_inv) == 0:
-                            gi += 1
-                            continue
-
-                        break
-
-                    bot_goal_idx[bid] = gi
-
-            # ---- Build per-bot actions ----
-            ws_actions = []
-            round_has_desync = False
-
-            for bid, bot in enumerate(live_bots):
-                lx, ly = bot['position']
-                bpos = (lx, ly)
-                inv = bot.get('inventory', [])
-
-                # Check sync with offset-corrected round
-                is_synced = True
-                if expected_positions and 0 <= dp_rnd < len(expected_positions) and bid < len(expected_positions[dp_rnd]):
-                    ex, ey = expected_positions[dp_rnd][bid]
-                    if (lx, ly) != (ex, ey):
-                        is_synced = False
-                        desync_count += 1
-                        round_has_desync = True
-
-                # Track consecutive desync per bot
-                if is_synced:
-                    bot_consecutive_desync[bid] = 0
-                else:
-                    bot_consecutive_desync[bid] = bot_consecutive_desync.get(bid, 0) + 1
-
-                if is_synced:
-                    # SYNCED: execute raw DP action
-                    has_dp = actions and 0 <= dp_rnd < len(actions) and bid < len(actions[dp_rnd])
-                    if has_dp:
-                        act, item_idx = actions[dp_rnd][bid]
-                        # Check if bot's DP plan has remaining goals
-                        gi = bot_goal_idx.get(bid, 0) if bot_goal_idx else 0
-                        goals = (bot_goals or {}).get(bid, [])
-                        plan_exhausted = gi >= len(goals) and act == ACT_WAIT
-
-                        if plan_exhausted:
-                            # DP says wait but no more goals -> greedy for new orders
-                            if not greedy_mode_logged:
-                                greedy_mode_logged = True
-                                print(f"R{rnd}: All bots switched to GREEDY mode "
-                                      f"(DP plan exhausted, score={score})", file=sys.stderr)
-                            ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
-                        else:
-                            a = {'bot': bot['id'], 'action': ['wait', 'move_up', 'move_down',
-                                 'move_left', 'move_right', 'pick_up', 'drop_off'][act]}
-                            if act == ACT_PICKUP and 0 <= item_idx < len(map_state.items):
-                                a['item_id'] = map_state.items[item_idx]['id']
-                            elif act == ACT_PICKUP:
-                                a['action'] = 'wait'
-                            ws_actions.append(a)
-                    else:
-                        # DP plan exhausted -> greedy fallback for new orders
-                        ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
-                elif bot_consecutive_desync.get(bid, 0) > MAX_DESYNC_BEFORE_GREEDY:
-                    # PERSISTENT DESYNC: goal-based recovery wastes rounds navigating
-                    # toward stale goals. Greedy is more productive.
-                    if bot_consecutive_desync[bid] == MAX_DESYNC_BEFORE_GREEDY + 1:
-                        print(f"R{rnd}: Bot {bid} switched to GREEDY (desync>{MAX_DESYNC_BEFORE_GREEDY} rounds, "
-                              f"score={score})", file=sys.stderr)
-                    ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
-                else:
-                    # SHORT DESYNC: navigate toward current goal via BFS
-                    gi = bot_goal_idx.get(bid, 0) if bot_goal_idx else 0
-                    goals = (bot_goals or {}).get(bid, [])
-
-                    if gi < len(goals):
-                        goal_rnd, goal_pos, goal_act, goal_item = goals[gi]
-                        goal_pos_t = tuple(goal_pos)
-                        occupied = {tuple(b['position']) for b in live_bots if b['id'] != bot['id']}
-                        drop_off = tuple(map_state.drop_off)
-
-                        # Full inventory at pickup goal -> deliver first to clear space
-                        if goal_act == ACT_PICKUP and len(inv) >= INV_CAP:
-                            if bpos == drop_off:
-                                ws_actions.append({'bot': bot['id'], 'action': 'drop_off'})
-                            else:
-                                nav_act = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
-                                ws_actions.append({'bot': bot['id'],
-                                                   'action': _ACT_NAMES[nav_act]})
-                        elif bpos == goal_pos_t:
-                            # Already at goal position — execute goal action
-                            a = {'bot': bot['id'], 'action': ['wait', 'move_up', 'move_down',
-                                 'move_left', 'move_right', 'pick_up', 'drop_off'][goal_act]}
-                            if goal_act == ACT_PICKUP and 0 <= goal_item < len(map_state.items):
-                                a['item_id'] = map_state.items[goal_item]['id']
-                            elif goal_act == ACT_PICKUP:
-                                a['action'] = 'wait'
-                            ws_actions.append(a)
-                        else:
-                            # Navigate toward goal position
-                            nav_act = bfs_next_action(bpos, goal_pos_t, walkable, occupied, map_state)
-                            ws_actions.append({'bot': bot['id'],
-                                               'action': _ACT_NAMES[nav_act]})
-                    else:
-                        # No more goals -> greedy fallback for new orders
-                        ws_actions.append(greedy_action(bot, data, map_state, walkable, live_bots))
-
-            if round_has_desync:
-                desync_rounds += 1
-            else:
                 synced_rounds += 1
 
-            # Log
+            # Decide per-bot: DP or greedy
+            # A desynced bot getting DP actions picks up wrong items → dead inventory
+            dp_plan_exhausted = (dp_rnd > dp_last_meaningful)
+            any_bot_desynced = any(
+                bot_consecutive_desync.get(bid, 0) > MAX_DESYNC_BEFORE_GREEDY
+                for bid in range(num_bots)
+            ) if num_bots > 0 else False
+
+            # Pure cached fast-path: all synced AND DP plan still active
+            use_pure_cached = (cached_responses
+                               and not any_bot_desynced
+                               and not dp_plan_exhausted
+                               and 0 <= dp_rnd < len(cached_responses))
+
+            if use_pure_cached:
+                # FAST PATH: all bots synced, send pre-built response
+                response_str = cached_responses[dp_rnd]
+            elif not dp_plan_exhausted and cached_responses and 0 <= dp_rnd < len(cached_responses):
+                # HYBRID: some bots synced (follow DP), some desynced (greedy)
+                # Parse the cached DP response and replace desynced bots with greedy
+                dp_response = json.loads(cached_responses[dp_rnd])
+                dp_actions_by_bot = {a['bot']: a for a in dp_response['actions']}
+                ws_actions = []
+                claimed = {}
+                for bid, bot in enumerate(live_bots):
+                    if bot_consecutive_desync.get(bid, 0) > MAX_DESYNC_BEFORE_GREEDY:
+                        # Desynced bot → greedy
+                        ws_actions.append(greedy_action(bot, data, map_state, walkable,
+                                                        live_bots, claimed_items=claimed))
+                    elif bid in dp_actions_by_bot:
+                        ws_actions.append(dp_actions_by_bot[bid])
+                    else:
+                        ws_actions.append(greedy_action(bot, data, map_state, walkable,
+                                                        live_bots, claimed_items=claimed))
+                response_str = json.dumps({"actions": ws_actions})
+                if not greedy_mode_logged and any_bot_desynced:
+                    n_greedy = sum(1 for bid in range(num_bots)
+                                  if bot_consecutive_desync.get(bid, 0) > MAX_DESYNC_BEFORE_GREEDY)
+                    greedy_mode_logged = True
+                    print(f"R{rnd}: HYBRID mode — {n_greedy}/{num_bots} bots greedy "
+                          f"(score={score})", file=sys.stderr)
+            else:
+                # ALL GREEDY: DP plan exhausted or no cached data
+                if not greedy_after_dp_logged and dp_plan_exhausted:
+                    greedy_after_dp_logged = True
+                    print(f"R{rnd}: DP plan exhausted (last meaningful={dp_last_meaningful}), "
+                          f"switching to GREEDY (score={score})", file=sys.stderr)
+                elif not greedy_mode_logged and any_bot_desynced:
+                    greedy_mode_logged = True
+                    print(f"R{rnd}: All bots GREEDY (score={score})", file=sys.stderr)
+
+                ws_actions = []
+                claimed = {}
+                for bid, bot in enumerate(live_bots):
+                    ws_actions.append(greedy_action(bot, data, map_state, walkable,
+                                                    live_bots, claimed_items=claimed))
+                response_str = json.dumps({"actions": ws_actions})
+
+            # Log status
+            round_has_desync = not last_round_synced
             mode = "SYNC" if not round_has_desync else "DESYNC"
             if rnd < 5 or rnd % 25 == 0 or rnd >= 295 or (round_has_desync and desync_rounds <= 10):
                 gi_str = ''
@@ -610,20 +727,32 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
                 print(f"R{rnd}/{max_rounds} Score:{score} [{mode}] dp_rnd={dp_rnd} "
                       f"(synced:{synced_rounds} desynced:{desync_rounds}){gi_str}", file=sys.stderr)
 
-            response = {"actions": ws_actions}
-            log_file.write(json.dumps(response) + '\n')
-            # Flush periodically instead of every line to avoid blocking asyncio
+            log_file.write(response_str + '\n')
             if rnd % 25 == 0 or rnd >= max_rounds - 5:
                 log_file.flush()
 
-            # Send response with small delay to prevent server from racing ahead
-            await asyncio.sleep(SEND_DELAY)
-            await ws.send(json.dumps(response))
+            # Send immediately — no delay, response is pre-built
+            try:
+                await asyncio.wait_for(ws.send(response_str), timeout=WS_SEND_TIMEOUT)
+            except asyncio.TimeoutError:
+                print(f"WARNING: WebSocket send timed out at R{rnd}", file=sys.stderr)
+            except websockets.exceptions.ConnectionClosed as e:
+                print(f"WebSocket closed during send at R{rnd}: {e}", file=sys.stderr)
+                break
+            except Exception as e:
+                print(f"WebSocket send error at R{rnd}: {e}", file=sys.stderr)
+                break
 
-            # Update state tracking for next round's goal advancement
+            # Track inventory for goal advancement (lightweight)
             bot_prev_score = score
             for bid, bot in enumerate(live_bots):
                 bot_prev_inv[bid] = list(bot.get('inventory', []))
+
+    except Exception as e:
+        print(f"WebSocket unexpected error: {e}", file=sys.stderr)
+
+    ws_elapsed = time.time() - ws_start
+    print(f"WebSocket session: {ws_elapsed:.1f}s, {recv_count} messages received", file=sys.stderr)
 
     log_file.flush()
     log_file.close()
@@ -633,10 +762,10 @@ async def replay_best(ws_url, difficulty=None, log_dir=None):
 
     # Auto-import to PostgreSQL
     try:
-        import subprocess
+        import subprocess  # nosec B404
         import_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                      '..', 'grocery-bot-zig', 'replay', 'import_logs.py')
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 B607
             [sys.executable, import_script, '--run-type', 'replay', log_path],
             capture_output=True, text=True, timeout=30)
         if result.returncode == 0:

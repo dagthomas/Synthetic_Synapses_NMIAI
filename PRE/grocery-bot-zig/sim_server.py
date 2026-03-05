@@ -74,7 +74,7 @@ def build_map(cfg):
 
 def generate_order(idx, item_types, order_size, status, available_counts=None):
     """Generate an order using only items that are available on the map."""
-    n = random.randint(order_size[0], order_size[1])
+    n = random.randint(order_size[0], order_size[1])  # nosec B311
     if available_counts:
         # Only use types that have items remaining
         avail_types = [t for t, c in available_counts.items() if c > 0]
@@ -86,12 +86,12 @@ def generate_order(idx, item_types, order_size, status, available_counts=None):
             usable = [t for t in avail_types if temp_counts.get(t, 0) > 0]
             if not usable:
                 usable = avail_types
-            t = random.choice(usable)
+            t = random.choice(usable)  # nosec B311
             required.append(t)
             if t in temp_counts:
                 temp_counts[t] -= 1
     else:
-        required = [random.choice(item_types) for _ in range(n)]
+        required = [random.choice(item_types) for _ in range(n)]  # nosec B311
     return {
         "id": f"order_{idx}",
         "items_required": required,
@@ -138,8 +138,8 @@ def is_walkable(x, y, w, h, walls, shelves):
 
 async def run_game(websocket, cfg, seed=None):
     if seed is None:
-        seed = random.randint(0, 999999)
-    random.seed(seed)
+        seed = random.randint(0, 999999)  # nosec B311
+    random.seed(seed)  # nosec B311
     print(f"Seed: {seed}")
     w, h, walls, shelves, drop_off, spawn, items, item_types = build_map(cfg)
     num_bots = cfg["bots"]

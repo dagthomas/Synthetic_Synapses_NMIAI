@@ -8,8 +8,12 @@ On RTX 5090: ~50M state evaluations in <5 seconds (vs ~6K/s on CPU).
 Usage:
     python gpu_beam_search.py [difficulty] [--seed SEED] [--beam 10000] [--capture]
 """
+from __future__ import annotations
+
 import time
 import sys
+from typing import Any, Callable
+
 import numpy as np
 import torch
 
@@ -38,9 +42,15 @@ class GPUBeamSearcher:
         orders_comp: [B] int32 — orders completed count
     """
 
-    def __init__(self, map_state, all_orders, device='cuda', num_bots=1,
-                 locked_trajectories=None, pipeline_mode=False, pipeline_depth=1,
-                 preferred_types=None, no_compile=False, order_cap=None):
+    def __init__(self, map_state: MapState, all_orders: list[Order],
+                 device: str = 'cuda', num_bots: int = 1,
+                 locked_trajectories: dict[str, np.ndarray] | None = None,
+                 pipeline_mode: bool = False, pipeline_depth: int = 1,
+                 preferred_types: set[int] | None = None,
+                 no_compile: bool = False,
+                 order_cap: int | None = None,
+                 speed_bonus: float = 0.0,
+                 preferred_zone: tuple[int, ...] | None = None) -> None:
         self.device = device
         self.ms = map_state
         self.all_orders = all_orders
@@ -60,6 +70,7 @@ class GPUBeamSearcher:
         # pre-fetch/idle. Forces work distribution across bots in sequential DP.
         # None = unlimited (default). Only used in Pass 1 for Hard/Expert.
         self.order_cap = order_cap
+        self.speed_bonus = speed_bonus
         # preferred_types: set of item type IDs this bot should specialize in.
         # Soft hint (bonus) to avoid competition between bots for the same types.
         # Set via compute_type_assignments() in gpu_sequential_solver.py.
@@ -103,6 +114,11 @@ class GPUBeamSearcher:
         # Actions per state: wait + 4 moves + dropoff + num_items pickups
         self.num_actions = 6 + self.num_items
 
+        # Enable TF32 for any float32 matmuls (BFS precompute, etc.)
+        # TF32 uses Tensor Cores with 10-bit mantissa — exact for integer-valued results
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
         t0 = time.time()
 
         # === Upload static map data to GPU ===
@@ -136,24 +152,23 @@ class GPUBeamSearcher:
             else:
                 self._locked_all_planned_mask = None
 
-            # _locked_remaining_planned: bool [MAX_ROUNDS+1, num_types] — for each round r,
-            # True if any locked bot plans to pick that type in rounds [r, MAX_ROUNDS).
-            # Suffix union: remaining[r] = remaining[r+1] | (any pickup at round r).
-            # Used in _eval for accurate coverage: a type is "covered" if a locked bot
-            # will still pick it this game (not just within 60 rounds).
-            remaining = np.zeros((MAX_ROUNDS + 1, self.num_types), dtype=np.uint8)
+            # _locked_remaining_planned: int16 [MAX_ROUNDS+1, num_types] — for each round r,
+            # COUNT of how many pickups of type t locked bots will make in [r, MAX_ROUNDS).
+            # Suffix sum: remaining[r] = remaining[r+1] + (pickups at round r).
+            # Used in _eval for count-aware coordination.
+            remaining = np.zeros((MAX_ROUNDS + 1, self.num_types), dtype=np.int16)
             for r in range(MAX_ROUNDS - 1, -1, -1):
-                remaining[r] = remaining[r + 1]  # inherit future pickups
+                remaining[r] = remaining[r + 1]  # inherit future pickup counts
                 for lb in range(self.num_locked):
                     if self._locked_actions_np[lb, r] == ACT_PICKUP:
                         iidx = int(self._locked_action_items_np[lb, r])
                         if 0 <= iidx < self.num_items:
                             tp = int(_itp[iidx])
                             if 0 <= tp < self.num_types:
-                                remaining[r, tp] = 1
-            # Upload to GPU as bool [MAX_ROUNDS+1, num_types]
+                                remaining[r, tp] += 1
+            # Upload to GPU as float [MAX_ROUNDS+1, num_types] for easy arithmetic
             self._locked_remaining_planned = torch.tensor(
-                remaining, dtype=torch.bool, device=device)  # [MAX_ROUNDS+1, num_types]
+                remaining, dtype=torch.float32, device=device)  # [MAX_ROUNDS+1, num_types]
 
         # Walkable mask [H, W]
         self.walkable = (
@@ -167,6 +182,51 @@ class GPUBeamSearcher:
         valid_moves[:, 1:, 2]  = self.walkable[:, :-1]  # left: target x-1 walkable
         valid_moves[:, :-1, 3] = self.walkable[:, 1:]   # right: target x+1 walkable
         self.valid_moves = valid_moves  # [H, W, 4]
+
+        # === Aisle / corridor detection (for congestion penalty in multi-bot _eval) ===
+        # Mirrors spacetime.zig aisle detection: 1-tile wide passages flanked by shelf/wall
+        grid_np = map_state.grid  # [H, W] int8
+        _corridor_rows = np.zeros(self.H, dtype=bool)
+        for y in range(self.H):
+            floor_count = np.sum((grid_np[y] == CELL_FLOOR) | (grid_np[y] == CELL_DROPOFF))
+            if floor_count * 10 > self.W * 6:
+                _corridor_rows[y] = True
+
+        _aisle_columns = np.zeros(self.W, dtype=bool)
+        for x in range(1, self.W - 1):
+            aisle_cells = 0
+            total_floor = 0
+            for y in range(self.H):
+                if _corridor_rows[y]:
+                    continue
+                if grid_np[y, x] != CELL_FLOOR and grid_np[y, x] != CELL_DROPOFF:
+                    continue
+                total_floor += 1
+                left = grid_np[y, x - 1]
+                right = grid_np[y, x + 1]
+                if (left == CELL_SHELF or left == CELL_WALL) and (right == CELL_SHELF or right == CELL_WALL):
+                    aisle_cells += 1
+            if total_floor > 2 and aisle_cells * 4 > total_floor * 3:
+                _aisle_columns[x] = True
+
+        self._aisle_columns = torch.tensor(_aisle_columns, dtype=torch.bool, device=device)  # [W]
+        self._corridor_rows = torch.tensor(_corridor_rows, dtype=torch.bool, device=device)  # [H]
+        _n_aisles = int(_aisle_columns.sum())
+
+        # Zone-based aisle assignment: bot prefers picking from specific aisle columns.
+        # Each aisle column has adjacent shelves with items. Being in your zone
+        # reduces cross-traffic and collision with other bots.
+        self.preferred_zone = preferred_zone
+        self._zone_mask = None  # [W] bool — True for columns in/near preferred aisles
+        if preferred_zone and len(preferred_zone) > 0:
+            zone_mask = np.zeros(self.W, dtype=bool)
+            for col in preferred_zone:
+                # Zone includes the aisle column and adjacent shelf columns
+                for dx in range(-1, 2):
+                    c = col + dx
+                    if 0 <= c < self.W:
+                        zone_mask[c] = True
+            self._zone_mask = torch.tensor(zone_mask, dtype=torch.bool, device=device)
 
         # Pack all orders into tensor: [num_orders, MAX_ORDER_SIZE] int8
         order_req = np.full((self.num_orders, MAX_ORDER_SIZE), -1, dtype=np.int8)
@@ -323,18 +383,31 @@ class GPUBeamSearcher:
         # torch.compile hot-path functions for reduced overhead on repeated calls (300x per search).
         # Only on CUDA; CPU path sees negligible benefit and compile adds overhead.
         # Disabled in live/multi-threaded mode (no_compile=True) to avoid dynamo FX tracing conflicts.
-        # Try triton-backed 'reduce-overhead' first (best perf), fall back to 'aot_eager' (no triton).
+        # Fallback chain: inductor/default (triton kernel fusion) → reduce-overhead
+        #   (cudagraphs) → aot_eager
+        # Note: reduce-overhead uses CUDA graphs which require careful tensor lifetime
+        # management (no referencing outputs across graph replays). 'default' mode gets
+        # Triton kernel fusion without the buffer-reuse pitfall.
         if device == 'cuda' and int(torch.__version__.split('.')[0]) >= 2 and not no_compile:
             _compile = None
             try:
                 import triton  # noqa: F401
-                _compile = lambda fn: torch.compile(fn, mode='reduce-overhead', fullgraph=False)
+                # 'default' mode: Triton codegen + kernel fusion (no CUDA graphs)
+                _compile = lambda fn: torch.compile(fn, mode='default', fullgraph=False)
             except ImportError:
+                # Try inductor with C++ wrapper (kernel fusion without triton)
                 try:
-                    # aot_eager: ahead-of-time tracing, works without triton
-                    _compile = lambda fn: torch.compile(fn, backend='aot_eager', fullgraph=False)
+                    _test = torch.compile(lambda x: x + 1, backend='inductor',
+                                          options={'cpp_wrapper': True})
+                    _test(torch.zeros(1, device='cuda'))
+                    _compile = lambda fn: torch.compile(
+                        fn, backend='inductor', options={'cpp_wrapper': True})
                 except Exception:
-                    pass
+                    try:
+                        _compile = lambda fn: torch.compile(
+                            fn, backend='aot_eager', fullgraph=False)
+                    except Exception:
+                        pass  # All compile backends unavailable; will use uncompiled kernels
             if _compile is not None:
                 try:
                     self._eval = _compile(self._eval)
@@ -359,7 +432,7 @@ class GPUBeamSearcher:
               f"max_adj={max_adj_actual}, {dt:.2f}s",
               file=sys.stderr)
 
-    def _from_game_state(self, gs, bot_id=0):
+    def _from_game_state(self, gs: GameState, bot_id: int = 0) -> dict[str, torch.Tensor]:
         """Convert CPU GameState to GPU beam state dict (batch size 1).
 
         Args:
@@ -717,7 +790,8 @@ class GPUBeamSearcher:
         return expanded, actions, action_items, valid_mask, C_actual
 
     @torch.no_grad()
-    def _step(self, state, actions, action_items, round_num=-1):
+    def _step(self, state: dict[str, torch.Tensor], actions: torch.Tensor,
+              action_items: torch.Tensor, round_num: int = -1) -> dict[str, torch.Tensor]:
         """Apply actions to batch of states. Returns new state dict.
 
         Replicates game_engine.step() exactly: processes bots in real ID
@@ -822,8 +896,10 @@ class GPUBeamSearcher:
                  (inv_exp >= 0) & can_exp)      # [B, INV_CAP, MAX_ORDER_SIZE]
 
         # Greedy first-match: each inv slot delivers to first matching order slot
+        # Uses out-of-place ops only (no slice assignment) for CUDA graph compatibility
         score_add = torch.zeros(B, dtype=torch.int32, device=d)
         used_order = torch.zeros(B, MAX_ORDER_SIZE, dtype=torch.bool, device=d)
+        new_inv_cols = []
 
         for s in range(INV_CAP):
             available = match[:, s, :] & ~used_order   # [B, MAX_ORDER_SIZE]
@@ -832,12 +908,13 @@ class GPUBeamSearcher:
             first_match = available & (cumsum == 1)
             any_match = first_match.any(dim=1)          # [B]
 
-            # Update: mark order slot delivered, clear inv slot, add score
+            # Accumulate: mark order slot delivered, collect new inv value, add score
             active_del = active_del + first_match.to(torch.int8)
-            bot_inv_slice[:, s] = torch.where(any_match, self._neg1_i8, bot_inv_slice[:, s])
+            new_inv_cols.append(torch.where(any_match, self._neg1_i8, bot_inv_slice[:, s]))
             score_add = score_add + first_match.sum(dim=1).to(torch.int32)
             used_order = used_order | first_match
 
+        bot_inv_slice = torch.stack(new_inv_cols, dim=1)
         return bot_inv_slice, active_del, score_add
 
     def _auto_deliver_all(self, order_complete, bot_x, bot_y, bot_inv,
@@ -1100,12 +1177,15 @@ class GPUBeamSearcher:
         can_pickup = is_pickup & has_space & adjacent
         pickup_type = self.item_types[item_idx]
 
+        # Out-of-place inventory update for CUDA graph compatibility
         added = torch.zeros(B, dtype=torch.bool, device=d)
+        inv_cols = []
         for s in range(INV_CAP):
             slot_empty = bot_inv[:, s] < 0
             add_here = can_pickup & slot_empty & ~added
-            bot_inv[:, s] = torch.where(add_here, pickup_type, bot_inv[:, s])
+            inv_cols.append(torch.where(add_here, pickup_type, bot_inv[:, s]))
             added = added | add_here
+        bot_inv = torch.stack(inv_cols, dim=1)
 
         # === DROPOFF (vectorized) ===
         is_dropoff = (actions == ACT_DROPOFF)
@@ -1153,7 +1233,7 @@ class GPUBeamSearcher:
         return bot_x, bot_y, bot_inv, active_idx, active_del, score, orders_comp
 
     @torch.no_grad()
-    def _hash(self, state):
+    def _hash(self, state: dict[str, torch.Tensor]) -> torch.Tensor:
         """Compute state hash for deduplication. Returns [B] int64.
 
         Two states with the same hash are functionally identical
@@ -1177,7 +1257,7 @@ class GPUBeamSearcher:
         return h
 
     @torch.no_grad()
-    def _eval_cheap(self, state, round_num=0):
+    def _eval_cheap(self, state: dict[str, torch.Tensor], round_num: int = 0) -> torch.Tensor:
         """Cheap evaluation for two-phase beam pre-filtering. Returns [B] float32.
 
         Only computes: score, distance to dropoff, inventory matching (active),
@@ -1195,6 +1275,10 @@ class GPUBeamSearcher:
 
         # Score is dominant
         ev = state['score'].float() * 100000
+
+        # Speed bonus: prefer higher scores earlier (more rounds left to discover orders)
+        if self.speed_bonus > 0:
+            ev = ev + self.speed_bonus * state['score'].float() * rounds_left
 
         # Distance to dropoff
         dist_drop = self.dist_to_dropoff[bot_y, bot_x].float()
@@ -1252,7 +1336,7 @@ class GPUBeamSearcher:
         return ev
 
     @torch.no_grad()
-    def _eval(self, state, round_num=0):
+    def _eval(self, state: dict[str, torch.Tensor], round_num: int = 0) -> torch.Tensor:
         """Evaluate states for beam pruning. Returns [B] float32 (higher=better).
 
         Key insight: each pending delivery is worth ~1 point (100000 in eval units).
@@ -1275,6 +1359,10 @@ class GPUBeamSearcher:
 
         # Score is dominant factor (1 point = 100000 eval units)
         ev = state['score'].float() * 100000
+
+        # Speed bonus: prefer higher scores earlier (more rounds left to discover orders)
+        if self.speed_bonus > 0:
+            ev = ev + self.speed_bonus * state['score'].float() * rounds_left
 
         # Distance to dropoff (BFS, exact)
         dist_drop = self.dist_to_dropoff[bot_y, bot_x].float()
@@ -1315,7 +1403,7 @@ class GPUBeamSearcher:
 
         # Active inventory value: ~70000 per item, discounted by distance to dropoff
         # At dist_drop=0: 70000 (0.7 of a delivery — high but not overriding score)
-        # At dist_drop=20: 30000
+        # At dist_drop=20: 35000
         # At dist_drop=40: 0 (item far from deliverable)
         active_inv_value = (70000 - dist_drop * 1750).clamp(min=0)
         ev = ev + num_active_items * active_inv_value
@@ -1417,6 +1505,7 @@ class GPUBeamSearcher:
         order_achievable = has_trip_info & (total_order_remaining <= rounds_left)
         ev = ev + order_achievable.float() * 8000
         # Prefer states with less remaining work (smoother gradient than just feasibility)
+        # Prefer states with less remaining work (smoother gradient than just feasibility)
         ev = ev - has_trip_info.float() * total_order_remaining.clamp(0, 300) * 50
 
         # === Endgame partial delivery: when order can't be completed, maximize item pickups ===
@@ -1459,6 +1548,26 @@ class GPUBeamSearcher:
         camping_penalty = at_drop & ~has_active_inv
         ev = ev - camping_penalty.float() * 12000
 
+        # === Aisle congestion penalty (multi-bot) ===
+        # Penalize candidate bot for being in the same 1-tile aisle column as
+        # a locked bot. Narrow aisles create deadlocks and wasted rounds.
+        if self.num_locked > 0 and 'locked_bx' in state and self._aisle_columns.any():
+            _cand_in_aisle = self._aisle_columns[bot_x]  # [B] bool
+            _cand_not_corridor = ~self._corridor_rows[bot_y]  # [B] bool
+            _cand_in_narrow = _cand_in_aisle & _cand_not_corridor  # [B]
+            if _cand_in_narrow.any():
+                _lbx = state['locked_bx']  # [B, L]
+                _lby = state['locked_by']  # [B, L]
+                # Locked bot in same aisle column AND not in corridor row
+                _same_col = (_lbx == bot_x.unsqueeze(1))  # [B, L]
+                _lby_long = _lby.long().clamp(0, self.H - 1)
+                _locked_not_corr = ~self._corridor_rows[_lby_long]  # [B, L]
+                _locked_same_aisle = _same_col & _locked_not_corr  # [B, L]
+                _num_locked_same = _locked_same_aisle.sum(dim=1).float()  # [B]
+                # Scale: -4000 per locked bot in same aisle (moderate — less than
+                # active_inv_value but enough to prefer different-aisle routing)
+                ev = ev - _cand_in_narrow.float() * _num_locked_same * 4000
+
         # === Dropoff queue system ===
         # When multiple bots are heading to dropoff with items, they should
         # form a queue along the bottom row (y = height-2) approaching from
@@ -1491,20 +1600,15 @@ class GPUBeamSearcher:
                 # Candidate should target UNCOVERED slots (division of labor).
                 locked_inv_l = locked_inv_state.long()  # [B, L, INV_CAP]
 
-                # Use precomputed lookup tables (built in __init__) instead of
-                # creating new CUDA tensors / scanning numpy on every _eval call.
                 locked_plans_type_mask = self._locked_all_planned_mask  # [num_types] bool | None
 
-                # _locked_remaining_planned[r, t]: True if any locked bot will pick type t
-                # in rounds [r, MAX_ROUNDS). Accurate full-game coverage tracking.
                 remaining_cover = None
                 if self._locked_remaining_planned is not None and round_num >= 0:
                     rn = min(round_num, MAX_ROUNDS)
-                    remaining_cover = self._locked_remaining_planned[rn]  # [num_types] bool
+                    remaining_cover = self._locked_remaining_planned[rn]  # [num_types] float (counts)
 
                 # locked_covers_slot[b, os]: True if any locked bot carries or will pick
-                # the type needed by order slot os (full remaining-game coverage).
-                # Vectorized: act_req [B, 6] -> [B, 1, 1, 6], locked_inv [B, L, C, 1]
+                # the type needed by order slot os.
                 ntypes_all = act_req.long().clamp(0, self.num_types - 1)  # [B, 6]
                 ntypes_4d = ntypes_all.unsqueeze(1).unsqueeze(2)  # [B, 1, 1, 6]
                 linv_4d = locked_inv_l.unsqueeze(3)  # [B, L, C, 1]
@@ -1512,26 +1616,23 @@ class GPUBeamSearcher:
                 # [B, L, C, 6] -> any over L,C -> [B, 6]
                 locked_covers_slot = ((linv_4d == ntypes_4d) & linv_valid).any(dim=2).any(dim=1)
                 if remaining_cover is not None:
-                    locked_covers_slot = locked_covers_slot | remaining_cover[ntypes_all]
+                    locked_covers_slot = locked_covers_slot | (remaining_cover[ntypes_all] > 0)
 
-                # For each active order slot, check if candidate carries that type
-                # needed: active_needed [B, MAX_ORDER_SIZE]
                 covered_by_locked = active_needed & locked_covers_slot      # [B, 6]
                 uncovered_by_locked = active_needed & ~locked_covers_slot   # [B, 6]
 
-                # Candidate inventory items: vectorized [B, INV_CAP, MAX_ORDER_SIZE]
-                # inv_exp: [B, INV_CAP, 1], act_req: [B, 1, MAX_ORDER_SIZE]
+                # Candidate inventory items matching order slots
                 type_match_grid = ((inv_exp == req_exp) & has_item_exp &
                                    (req_exp >= 0))  # [B, INV_CAP, MAX_ORDER_SIZE]
-                # covered_by_locked: [B, MAX_ORDER_SIZE] -> [B, 1, MAX_ORDER_SIZE]
                 cov_exp = covered_by_locked.unsqueeze(1)   # [B, 1, 6]
                 uncov_exp = uncovered_by_locked.unsqueeze(1)  # [B, 1, 6]
                 cand_redundant = (type_match_grid & cov_exp).float().sum(dim=(1, 2))
                 cand_covers_unique = (type_match_grid & uncov_exp).float().sum(dim=(1, 2))
 
-                # Very strong coordination: bots MUST avoid picking items that
-                # other bots already carry or plan to pick. This is the #1 source
-                # of wasted moves in multi-bot games.
+                # Coordination: unique coverage is rewarded, redundancy penalized.
+                # Penalty is intentionally LESS than active_inv_value (~70K) because
+                # "redundant" is approximate — locked bots deliver and free slots,
+                # so temporary redundancy often resolves naturally during the game.
                 _nl = self.num_locked
                 unique_bonus = 30000 + _nl * 3000   # 33K (medium) to 57K (expert)
                 redundant_pen = 20000 + _nl * 2000   # 22K (medium) to 38K (expert)
@@ -1586,7 +1687,7 @@ class GPUBeamSearcher:
                         has_slot = req_p1[:, os] >= 0
                         # Exclude types that locked bots will still pick → those bots handle it
                         if _preview_cover is not None:
-                            already_planned = _preview_cover[pt]
+                            already_planned = (_preview_cover[pt] > 0) if _preview_cover.dtype != torch.bool else _preview_cover[pt]
                             has_slot = has_slot & ~already_planned
                         better_p = has_slot & (d_pt < best_prev_dist)
                         best_prev_dist = torch.where(better_p, d_pt, best_prev_dist)
@@ -1668,7 +1769,8 @@ class GPUBeamSearcher:
         return ev
 
     @torch.no_grad()
-    def search(self, game_state, beam_width=10000, verbose=True):
+    def search(self, game_state: GameState, beam_width: int = 10000,
+               verbose: bool = True) -> tuple[int, list[tuple[int, int]]]:
         """Run GPU beam search over 300 rounds.
 
         Returns (best_score, action_sequence) where action_sequence is
@@ -1788,7 +1890,8 @@ class GPUBeamSearcher:
 
         return best_score, actions_seq
 
-    def verify_against_cpu(self, game_state, all_orders, num_rounds=100):
+    def verify_against_cpu(self, game_state: GameState, all_orders: list[Order],
+                           num_rounds: int = 100) -> bool:
         """Verify GPU step matches CPU step for guided action sequences.
 
         Uses a simple greedy policy that actually picks up items and delivers them,
@@ -1947,18 +2050,23 @@ class GPUBeamSearcher:
                     return False
 
         assert gpu_score == cpu_score, \
-            f"Score mismatch: CPU={cpu_score}, GPU={gpu_score}"
+            f"Score mismatch: CPU={cpu_score}, GPU={gpu_score}"  # nosec B101
         assert gpu_x == cpu_x and gpu_y == cpu_y, \
-            f"Position mismatch: CPU=({cpu_x},{cpu_y}), GPU=({gpu_x},{gpu_y})"
+            f"Position mismatch: CPU=({cpu_x},{cpu_y}), GPU=({gpu_x},{gpu_y})"  # nosec B101
         assert gpu_oc == cpu_oc, \
-            f"Orders mismatch: CPU={cpu_oc}, GPU={gpu_oc}"
+            f"Orders mismatch: CPU={cpu_oc}, GPU={gpu_oc}"  # nosec B101
 
         print(f"    MATCH! Score={gpu_score}, Orders={gpu_oc}", file=sys.stderr)
         return True
 
     @torch.no_grad()
-    def dp_search(self, game_state, max_states=500000, verbose=True, on_round=None,
-                  bot_id=0, start_rnd=0, max_rounds=None, init_state=None):
+    def dp_search(self, game_state: GameState | None, max_states: int = 500000,
+                  verbose: bool = True,
+                  on_round: Callable[[int, int, int, int, float], None] | None = None,
+                  bot_id: int = 0, start_rnd: int = 0,
+                  max_rounds: int | None = None,
+                  init_state: dict[str, torch.Tensor] | None = None
+                  ) -> tuple[int, list[tuple[int, int]]]:
         """Exact dynamic programming search via exhaustive BFS + dedup on GPU.
 
         For single-bot games, finds the OPTIMAL solution by exploring ALL
@@ -2161,8 +2269,1025 @@ class GPUBeamSearcher:
         return best_score, actions_seq
 
 
-def gpu_dp_search(difficulty=None, seed=None, max_states=500000, verbose=True,
-                  game_factory=None, capture_data=None):
+class GPUBeamSearcher2Bot(GPUBeamSearcher):
+    """Joint 2-bot GPU DP search.
+
+    Plans 2 candidate bots simultaneously via Cartesian product of actions.
+    For Hard (5 bots): plan pairs (0,1), (2,3), solo 4 → better coordination.
+
+    State representation:
+        bot1_x, bot1_y: [B] int16  — first candidate bot position
+        bot1_inv: [B, 3] int8      — first candidate inventory
+        bot2_x, bot2_y: [B] int16  — second candidate bot position
+        bot2_inv: [B, 3] int8      — second candidate inventory
+        active_idx: [B] int32      — shared order index
+        active_del: [B, 6] int8    — shared delivery state
+        score: [B] int32           — joint cumulative score
+        orders_comp: [B] int32     — joint orders completed
+        (plus locked_inv/locked_bx/locked_by when other bots are locked)
+    """
+
+    def __init__(self, map_state: MapState, all_orders: list[Order],
+                 device: str = 'cuda', num_bots: int = 1,
+                 locked_trajectories: dict[str, np.ndarray] | None = None,
+                 candidate_bot_ids: tuple[int, int] = (0, 1),
+                 no_compile: bool = False,
+                 speed_bonus: float = 0.0) -> None:
+        # Store candidate IDs before parent init (parent sets candidate_bot_id=0)
+        self.bot1_real_id = candidate_bot_ids[0]
+        self.bot2_real_id = candidate_bot_ids[1]
+        super().__init__(
+            map_state, all_orders, device=device, num_bots=num_bots,
+            locked_trajectories=locked_trajectories,
+            no_compile=no_compile, speed_bonus=speed_bonus)
+
+    def _from_game_state_2bot(self, gs: GameState,
+                               bot1_id: int = 0, bot2_id: int = 1
+                               ) -> dict[str, torch.Tensor]:
+        """Convert CPU GameState to 2-bot GPU state dict (batch size 1)."""
+        d = self.device
+        state = {
+            'bot1_x': torch.tensor(
+                [int(gs.bot_positions[bot1_id, 0])], dtype=torch.int16, device=d),
+            'bot1_y': torch.tensor(
+                [int(gs.bot_positions[bot1_id, 1])], dtype=torch.int16, device=d),
+            'bot1_inv': torch.tensor(
+                [[int(gs.bot_inventories[bot1_id, s]) for s in range(INV_CAP)]],
+                dtype=torch.int8, device=d),
+            'bot2_x': torch.tensor(
+                [int(gs.bot_positions[bot2_id, 0])], dtype=torch.int16, device=d),
+            'bot2_y': torch.tensor(
+                [int(gs.bot_positions[bot2_id, 1])], dtype=torch.int16, device=d),
+            'bot2_inv': torch.tensor(
+                [[int(gs.bot_inventories[bot2_id, s]) for s in range(INV_CAP)]],
+                dtype=torch.int8, device=d),
+            'active_idx': torch.tensor([0], dtype=torch.int32, device=d),
+            'active_del': torch.zeros((1, MAX_ORDER_SIZE), dtype=torch.int8, device=d),
+            'score': torch.tensor([0], dtype=torch.int32, device=d),
+            'orders_comp': torch.tensor([0], dtype=torch.int32, device=d),
+        }
+        if self.num_locked > 0:
+            state['locked_inv'] = torch.full(
+                (1, self.num_locked, INV_CAP), -1, dtype=torch.int8, device=d)
+            sx, sy = self.ms.spawn
+            state['locked_bx'] = torch.full(
+                (1, self.num_locked), sx, dtype=torch.int16, device=d)
+            state['locked_by'] = torch.full(
+                (1, self.num_locked), sy, dtype=torch.int16, device=d)
+        return state
+
+    @torch.no_grad()
+    def _hash_2bot(self, state: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Compute 2-bot state hash for dedup. Returns [B] int64.
+
+        Packing (61 bits total, fits int64):
+          bot1_x(5) + bot1_y(5) + bot1_inv(15) +
+          bot2_x(5) + bot2_y(5) + bot2_inv(15) +
+          active_idx(5) + active_del(6)
+        """
+        sorted_inv1, _ = state['bot1_inv'].sort(dim=1)
+        sorted_inv2, _ = state['bot2_inv'].sort(dim=1)
+
+        h = (state['bot1_x'].long()
+             | (state['bot1_y'].long() << 5)
+             | ((sorted_inv1[:, 0].long() + 1) << 10)
+             | ((sorted_inv1[:, 1].long() + 1) << 15)
+             | ((sorted_inv1[:, 2].long() + 1) << 20)
+             | (state['bot2_x'].long() << 25)
+             | (state['bot2_y'].long() << 30)
+             | ((sorted_inv2[:, 0].long() + 1) << 35)
+             | ((sorted_inv2[:, 1].long() + 1) << 40)
+             | ((sorted_inv2[:, 2].long() + 1) << 45)
+             | (state['active_idx'].long() << 50))
+
+        del_bits = state['active_del'].long()
+        _shifts_2bot = torch.arange(55, 55 + MAX_ORDER_SIZE,
+                                    dtype=torch.int64, device=state['bot1_x'].device)
+        h = h | (del_bits << _shifts_2bot.unsqueeze(0)).sum(dim=1)
+
+        return h
+
+    @torch.no_grad()
+    def _dp_expand_2bot(self, state):
+        """Position-aware Cartesian product expansion for 2-bot DP.
+
+        Generates all valid (bot1_action, bot2_action) combos per state.
+        Returns (expanded, b1_acts, b1_items, b2_acts, b2_items, valid, N).
+        N = dp_num_actions (per bot); total actions per state = N*N.
+        """
+        B = state['bot1_x'].shape[0]
+        d = self.device
+        N = self.dp_num_actions
+
+        # Bot1 actions from bot1's position
+        by1 = state['bot1_y'].long()
+        bx1 = state['bot1_x'].long()
+        adj1 = self.adj_items[by1, bx1]       # [B, MAX_ADJ]
+
+        acts1 = self._dp_acts_template.expand(B, N).clone()
+        items1 = torch.full((B, N), -1, dtype=torch.int16, device=d)
+        items1[:, 6:6 + self.MAX_ADJ] = adj1
+        valid1 = torch.ones(B, N, dtype=torch.bool, device=d)
+        valid1[:, 6:6 + self.MAX_ADJ] = adj1 >= 0
+        valid1[:, 1:5] &= self.valid_moves[by1, bx1]
+
+        # Bot2 actions from bot2's position
+        by2 = state['bot2_y'].long()
+        bx2 = state['bot2_x'].long()
+        adj2 = self.adj_items[by2, bx2]
+
+        acts2 = self._dp_acts_template.expand(B, N).clone()
+        items2 = torch.full((B, N), -1, dtype=torch.int16, device=d)
+        items2[:, 6:6 + self.MAX_ADJ] = adj2
+        valid2 = torch.ones(B, N, dtype=torch.bool, device=d)
+        valid2[:, 6:6 + self.MAX_ADJ] = adj2 >= 0
+        valid2[:, 1:5] &= self.valid_moves[by2, bx2]
+
+        # Cartesian product: [B] → [B * N * N]
+        BNN = B * N * N
+
+        expanded = {}
+        for k, v in state.items():
+            if v.dim() == 1:
+                expanded[k] = v.repeat_interleave(N * N, output_size=BNN)
+            elif v.dim() == 2:
+                expanded[k] = v.repeat_interleave(N * N, dim=0, output_size=BNN)
+            else:
+                expanded[k] = v.repeat_interleave(N * N, dim=0, output_size=BNN)
+
+        # Bot1 acts: [B, N, 1] → [B, N, N] → [BNN]
+        b1_acts = acts1.unsqueeze(2).expand(B, N, N).reshape(-1)
+        b1_items = items1.unsqueeze(2).expand(B, N, N).reshape(-1)
+        # Bot2 acts: [B, 1, N] → [B, N, N] → [BNN]
+        b2_acts = acts2.unsqueeze(1).expand(B, N, N).reshape(-1)
+        b2_items = items2.unsqueeze(1).expand(B, N, N).reshape(-1)
+
+        # Valid: both must be valid
+        valid = (valid1.unsqueeze(2) & valid2.unsqueeze(1)).reshape(-1)
+
+        return expanded, b1_acts, b1_items, b2_acts, b2_items, valid, N
+
+    def _move_candidate(self, acts, cand_x, cand_y,
+                        other_xs, other_ys,
+                        locked_bx, locked_by,
+                        B, d, spawn_x, spawn_y):
+        """Move one candidate bot with collision checks against others."""
+        acts_long = acts.long()
+        is_move = (acts >= 1) & (acts <= 4)
+        dx = self.DX_i32[acts_long]
+        dy = self.DY_i32[acts_long]
+        nx = cand_x.to(torch.int32) + dx
+        ny = cand_y.to(torch.int32) + dy
+
+        in_bounds = (nx >= 0) & (nx < self.W) & (ny >= 0) & (ny < self.H)
+        ny_safe = ny.clamp(0, self.H - 1)
+        nx_safe = nx.clamp(0, self.W - 1)
+        is_walkable = self.walkable[ny_safe.long(), nx_safe.long()]
+        can_move = is_move & in_bounds & is_walkable
+
+        at_spawn = (nx == spawn_x) & (ny == spawn_y)
+
+        # Collision with other candidate bots
+        for ox, oy in zip(other_xs, other_ys):
+            coll = ((nx == ox.to(torch.int32)) &
+                    (ny == oy.to(torch.int32)) & ~at_spawn)
+            can_move = can_move & ~coll
+
+        # Collision with locked bots
+        if locked_bx is not None and self.num_locked > 0:
+            all_lb_x = locked_bx.to(torch.int32)
+            all_lb_y = locked_by.to(torch.int32)
+            all_coll = ((nx.unsqueeze(1) == all_lb_x) &
+                        (ny.unsqueeze(1) == all_lb_y) &
+                        ~at_spawn.unsqueeze(1))
+            any_coll = all_coll.any(dim=1)
+            can_move = can_move & ~any_coll
+
+        new_x = torch.where(can_move, nx.to(torch.int16), cand_x)
+        new_y = torch.where(can_move, ny.to(torch.int16), cand_y)
+        return new_x, new_y
+
+    def _pickup_candidate(self, acts, items_arg, cand_x, cand_y, cand_inv, B, d):
+        """Pickup for one candidate bot."""
+        is_pickup = (acts == ACT_PICKUP)
+        item_idx = items_arg.long().clamp(0, self.num_items - 1)
+        inv_count = (cand_inv >= 0).sum(dim=1)
+        has_space = inv_count < INV_CAP
+
+        ix = self.item_pos_x[item_idx].to(torch.int32)
+        iy = self.item_pos_y[item_idx].to(torch.int32)
+        mdist = (cand_x.to(torch.int32) - ix).abs() + (cand_y.to(torch.int32) - iy).abs()
+        adjacent = mdist == 1
+
+        can_pickup = is_pickup & has_space & adjacent
+        pickup_type = self.item_types[item_idx]
+
+        added = torch.zeros(B, dtype=torch.bool, device=d)
+        inv_cols = []
+        for s in range(INV_CAP):
+            slot_empty = cand_inv[:, s] < 0
+            add_here = can_pickup & slot_empty & ~added
+            inv_cols.append(torch.where(add_here, pickup_type, cand_inv[:, s]))
+            added = added | add_here
+        return torch.stack(inv_cols, dim=1)
+
+    def _dropoff_candidate(self, acts, cand_x, cand_y, cand_inv,
+                           active_idx, active_del, score, orders_comp,
+                           other_cand_xs, other_cand_ys, other_cand_invs,
+                           locked_inv, locked_bx, locked_by, B, d):
+        """Dropoff + order completion + auto-deliver for one candidate bot.
+
+        After order completion, auto-delivers from: locked bots, then other
+        candidate bots, then this candidate bot — all in real ID order.
+        """
+        is_dropoff = (acts == ACT_DROPOFF)
+        at_drop = (cand_x == self.drop_x) & (cand_y == self.drop_y)
+        has_items = (cand_inv >= 0).any(dim=1)
+        can_dropoff = is_dropoff & at_drop & has_items & (active_idx < self.num_orders)
+
+        aidx = active_idx.long().clamp(0, self.num_orders - 1)
+        act_req = self.order_req[aidx]
+
+        cand_inv, active_del, score_add = self._vectorized_deliver(
+            cand_inv, act_req, active_del, can_dropoff, B, d)
+        score = score + score_add
+
+        sort_key = (cand_inv < 0).to(torch.int8)
+        _, sort_idx = sort_key.sort(dim=1, stable=True)
+        cand_inv = cand_inv.gather(1, sort_idx.long())
+
+        # Order completion check
+        slot_done = (active_del == 1) | (act_req < 0)
+        has_required = (act_req >= 0).any(dim=1)
+        order_complete = slot_done.all(dim=1) & can_dropoff & has_required
+
+        if order_complete.any():
+            orders_comp = orders_comp + order_complete.to(torch.int32)
+            score = score + order_complete.to(torch.int32) * 5
+            new_aidx = active_idx + order_complete.to(torch.int32)
+            oc_mask = order_complete.unsqueeze(1).expand_as(active_del)
+            active_del = torch.where(oc_mask, self._zero_i8, active_del)
+
+            valid_auto = order_complete & (new_aidx < self.num_orders)
+            new_aidx_l = new_aidx.long().clamp(0, self.num_orders - 1)
+            new_req = self.order_req[new_aidx_l]
+
+            # Auto-deliver locked bots at dropoff
+            if locked_bx is not None:
+                for lb in range(self.num_locked):
+                    lb_at_drop = ((locked_bx[:, lb] == self.drop_x) &
+                                  (locked_by[:, lb] == self.drop_y))
+                    lb_auto = valid_auto & lb_at_drop
+                    if lb_auto.any():
+                        linv = locked_inv[:, lb, :]
+                        linv, active_del, sa = self._vectorized_deliver(
+                            linv, new_req, active_del, lb_auto, B, d)
+                        locked_inv[:, lb, :] = linv
+                        score = score + sa
+
+            # Auto-deliver other candidate bots at dropoff
+            for ox, oy, oinv_ref in zip(other_cand_xs, other_cand_ys, other_cand_invs):
+                o_at_drop = (ox == self.drop_x) & (oy == self.drop_y)
+                o_auto = valid_auto & o_at_drop
+                if o_auto.any():
+                    oinv_ref[0], active_del, sa = self._vectorized_deliver(
+                        oinv_ref[0], new_req, active_del, o_auto, B, d)
+                    score = score + sa
+                    sk = (oinv_ref[0] < 0).to(torch.int8)
+                    _, si = sk.sort(dim=1, stable=True)
+                    oinv_ref[0] = oinv_ref[0].gather(1, si.long())
+
+            # Auto-deliver this candidate at dropoff
+            cand_at_drop = (cand_x == self.drop_x) & (cand_y == self.drop_y)
+            auto_cand = valid_auto & cand_at_drop
+            if auto_cand.any():
+                cand_inv, active_del, sa = self._vectorized_deliver(
+                    cand_inv, new_req, active_del, auto_cand, B, d)
+                score = score + sa
+                sk = (cand_inv < 0).to(torch.int8)
+                _, si = sk.sort(dim=1, stable=True)
+                cand_inv = cand_inv.gather(1, si.long())
+
+            active_idx = new_aidx
+
+        return cand_inv, active_idx, active_del, score, orders_comp
+
+    @torch.no_grad()
+    def _step_2bot(self, state, b1_acts, b1_items, b2_acts, b2_items,
+                   round_num: int = -1):
+        """Apply joint actions to 2-bot batch. Process all bots in real ID order.
+
+        Returns new state dict with both candidate bots updated.
+        """
+        B = state['bot1_x'].shape[0]
+        d = self.device
+
+        bot1_x = state['bot1_x'].clone()
+        bot1_y = state['bot1_y'].clone()
+        bot1_inv = state['bot1_inv'].clone()
+        bot2_x = state['bot2_x'].clone()
+        bot2_y = state['bot2_y'].clone()
+        bot2_inv = state['bot2_inv'].clone()
+        active_idx = state['active_idx'].clone()
+        active_del = state['active_del'].clone()
+        score = state['score'].clone()
+        orders_comp = state['orders_comp'].clone()
+        locked_inv = state['locked_inv'].clone() if 'locked_inv' in state else None
+        locked_bx = state['locked_bx'].clone() if 'locked_bx' in state else None
+        locked_by = state['locked_by'].clone() if 'locked_by' in state else None
+
+        spawn_x, spawn_y = self.ms.spawn
+
+        # Process all bots in real ID order (lower ID moves first)
+        for real_bid in range(self.num_bots):
+            if real_bid == self.bot1_real_id:
+                # === Bot 1 movement (collision with bot2 + locked) ===
+                bot1_x, bot1_y = self._move_candidate(
+                    b1_acts, bot1_x, bot1_y,
+                    [bot2_x], [bot2_y],
+                    locked_bx, locked_by,
+                    B, d, spawn_x, spawn_y)
+
+                # === Bot 1 pickup ===
+                bot1_inv = self._pickup_candidate(
+                    b1_acts, b1_items, bot1_x, bot1_y, bot1_inv, B, d)
+
+                # === Bot 1 dropoff + order completion ===
+                # Wrap bot2_inv in a mutable list so auto-delivery can update it
+                bot2_inv_ref = [bot2_inv]
+                bot1_inv, active_idx, active_del, score, orders_comp = \
+                    self._dropoff_candidate(
+                        b1_acts, bot1_x, bot1_y, bot1_inv,
+                        active_idx, active_del, score, orders_comp,
+                        [bot2_x], [bot2_y], [bot2_inv_ref],
+                        locked_inv, locked_bx, locked_by, B, d)
+                bot2_inv = bot2_inv_ref[0]
+
+            elif real_bid == self.bot2_real_id:
+                # === Bot 2 movement (collision with bot1's NEW pos + locked) ===
+                bot2_x, bot2_y = self._move_candidate(
+                    b2_acts, bot2_x, bot2_y,
+                    [bot1_x], [bot1_y],
+                    locked_bx, locked_by,
+                    B, d, spawn_x, spawn_y)
+
+                # === Bot 2 pickup ===
+                bot2_inv = self._pickup_candidate(
+                    b2_acts, b2_items, bot2_x, bot2_y, bot2_inv, B, d)
+
+                # === Bot 2 dropoff + order completion ===
+                bot1_inv_ref = [bot1_inv]
+                bot2_inv, active_idx, active_del, score, orders_comp = \
+                    self._dropoff_candidate(
+                        b2_acts, bot2_x, bot2_y, bot2_inv,
+                        active_idx, active_del, score, orders_comp,
+                        [bot1_x], [bot1_y], [bot1_inv_ref],
+                        locked_inv, locked_bx, locked_by, B, d)
+                bot1_inv = bot1_inv_ref[0]
+
+            elif real_bid in self.locked_idx_map:
+                b = self.locked_idx_map[real_bid]
+                lb_act = int(self.locked_actions[b, round_num])
+                if lb_act == ACT_WAIT:
+                    continue
+                # Reuse parent's _step_locked_bot but with 2 candidate bots
+                # We need a temp single-bot state for the locked bot processing
+                # Use _step_locked_bot_2cand instead
+                (bot1_x, bot1_y, bot1_inv, bot2_x, bot2_y, bot2_inv,
+                 active_idx, active_del, score, orders_comp,
+                 locked_inv, locked_bx, locked_by) = \
+                    self._step_locked_bot_2cand(
+                        b, round_num,
+                        bot1_x, bot1_y, bot1_inv,
+                        bot2_x, bot2_y, bot2_inv,
+                        active_idx, active_del, score, orders_comp,
+                        locked_inv, locked_bx, locked_by,
+                        B, d, spawn_x, spawn_y)
+
+        result = {
+            'bot1_x': bot1_x, 'bot1_y': bot1_y, 'bot1_inv': bot1_inv,
+            'bot2_x': bot2_x, 'bot2_y': bot2_y, 'bot2_inv': bot2_inv,
+            'active_idx': active_idx, 'active_del': active_del,
+            'score': score, 'orders_comp': orders_comp,
+        }
+        if locked_inv is not None:
+            result['locked_inv'] = locked_inv
+        if locked_bx is not None:
+            result['locked_bx'] = locked_bx
+            result['locked_by'] = locked_by
+        return result
+
+    def _step_locked_bot_2cand(self, b, round_num,
+                                bot1_x, bot1_y, bot1_inv,
+                                bot2_x, bot2_y, bot2_inv,
+                                active_idx, active_del, score, orders_comp,
+                                locked_inv, locked_bx, locked_by,
+                                B, d, spawn_x, spawn_y):
+        """Process locked bot action with 2 candidate bots for collision/auto-delivery."""
+        lb_act = int(self.locked_actions[b, round_num])
+        lb_item = int(self.locked_action_items[b, round_num])
+        lbx = locked_bx[:, b]
+        lby = locked_by[:, b]
+
+        # --- Movement ---
+        if ACT_MOVE_UP <= lb_act <= ACT_MOVE_RIGHT:
+            lb_dx = int(self.DX[lb_act])
+            lb_dy = int(self.DY[lb_act])
+            lnx = lbx.to(torch.int32) + lb_dx
+            lny = lby.to(torch.int32) + lb_dy
+
+            lb_in_b = (lnx >= 0) & (lnx < self.W) & (lny >= 0) & (lny < self.H)
+            lny_s = lny.clamp(0, self.H - 1)
+            lnx_s = lnx.clamp(0, self.W - 1)
+            lb_walk = lb_in_b & self.walkable[lny_s.long(), lnx_s.long()]
+
+            lb_at_spawn = (lnx == spawn_x) & (lny == spawn_y)
+            # Collision with both candidates
+            cand1_coll = ((lnx == bot1_x.to(torch.int32)) &
+                          (lny == bot1_y.to(torch.int32)) & ~lb_at_spawn)
+            cand2_coll = ((lnx == bot2_x.to(torch.int32)) &
+                          (lny == bot2_y.to(torch.int32)) & ~lb_at_spawn)
+            lb_can_move = lb_walk & ~cand1_coll & ~cand2_coll
+
+            # Collision with other locked bots
+            if self.num_locked > 1:
+                all_lb_x = locked_bx.to(torch.int32)
+                all_lb_y = locked_by.to(torch.int32)
+                all_coll = ((lnx.unsqueeze(1) == all_lb_x) &
+                            (lny.unsqueeze(1) == all_lb_y) &
+                            ~lb_at_spawn.unsqueeze(1))
+                all_coll[:, b] = False
+                any_coll = all_coll.any(dim=1)
+                lb_can_move = lb_can_move & ~any_coll
+
+            locked_bx[:, b] = torch.where(lb_can_move, lnx.to(torch.int16), lbx)
+            locked_by[:, b] = torch.where(lb_can_move, lny.to(torch.int16), lby)
+            lbx = locked_bx[:, b]
+            lby = locked_by[:, b]
+
+        # --- Pickup ---
+        elif lb_act == ACT_PICKUP and lb_item >= 0:
+            item_x = int(self.item_pos_x[lb_item])
+            item_y = int(self.item_pos_y[lb_item])
+            lb_mdist = ((lbx.to(torch.int32) - item_x).abs() +
+                        (lby.to(torch.int32) - item_y).abs())
+            lb_adjacent = lb_mdist == 1
+            pickup_type_lb = self.item_types[lb_item]
+            added_lb = torch.zeros(B, dtype=torch.bool, device=d)
+            for s in range(INV_CAP):
+                slot_empty = locked_inv[:, b, s] < 0
+                add_here = slot_empty & ~added_lb & lb_adjacent
+                locked_inv[:, b, s] = torch.where(
+                    add_here, pickup_type_lb, locked_inv[:, b, s])
+                added_lb = added_lb | add_here
+
+        # --- Dropoff ---
+        elif lb_act == ACT_DROPOFF:
+            lb_at_drop = (lbx == self.drop_x) & (lby == self.drop_y)
+            lb_can_drop = lb_at_drop & (active_idx < self.num_orders)
+
+            aidx_l = active_idx.long().clamp(0, self.num_orders - 1)
+            act_req_lb = self.order_req[aidx_l]
+
+            linv_b = locked_inv[:, b, :]
+            linv_b, active_del, score_add = self._vectorized_deliver(
+                linv_b, act_req_lb, active_del, lb_can_drop, B, d)
+            locked_inv[:, b, :] = linv_b
+            score = score + score_add
+
+            linv_b = locked_inv[:, b, :]
+            sort_key = (linv_b < 0).to(torch.int8)
+            _, sort_idx = sort_key.sort(dim=1, stable=True)
+            locked_inv[:, b, :] = linv_b.gather(1, sort_idx.long())
+
+            # Order completion
+            act_req_lb = self.order_req[aidx_l]
+            slot_done = (active_del == 1) | (act_req_lb < 0)
+            has_required = (act_req_lb >= 0).any(dim=1)
+            order_complete_lb = slot_done.all(dim=1) & has_required & lb_can_drop
+
+            if order_complete_lb.any():
+                orders_comp = orders_comp + order_complete_lb.to(torch.int32)
+                score = score + order_complete_lb.to(torch.int32) * 5
+                new_aidx = active_idx + order_complete_lb.to(torch.int32)
+                oc_mask = order_complete_lb.unsqueeze(1).expand_as(active_del)
+                active_del = torch.where(oc_mask, self._zero_i8, active_del)
+
+                valid_auto = order_complete_lb & (new_aidx < self.num_orders)
+                new_aidx_l = new_aidx.long().clamp(0, self.num_orders - 1)
+                new_req = self.order_req[new_aidx_l]
+
+                # Auto-deliver all locked bots
+                for lb2 in range(self.num_locked):
+                    lb2_at = ((locked_bx[:, lb2] == self.drop_x) &
+                              (locked_by[:, lb2] == self.drop_y))
+                    lb2_auto = valid_auto & lb2_at
+                    if lb2_auto.any():
+                        li = locked_inv[:, lb2, :]
+                        li, active_del, sa = self._vectorized_deliver(
+                            li, new_req, active_del, lb2_auto, B, d)
+                        locked_inv[:, lb2, :] = li
+                        score = score + sa
+
+                # Auto-deliver bot1
+                b1_at = (bot1_x == self.drop_x) & (bot1_y == self.drop_y)
+                b1_auto = valid_auto & b1_at
+                if b1_auto.any():
+                    bot1_inv, active_del, sa = self._vectorized_deliver(
+                        bot1_inv, new_req, active_del, b1_auto, B, d)
+                    score = score + sa
+                    sk = (bot1_inv < 0).to(torch.int8)
+                    _, si = sk.sort(dim=1, stable=True)
+                    bot1_inv = bot1_inv.gather(1, si.long())
+
+                # Auto-deliver bot2
+                b2_at = (bot2_x == self.drop_x) & (bot2_y == self.drop_y)
+                b2_auto = valid_auto & b2_at
+                if b2_auto.any():
+                    bot2_inv, active_del, sa = self._vectorized_deliver(
+                        bot2_inv, new_req, active_del, b2_auto, B, d)
+                    score = score + sa
+                    sk = (bot2_inv < 0).to(torch.int8)
+                    _, si = sk.sort(dim=1, stable=True)
+                    bot2_inv = bot2_inv.gather(1, si.long())
+
+                active_idx = new_aidx
+
+        return (bot1_x, bot1_y, bot1_inv, bot2_x, bot2_y, bot2_inv,
+                active_idx, active_del, score, orders_comp,
+                locked_inv, locked_bx, locked_by)
+
+    @torch.no_grad()
+    def _eval_2bot(self, state: dict[str, torch.Tensor],
+                   round_num: int = 0) -> torch.Tensor:
+        """Evaluate 2-bot states for beam pruning. Returns [B] float32.
+
+        Joint evaluation: considers both bots' inventories, positions, and
+        their coordination (anti-redundancy, work division).
+        """
+        B = state['bot1_x'].shape[0]
+        d = self.device
+
+        bot1_x = state['bot1_x'].long()
+        bot1_y = state['bot1_y'].long()
+        inv1 = state['bot1_inv']
+        bot2_x = state['bot2_x'].long()
+        bot2_y = state['bot2_y'].long()
+        inv2 = state['bot2_inv']
+        aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
+
+        rounds_left = MAX_ROUNDS - round_num - 1
+
+        # Score is dominant
+        ev = state['score'].float() * 100000
+
+        if self.speed_bonus > 0:
+            ev = ev + self.speed_bonus * state['score'].float() * rounds_left
+
+        # Distance to dropoff for each bot
+        dist_drop1 = self.dist_to_dropoff[bot1_y, bot1_x].float()
+        dist_drop2 = self.dist_to_dropoff[bot2_y, bot2_x].float()
+
+        # Active order analysis
+        act_req = self.order_req[aidx]
+        act_del = state['active_del']
+        active_needed = (act_req >= 0) & (act_del == 0)
+        active_done = (act_req >= 0) & (act_del == 1)
+        active_remaining = active_needed.sum(dim=1).float()
+        active_delivered = active_done.sum(dim=1).float()
+        active_total = (act_req >= 0).sum(dim=1).float()
+        fraction_done = active_delivered / active_total.clamp(min=1)
+
+        ev = ev + fraction_done * 30000
+        ev = ev + (active_remaining == 0).float() * 50000
+        ev = ev + (active_remaining == 1).float() * 20000
+        ev = ev + (active_remaining == 2).float() * 5000
+
+        # === Inventory matching for BOTH bots (joint) ===
+        req_exp = act_req.unsqueeze(1)      # [B, 1, 6]
+        del_exp = act_del.unsqueeze(1)      # [B, 1, 6]
+
+        # Bot1 active matching
+        inv1_exp = inv1.unsqueeze(2)        # [B, 3, 1]
+        has1 = (inv1_exp >= 0)
+        match1 = (inv1_exp == req_exp) & (del_exp == 0) & (req_exp >= 0) & has1
+        inv1_matches = match1.any(dim=2)    # [B, 3]
+        has_active1 = inv1_matches.any(dim=1)
+        n_active1 = inv1_matches.sum(dim=1).float()
+
+        # Bot2 active matching
+        inv2_exp = inv2.unsqueeze(2)
+        has2 = (inv2_exp >= 0)
+        match2 = (inv2_exp == req_exp) & (del_exp == 0) & (req_exp >= 0) & has2
+        inv2_matches = match2.any(dim=2)
+        has_active2 = inv2_matches.any(dim=1)
+        n_active2 = inv2_matches.sum(dim=1).float()
+
+        # Active inventory value per bot (discounted by distance)
+        active_val1 = (70000 - dist_drop1 * 1750).clamp(min=0)
+        active_val2 = (70000 - dist_drop2 * 1750).clamp(min=0)
+        ev = ev + n_active1 * active_val1 + n_active2 * active_val2
+
+        # Preview order matching for both bots
+        pidx = (aidx + 1).clamp(0, self.num_orders - 1)
+        prev_req = self.order_req[pidx]
+        prev_req_exp = prev_req.unsqueeze(1)
+
+        match_prev1 = ((inv1_exp == prev_req_exp) & (prev_req_exp >= 0) & has1).any(dim=2) & ~inv1_matches
+        match_prev2 = ((inv2_exp == prev_req_exp) & (prev_req_exp >= 0) & has2).any(dim=2) & ~inv2_matches
+
+        # Preview items valued progressively as active order completes
+        frac_exp1 = fraction_done.unsqueeze(1).expand_as(match_prev1)
+        prev_val = 5000.0 + 10000.0 * frac_exp1
+        ev = ev + (match_prev1.float() * prev_val).sum(dim=1)
+        ev = ev + (match_prev2.float() * prev_val).sum(dim=1)
+
+        # Dead inventory for both bots
+        has1_flat = (inv1 >= 0)
+        is_dead1 = has1_flat & ~inv1_matches & ~match_prev1
+        has2_flat = (inv2 >= 0)
+        is_dead2 = has2_flat & ~inv2_matches & ~match_prev2
+
+        # Check orders +2, +3 before declaring dead
+        for _extra in [2, 3]:
+            _eidx = (aidx + _extra).clamp(0, self.num_orders - 1)
+            _ereq = self.order_req[_eidx].unsqueeze(1)
+            if is_dead1.any():
+                _m1 = ((inv1_exp == _ereq) & (_ereq >= 0) & has1).any(dim=2) & ~inv1_matches & ~match_prev1
+                is_dead1 = is_dead1 & ~_m1
+            if is_dead2.any():
+                _m2 = ((inv2_exp == _ereq) & (_ereq >= 0) & has2).any(dim=2) & ~inv2_matches & ~match_prev2
+                is_dead2 = is_dead2 & ~_m2
+
+        dead_penalty = 50000 * min(1.0, rounds_left / 150.0) + 5000
+        ev = ev - (is_dead1.sum(dim=1).float() + is_dead2.sum(dim=1).float()) * dead_penalty
+
+        # === Joint coordination: reward DIFFERENT targets, penalize redundancy ===
+        # Count order slots covered by each bot's inventory
+        # match1_grid: [B, 3, 6], match2_grid: [B, 3, 6]
+        # A slot is "jointly covered" if EITHER bot covers it
+        slot_covered1 = match1.any(dim=1)  # [B, 6] — any inv1 slot matches this order slot
+        slot_covered2 = match2.any(dim=1)  # [B, 6]
+        both_cover = active_needed & slot_covered1 & slot_covered2  # redundancy
+        unique_cover = active_needed & (slot_covered1 ^ slot_covered2)  # unique
+
+        ev = ev + unique_cover.sum(dim=1).float() * 35000   # reward unique coverage
+        ev = ev - both_cover.sum(dim=1).float() * 15000      # penalize redundancy
+
+        # === Distance guidance for both bots ===
+        for bot_x, bot_y, has_active_inv, dist_drop in [
+            (bot1_x, bot1_y, has_active1, dist_drop1),
+            (bot2_x, bot2_y, has_active2, dist_drop2),
+        ]:
+            inv_count_b = 0  # simplified; check space via has_space below
+            has_space_b = True  # will compute per-bot below
+
+            best_dist = torch.full((B,), 9999.0, device=d)
+            for os in range(MAX_ORDER_SIZE):
+                needed = active_needed[:, os]
+                if not needed.any():
+                    continue
+                nt = act_req[:, os].long().clamp(0, self.num_types - 1)
+                dt = self.dist_to_type[nt, bot_y, bot_x].float()
+                better = needed & (dt < best_dist)
+                best_dist = torch.where(better, dt, best_dist)
+
+            close = best_dist < 9999
+            trip_ok = close & ((best_dist + dist_drop + 2) <= rounds_left)
+            _m = (trip_ok & ~has_active_inv).float()
+            ev = ev + _m * (20000.0 - best_dist * 800)
+
+            # Delivery urgency
+            ev = ev - has_active_inv.float() * dist_drop * 200
+
+        # Trip table for remaining order cost
+        del_bits = (act_del.long() * self._del_weights).sum(dim=1)
+        # Use bot that's closer to items for trip evaluation
+        min_dist_drop = torch.min(dist_drop1, dist_drop2)
+        # Use bot1's position for trip cost (heuristic — either bot could do it)
+        cell_idx = self.trip_cell_idx_map[bot1_y, bot1_x]
+        trip_combo = self.remaining_trip_combo[aidx, del_bits]
+        has_trip = (trip_combo >= 0) & (cell_idx >= 0)
+        safe_cell = cell_idx.clamp(0, self._trip_n_cells - 1)
+        safe_combo = trip_combo.clamp(0, self._trip_n_combos - 1)
+        next_cost = self.trip_cost_gpu[safe_cell, safe_combo].float()
+        after_cost = self.remaining_after_cost[aidx, del_bits].float()
+        total_remaining = (has_trip.float() * (next_cost + after_cost) +
+                           (~has_trip).float() * 9999.0)
+        achievable = has_trip & (total_remaining <= rounds_left)
+        ev = ev + achievable.float() * 8000
+        ev = ev - has_trip.float() * total_remaining.clamp(0, 300) * 50
+
+        # Penalize both bots camping at dropoff without active items
+        at_drop1 = (state['bot1_x'].long() == self.drop_x) & (state['bot1_y'].long() == self.drop_y)
+        at_drop2 = (state['bot2_x'].long() == self.drop_x) & (state['bot2_y'].long() == self.drop_y)
+        camp1 = at_drop1 & ~has_active1
+        camp2 = at_drop2 & ~has_active2
+        ev = ev - camp1.float() * 12000
+        ev = ev - camp2.float() * 12000
+
+        # Penalize bots being too close to each other (congestion)
+        bot_dist = ((bot1_x - bot2_x).abs() + (bot1_y - bot2_y).abs()).float()
+        too_close = bot_dist <= 1
+        ev = ev - too_close.float() * 3000
+
+        # Aisle congestion with locked bots
+        if self.num_locked > 0 and 'locked_bx' in state and self._aisle_columns.any():
+            for bx, by in [(bot1_x, bot1_y), (bot2_x, bot2_y)]:
+                _in_aisle = self._aisle_columns[bx]
+                _not_corr = ~self._corridor_rows[by]
+                _in_narrow = _in_aisle & _not_corr
+                if _in_narrow.any():
+                    _lbx = state['locked_bx']
+                    _lby = state['locked_by']
+                    _same = (_lbx == bx.unsqueeze(1))
+                    _lby_l = _lby.long().clamp(0, self.H - 1)
+                    _lnc = ~self._corridor_rows[_lby_l]
+                    _lsa = _same & _lnc
+                    _nls = _lsa.sum(dim=1).float()
+                    ev = ev - _in_narrow.float() * _nls * 4000
+
+        return ev
+
+    @torch.no_grad()
+    def dp_search_2bot(self, game_state: GameState | None,
+                       max_states: int = 100000,
+                       verbose: bool = True,
+                       on_round=None,
+                       bot_ids: tuple[int, int] = (0, 1),
+                       init_state: dict[str, torch.Tensor] | None = None,
+                       ) -> tuple[int, list[tuple[int, int]], list[tuple[int, int]]]:
+        """Joint 2-bot DP search via exhaustive BFS + dedup.
+
+        Returns (best_score, bot1_actions, bot2_actions) where each is
+        list of (action_type, item_idx) per round.
+        """
+        t0 = time.time()
+        self.bot1_real_id = bot_ids[0]
+        self.bot2_real_id = bot_ids[1]
+        d = self.device
+
+        if init_state is not None:
+            state = init_state
+        else:
+            state = self._from_game_state_2bot(
+                game_state, bot1_id=bot_ids[0], bot2_id=bot_ids[1])
+
+        N = self.dp_num_actions  # per bot
+
+        # History for backtracking (on GPU)
+        parent_idx_history = []
+        b1_act_history = []
+        b1_item_history = []
+        b2_act_history = []
+        b2_item_history = []
+
+        pruned_rounds = 0
+
+        for rnd in range(MAX_ROUNDS):
+            B = state['bot1_x'].shape[0]
+
+            # Expand: Cartesian product of bot1 × bot2 actions
+            expanded, b1a, b1i, b2a, b2i, valid, N_per = \
+                self._dp_expand_2bot(state)
+
+            # Pre-filter: step only valid combos
+            filt_idx = valid.nonzero(as_tuple=True)[0]
+            filt_exp = {k: v[filt_idx] for k, v in expanded.items()}
+            filt_b1a = b1a[filt_idx]
+            filt_b1i = b1i[filt_idx]
+            filt_b2a = b2a[filt_idx]
+            filt_b2i = b2i[filt_idx]
+            NN = N_per * N_per  # actions per parent state
+            filt_parent = filt_idx // NN
+            BF = filt_idx.shape[0]
+
+            if BF == 0:
+                # No valid actions — just keep current state with wait
+                parent_idx_history.append(torch.zeros(B, dtype=torch.long, device=d))
+                b1_act_history.append(torch.zeros(B, dtype=torch.int8, device=d))
+                b1_item_history.append(torch.full((B,), -1, dtype=torch.int16, device=d))
+                b2_act_history.append(torch.zeros(B, dtype=torch.int8, device=d))
+                b2_item_history.append(torch.full((B,), -1, dtype=torch.int16, device=d))
+                continue
+
+            # Step both bots
+            new_state = self._step_2bot(
+                filt_exp, filt_b1a, filt_b1i, filt_b2a, filt_b2i,
+                round_num=rnd)
+
+            # No-op detection: both bots unchanged
+            no_change = (
+                (new_state['bot1_x'] == filt_exp['bot1_x']) &
+                (new_state['bot1_y'] == filt_exp['bot1_y']) &
+                (new_state['bot2_x'] == filt_exp['bot2_x']) &
+                (new_state['bot2_y'] == filt_exp['bot2_y']) &
+                ((new_state['bot1_inv'] == filt_exp['bot1_inv']).all(dim=1)) &
+                ((new_state['bot2_inv'] == filt_exp['bot2_inv']).all(dim=1)) &
+                (new_state['score'] == filt_exp['score']) &
+                (new_state['active_idx'] == filt_exp['active_idx'])
+            )
+            is_noop = no_change & ((filt_b1a != ACT_WAIT) | (filt_b2a != ACT_WAIT))
+
+            # Hash + dedup
+            hashes = self._hash_2bot(new_state)
+            hashes[is_noop] = -1
+
+            # Sort by score desc then hash asc for dedup
+            _, score_order = new_state['score'].sort(descending=True, stable=True)
+            hashes_scored = hashes[score_order]
+            sorted_h, hash_order = hashes_scored.sort(stable=True)
+            sort_idx = score_order[hash_order]
+            is_first = torch.ones(BF, dtype=torch.bool, device=d)
+            is_first[1:] = sorted_h[1:] != sorted_h[:-1]
+            valid_mask = is_first & (sorted_h != -1)
+
+            unique_idx = sort_idx[valid_mask]
+            B_new = unique_idx.shape[0]
+
+            # Parent tracking
+            parent_idx = filt_parent[unique_idx]
+            parent_idx_history.append(parent_idx)
+            b1_act_history.append(filt_b1a[unique_idx])
+            b1_item_history.append(filt_b1i[unique_idx])
+            b2_act_history.append(filt_b2a[unique_idx])
+            b2_item_history.append(filt_b2i[unique_idx])
+
+            # Gather unique states
+            state = {k: v[unique_idx] for k, v in new_state.items()}
+
+            # Prune if too many states
+            if B_new > max_states:
+                pruned_rounds += 1
+                evals = self._eval_2bot(state, round_num=rnd)
+                keep = min(max_states, B_new)
+                _, topk = torch.topk(evals, keep)
+                topk_sorted, _ = topk.sort()
+                state = {k: v[topk_sorted] for k, v in state.items()}
+                parent_idx_history[-1] = parent_idx_history[-1][topk_sorted]
+                b1_act_history[-1] = b1_act_history[-1][topk_sorted]
+                b1_item_history[-1] = b1_item_history[-1][topk_sorted]
+                b2_act_history[-1] = b2_act_history[-1][topk_sorted]
+                b2_item_history[-1] = b2_item_history[-1][topk_sorted]
+                B_new = keep
+
+            # Verbose output
+            if verbose and (rnd < 10 or rnd % 25 == 0 or rnd == MAX_ROUNDS - 1):
+                dt = time.time() - t0
+                best_score = state['score'].max().item()
+                print(f"  R{rnd:3d}: score={best_score:3d}, "
+                      f"unique={B_new}, expanded={BF}, "
+                      f"t={dt:.1f}s", file=sys.stderr)
+                if on_round:
+                    on_round(rnd, best_score, B_new, BF, dt)
+
+        # Find best and backtrack
+        best_idx = state['score'].argmax().item()
+        best_score = state['score'][best_idx].item()
+
+        # Transfer history to CPU
+        parent_idx_history = [h.cpu() for h in parent_idx_history]
+        b1_act_history = [h.cpu() for h in b1_act_history]
+        b1_item_history = [h.cpu() for h in b1_item_history]
+        b2_act_history = [h.cpu() for h in b2_act_history]
+        b2_item_history = [h.cpu() for h in b2_item_history]
+
+        bot1_seq = []
+        bot2_seq = []
+        idx = best_idx
+        for j in range(MAX_ROUNDS - 1, -1, -1):
+            bot1_seq.append((int(b1_act_history[j][idx]),
+                             int(b1_item_history[j][idx])))
+            bot2_seq.append((int(b2_act_history[j][idx]),
+                             int(b2_item_history[j][idx])))
+            idx = int(parent_idx_history[j][idx])
+        bot1_seq.reverse()
+        bot2_seq.reverse()
+
+        total_time = time.time() - t0
+        if verbose:
+            print(f"\n2-Bot GPU DP: score={best_score}, time={total_time:.1f}s, "
+                  f"pruned={pruned_rounds}", file=sys.stderr)
+
+        return best_score, bot1_seq, bot2_seq
+
+    @torch.no_grad()
+    def verify_2bot_against_cpu(self, game_state: GameState,
+                                 all_orders: list[Order],
+                                 bot1_id: int = 0, bot2_id: int = 1,
+                                 num_rounds: int = 50) -> bool:
+        """Verify 2-bot GPU step matches CPU step with greedy actions."""
+        from pathfinding import precompute_all_distances, get_first_step, get_distance
+        ms = game_state.map_state
+        dist_maps = precompute_all_distances(ms)
+        num_bots = len(game_state.bot_positions)
+
+        cpu_state = game_state.copy()
+        cpu_log = []
+
+        def greedy_action(gs, bid):
+            bx = int(gs.bot_positions[bid, 0])
+            by = int(gs.bot_positions[bid, 1])
+            inv_count = gs.bot_inv_count(bid)
+            inv_items = gs.bot_inv_list(bid)
+            active = gs.get_active_order()
+            if not active:
+                return (ACT_WAIT, -1)
+            if (bx == ms.drop_off[0] and by == ms.drop_off[1] and
+                    inv_count > 0 and any(active.needs_type(t) for t in inv_items)):
+                return (ACT_DROPOFF, -1)
+            if inv_count < INV_CAP:
+                for iidx in range(ms.num_items):
+                    ix = int(ms.item_positions[iidx, 0])
+                    iy = int(ms.item_positions[iidx, 1])
+                    if abs(bx - ix) + abs(by - iy) == 1:
+                        tid = int(ms.item_types[iidx])
+                        if active.needs_type(tid):
+                            return (ACT_PICKUP, iidx)
+            if inv_count > 0 and any(active.needs_type(t) for t in inv_items):
+                act = get_first_step(dist_maps, (bx, by), ms.drop_off)
+                if act > 0:
+                    return (act, -1)
+            if inv_count < INV_CAP:
+                best_d = 9999
+                best_a = None
+                for iidx in range(ms.num_items):
+                    tid = int(ms.item_types[iidx])
+                    if not active.needs_type(tid):
+                        continue
+                    for ax, ay in ms.item_adjacencies.get(iidx, []):
+                        dd = get_distance(dist_maps, (bx, by), (ax, ay))
+                        if dd < best_d:
+                            act = get_first_step(dist_maps, (bx, by), (ax, ay))
+                            if act > 0:
+                                best_a = (act, -1)
+                                best_d = dd
+                if best_a:
+                    return best_a
+            if inv_count > 0:
+                act = get_first_step(dist_maps, (bx, by), ms.drop_off)
+                if act > 0:
+                    return (act, -1)
+            return (ACT_WAIT, -1)
+
+        for rnd in range(num_rounds):
+            a1 = greedy_action(cpu_state, bot1_id)
+            a2 = greedy_action(cpu_state, bot2_id)
+            cpu_log.append((a1, a2))
+            round_acts = [(ACT_WAIT, -1)] * num_bots
+            round_acts[bot1_id] = a1
+            round_acts[bot2_id] = a2
+            cpu_state.round = rnd
+            cpu_step(cpu_state, round_acts, all_orders)
+
+        # Replay on GPU
+        gpu_state = self._from_game_state_2bot(game_state, bot1_id, bot2_id)
+        for rnd in range(num_rounds):
+            a1, a2 = cpu_log[rnd]
+            b1a = torch.tensor([a1[0]], dtype=torch.int8, device=self.device)
+            b1i = torch.tensor([a1[1] if a1[1] >= 0 else 0], dtype=torch.int16, device=self.device)
+            b2a = torch.tensor([a2[0]], dtype=torch.int8, device=self.device)
+            b2i = torch.tensor([a2[1] if a2[1] >= 0 else 0], dtype=torch.int16, device=self.device)
+            gpu_state = self._step_2bot(gpu_state, b1a, b1i, b2a, b2i, round_num=rnd)
+
+        gs = gpu_state['score'][0].item()
+        cs = cpu_state.score
+        print(f"  2-Bot verify ({num_rounds} rounds): CPU={cs}, GPU={gs}",
+              file=sys.stderr)
+        if gs != cs:
+            # Detailed replay to find divergence
+            gpu2 = self._from_game_state_2bot(game_state, bot1_id, bot2_id)
+            cpu2 = game_state.copy()
+            for rnd in range(num_rounds):
+                a1, a2 = cpu_log[rnd]
+                round_acts = [(ACT_WAIT, -1)] * num_bots
+                round_acts[bot1_id] = a1
+                round_acts[bot2_id] = a2
+                cpu2.round = rnd
+                cpu_step(cpu2, round_acts, all_orders)
+
+                b1a = torch.tensor([a1[0]], dtype=torch.int8, device=self.device)
+                b1i = torch.tensor([a1[1] if a1[1] >= 0 else 0], dtype=torch.int16, device=self.device)
+                b2a = torch.tensor([a2[0]], dtype=torch.int8, device=self.device)
+                b2i = torch.tensor([a2[1] if a2[1] >= 0 else 0], dtype=torch.int16, device=self.device)
+                gpu2 = self._step_2bot(gpu2, b1a, b1i, b2a, b2i, round_num=rnd)
+
+                g_s = gpu2['score'][0].item()
+                c_s = cpu2.score
+                if g_s != c_s:
+                    print(f"    DIVERGENCE at round {rnd}!", file=sys.stderr)
+                    print(f"      Bot1 act={a1}, Bot2 act={a2}", file=sys.stderr)
+                    print(f"      CPU: score={c_s}", file=sys.stderr)
+                    print(f"      GPU: score={g_s}", file=sys.stderr)
+                    return False
+        print(f"    MATCH! Score={gs}", file=sys.stderr)
+        return True
+
+
+def gpu_dp_search(difficulty: str | None = None, seed: int | None = None,
+                  max_states: int = 500000, verbose: bool = True,
+                  game_factory: Callable | None = None,
+                  capture_data: dict | None = None) -> tuple[int, list[tuple[int, int]]]:
     """Convenience function for GPU DP search (optimal for single-bot).
 
     Returns (best_score, action_sequence) where action_sequence is
@@ -2197,8 +3322,10 @@ def gpu_dp_search(difficulty=None, seed=None, max_states=500000, verbose=True,
     return score, actions_seq
 
 
-def gpu_beam_search(difficulty=None, seed=None, beam_width=10000, verbose=True,
-                    game_factory=None, capture_data=None):
+def gpu_beam_search(difficulty: str | None = None, seed: int | None = None,
+                    beam_width: int = 10000, verbose: bool = True,
+                    game_factory: Callable | None = None,
+                    capture_data: dict | None = None) -> tuple[int, list[tuple[int, int]]]:
     """Convenience function for GPU beam search.
 
     Returns (best_score, action_sequence).

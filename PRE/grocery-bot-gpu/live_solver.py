@@ -26,18 +26,7 @@ from game_engine import (
     CELL_FLOOR, CELL_WALL, CELL_SHELF, CELL_DROPOFF,
 )
 from planner import solve as planner_solve
-
-
-def detect_difficulty(num_bots):
-    """Detect difficulty from bot count."""
-    if num_bots <= 1:
-        return 'easy'
-    elif num_bots <= 3:
-        return 'medium'
-    elif num_bots <= 5:
-        return 'hard'
-    else:
-        return 'expert'
+from configs import detect_difficulty  # canonical source; re-exported for backward compat
 
 
 def ws_to_capture(data):

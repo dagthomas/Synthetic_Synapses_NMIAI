@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createCleanup } from '$lib/sse.server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BOT_DIR = resolve(__dirname, '..', '..', '..', '..', '..', '..', '..');
@@ -14,46 +15,35 @@ export async function POST({ request }) {
 	}
 
 	const encoder = new TextEncoder();
-	let process = null;
-	let closed = false;
-	let safetyTimeout = null;
-
-	function cleanupShared(controller) {
-		if (closed) return;
-		closed = true;
-		if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-		if (process && !process.killed) {
-			try { process.kill(); } catch (e) {}
-		}
-		try { controller?.close(); } catch (e) {}
-	}
+	const ctx = { closed: false, safetyTimeout: null, heartbeatInterval: null, process: null };
 
 	const stream = new ReadableStream({
 		start(controller) {
-			function cleanup() { cleanupShared(controller); }
+			const cleanup = createCleanup(ctx, controller);
 
-			safetyTimeout = setTimeout(() => {
+			ctx.safetyTimeout = setTimeout(() => {
 				sendEvent({ type: 'error', msg: 'Timeout: GPU solve took too long' });
 				cleanup();
 			}, 300_000); // 5 min for multi-bot sequential DP
 
+			// Custom sendEvent: this endpoint passes pre-formed objects (not type+data)
 			function sendEvent(data) {
-				if (closed) return;
+				if (ctx.closed) return;
 				try {
 					controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-				} catch (e) {}
+				} catch (e) { /* stream closed by client */ }
 			}
 
 			const args = ['gpu_multi_solve_stream.py', difficulty];
 			if (seed) args.push('--seed', String(seed));
 
-			process = spawn('python', args, {
+			ctx.process = spawn('python', args, {
 				cwd: GPU_DIR,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});
 
 			let stdoutBuffer = '';
-			process.stdout.on('data', (data) => {
+			ctx.process.stdout.on('data', (data) => {
 				stdoutBuffer += data.toString();
 				const lines = stdoutBuffer.split('\n');
 				stdoutBuffer = lines.pop() || '';
@@ -69,23 +59,23 @@ export async function POST({ request }) {
 				}
 			});
 
-			process.stderr.on('data', (data) => {
+			ctx.process.stderr.on('data', (data) => {
 				const text = data.toString().trim();
 				if (text) sendEvent({ type: 'stderr', text });
 			});
 
-			process.on('close', (code) => {
+			ctx.process.on('close', (code) => {
 				sendEvent({ type: 'process_done', code });
 				cleanup();
 			});
 
-			process.on('error', (err) => {
+			ctx.process.on('error', (err) => {
 				sendEvent({ type: 'error', msg: `Failed to spawn: ${err.message}` });
 				cleanup();
 			});
 		},
 		cancel() {
-			cleanupShared(null);
+			createCleanup(ctx, null)();
 		}
 	});
 

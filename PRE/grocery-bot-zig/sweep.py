@@ -3,7 +3,7 @@
 Usage: python sweep.py [difficulty] [--seeds N] [--port PORT]
        python sweep.py expert --seeds 40 --no-record   # skip DB recording
 """
-import subprocess, sys, os, re, time, statistics, argparse, threading, glob
+import subprocess, sys, os, re, time, statistics, argparse, threading, glob  # nosec B404
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_EXE = os.path.join(SCRIPT_DIR, "zig-out", "bin", "grocery-bot.exe")
@@ -14,7 +14,7 @@ def get_bot_exe(difficulty):
     if os.path.exists(specific):
         return specific
     return BOT_EXE
-DEFAULT_DB = "postgres://grocery:grocery123@localhost:5433/grocery_bot"
+DEFAULT_DB = os.environ.get("GROCERY_DB_URL", "postgres://grocery@localhost:5433/grocery_bot")
 
 
 def drain_pipe(pipe, lines):
@@ -28,7 +28,7 @@ def run_one(difficulty, seed, port, bot_exe=None):
     """Run a single game with given seed. Returns (score, orders_completed) or None on failure."""
     if bot_exe is None:
         bot_exe = get_bot_exe(difficulty)
-    srv = subprocess.Popen(
+    srv = subprocess.Popen(  # nosec B603 B607
         [sys.executable, "-u", "sim_server.py", str(port), difficulty, "--seed", str(seed)],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         cwd=SCRIPT_DIR,
@@ -40,7 +40,7 @@ def run_one(difficulty, seed, port, bot_exe=None):
 
     time.sleep(0.5)
 
-    bot = subprocess.Popen(
+    bot = subprocess.Popen(  # nosec B603 B607
         [bot_exe, f"ws://localhost:{port}"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         cwd=SCRIPT_DIR,
@@ -54,7 +54,8 @@ def run_one(difficulty, seed, port, bot_exe=None):
         srv.terminate()
         try:
             srv.wait(timeout=5)
-        except:
+        except Exception:
+            # srv.wait() timed out or failed; force-kill to avoid orphaned process
             srv.kill()
         return None
 
@@ -62,7 +63,8 @@ def run_one(difficulty, seed, port, bot_exe=None):
     srv.terminate()
     try:
         srv.wait(timeout=5)
-    except:
+    except Exception:
+        # srv.wait() timed out or failed; force-kill to avoid orphaned process
         srv.kill()
     srv_thread.join(timeout=2)
 
@@ -194,7 +196,7 @@ def cleanup_game_logs(max_keep=15):
         try:
             os.remove(old)
         except OSError:
-            pass
+            pass  # File already deleted or locked by another process; skip silently
     removed = len(logs) - max_keep
     if removed > 0:
         print(f"Cleaned up {removed} old game log files (keeping {max_keep})")

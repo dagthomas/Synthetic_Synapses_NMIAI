@@ -100,6 +100,7 @@
 			<a href="/optimize">optimize</a>
 			<a href="/gpu" class="gpu-link">gpu</a>
 			<a href="/pipeline" class="pipeline-link">pipeline</a>
+			<a href="/tokens">tokens</a>
 		</div>
 	</div>
 </nav>

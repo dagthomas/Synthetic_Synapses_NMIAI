@@ -2,12 +2,15 @@ const std = @import("std");
 const ws = @import("ws.zig");
 const types = @import("types.zig");
 const strategy = @import("strategy.zig");
+const queue_strategy = @import("queue_strategy.zig");
 const parser = @import("parser.zig");
 const precomputed = @import("precomputed.zig");
 
 const GameState = types.GameState;
 const Pos = types.Pos;
 const MAX_BOTS = types.MAX_BOTS;
+
+var use_queue_strategy: bool = false;
 
 // ── Replay Mode ───────────────────────────────────────────────────────
 fn runReplay(log_path: []const u8) !void {
@@ -62,14 +65,24 @@ fn runReplay(log_path: []const u8) !void {
         total_rounds += 1;
 
         if (state.round == 0) {
-            strategy.initPbots();
-            strategy.expected_count = 0;
+            if (use_queue_strategy) {
+                queue_strategy.initPbots();
+            } else {
+                strategy.initPbots();
+                strategy.expected_count = 0;
+            }
         }
 
-        const response = strategy.decideActions(&state, &action_buf) catch |err| {
-            std.debug.print("R{d} Decision error: {any}\n", .{ state.round, err });
-            continue;
-        };
+        const response = if (use_queue_strategy)
+            queue_strategy.decideActions(&state, &action_buf) catch |err| {
+                std.debug.print("R{d} Decision error: {any}\n", .{ state.round, err });
+                continue;
+            }
+        else
+            strategy.decideActions(&state, &action_buf) catch |err| {
+                std.debug.print("R{d} Decision error: {any}\n", .{ state.round, err });
+                continue;
+            };
 
         // Count actions in our response
         var resp_iter = std.mem.splitSequence(u8, response, "\"action\":\"");
@@ -168,8 +181,12 @@ fn runLive(url: []const u8) !void {
 
         // Initialize persistent state on first round
         if (state.round == 0) {
-            strategy.initPbots();
-            strategy.expected_count = 0;
+            if (use_queue_strategy) {
+                queue_strategy.initPbots();
+            } else {
+                strategy.initPbots();
+                strategy.expected_count = 0;
+            }
         }
 
         std.debug.print("R{d}/{d} Score:{d}\n", .{ state.round, state.max_rounds, state.score });
@@ -180,14 +197,17 @@ fn runLive(url: []const u8) !void {
         if (current_round <= last_responded_round) continue;
         if (last_responded_round >= 0 and current_round > last_responded_round + 1) {
             std.debug.print("R{d} DESYNC: expected R{d}, skipping to re-sync\n", .{ state.round, last_responded_round + 1 });
-            _ = strategy.decideActions(&state, &action_buf) catch {};
+            if (use_queue_strategy) {
+                _ = queue_strategy.decideActions(&state, &action_buf) catch {};
+            } else {
+                _ = strategy.decideActions(&state, &action_buf) catch {};
+            }
             last_responded_round = current_round;
             continue;
         }
 
-        // Detect 1-round action offset via position mismatch
-        // Skip this check if strategy.zig has already detected and is handling the offset
-        if (strategy.expected_count > 0 and state.round > 1 and !strategy.offset_detected) {
+        // Detect 1-round action offset via position mismatch (original strategy only)
+        if (!use_queue_strategy and strategy.expected_count > 0 and state.round > 1 and !strategy.offset_detected) {
             var mismatches: u8 = 0;
             const check_count = @min(strategy.expected_count, state.bot_count);
             for (0..check_count) |bi| {
@@ -195,30 +215,37 @@ fn runLive(url: []const u8) !void {
                     mismatches += 1;
                 }
             }
-            // Aggressive detection: even 1 mismatch counts (was 60%+1 threshold)
             const threshold: u8 = 1;
             if (mismatches >= threshold) {
                 desync_counter += 1;
-                // Trigger after 2 consecutive rounds (was 3)
                 if (desync_counter >= 2) {
                     std.debug.print("R{d} POSITION DESYNC: {d}/{d} mismatches for {d} rounds, re-syncing\n", .{ state.round, mismatches, check_count, desync_counter });
-                    // Reset desync state but fall through to normal decision + send
-                    // (previously we called decideActions here then continued, wasting the round)
                     strategy.expected_count = 0;
                     desync_counter = 0;
                 }
             } else {
-                desync_counter = 0; // Reset immediately on clean round (was gradual decay)
+                desync_counter = 0;
             }
         }
 
-        const response = strategy.decideActions(&state, &action_buf) catch |err| {
+        const response = if (use_queue_strategy)
+            queue_strategy.decideActions(&state, &action_buf) catch |err| {
+                std.debug.print("Decision error: {any}\n", .{err});
+                continue;
+            }
+        else
+            strategy.decideActions(&state, &action_buf) catch |err| {
             std.debug.print("Decision error: {any}\n", .{err});
             continue;
         };
 
         log_file.writeAll(response) catch {};
         log_file.writeAll("\n") catch {};
+
+        // Small delay before sending to prevent 1-round action offset desync.
+        // Without this, the server may not have finished processing the previous
+        // round before we send, causing our action to apply to the wrong round.
+        std.Thread.sleep(45 * std.time.ns_per_ms);
 
         client.sendMessage(response) catch |err| {
             std.debug.print("Send error: {any}\n", .{err});
@@ -238,23 +265,33 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage:\n  grocery-bot <wss://...> [--precomputed capture.json]  Live mode\n  grocery-bot --replay <logfile>                        Replay mode\n", .{});
+        std.debug.print("Usage:\n  grocery-bot <wss://...> [--precomputed capture.json] [--queue]  Live mode\n  grocery-bot --replay <logfile> [--queue]                          Replay mode\n", .{});
         return;
+    }
+
+    // Check for --queue anywhere in args
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--queue")) {
+            use_queue_strategy = true;
+            std.debug.print("Using QUEUE strategy\n", .{});
+        }
     }
 
     if (std.mem.eql(u8, args[1], "--replay")) {
         if (args.len < 3) {
-            std.debug.print("Usage: grocery-bot --replay <logfile.jsonl>\n", .{});
+            std.debug.print("Usage: grocery-bot --replay <logfile.jsonl> [--queue]\n", .{});
             return;
         }
         try runReplay(args[2]);
     } else {
-        // Parse optional --precomputed <path> after the URL
+        // Parse optional flags after the URL
         var i: usize = 2;
-        while (i + 1 < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--precomputed")) {
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--precomputed") and i + 1 < args.len) {
                 _ = precomputed.load(args[i + 1]);
                 i += 1;
+            } else if (std.mem.eql(u8, args[i], "--queue")) {
+                // Handled in global arg scan above
             }
         }
         try runLive(args[1]);

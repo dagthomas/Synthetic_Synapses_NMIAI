@@ -130,7 +130,8 @@
 				try {
 					const event = JSON.parse(line.slice(6));
 					onEvent(event);
-				} catch (e) {}
+				} catch (e) { // Stream closed — client disconnected
+				}
 			}
 		}
 	}

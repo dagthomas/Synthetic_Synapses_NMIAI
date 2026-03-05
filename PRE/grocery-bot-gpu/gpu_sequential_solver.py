@@ -7,44 +7,59 @@ Two-pass approach:
 
 Each bot's DP stays single-bot sized (~200K states), making it GPU-tractable.
 
+Error contract:
+  - solve_sequential / refine_from_solution raise ValueError on invalid input
+    (missing capture_data and seed+difficulty).
+  - Both return (score, actions) tuple: score is int, actions is
+    list of 300 round_actions where each round_actions is [(act, item)] * num_bots.
+  - Returns (0, []) if GPU/CPU verification fails (solver internal check).
+    Callers should check score > 0 before using the actions.
+  - cpu_verify returns int score (0 on empty/failed simulation).
+
 Usage:
     from gpu_sequential_solver import solve_sequential
     score, actions = solve_sequential(capture, device='cuda')
 """
+from __future__ import annotations
+
 import sys
 import time
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple  # noqa: F401
+
 import numpy as np
 import torch
 from concurrent.futures import ThreadPoolExecutor
 
 from game_engine import (
     init_game, init_game_from_capture, step as cpu_step,
-    GameState, MapState, Order,
+    GameState, MapState, Order, CaptureData,
     MAX_ROUNDS, INV_CAP, MAX_ORDER_SIZE,
     ACT_WAIT, ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT,
     ACT_PICKUP, ACT_DROPOFF,
     CELL_FLOOR, CELL_WALL, CELL_SHELF, CELL_DROPOFF,
     DX, DY,
 )
-from gpu_beam_search import GPUBeamSearcher
-from configs import CONFIGS
+from gpu_beam_search import GPUBeamSearcher, GPUBeamSearcher2Bot
+from configs import CONFIGS, DIFF_IDX as _DIFF_IDX
 
 _ZIG_AVAILABLE = False
 try:
     import zig_ffi as _zig_ffi
     _ZIG_AVAILABLE = True
 except (ImportError, OSError):
-    pass
-
-_DIFF_IDX = {'easy': 0, 'medium': 1, 'hard': 2, 'expert': 3}
+    pass  # zig_ffi DLL is optional; solver works without it (slower verification)
 
 # Difficulty-aware defaults: more refinement for harder difficulties with more bots
 DEFAULT_REFINE_ITERS = {'easy': 0, 'medium': 3, 'hard': 10, 'expert': 10}
-DEFAULT_PASS1_ORDERINGS = {'easy': 1, 'medium': 1, 'hard': 1, 'expert': 1}
+DEFAULT_PASS1_ORDERINGS = {'easy': 1, 'medium': 1, 'hard': 3, 'expert': 3}
+DEFAULT_MAX_DP_BOTS = {'easy': 1, 'medium': 3, 'hard': 5, 'expert': 7}
 
 
-def pre_simulate_locked(gs_template, all_orders, bot_actions, locked_bot_ids,
-                        _zig_ctx=None):
+def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
+                        bot_actions: dict[int, list[tuple[int, int]]],
+                        locked_bot_ids: list[int],
+                        _zig_ctx: dict[str, Any] | None = None) -> dict[str, np.ndarray] | None:
     """CPU simulation of locked bots to get their per-round positions.
 
     Args:
@@ -120,8 +135,9 @@ def pre_simulate_locked(gs_template, all_orders, bot_actions, locked_bot_ids,
     }
 
 
-def cpu_verify(gs_template, all_orders, combined_actions, num_bots,
-               _zig_ctx=None):
+def cpu_verify(gs_template: GameState, all_orders: List[Order],
+               combined_actions: List[List[Tuple[int, int]]], num_bots: int,
+               _zig_ctx: Optional[Dict[str, Any]] = None) -> int:
     """Verify final score by replaying all bots' combined actions on CPU.
 
     Args:
@@ -132,7 +148,7 @@ def cpu_verify(gs_template, all_orders, combined_actions, num_bots,
         _zig_ctx: Optional dict with 'diff_idx' and 'seed' for Zig FFI fast path.
 
     Returns:
-        Final score from CPU simulation.
+        Final score (int) from CPU simulation. Returns 0 on empty/trivial games.
     """
     if _zig_ctx is not None and _ZIG_AVAILABLE:
         if _zig_ctx.get('mode') == 'live':
@@ -150,7 +166,9 @@ def cpu_verify(gs_template, all_orders, combined_actions, num_bots,
     return gs.score
 
 
-def cpu_verify_detailed(gs_template, all_orders, combined_actions, num_bots):
+def cpu_verify_detailed(gs_template: GameState, all_orders: List[Order],
+                        combined_actions: List[List[Tuple[int, int]]],
+                        num_bots: int) -> Tuple[int, int, int]:
     """Like cpu_verify but returns (score, orders_completed, items_delivered)."""
     gs = gs_template.copy()
     for r in range(MAX_ROUNDS):
@@ -161,11 +179,15 @@ def cpu_verify_detailed(gs_template, all_orders, combined_actions, num_bots):
 
 def _make_combined(bot_actions, num_bots):
     """Convert bot_actions dict to per-round combined format."""
+    _wait = (ACT_WAIT, -1)
     combined = []
     for r in range(MAX_ROUNDS):
         round_acts = []
         for bid in range(num_bots):
-            round_acts.append(bot_actions[bid][r])
+            if bid in bot_actions:
+                round_acts.append(bot_actions[bid][r])
+            else:
+                round_acts.append(_wait)
         combined.append(round_acts)
     return combined
 
@@ -186,8 +208,101 @@ DEFAULT_MAX_STATES = {
 }
 
 
-def compute_type_assignments(all_orders, num_bots, num_types, ms=None,
-                             shuffle_seed=None):
+@dataclass
+class SolveConfig:
+    """Solver configuration parameters."""
+    max_states: 'Optional[int]' = None
+    max_time_s: 'Optional[float]' = None
+    max_refine_iters: 'Optional[int]' = None
+    num_pass1_orderings: 'Optional[int]' = None
+    pass1_states: 'Optional[int]' = None
+    pipeline_fraction: float = 0.4
+    max_pipeline_depth: int = 3
+    use_type_specialization: bool = True
+    no_filler: bool = False
+    no_compile: bool = False
+    bot_order: 'Optional[list]' = None
+    speed_bonus: float = 0.0
+    max_dp_bots: 'Optional[int]' = None  # DP-plan only top N bots; rest get CPU greedy
+    use_2bot_dp: bool = False  # Plan bot pairs jointly (2-bot DP)
+
+
+@dataclass
+class SolveCallbacks:
+    """Progress callbacks for streaming output."""
+    on_bot_progress: 'Optional[Callable]' = None
+    on_round: 'Optional[Callable]' = None
+    on_phase: 'Optional[Callable]' = None
+
+
+
+
+def compute_zone_assignments(ms: MapState, num_bots: int,
+                             n_pipeline: int = 0) -> dict[int, tuple[int, ...]]:
+    """Assign aisle zones to bots based on map geometry.
+
+    Detects narrow aisle columns (1-tile wide between shelves) and distributes
+    them across non-pipeline bots. Pipeline bots get no zone (they roam).
+
+    Returns:
+        dict {bot_id: tuple of aisle column indices} for each bot.
+        Empty dict if < 3 bots or no aisles detected.
+    """
+    if num_bots < 3:
+        return {}
+
+    grid = ms.grid
+    H, W = ms.height, ms.width
+
+    # Detect corridor rows (wide horizontal passages)
+    corridor_rows = set()
+    for y in range(H):
+        floor_count = sum(1 for x in range(W)
+                          if grid[y, x] in (CELL_FLOOR, CELL_DROPOFF))
+        if floor_count * 10 > W * 6:
+            corridor_rows.add(y)
+
+    # Detect aisle columns (narrow vertical passages between shelves)
+    aisle_cols = []
+    for x in range(1, W - 1):
+        aisle_cells = 0
+        total_floor = 0
+        for y in range(H):
+            if y in corridor_rows:
+                continue
+            if grid[y, x] not in (CELL_FLOOR, CELL_DROPOFF):
+                continue
+            total_floor += 1
+            left = grid[y, x - 1]
+            right = grid[y, x + 1]
+            if left in (CELL_SHELF, CELL_WALL) and right in (CELL_SHELF, CELL_WALL):
+                aisle_cells += 1
+        if total_floor > 2 and aisle_cells * 4 > total_floor * 3:
+            aisle_cols.append(x)
+
+    if len(aisle_cols) < 2:
+        return {}
+
+    # Sort aisles by distance to dropoff (leftmost first on typical maps)
+    drop_x = int(ms.drop_off[0])
+    aisle_cols.sort(key=lambda c: abs(c - drop_x))
+
+    # Number of bots that get zone assignments (exclude pipeline bots)
+    n_primary = num_bots - n_pipeline
+    if n_primary < 2:
+        return {}
+
+    # Distribute aisles across primary bots (round-robin, near-dropoff first)
+    assignments: dict[int, list[int]] = {b: [] for b in range(n_primary)}
+    for i, col in enumerate(aisle_cols):
+        assignments[i % n_primary].append(col)
+
+    return {b: tuple(cols) for b, cols in assignments.items() if cols}
+
+
+def compute_type_assignments(all_orders: list[Order], num_bots: int,
+                             num_types: int, ms: MapState | None = None,
+                             shuffle_seed: int | None = None) -> dict[int, set[int]]:
     """Assign item types to bots for type specialization (round-robin by frequency).
 
     Round-robin by order frequency: bot 0 gets type 0 (most frequent), type N, type 2N...
@@ -199,7 +314,7 @@ def compute_type_assignments(all_orders, num_bots, num_types, ms=None,
                       Produces diverse assignments across multiple Pass 1 orderings.
 
     Returns:
-        dict {bot_id: set[int]} — preferred item type IDs for each bot.
+        dict {bot_id: set[int]} -- preferred item type IDs for each bot.
         Only populated for multi-bot (num_bots >= 3).
     """
     if num_bots < 3:
@@ -231,48 +346,274 @@ def compute_type_assignments(all_orders, num_bots, num_types, ms=None,
     return assignments
 
 
-def solve_sequential(capture_data=None, seed=None, difficulty=None,
-                     device='cuda', max_states=None, verbose=True,
-                     on_bot_progress=None, on_round=None, on_phase=None,
-                     max_refine_iters=None, bot_order=None, no_filler=False,
-                     pipeline_fraction=0.4, num_pass1_orderings=None,
-                     pass1_states=None, max_pipeline_depth=3,
-                     use_type_specialization=True,
-                     all_orders_override=None, max_time_s=None,
-                     no_compile=False):
-    """Sequential per-bot GPU DP with iterative refinement.
+def greedy_plan_bots(gs_template: GameState, all_orders: list[Order],
+                     bot_ids: list[int], existing_bot_actions: dict[int, list],
+                     ms: MapState, num_bots: int,
+                     _zig_ctx: dict | None = None,
+                     capture_data: CaptureData | None = None,
+                     no_filler: bool = False) -> dict[int, list]:
+    """Hybrid JIT + preview strategy for bots not covered by GPU DP.
 
-    Pass 1: Sequential planning (bot 0 solo, bot 1 with 0 locked, ...).
-    Pass 2+: Refinement — re-plan each bot with ALL other bots locked.
-    Repeats up to max_refine_iters times or until no improvement.
+    Strategy: fetch preview and high-frequency non-active types speculatively.
+    NEVER pick active order types (interferes with DP bot plans).
+    When items match the active order, deliver to dropoff.
+    Stay away from dropoff when idle to avoid congesting DP bots.
+
+    Co-simulates all bots together for correct order progression.
+    """
+    from precompute import PrecomputedTables
+
+    tables = PrecomputedTables.get(ms)
+    step_to_type = tables.step_to_type      # [num_types, H, W] int8
+    step_to_dropoff = tables.step_to_dropoff  # [H, W] int8
+    dist_to_type = tables.dist_to_type      # [num_types, H, W] int16
+    dist_to_dropoff = tables.dist_to_dropoff  # [H, W] int16
+
+    drop_x, drop_y = int(ms.drop_off[0]), int(ms.drop_off[1])
+    greedy_set = set(bot_ids)
+
+    # Build type frequency across ALL orders
+    type_freq = {}
+    for o in all_orders:
+        for t in o.required:
+            tid = int(t)
+            if tid >= 0:
+                type_freq[tid] = type_freq.get(tid, 0) + 1
+    ranked_types = sorted(type_freq.keys(), key=lambda t: -type_freq[t])
+
+    # Build item adjacency lookup: type_id -> [(item_idx, adj_x, adj_y)]
+    type_adj_items = {}
+    for item_idx in range(ms.num_items):
+        type_id = int(ms.item_types[item_idx])
+        ix = int(ms.item_positions[item_idx, 0])
+        iy = int(ms.item_positions[item_idx, 1])
+        if type_id not in type_adj_items:
+            type_adj_items[type_id] = []
+        for ddx, ddy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+            ax, ay = ix + ddx, iy + ddy
+            if 0 <= ax < ms.width and 0 <= ay < ms.height:
+                cell = ms.grid[ay, ax]
+                if cell == CELL_FLOOR or cell == CELL_DROPOFF:
+                    type_adj_items[type_id].append((item_idx, ax, ay))
+
+    def find_adjacent_item(bx, by, type_id):
+        """Find item_idx of given type adjacent to (bx,by), or -1."""
+        for item_idx, ax, ay in type_adj_items.get(type_id, []):
+            if ax == bx and ay == by:
+                return item_idx
+        return -1
+
+    # Co-simulate: DP bots replay, greedy bots decide greedily each round
+    gs_sim = _fresh_gs(gs_template, capture_data, no_filler)
+    greedy_actions = {bid: [] for bid in bot_ids}
+
+    for r in range(MAX_ROUNDS):
+        gs_sim.round = r
+
+        # Get active order's needed types with multiplicity
+        active_needed = {}
+        for o in gs_sim.orders:
+            if o.status == 'active':
+                for i, t in enumerate(o.required):
+                    if o.delivered[i] == 0:
+                        tid = int(t)
+                        active_needed[tid] = active_needed.get(tid, 0) + 1
+                break
+
+        # Get preview order types
+        preview_needed = {}
+        for o in gs_sim.orders:
+            if o.status == 'preview':
+                for i, t in enumerate(o.required):
+                    tid = int(t)
+                    preview_needed[tid] = preview_needed.get(tid, 0) + 1
+                break
+
+        # What DP bots are carrying
+        dp_carrying = {}
+        for bid in range(num_bots):
+            if bid in greedy_set:
+                continue
+            for slot in range(INV_CAP):
+                t = int(gs_sim.bot_inventories[bid][slot])
+                if t >= 0:
+                    dp_carrying[t] = dp_carrying.get(t, 0) + 1
+
+        # Per-round claiming
+        claimed = {}
+        bot_decisions = {}
+
+        for bid in bot_ids:
+            bx = int(gs_sim.bot_positions[bid][0])
+            by = int(gs_sim.bot_positions[bid][1])
+            inv_count = int((gs_sim.bot_inventories[bid] >= 0).sum())
+            has_items = inv_count > 0
+            inv_full = inv_count >= INV_CAP
+
+            my_types = []
+            for slot in range(INV_CAP):
+                t = int(gs_sim.bot_inventories[bid][slot])
+                if t >= 0:
+                    my_types.append(t)
+            my_types_set = set(my_types)
+
+            # Count active matches
+            active_match_count = 0
+            if active_needed:
+                remaining_need = dict(active_needed)
+                for t in my_types:
+                    if remaining_need.get(t, 0) > 0:
+                        active_match_count += 1
+                        remaining_need[t] -= 1
+            has_active_items = active_match_count > 0
+
+            # ── 1. At dropoff → deliver
+            if bx == drop_x and by == drop_y and has_items:
+                bot_decisions[bid] = (ACT_DROPOFF, -1)
+                continue
+
+            # ── 2. Has active items → go deliver
+            if has_active_items:
+                step = int(step_to_dropoff[by, bx])
+                bot_decisions[bid] = (step if step > 0 else ACT_WAIT, -1)
+                continue
+
+            # ── 3. Full inventory → wait away from dropoff
+            if inv_full:
+                dist_drop = int(dist_to_dropoff[by, bx])
+                if dist_drop <= 2:
+                    for tid in ranked_types:
+                        if tid not in my_types_set:
+                            d = int(dist_to_type[tid, by, bx])
+                            if d > 3:
+                                step = int(step_to_type[tid, by, bx])
+                                if step > 0:
+                                    bot_decisions[bid] = (step, -1)
+                                    break
+                    if bid not in bot_decisions:
+                        bot_decisions[bid] = (ACT_WAIT, -1)
+                else:
+                    bot_decisions[bid] = (ACT_WAIT, -1)
+                continue
+
+            # ── 4. Fetch preview/high-frequency non-active types
+            best_type = -1
+            best_dist = 9999
+            best_score = -1
+
+            for tid in ranked_types:
+                if tid in my_types_set:
+                    continue
+                if tid in active_needed:
+                    continue  # never chase active types (DP handles)
+                if claimed.get(tid, 0) >= 2:
+                    continue
+                d = int(dist_to_type[tid, by, bx])
+                if d >= 9999:
+                    continue
+                if tid in preview_needed:
+                    score = 20000 - d
+                else:
+                    score = 10000 - d
+                if score > best_score:
+                    best_score = score
+                    best_dist = d
+                    best_type = tid
+
+            if best_type >= 0 and best_dist == 0:
+                item_idx = find_adjacent_item(bx, by, best_type)
+                if item_idx >= 0:
+                    bot_decisions[bid] = (ACT_PICKUP, item_idx)
+                    claimed[best_type] = claimed.get(best_type, 0) + 1
+                else:
+                    bot_decisions[bid] = (ACT_WAIT, -1)
+            elif best_type >= 0:
+                step = int(step_to_type[best_type, by, bx])
+                bot_decisions[bid] = (step if step > 0 else ACT_WAIT, -1)
+                claimed[best_type] = claimed.get(best_type, 0) + 1
+            else:
+                bot_decisions[bid] = (ACT_WAIT, -1)
+
+        # Build round actions
+        round_acts = []
+        for bid in range(num_bots):
+            if bid not in greedy_set:
+                if bid in existing_bot_actions:
+                    round_acts.append(existing_bot_actions[bid][r])
+                else:
+                    round_acts.append((ACT_WAIT, -1))
+            else:
+                act_pair = bot_decisions.get(bid, (ACT_WAIT, -1))
+                greedy_actions[bid].append(act_pair)
+                round_acts.append(act_pair)
+
+        cpu_step(gs_sim, round_acts, all_orders)
+
+    return greedy_actions
+
+
+def solve_sequential(capture_data: CaptureData | None = None,
+                     seed: int | None = None, difficulty: str | None = None,
+                     device: str = 'cuda', config: SolveConfig | None = None,
+                     callbacks: SolveCallbacks | None = None,
+                     verbose: bool = True,
+                     all_orders_override: list[Order] | None = None,
+                     # Legacy kwargs for backward compat - prefer config/callbacks
+                     **kwargs) -> tuple[int, list[list[tuple[int, int]]]]:
+    """Sequential per-bot GPU DP with iterative refinement.
 
     Args:
         capture_data: Captured game data (preferred).
         seed: Game seed (if no capture).
         difficulty: Game difficulty.
         device: 'cuda' or 'cpu'.
-        max_states: Max states per bot DP search.
+        config: SolveConfig with solver parameters (preferred over kwargs).
+        callbacks: SolveCallbacks with progress callbacks (preferred over kwargs).
         verbose: Print progress.
-        on_bot_progress: Optional callback(bot_id, num_bots, score, time).
-        on_round: Optional callback(bot_id, rnd, score, unique, expanded, elapsed).
-        on_phase: Optional callback(phase_name, iteration, cpu_score).
-        max_refine_iters: Max refinement iterations (0 = no refinement).
-        bot_order: Optional list of bot IDs for Pass 1 planning order.
-                   Default: [0, 1, ..., num_bots-1].
-        pipeline_fraction: Fraction of bots (last in plan_order) to plan with
-                           pipeline_mode=True (pre-fetch preview order items).
-                           0 = disabled; 0.4 = last 40% of bots are pipeline.
-        num_pass1_orderings: Number of different Pass 1 orderings to try.
-                             Best result is used as starting point for refinement.
-                             Orderings: forward, reverse, random...
-                             Default 1 (just forward). Use 3+ for better quality.
-        pass1_states: Max states for Pass 1 (default: same as max_states).
-                      Set lower to speed up multi-start pass 1.
+        all_orders_override: Override all_orders with pre-cracked orders.
+        **kwargs: Legacy keyword arguments for backward compatibility.
 
     Returns:
-        (final_score, combined_actions) where combined_actions is
-        list of 300 round_actions, each is [(act, item)] * num_bots.
+        (final_score, combined_actions) tuple.
     """
+    # --- Merge config/callbacks with legacy kwargs ---
+    if config is None:
+        config = SolveConfig()
+    if callbacks is None:
+        callbacks = SolveCallbacks()
+    # Allow legacy kwargs to override config fields
+    for key in ('max_states', 'max_time_s', 'max_refine_iters', 'num_pass1_orderings',
+                'pass1_states', 'pipeline_fraction', 'max_pipeline_depth',
+                'use_type_specialization', 'no_filler', 'no_compile', 'bot_order',
+                'speed_bonus', 'max_dp_bots', 'use_2bot_dp'):
+        if key in kwargs:
+            setattr(config, key, kwargs.pop(key))
+    for key in ('on_bot_progress', 'on_round', 'on_phase'):
+        if key in kwargs:
+            setattr(callbacks, key, kwargs.pop(key))
+    if kwargs:
+        raise TypeError(f"solve_sequential() got unexpected keyword arguments: "
+                        f"{list(kwargs.keys())}")
+
+    # --- Unpack for local use ---
+    max_states = config.max_states
+    max_time_s = config.max_time_s if config.max_time_s else None
+    max_refine_iters = config.max_refine_iters
+    num_pass1_orderings = config.num_pass1_orderings
+    pass1_states = config.pass1_states
+    pipeline_fraction = config.pipeline_fraction
+    max_pipeline_depth = config.max_pipeline_depth
+    use_type_specialization = config.use_type_specialization
+    no_filler = config.no_filler
+    no_compile = config.no_compile
+    bot_order = config.bot_order
+    speed_bonus = config.speed_bonus
+    max_dp_bots = config.max_dp_bots
+    use_2bot_dp = config.use_2bot_dp
+    on_bot_progress = callbacks.on_bot_progress
+    on_round = callbacks.on_round
+    on_phase = callbacks.on_phase
+
     t0 = time.time()
 
     # Initialize game
@@ -310,6 +651,14 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
     ms = gs.map_state
     num_bots = len(gs.bot_positions)
 
+    # max_dp_bots: only DP-plan this many bots; rest get CPU greedy plans.
+    # For Expert (10 bots), planning all 10 takes ~130s cold + ~600s refine.
+    # With max_dp_bots=5, cold ~65s + refine ~300s — fits in 288s token window.
+    if max_dp_bots is None:
+        max_dp_bots = DEFAULT_MAX_DP_BOTS.get(diff, num_bots)
+    max_dp_bots = min(max_dp_bots, num_bots)
+    _greedy_bot_ids = list(range(max_dp_bots, num_bots))  # bots planned by CPU greedy
+
     # Type specialization: assign preferred item types to each bot
     # to reduce inter-bot competition for the same items.
     _type_assignments = {}
@@ -342,7 +691,7 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
     # For single-bot, just run standard DP (no refinement needed)
     if num_bots == 1:
         searcher = GPUBeamSearcher(ms, all_orders, device=device, num_bots=num_bots,
-                                    no_compile=no_compile)
+                                    no_compile=no_compile, speed_bonus=speed_bonus)
         if verbose:
             gs_v = gs.copy()
             ok = searcher.verify_against_cpu(gs_v, all_orders, num_rounds=100)
@@ -378,8 +727,9 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
     else:
         p1_states = max_states
 
-    # Build list of Pass 1 orderings to try
-    base_order = bot_order if bot_order is not None else list(range(num_bots))
+    # Build list of Pass 1 orderings to try (DP bots only)
+    dp_bot_ids = list(range(max_dp_bots))  # bots 0..max_dp_bots-1 get GPU DP
+    base_order = bot_order if bot_order is not None else dp_bot_ids
     p1_orderings = [base_order]
     if num_pass1_orderings > 1:
         rev = list(reversed(base_order))
@@ -427,6 +777,13 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
         print(f"  Order cap: {_order_cap} per bot (visible={_visible_orders}, "
               f"primary={_primary_bots})", file=sys.stderr)
 
+    # Zone assignments: assign bots to aisle zones for spatial separation
+    _zone_assignments = compute_zone_assignments(ms, num_bots, n_pipeline=n_pipeline)
+    if verbose and _zone_assignments:
+        zone_str = ', '.join(
+            f"bot{b}:cols{cols}" for b, cols in sorted(_zone_assignments.items()))
+        print(f"  Zone assignments: {zone_str}", file=sys.stderr)
+
     best_p1_score = -1
     best_p1_actions = None
     best_p1_pipeline_ids = {}
@@ -435,10 +792,11 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
     _ta_for_ordering = _type_assignments if use_type_specialization and num_bots >= 3 else {}
 
     for p1_idx, plan_order in enumerate(p1_orderings):
-        # Time check between pass1 orderings
-        if max_time_s is not None and (time.time() - t0) > max_time_s:
+        # Time-bound: stop if we've exceeded the budget (keep best so far)
+        if max_time_s and (time.time() - t0) > max_time_s and best_p1_actions is not None:
             if verbose:
-                print(f"  [Pass 1] Time budget {max_time_s}s reached, skipping remaining orderings",
+                print(f"\n  Pass 1 time limit ({max_time_s:.0f}s) exceeded after "
+                      f"{p1_idx}/{len(p1_orderings)} orderings, keeping best",
                       file=sys.stderr)
             break
 
@@ -463,78 +821,189 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
 
         bot_actions = {}  # reset for this ordering
 
-        for bot_pos, bot_id in enumerate(plan_order):
-            t_bot = time.time()
+        if use_2bot_dp and len(plan_order) >= 2:
+            # === 2-Bot DP: plan pairs jointly ===
+            # Build pairs: (0,1), (2,3), ... and optional solo last bot
+            pairs = [(plan_order[i], plan_order[i + 1])
+                     for i in range(0, len(plan_order) - 1, 2)]
+            solo = [plan_order[-1]] if len(plan_order) % 2 == 1 else []
+
             if verbose:
-                print(f"\n=== Pass 1 ({p1_idx+1}/{len(p1_orderings)}), "
-                      f"Bot {bot_id}/{num_bots} ===", file=sys.stderr)
+                pair_str = ', '.join(f"({a},{b})" for a, b in pairs)
+                solo_str = f", solo: {solo}" if solo else ""
+                print(f"  2-Bot DP pairs: {pair_str}{solo_str}", file=sys.stderr)
 
-            # Lock all previously-planned bots
-            locked_ids = sorted(bot_actions.keys())
-            locked = None
-            if locked_ids:
-                locked = pre_simulate_locked(
-                    _fresh_gs(gs, capture_data, no_filler), all_orders, bot_actions, locked_ids,
-                    _zig_ctx=_zig_ctx)
+            for pair_idx, (bot_a, bot_b) in enumerate(pairs):
+                t_pair = time.time()
+                if verbose:
+                    print(f"\n=== Pass 1 ({p1_idx+1}/{len(p1_orderings)}), "
+                          f"Pair ({bot_a},{bot_b}) ===", file=sys.stderr)
 
-            p_depth = pipeline_bot_ids.get(bot_id, 0)
-            is_pipeline = p_depth > 0
-            pref_types = _ta_for_ordering.get(bot_id) if _ta_for_ordering else None
-            # Order cap: non-pipeline bots in Pass 1 only
-            bot_order_cap = None if is_pipeline else _order_cap
-            searcher = GPUBeamSearcher(
-                ms, all_orders, device=device, num_bots=num_bots,
-                locked_trajectories=locked, pipeline_mode=is_pipeline,
-                pipeline_depth=p_depth, preferred_types=pref_types,
-                no_compile=no_compile, order_cap=bot_order_cap)
+                locked_ids = sorted(bot_actions.keys())
+                locked = None
+                if locked_ids:
+                    locked = pre_simulate_locked(
+                        _fresh_gs(gs, capture_data, no_filler), all_orders,
+                        bot_actions, locked_ids, _zig_ctx=_zig_ctx)
 
-            # Verify on first bot of first ordering only
-            if p1_idx == 0 and bot_id == plan_order[0] and verbose:
-                gs_v = _fresh_gs(gs, capture_data, no_filler)
-                ok = searcher.verify_against_cpu(gs_v, all_orders, num_rounds=100)
-                if not ok:
-                    print("VERIFICATION FAILED", file=sys.stderr)
-                    return 0, []
+                searcher = GPUBeamSearcher2Bot(
+                    ms, all_orders, device=device, num_bots=num_bots,
+                    locked_trajectories=locked,
+                    candidate_bot_ids=(bot_a, bot_b),
+                    no_compile=no_compile, speed_bonus=speed_bonus)
 
-            def round_cb(rnd, score, unique, expanded, elapsed, _bid=bot_id):
-                if on_round:
-                    on_round(_bid, rnd, score, unique, expanded, elapsed)
+                # Verify on first pair of first ordering only
+                if p1_idx == 0 and pair_idx == 0 and verbose:
+                    gs_v = _fresh_gs(gs, capture_data, no_filler)
+                    ok = searcher.verify_2bot_against_cpu(
+                        gs_v, all_orders, bot1_id=bot_a, bot2_id=bot_b,
+                        num_rounds=50)
+                    if not ok:
+                        print("2-BOT VERIFICATION FAILED, falling back to 1-bot",
+                              file=sys.stderr)
+                        use_2bot_dp = False
+                        bot_actions = {}
+                        break
 
-            # Position-aware state budget: flatter scale so late bots
-            # (delivery specialists) get fair budget.
-            # pos 0 → 1.5x, pos N-1 → 0.8x
-            if num_bots > 1:
-                t = bot_pos / max(num_bots - 1, 1)  # 0.0 (first) to 1.0 (last)
-                pos_scale = 2.0 - 1.5 * t  # 2.0 → 0.5
-                effective_states = max(1000, int(p1_states * pos_scale))
-            else:
+                # State budget for pair
                 effective_states = p1_states
 
-            gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
-            dp_score, bot_acts = searcher.dp_search(
-                gs_for_dp, max_states=effective_states, verbose=verbose,
-                on_round=round_cb, bot_id=bot_id)
+                gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
+                dp_score, acts_a, acts_b = searcher.dp_search_2bot(
+                    gs_for_dp, max_states=effective_states, verbose=verbose,
+                    bot_ids=(bot_a, bot_b))
 
-            bot_actions[bot_id] = bot_acts
+                bot_actions[bot_a] = acts_a
+                bot_actions[bot_b] = acts_b
 
-            bot_time = time.time() - t_bot
-            if verbose:
-                print(f"  Bot {bot_id}: DP score={dp_score}, time={bot_time:.1f}s",
-                      file=sys.stderr)
-
-            if on_bot_progress:
-                on_bot_progress(bot_id, num_bots, dp_score, time.time() - t0)
-
-            del searcher
-            if device == 'cuda':
-                torch.cuda.empty_cache()
-
-            # Per-bot time check in pass1
-            if max_time_s is not None and (time.time() - t0) > max_time_s:
+                pair_time = time.time() - t_pair
                 if verbose:
-                    print(f"  [Pass 1] Time budget {max_time_s}s reached after bot {bot_id}",
+                    print(f"  Pair ({bot_a},{bot_b}): DP score={dp_score}, "
+                          f"time={pair_time:.1f}s", file=sys.stderr)
+
+                if on_bot_progress:
+                    on_bot_progress(bot_b, num_bots, dp_score, time.time() - t0)
+
+                del searcher
+                if device == 'cuda':
+                    torch.cuda.empty_cache()
+
+            # Plan solo bot (if odd number) using single-bot DP
+            for bot_id in solo:
+                t_bot = time.time()
+                if verbose:
+                    print(f"\n=== Pass 1 ({p1_idx+1}/{len(p1_orderings)}), "
+                          f"Bot {bot_id} (solo) ===", file=sys.stderr)
+
+                locked_ids = sorted(bot_actions.keys())
+                locked = None
+                if locked_ids:
+                    locked = pre_simulate_locked(
+                        _fresh_gs(gs, capture_data, no_filler), all_orders,
+                        bot_actions, locked_ids, _zig_ctx=_zig_ctx)
+
+                searcher = GPUBeamSearcher(
+                    ms, all_orders, device=device, num_bots=num_bots,
+                    locked_trajectories=locked, no_compile=no_compile,
+                    speed_bonus=speed_bonus)
+
+                gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
+                dp_score, bot_acts = searcher.dp_search(
+                    gs_for_dp, max_states=p1_states, verbose=verbose,
+                    bot_id=bot_id)
+
+                bot_actions[bot_id] = bot_acts
+                bot_time = time.time() - t_bot
+                if verbose:
+                    print(f"  Bot {bot_id}: DP score={dp_score}, "
+                          f"time={bot_time:.1f}s", file=sys.stderr)
+
+                del searcher
+                if device == 'cuda':
+                    torch.cuda.empty_cache()
+
+            # If 2-bot verification failed earlier, restart with single-bot
+            if not use_2bot_dp:
+                continue
+
+        else:
+            # === Original single-bot sequential DP ===
+            for bot_pos, bot_id in enumerate(plan_order):
+                t_bot = time.time()
+                if verbose:
+                    print(f"\n=== Pass 1 ({p1_idx+1}/{len(p1_orderings)}), "
+                          f"Bot {bot_id}/{num_bots} ===", file=sys.stderr)
+
+                # Lock all previously-planned bots
+                locked_ids = sorted(bot_actions.keys())
+                locked = None
+                if locked_ids:
+                    locked = pre_simulate_locked(
+                        _fresh_gs(gs, capture_data, no_filler), all_orders, bot_actions, locked_ids,
+                        _zig_ctx=_zig_ctx)
+
+                p_depth = pipeline_bot_ids.get(bot_id, 0)
+                is_pipeline = p_depth > 0
+                pref_types = _ta_for_ordering.get(bot_id) if _ta_for_ordering else None
+                # Order cap: non-pipeline bots in Pass 1 only
+                bot_order_cap = None if is_pipeline else _order_cap
+                bot_zone = _zone_assignments.get(bot_id)
+                searcher = GPUBeamSearcher(
+                    ms, all_orders, device=device, num_bots=num_bots,
+                    locked_trajectories=locked, pipeline_mode=is_pipeline,
+                    pipeline_depth=p_depth, preferred_types=pref_types,
+                    no_compile=no_compile, order_cap=bot_order_cap,
+                    speed_bonus=speed_bonus, preferred_zone=bot_zone)
+
+                # Verify on first bot of first ordering only
+                if p1_idx == 0 and bot_id == plan_order[0] and verbose:
+                    gs_v = _fresh_gs(gs, capture_data, no_filler)
+                    ok = searcher.verify_against_cpu(gs_v, all_orders, num_rounds=100)
+                    if not ok:
+                        print("VERIFICATION FAILED", file=sys.stderr)
+                        return 0, []
+
+                def round_cb(rnd, score, unique, expanded, elapsed, _bid=bot_id):
+                    if on_round:
+                        on_round(_bid, rnd, score, unique, expanded, elapsed)
+
+                # Position-aware state budget: first bot needs more exploration
+                # (no locked bots, must discover good paths from scratch).
+                # Later bots are more constrained, need fewer states.
+                # pos 0 → 2.0x, pos N-1 → 0.5x
+                if num_bots > 1:
+                    t = bot_pos / max(num_bots - 1, 1)  # 0.0 (first) to 1.0 (last)
+                    pos_scale = 2.0 - 1.5 * t  # 2.0 → 0.5
+                    effective_states = max(1000, int(p1_states * pos_scale))
+                else:
+                    effective_states = p1_states
+
+                gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
+                dp_score, bot_acts = searcher.dp_search(
+                    gs_for_dp, max_states=effective_states, verbose=verbose,
+                    on_round=round_cb, bot_id=bot_id)
+
+                bot_actions[bot_id] = bot_acts
+
+                bot_time = time.time() - t_bot
+                if verbose:
+                    print(f"  Bot {bot_id}: DP score={dp_score}, time={bot_time:.1f}s",
                           file=sys.stderr)
-                break
+
+                if on_bot_progress:
+                    on_bot_progress(bot_id, num_bots, dp_score, time.time() - t0)
+
+                del searcher
+                if device == 'cuda':
+                    torch.cuda.empty_cache()
+
+        # Fill greedy bots (not DP-planned) with CPU greedy actions
+        if _greedy_bot_ids:
+            greedy_acts = greedy_plan_bots(
+                gs, all_orders, _greedy_bot_ids, bot_actions, ms, num_bots,
+                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+            for bid, acts in greedy_acts.items():
+                bot_actions[bid] = acts
 
         # CPU verify after this Pass 1 ordering
         combined = _make_combined(bot_actions, num_bots)
@@ -569,7 +1038,9 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
     import random as _random
     _rng = _random.Random(42)  # deterministic
 
-    no_improve_iters = 0  # allow 1 escape attempt before stopping
+    # Short time budgets (pipeline): stop quickly on plateau. Long budgets: allow more escapes.
+    _escape_limit = 2 if (max_time_s and max_time_s <= 60) else 4
+    no_improve_iters = 0
     for iteration in range(max_refine_iters):
         # Time-budget check
         if max_time_s is not None and (time.time() - t0) > max_time_s:
@@ -582,15 +1053,13 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
             on_phase(f"refine", iteration + 1, best_score)
 
         # Alternate refinement order each iteration to escape local optima.
-        # Iter 0: forward [0,1,...,N-1]
-        # Iter 1: reverse [N-1,...,1,0]
-        # Iter 2+: random shuffle
+        # Only refine DP bots; greedy bots are re-generated after each iteration.
         if iteration == 0:
-            refine_order = list(range(num_bots))
+            refine_order = list(dp_bot_ids)
         elif iteration == 1:
-            refine_order = list(range(num_bots - 1, -1, -1))
+            refine_order = list(reversed(dp_bot_ids))
         else:
-            refine_order = list(range(num_bots))
+            refine_order = list(dp_bot_ids)
             _rng.shuffle(refine_order)
 
         if verbose:
@@ -646,11 +1115,13 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
                 p_depth = pipeline_bot_ids.get(bot_id, 0)
                 is_pipeline = p_depth > 0
                 pref_types = _type_assignments.get(bot_id) if _type_assignments else None
+                bot_zone = _zone_assignments.get(bot_id)
                 searcher = GPUBeamSearcher(
                     ms, all_orders, device=device, num_bots=num_bots,
                     locked_trajectories=locked, pipeline_mode=is_pipeline,
                     pipeline_depth=p_depth, preferred_types=pref_types,
-                    no_compile=no_compile)
+                    no_compile=no_compile, speed_bonus=speed_bonus,
+                    preferred_zone=bot_zone)
 
                 def round_cb(rnd, score, unique, expanded, elapsed, _bid=bot_id):
                     if on_round:
@@ -709,16 +1180,16 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
                             try:
                                 _pending_locked[next_bot].result(timeout=5)
                             except Exception:
-                                pass
+                                pass  # Future may have already failed; we discard its result anyway
                             del _pending_locked[next_bot]
                     if verbose:
                         print(f"  Bot {bot_id}: DP={dp_score}, CPU={new_score} "
                               f"(no improvement, reverted), time={bot_time:.1f}s",
                               file=sys.stderr)
                     consecutive_fails += 1
-                    if consecutive_fails >= num_bots:
+                    if consecutive_fails >= max_dp_bots:
                         if verbose:
-                            print(f"  Early stop: {num_bots} consecutive no-improvements",
+                            print(f"  Early stop: {max_dp_bots} consecutive no-improvements",
                                   file=sys.stderr)
                         break
 
@@ -734,6 +1205,24 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
 
             _refine_pool.shutdown(wait=True)
 
+        # Re-generate greedy bot plans after DP bots may have changed
+        if _greedy_bot_ids and iter_improved:
+            greedy_acts = greedy_plan_bots(
+                gs, all_orders, _greedy_bot_ids, bot_actions, ms, num_bots,
+                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+            for bid, acts in greedy_acts.items():
+                bot_actions[bid] = acts
+            # Re-verify with updated greedy plans
+            combined = _make_combined(bot_actions, num_bots)
+            gs_v = _fresh_gs(gs, capture_data, no_filler)
+            new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx)
+            if new_score > best_score:
+                best_score = new_score
+                best_actions = {k: list(v) for k, v in bot_actions.items()}
+            elif new_score < best_score:
+                # Greedy re-gen hurt score; restore best
+                bot_actions = {k: list(v) for k, v in best_actions.items()}
+
         if on_phase:
             on_phase(f"refine_done", iteration + 1, best_score)
 
@@ -743,17 +1232,14 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
 
         if not iter_improved:
             no_improve_iters += 1
-            _escape_limit = 4
             if no_improve_iters >= _escape_limit:
                 if verbose:
                     print(f"  Stopping refinement ({no_improve_iters} consecutive "
                           f"no-improvement iters)", file=sys.stderr)
                 break
             else:
-                # Perturbation escape: fully reset a random bot to idle, then re-refine.
-                # This forces other bots to plan without that bot's contribution,
-                # creating a fundamentally different coordination pattern.
-                perturb_bot = _rng.choice(list(range(num_bots)))
+                # Perturbation escape: fully reset a random DP bot to idle, then re-refine.
+                perturb_bot = _rng.choice(dp_bot_ids)
                 bot_actions[perturb_bot] = [(ACT_WAIT, -1)] * MAX_ROUNDS
                 if verbose:
                     print(f"  Perturbation escape: reset bot {perturb_bot} to idle "
@@ -772,7 +1258,7 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
     return best_score, combined
 
 
-def generate_orderings(num_bots, k=1000, seed=42):
+def generate_orderings(num_bots: int, k: int = 1000, seed: int = 42) -> list[list[int]]:
     """Generate k random bot orderings via Fischer-Yates shuffle.
 
     First ordering is always [0, 1, ..., num_bots-1] (default).
@@ -798,7 +1284,8 @@ def generate_orderings(num_bots, k=1000, seed=42):
     return orderings[:k]
 
 
-def batch_evaluate_orderings(capture_data, orderings_list, device='cuda', n_steps=25):
+def batch_evaluate_orderings(capture_data: CaptureData, orderings_list: list[list[int]],
+                             device: str = 'cuda', n_steps: int = 25) -> list[float]:
     """Screen K bot orderings via short greedy rollout on GPU.
 
     Runs n_steps of greedy simulation simultaneously for all K orderings.
@@ -977,12 +1464,16 @@ def batch_evaluate_orderings(capture_data, orderings_list, device='cuda', n_step
     return score.float().cpu().tolist()
 
 
-def solve_multi_restart(capture_data=None, seed=None, difficulty=None,
-                        device='cuda', max_states=500000, verbose=True,
-                        max_refine_iters=2, num_restarts=3,
-                        num_screen=1000, n_screen_steps=25,
-                        on_restart=None, no_filler=False,
-                        all_orders_override=None, no_compile=False):
+def solve_multi_restart(capture_data: CaptureData | None = None,
+                        seed: int | None = None, difficulty: str | None = None,
+                        device: str = 'cuda', max_states: int = 500000,
+                        verbose: bool = True,
+                        max_refine_iters: int = 2, num_restarts: int = 3,
+                        num_screen: int = 1000, n_screen_steps: int = 25,
+                        on_restart: Callable | None = None,
+                        no_filler: bool = False,
+                        all_orders_override: list[Order] | None = None,
+                        no_compile: bool = False) -> tuple[int, list[list[tuple[int, int]]]]:
     """Run sequential solver with multiple random bot orderings, keep best.
 
     Uses batch GPU greedy rollout to screen num_screen orderings cheaply,
@@ -1081,13 +1572,18 @@ def solve_multi_restart(capture_data=None, seed=None, difficulty=None,
     return best_score, best_actions
 
 
-def refine_from_solution(combined_actions, capture_data=None, seed=None,
-                         difficulty=None, device='cuda', max_states=500000,
-                         verbose=True, max_refine_iters=3,
-                         on_bot_progress=None, on_round=None, on_phase=None,
-                         no_filler=False, pipeline_fraction=0.4, max_pipeline_depth=3,
-                         all_orders_override=None, max_time_s=None,
-                         no_compile=False):
+def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
+                         capture_data: CaptureData | None = None,
+                         seed: int | None = None,
+                         difficulty: str | None = None,
+                         device: str = 'cuda',
+                         config: SolveConfig | None = None,
+                         callbacks: SolveCallbacks | None = None,
+                         verbose: bool = True,
+                         all_orders_override: list[Order] | None = None,
+                         # Legacy kwargs for backward compat - prefer config/callbacks
+                         **kwargs,
+                         ) -> tuple[int, list[list[tuple[int, int]]]]:
     """Refine an existing multi-bot solution via GPU DP.
 
     Loads a pre-existing solution (e.g., from a previous GPU DP run or Python
@@ -1095,11 +1591,47 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
 
     Args:
         combined_actions: List of 300 round_actions, each is [(act, item)] * num_bots.
+        config: SolveConfig with solver parameters (or pass legacy kwargs).
+        callbacks: SolveCallbacks with progress callbacks (or pass legacy kwargs).
         Other args same as solve_sequential.
 
     Returns:
-        (best_score, best_combined_actions).
+        (best_score, best_combined_actions) tuple.
+        Score is 0 if refinement produces no valid result (unlikely in practice).
+
+    Raises:
+        ValueError: If neither capture_data nor (seed + difficulty) is provided.
     """
+    # Merge legacy kwargs into config/callbacks (same bridge as solve_sequential)
+    if config is None:
+        config = SolveConfig()
+    if callbacks is None:
+        callbacks = SolveCallbacks()
+
+    _CONFIG_FIELDS = {f.name for f in config.__dataclass_fields__.values()}
+    _CB_FIELDS = {f.name for f in callbacks.__dataclass_fields__.values()}
+    for k, v in kwargs.items():
+        if k in _CONFIG_FIELDS:
+            setattr(config, k, v)
+        elif k in _CB_FIELDS:
+            setattr(callbacks, k, v)
+        elif k.startswith('on_') and k.lstrip('on_') in ('bot_progress', 'round', 'phase'):
+            setattr(callbacks, k, v)
+        else:
+            raise TypeError(f"refine_from_solution() got unexpected keyword argument '{k}'")
+
+    max_states = config.max_states if config.max_states is not None else 500000
+    max_refine_iters = config.max_refine_iters if config.max_refine_iters is not None else 3
+    no_filler = config.no_filler
+    no_compile = config.no_compile
+    max_time_s = config.max_time_s
+    speed_bonus = config.speed_bonus
+    pipeline_fraction = config.pipeline_fraction
+    max_pipeline_depth = config.max_pipeline_depth
+    on_bot_progress = callbacks.on_bot_progress
+    on_round = callbacks.on_round
+    on_phase = callbacks.on_phase
+
     t0 = time.time()
 
     # Initialize game
@@ -1127,6 +1659,14 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
     ms = gs.map_state
     num_bots = len(gs.bot_positions)
 
+    # max_dp_bots: only refine this many bots via GPU DP; rest get CPU greedy
+    max_dp_bots_r = config.max_dp_bots
+    if max_dp_bots_r is None:
+        max_dp_bots_r = DEFAULT_MAX_DP_BOTS.get(diff, num_bots)
+    max_dp_bots_r = min(max_dp_bots_r, num_bots)
+    dp_bot_ids_r = list(range(max_dp_bots_r))
+    _greedy_bot_ids_r = list(range(max_dp_bots_r, num_bots))
+
     # Build Zig FFI context (seed or live capture)
     _zig_seed = seed if seed else (capture_data.get('seed') if capture_data else None)
     if _ZIG_AVAILABLE and _zig_seed:
@@ -1137,6 +1677,12 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
         _zig_ctx = None
 
     # Convert combined_actions to per-bot format
+    # Validate bot count matches — old solution may have wrong bot count
+    solution_bots = len(combined_actions[0]) if combined_actions else 0
+    if solution_bots != num_bots:
+        raise ValueError(
+            f"Solution has {solution_bots} bots but game needs {num_bots}. "
+            f"Clear stale solution: rm solutions/{diff}/best.json")
     bot_actions = {}
     for bid in range(num_bots):
         bot_actions[bid] = [(r_acts[bid][0], r_acts[bid][1])
@@ -1163,25 +1709,37 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
     # Type specialization for refinement
     _type_assignments_r = compute_type_assignments(
         all_orders, num_bots, ms.num_types) if num_bots >= 3 else {}
+    _zone_assignments_r = compute_zone_assignments(ms, num_bots, n_pipeline=n_pipeline)
+
+    # Generate greedy plans for non-DP bots
+    if _greedy_bot_ids_r:
+        greedy_acts = greedy_plan_bots(
+            gs, all_orders, _greedy_bot_ids_r, bot_actions, ms, num_bots,
+            _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+        for bid, acts in greedy_acts.items():
+            bot_actions[bid] = acts
 
     # Verify starting score
     gs_v = _fresh_gs(gs, capture_data, no_filler)
-    best_score = cpu_verify(gs_v, all_orders, combined_actions, num_bots, _zig_ctx=_zig_ctx)
+    best_score = cpu_verify(gs_v, all_orders, _make_combined(bot_actions, num_bots),
+                            num_bots, _zig_ctx=_zig_ctx)
     best_actions = {k: list(v) for k, v in bot_actions.items()}
 
     if verbose:
-        print(f"Warm-start refinement: {diff}, {num_bots} bots, "
+        dp_str = f" (DP bots: {dp_bot_ids_r}, greedy: {_greedy_bot_ids_r})" if _greedy_bot_ids_r else ""
+        print(f"Warm-start refinement: {diff}, {num_bots} bots{dp_str}, "
               f"starting_score={best_score}, max_states={max_states}, "
               f"refine_iters={max_refine_iters}", file=sys.stderr)
 
     if on_phase:
         on_phase("warm_start", 0, best_score)
 
-    # Run refinement iterations (same as in solve_sequential)
+    # Run refinement iterations — only refine DP bots
     import random as _random_rfn
     _rng_rfn = _random_rfn.Random(42)
 
-    no_improve_iters = 0  # allow 1 escape attempt before stopping
+    no_improve_iters = 0
+    _n_dp = len(dp_bot_ids_r)
     for iteration in range(max_refine_iters):
         # Time-budget check
         if max_time_s is not None and (time.time() - t0) > max_time_s:
@@ -1193,12 +1751,13 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
         if on_phase:
             on_phase("refine", iteration + 1, best_score)
 
+        # Only refine DP bots; greedy bots re-generated after
         if iteration == 0:
-            refine_order = list(range(num_bots))
+            refine_order = list(dp_bot_ids_r)
         elif iteration == 1:
-            refine_order = list(range(num_bots - 1, -1, -1))
+            refine_order = list(reversed(dp_bot_ids_r))
         else:
-            refine_order = list(range(num_bots))
+            refine_order = list(dp_bot_ids_r)
             _rng_rfn.shuffle(refine_order)
 
         if verbose:
@@ -1229,11 +1788,13 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
                 p_depth = pipeline_bot_ids.get(bot_id, 0)
                 is_pipeline = p_depth > 0
                 pref_types_r = _type_assignments_r.get(bot_id) if _type_assignments_r else None
+                bot_zone_r = _zone_assignments_r.get(bot_id)
                 searcher = GPUBeamSearcher(
                     ms, all_orders, device=device, num_bots=num_bots,
                     locked_trajectories=locked, pipeline_mode=is_pipeline,
                     pipeline_depth=p_depth, preferred_types=pref_types_r,
-                    no_compile=no_compile)
+                    no_compile=no_compile, speed_bonus=speed_bonus,
+                    preferred_zone=bot_zone_r)
 
                 def round_cb(rnd, score, unique, expanded, elapsed, _bid=bot_id):
                     if on_round:
@@ -1275,14 +1836,30 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
                               f"(no improvement, reverted), time={bot_time:.1f}s",
                               file=sys.stderr)
                     consecutive_fails += 1
-                    if consecutive_fails >= num_bots:
+                    if consecutive_fails >= _n_dp:
                         if verbose:
-                            print(f"  Early stop: {num_bots} consecutive no-improvements",
+                            print(f"  Early stop: {_n_dp} consecutive no-improvements",
                                   file=sys.stderr)
                         break
 
                 if on_bot_progress:
                     on_bot_progress(bot_id, num_bots, best_score, time.time() - t0)
+
+        # Re-generate greedy bot plans after DP bots may have changed
+        if _greedy_bot_ids_r and iter_improved:
+            greedy_acts = greedy_plan_bots(
+                gs, all_orders, _greedy_bot_ids_r, bot_actions, ms, num_bots,
+                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+            for bid, acts in greedy_acts.items():
+                bot_actions[bid] = acts
+            combined = _make_combined(bot_actions, num_bots)
+            gs_v = _fresh_gs(gs, capture_data, no_filler)
+            new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx)
+            if new_score > best_score:
+                best_score = new_score
+                best_actions = {k: list(v) for k, v in bot_actions.items()}
+            elif new_score < best_score:
+                bot_actions = {k: list(v) for k, v in best_actions.items()}
 
         if on_phase:
             on_phase("refine_done", iteration + 1, best_score)

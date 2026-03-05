@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Run sim_server and bot for all difficulties."""
-import subprocess, sys, time, os
+import subprocess, sys, time, os  # nosec B404
 
 difficulties = ["easy", "medium", "hard", "expert"]
 base_port = 9890
@@ -11,7 +11,7 @@ for i, diff in enumerate(difficulties):
     print(f"Testing {diff.upper()} on port {port}")
     print(f"{'='*50}")
 
-    srv = subprocess.Popen(
+    srv = subprocess.Popen(  # nosec B603 B607
         [sys.executable, "sim_server.py", str(port), diff],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         cwd=os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +19,7 @@ for i, diff in enumerate(difficulties):
     time.sleep(2)
 
     bot_exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zig-out", "bin", "grocery-bot.exe")
-    bot = subprocess.Popen(
+    bot = subprocess.Popen(  # nosec B603 B607
         [bot_exe, f"ws://localhost:{port}"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         cwd=os.path.dirname(os.path.abspath(__file__))
@@ -40,7 +40,8 @@ for i, diff in enumerate(difficulties):
     srv.terminate()
     try:
         srv.communicate(timeout=5)
-    except:
+    except Exception:
+        # srv.communicate() timed out or failed; force-kill to avoid orphaned process
         srv.kill()
 
 print(f"\n{'='*50}")

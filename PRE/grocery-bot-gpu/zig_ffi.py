@@ -16,9 +16,7 @@ import platform
 
 import numpy as np
 
-MAX_ROUNDS = 300
-
-_DIFF_IDX = {'easy': 0, 'medium': 1, 'hard': 2, 'expert': 3}
+from configs import MAX_ROUNDS, DIFF_IDX as _DIFF_IDX
 
 _lib = None
 
@@ -396,8 +394,6 @@ def zig_presim_locked_live(capture_data, all_orders, bot_actions,
 
 def test_ffi_vs_python(difficulty='medium', seed=7001):
     """Validate FFI verify matches Python cpu_verify for a dummy all-wait solution."""
-    import sys
-    sys.path.insert(0, os.path.dirname(__file__))
     from game_engine import init_game, ACT_WAIT
 
     gs, all_orders = init_game(seed, difficulty)
@@ -412,7 +408,7 @@ def test_ffi_vs_python(difficulty='medium', seed=7001):
 
     print(f"test_ffi_vs_python({difficulty}, seed={seed}): "
           f"python={py_score}, zig={zig_score}")
-    assert zig_score == py_score, f"Mismatch: python={py_score} zig={zig_score}"
+    assert zig_score == py_score, f"Mismatch: python={py_score} zig={zig_score}"  # nosec B101
     print("OK")
 
 

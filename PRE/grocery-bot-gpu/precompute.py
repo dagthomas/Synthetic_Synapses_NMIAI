@@ -4,12 +4,19 @@ Uses matrix-multiply BFS on CUDA to compute all-pairs shortest paths for the
 entire map in <5ms. Results are cached to disk (.npz) so subsequent loads are <1ms.
 
 Tables provided:
-- dist_matrix[from_idx, to_idx]     — int16, all-pairs shortest path distances
-- next_step_matrix[from_idx, to_idx] — int8, first action (1-4) from→to
-- dist_to_type[type_id, y, x]       — int16, distance to nearest item of type
-- step_to_type[type_id, y, x]       — int8, first action toward nearest of type
-- dist_to_dropoff[y, x]             — int16, distance to dropoff
-- step_to_dropoff[y, x]             — int8, first action toward dropoff
+- dist_matrix[from_idx, to_idx]     -- int16, all-pairs shortest path distances
+- next_step_matrix[from_idx, to_idx] -- int8, first action (1-4) from->to
+- dist_to_type[type_id, y, x]       -- int16, distance to nearest item of type
+- step_to_type[type_id, y, x]       -- int8, first action toward nearest of type
+- dist_to_dropoff[y, x]             -- int16, distance to dropoff
+- step_to_dropoff[y, x]             -- int8, first action toward dropoff
+
+Error contract:
+  - PrecomputedTables.get() always returns a valid PrecomputedTables instance
+    (computes on cache miss; never returns None).
+  - _load_from_cache returns None on corrupt/incompatible cache (triggers recompute).
+  - get_distance / get_first_step return sentinel values (9999 / 0) for invalid cells.
+  - precompute_for_difficulty returns None if no capture data exists.
 
 Usage:
     from precompute import PrecomputedTables
@@ -23,10 +30,14 @@ CLI:
     python precompute.py easy               # Precompute one difficulty
     python precompute.py --info             # Show cache stats
 """
+from __future__ import annotations
+
 import hashlib
 import os
 import sys
 import time
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 
 from game_engine import CELL_FLOOR, CELL_DROPOFF, MapState
@@ -62,7 +73,7 @@ class PrecomputedTables:
         self.step_to_dropoff = None  # [H, W] int8
 
     @classmethod
-    def get(cls, map_state):
+    def get(cls, map_state: MapState) -> PrecomputedTables:
         """Get or compute PrecomputedTables for a map state. Caches in memory + disk."""
         grid_hash = cls._compute_hash(map_state)
 
@@ -94,7 +105,7 @@ class PrecomputedTables:
     @staticmethod
     def _compute_hash(map_state):
         """Compute cache key from grid layout."""
-        h = hashlib.md5()
+        h = hashlib.md5()  # nosec B324
         h.update(map_state.grid.tobytes())
         return h.hexdigest()[:12]
 
@@ -144,6 +155,9 @@ class PrecomputedTables:
     def _gpu_bfs(cls, walkable, pos_to_idx, N, H, W):
         """GPU matrix-multiply BFS for all-pairs shortest paths."""
         import torch
+
+        # Enable TF32 for BFS matmul — values are 0/1 integers, TF32 is exact
+        torch.backends.cuda.matmul.allow_tf32 = True
 
         device = 'cuda'
 
@@ -360,16 +374,16 @@ class PrecomputedTables:
 
     # === Public API ===
 
-    def get_distance(self, src, tgt):
-        """O(1) distance lookup. src/tgt are (x, y) tuples."""
+    def get_distance(self, src: Tuple[int, int], tgt: Tuple[int, int]) -> int:
+        """O(1) distance lookup. src/tgt are (x, y) tuples. Returns 9999 for invalid cells."""
         si = self.pos_to_idx.get(src)
         ti = self.pos_to_idx.get(tgt)
         if si is None or ti is None:
             return 9999
         return int(self.dist_matrix[si, ti])
 
-    def get_first_step(self, src, tgt):
-        """O(1) first-step action lookup. Returns action ID 1-4, or 0 if at target."""
+    def get_first_step(self, src: Tuple[int, int], tgt: Tuple[int, int]) -> int:
+        """O(1) first-step action lookup. Returns action ID 1-4, or 0 if at target/invalid."""
         if src == tgt:
             return 0
         si = self.pos_to_idx.get(src)
@@ -378,7 +392,8 @@ class PrecomputedTables:
             return 0
         return int(self.next_step_matrix[si, ti])
 
-    def get_nearest_item_cell(self, src, item_idx, map_state):
+    def get_nearest_item_cell(self, src: Tuple[int, int], item_idx: int,
+                              map_state: MapState) -> Optional[Tuple[int, int, int]]:
         """Find nearest walkable cell adjacent to item_idx from src. Returns (x, y, dist) or None."""
         adj = map_state.item_adjacencies.get(item_idx, [])
         si = self.pos_to_idx.get(src)
@@ -395,7 +410,7 @@ class PrecomputedTables:
                     best = (cx, cy, d)
         return best
 
-    def as_dist_maps(self):
+    def as_dist_maps(self) -> dict[tuple[int, int], np.ndarray]:
         """Return backward-compatible dict: {(x,y) -> dist_map[H,W] int16}.
 
         Lazily computed and cached. The dist_map values use -1 for unreachable
@@ -421,7 +436,7 @@ class PrecomputedTables:
         self._dist_maps = dist_maps
         return dist_maps
 
-    def to_gpu_tensors(self, device='cuda'):
+    def to_gpu_tensors(self, device: str = 'cuda') -> dict[str, Any]:
         """Return all tables as CUDA tensors for gpu_beam_search.
 
         Cached per device — subsequent calls return the same tensors without
@@ -453,7 +468,7 @@ class PrecomputedTables:
         self._gpu_tensors = result
         return result
 
-    def get_trips(self, map_state, max_size=3):
+    def get_trips(self, map_state: MapState, max_size: int = 3) -> TripTable:
         """Get or compute TripTable for this map. Cached after first call."""
         if self._trip_table is None:
             self._trip_table = TripTable.compute(self, map_state, max_size)
@@ -710,8 +725,12 @@ class TripTable:
                    num_types, cell_idx_map, N)
 
 
-def precompute_for_difficulty(difficulty, verbose=True):
-    """Precompute tables for a specific difficulty using captured map data."""
+def precompute_for_difficulty(difficulty: str, verbose: bool = True) -> Optional[Tuple['PrecomputedTables', MapState]]:
+    """Precompute tables for a specific difficulty using captured map data.
+
+    Returns:
+        (tables, map_state) tuple, or None if no capture data exists for the difficulty.
+    """
     from solution_store import load_capture
     from game_engine import build_map_from_capture
 

@@ -1,0 +1,74 @@
+{
+  "assessments": {
+    "test_strategy": 52,
+    "initialization_coupling": 88,
+    "incomplete_migration": 55,
+    "contract_coherence": 82,
+    "mid_level_elegance": 72
+  },
+  "findings": [
+    {
+      "dimension": "test_strategy",
+      "slug": "no-gpu-code-tests",
+      "summary": "GPU solver code (gpu_beam_search.py, gpu_sequential_solver.py, live_gpu_stream.py) has zero unit tests",
+      "detail": "The three most complex files -- gpu_beam_search.py (2266 lines), gpu_sequential_solver.py (1450 lines), and live_gpu_stream.py (2388 lines) -- have no unit tests. Even CPU-testable functions like cpu_verify(), pre_simulate_locked(), SolveConfig/SolveCallbacks construction could be tested with CPU-only mocks.",
+      "files": [
+        "grocery-bot-gpu/gpu_beam_search.py",
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/live_gpu_stream.py"
+      ],
+      "confidence": "high",
+      "impact": "+++"
+    },
+    {
+      "dimension": "incomplete_migration",
+      "slug": "stale-cpu-solver-files",
+      "summary": "At least 15 Python files are stale solver generations without DEPRECATED markers",
+      "detail": "The codebase contains multiple solver generations no longer in the active pipeline but still present without deprecation markers: beam_search.py, optimizer.py, seq_solver.py, smart_policy.py, order_solver.py, trip_solver.py, pipeline_solver.py, two_phase_planner.py, gpu_optimizer.py, gpu_sim.py, parallel_optimizer.py, planner_optimizer.py, solve.py, solve_and_save.py, solve_all.py, solve_from_capture.py, pipeline.py. Only planner_v2.py and planner_v3.py have DEPRECATED notices.",
+      "files": [
+        "grocery-bot-gpu/beam_search.py",
+        "grocery-bot-gpu/optimizer.py",
+        "grocery-bot-gpu/seq_solver.py",
+        "grocery-bot-gpu/gpu_optimizer.py",
+        "grocery-bot-gpu/gpu_sim.py",
+        "grocery-bot-gpu/smart_policy.py",
+        "grocery-bot-gpu/pipeline_solver.py"
+      ],
+      "confidence": "high",
+      "impact": "+++"
+    },
+    {
+      "dimension": "contract_coherence",
+      "slug": "refine-no-config-object",
+      "summary": "refine_from_solution uses raw kwargs while solve_sequential migrated to SolveConfig/SolveCallbacks",
+      "detail": "solve_sequential() accepts SolveConfig and SolveCallbacks dataclass objects, but refine_from_solution() still uses 15 individual keyword arguments. The docstring says 'Other args same as solve_sequential' but the actual interface differs.",
+      "files": [
+        "grocery-bot-gpu/gpu_sequential_solver.py"
+      ],
+      "confidence": "high",
+      "impact": "++"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "slug": "difficulty-detection-duplication-js",
+      "summary": "Difficulty detection logic duplicated in JS endpoints and Python configs.py",
+      "detail": "iterate/+server.js detectDifficultyFromLog() and optimize/replay/+server.js both hardcode bot-count-to-difficulty mapping that duplicates configs.py detect_difficulty(). Creates maintenance risk if configs change.",
+      "files": [
+        "grocery-bot-zig/replay/app/src/routes/api/pipeline/iterate/+server.js",
+        "grocery-bot-zig/replay/app/src/routes/api/optimize/replay/+server.js"
+      ],
+      "confidence": "high",
+      "impact": "++"
+    }
+  ],
+  "provenance": {
+    "kind": "blind_review_batch_import",
+    "blind": true,
+    "runner": "claude",
+    "run_stamp": "ext_20260304_215002_fbce4b5c",
+    "created_at": "2026-03-04T21:55:09+00:00",
+    "packet_path": "X:\\KODE\\AINM\\PRE\\.desloppify\\review_packet_blind.json",
+    "packet_sha256": "68bf1e05bfcb976741e7b64c379cfbb40dd1bf2bdc45df70e7d4a813fed12f95",
+    "external_session_id": "ext_20260304_215002_fbce4b5c"
+  }
+}

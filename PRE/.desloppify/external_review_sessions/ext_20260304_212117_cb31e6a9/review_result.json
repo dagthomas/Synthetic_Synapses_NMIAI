@@ -1,0 +1,524 @@
+{
+  "session": {
+    "id": "ext_20260304_212117_cb31e6a9",
+    "token": "dd7806aaea3c39cf0efcb7f1fed42215"
+  },
+  "assessments": {
+    "naming_quality": 82,
+    "logic_clarity": 85,
+    "type_safety": 38,
+    "contract_coherence": 62,
+    "error_consistency": 68,
+    "abstraction_fitness": 78,
+    "ai_generated_debt": 80,
+    "high_level_elegance": 55,
+    "mid_level_elegance": 70,
+    "low_level_elegance": 78,
+    "cross_module_architecture": 72,
+    "initialization_coupling": 82,
+    "convention_outlier": 80,
+    "dependency_health": 85,
+    "test_strategy": 15,
+    "api_surface_coherence": 65,
+    "authorization_consistency": 90,
+    "incomplete_migration": 60,
+    "package_organization": 40,
+    "design_coherence": 55
+  },
+  "findings": [
+    {
+      "dimension": "type_safety",
+      "identifier": "no-type-annotations-on-public-functions",
+      "summary": "Only 8 out of ~247 top-level function definitions across 63 Python files have return type annotations. The sole typed module is solution_store.py. Core solver functions like GPUBeamSearcher.__init__, dp_search, _step, _eval, and all functions in game_engine.py, precompute.py, live_gpu_stream.py, replay_solution.py, and every planner variant lack any type annotations on parameters or return values.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_beam_search.py",
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/game_engine.py",
+        "grocery-bot-gpu/precompute.py",
+        "grocery-bot-gpu/live_gpu_stream.py",
+        "grocery-bot-gpu/replay_solution.py",
+        "grocery-bot-gpu/planner.py"
+      ],
+      "evidence": [
+        "grep for 'def \\w+(.*) -> ' across grocery-bot-gpu/*.py returns only 8 matches, all in solution_store.py",
+        "gpu_beam_search.py __init__ takes 10+ parameters with no type annotations",
+        "game_engine.py: step(), init_game(), build_map(), build_map_from_capture() all untyped",
+        "precompute.py: PrecomputedTables.get(), _compute(), to_gpu_tensors() all untyped",
+        "gpu_sequential_solver.py: solve_sequential has docstring types but no annotations on the function signature beyond the SolveConfig/SolveCallbacks dataclasses"
+      ],
+      "suggestion": "Add type annotations to at minimum the public API functions: solve_sequential, refine_from_solution, cpu_verify, init_game, init_game_from_capture, step, build_map_from_capture, PrecomputedTables.get, and GPUBeamSearcher.__init__/dp_search. Even partial typing on the 15-20 most-imported functions would catch misuse at call sites.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "type_safety",
+      "identifier": "untyped-dict-interchange-format",
+      "summary": "The capture_data dict is the primary interchange format across 15+ modules (solution_store, gpu_sequential_solver, live_gpu_stream, replay_solution, capture_and_solve_stream, iterate_local, optimize_and_save, etc.) but CaptureData TypedDict in game_engine.py is never enforced at boundaries. Functions accept Dict[str, Any] or bare dict, making it easy to pass malformed data.",
+      "related_files": [
+        "grocery-bot-gpu/game_engine.py",
+        "grocery-bot-gpu/solution_store.py",
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/live_gpu_stream.py",
+        "grocery-bot-gpu/iterate_local.py"
+      ],
+      "evidence": [
+        "game_engine.py defines CaptureData(TypedDict) at line 18 but no function signature uses it",
+        "solution_store.py: save_capture takes capture_data: Dict[str, Any], not CaptureData",
+        "gpu_sequential_solver.py: solve_sequential takes capture_data with no type annotation at all",
+        "iterate_local.py: make_capture_from_seed returns a plain dict, not validated against CaptureData"
+      ],
+      "suggestion": "Use CaptureData as the parameter type for functions that accept capture data. At minimum, annotate the top-level solve_sequential, save_capture, merge_capture, and init_game_from_capture signatures with CaptureData.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "error-contract-not-enforced-by-types",
+      "summary": "gpu_sequential_solver.py documents error contracts in module docstring (returns (0, []) on failure, raises ValueError on invalid input) but these contracts are not enforced by type annotations or runtime checks at all call sites. Callers like optimize_and_save.py, live_gpu_stream.py, and production_run.py do not consistently check for the (0, []) failure return before using results.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/optimize_and_save.py",
+        "grocery-bot-gpu/live_gpu_stream.py",
+        "grocery-bot-gpu/production_run.py"
+      ],
+      "evidence": [
+        "gpu_sequential_solver.py docstring says: 'Returns (0, []) if GPU/CPU verification fails. Callers should check score > 0 before using the actions.'",
+        "optimize_and_save.py calls solve_sequential but wraps in a bare try/except, does not explicitly check for score==0 failure return",
+        "live_gpu_stream.py _gpu_worker catches Exception broadly and logs it, but does not distinguish (0,[]) solver failure from other errors"
+      ],
+      "suggestion": "Consider returning a Result-like namedtuple (e.g., SolveResult with success, score, actions fields) instead of a bare tuple, or add a runtime assertion at call sites that score > 0 before proceeding to save/replay.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "contract_coherence",
+      "identifier": "predict-full-sim-missing-game-states-return",
+      "summary": "replay_solution.py predict_full_sim docstring says 'Returns: positions, game_states' but the function only returns positions. The game_states return documented in the docstring is missing from the actual implementation.",
+      "related_files": [
+        "grocery-bot-gpu/replay_solution.py"
+      ],
+      "evidence": [
+        "replay_solution.py line 33-41: docstring says 'Returns: positions: list..., game_states: GameState snapshots...' but line 51 is 'return positions' (single value, no game_states)"
+      ],
+      "suggestion": "Either update the docstring to match the single-value return, or add game_states to the return value if callers need it.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "broad-exception-swallowing-in-live-stream",
+      "summary": "live_gpu_stream.py has 21 except-Exception blocks, many of which catch all exceptions and only print to stderr. Background workers (_mapf_worker, _gpu_worker, _per_round_worker) catch Exception broadly and continue, potentially masking bugs like tensor shape mismatches or CUDA OOM errors that should propagate differently than expected solver failures.",
+      "related_files": [
+        "grocery-bot-gpu/live_gpu_stream.py"
+      ],
+      "evidence": [
+        "live_gpu_stream.py: 21 'except Exception' occurrences (highest in codebase)",
+        "_mapf_worker (line ~246): catches Exception, prints traceback, returns silently",
+        "_gpu_worker: catches Exception per pass, logs, continues to next pass \u00e2\u20ac\u201d CUDA OOM treated same as trivial error",
+        "SvelteKit iterate/+server.js: 'try { JSON.parse(line) } catch (e) {}' silently swallows parse errors in 10+ locations"
+      ],
+      "suggestion": "Differentiate between expected failures (solver returning low score, network timeout) and unexpected failures (CUDA OOM, tensor shape error). For the latter, either re-raise or set a flag that prevents further GPU calls. In the SvelteKit pipeline, at minimum log parse errors rather than silently swallowing.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "error_consistency",
+      "identifier": "mixed-error-strategies-across-modules",
+      "summary": "Error handling strategy varies inconsistently: solution_store.py uses Optional returns with documented error contracts, gpu_sequential_solver.py uses (0, []) sentinel returns, live_gpu_stream.py swallows exceptions with try/except, and SvelteKit endpoints use bare try-catch with empty catch blocks. No unified error type or strategy exists across the codebase.",
+      "related_files": [
+        "grocery-bot-gpu/solution_store.py",
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/live_gpu_stream.py",
+        "grocery-bot-zig/replay/app/src/routes/api/pipeline/iterate/+server.js"
+      ],
+      "evidence": [
+        "solution_store.py: returns Optional[Dict] (None on failure) \u00e2\u20ac\u201d documented in error contract comment",
+        "gpu_sequential_solver.py: returns (0, []) tuple on failure \u00e2\u20ac\u201d documented but not type-enforced",
+        "live_gpu_stream.py: 21 bare except-Exception blocks that print and continue",
+        "iterate/+server.js: 10+ empty catch blocks like 'try { ... } catch (e) {}'"
+      ],
+      "suggestion": "Standardize on Optional returns for load functions and typed result objects for solver functions. At minimum, replace empty catch blocks in SvelteKit endpoints with logging.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "naming_quality",
+      "identifier": "abbreviated-variable-names-in-core-solver",
+      "summary": "gpu_beam_search.py uses abbreviated variable names that obscure intent in the hot path. Examples: ms (map_state), gs (game_state), d (device), W/H (width/height), _rtc/_rac/_ofc (remaining_trip_combo / remaining_after_cost / order_full_cost), _itp (item_types), _pdepth (pipeline_depth), sc (score), oi (order_index), nr (num_remaining). While some abbreviations like ms/gs are used consistently across the codebase, single-letter names and underscore-prefixed abbreviations are harder to grep and understand.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_beam_search.py",
+        "grocery-bot-gpu/gpu_sequential_solver.py"
+      ],
+      "evidence": [
+        "gpu_beam_search.py line 45: self.ms = map_state",
+        "gpu_beam_search.py line 212-214: _rtc, _rac, _ofc \u00e2\u20ac\u201d these encode complex semantics in 3-letter variables",
+        "gpu_beam_search.py line 124: _itp = self.item_types.cpu().numpy()",
+        "gpu_beam_search.py line 385: d = self.device \u00e2\u20ac\u201d single letter in 30-line function"
+      ],
+      "suggestion": "Keep ms/gs/diff as established project conventions, but expand _rtc/_rac/_ofc to remaining_trip_combo/remaining_after_cost/order_full_cost since they are only used in __init__ (not hot path). Replace single-letter d with device.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "test_strategy",
+      "identifier": "near-zero-test-coverage",
+      "summary": "The grocery-bot-gpu directory has 63 Python files with no test files at all. The only test files in the entire project are in grocery-bot-zig/ (test_all.py, test_connection.py, test_ws.py, test_run.py) and those are integration/connection tests, not unit tests. Critical business logic in game_engine.py (step function, order delivery, collision handling), gpu_beam_search.py (state hashing, action expansion, scoring), gpu_sequential_solver.py (pre_simulate_locked, cpu_verify), and solution_store.py (never-overwrite-better-score logic) has zero automated test coverage.",
+      "related_files": [
+        "grocery-bot-gpu/game_engine.py",
+        "grocery-bot-gpu/gpu_beam_search.py",
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/solution_store.py",
+        "grocery-bot-gpu/precompute.py"
+      ],
+      "evidence": [
+        "find grocery-bot-gpu -name '*test*' returns no results",
+        "glob for **/test*.py returns only 4 files, all in grocery-bot-zig/",
+        "game_engine.py step() function has complex order delivery + auto-delivery + collision logic with zero test coverage",
+        "solution_store.py save_solution has a critical 'never overwrite better score' contract that is untested"
+      ],
+      "suggestion": "Add unit tests for at minimum: (1) game_engine.py step() with known inputs/outputs, (2) solution_store.py save_solution never-overwrite invariant, (3) gpu_sequential_solver.py cpu_verify matches known game results, (4) precompute.py BFS distance correctness on small grids. These are deterministic functions that are easy to test and protect critical correctness guarantees.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "package_organization",
+      "identifier": "flat-63-file-directory",
+      "summary": "grocery-bot-gpu/ contains 63 Python files in a single flat directory with no subdirectory structure. Files span at least 6 distinct concerns: core engine (game_engine, configs), GPU solvers (gpu_beam_search, gpu_sequential_solver, precompute), planners (planner, planner_v2, planner_v3, pipeline_solver, planner_optimizer), pipeline orchestration (production_run, capture_and_solve_stream, optimize_and_save, iterate_local), live game (live_gpu_stream, live_solver, live_bot, live_gpu_solver), and utilities (pathfinding, action_gen, solution_store, ws_client, zig_ffi). Navigation requires knowing file names by heart.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_beam_search.py",
+        "grocery-bot-gpu/planner.py",
+        "grocery-bot-gpu/planner_v2.py",
+        "grocery-bot-gpu/planner_v3.py",
+        "grocery-bot-gpu/pipeline_solver.py",
+        "grocery-bot-gpu/production_run.py",
+        "grocery-bot-gpu/live_gpu_stream.py",
+        "grocery-bot-gpu/live_solver.py",
+        "grocery-bot-gpu/live_bot.py"
+      ],
+      "evidence": [
+        "63 .py files in a single flat directory (find grocery-bot-gpu -maxdepth 1 -name '*.py' | wc -l)",
+        "7+ solver variants: gpu_beam_search, beam_search, planner, planner_v2, planner_v3, pipeline_solver, planner_optimizer, optimizer, gpu_optimizer, order_solver, seq_solver, trip_solver",
+        "4+ live game files: live_gpu_stream, live_solver, live_bot, live_gpu_solver",
+        "4+ pipeline orchestrators: production_run, capture_and_solve_stream, pipeline, iterate_local"
+      ],
+      "suggestion": "Group into subdirectories by concern: solvers/ (gpu_beam_search, gpu_sequential_solver, planner*, pipeline_solver, optimizer*), live/ (live_gpu_stream, live_solver, live_bot), pipeline/ (production_run, capture_and_solve_stream, iterate_local), core/ (game_engine, configs, precompute, pathfinding). An __init__.py in each re-exporting key symbols maintains backward compatibility.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "package_organization",
+      "identifier": "stale-solver-variants-clutter",
+      "summary": "Multiple solver variants with overlapping functionality exist without clear ownership or lifecycle: beam_search.py (CPU), gpu_beam_search.py (GPU), optimizer.py, gpu_optimizer.py, parallel_optimizer.py, planner.py, planner_v2.py, planner_v3.py, planner_optimizer.py, pipeline_solver.py, order_solver.py, seq_solver.py, trip_solver.py, smart_policy.py, two_phase_planner.py. The active production solver is gpu_sequential_solver.py + gpu_beam_search.py. The rest appear to be evolutionary predecessors or experiments that are not imported by production code.",
+      "related_files": [
+        "grocery-bot-gpu/beam_search.py",
+        "grocery-bot-gpu/optimizer.py",
+        "grocery-bot-gpu/gpu_optimizer.py",
+        "grocery-bot-gpu/parallel_optimizer.py",
+        "grocery-bot-gpu/planner_v2.py",
+        "grocery-bot-gpu/planner_v3.py",
+        "grocery-bot-gpu/planner_optimizer.py",
+        "grocery-bot-gpu/pipeline_solver.py",
+        "grocery-bot-gpu/order_solver.py",
+        "grocery-bot-gpu/seq_solver.py",
+        "grocery-bot-gpu/trip_solver.py",
+        "grocery-bot-gpu/smart_policy.py",
+        "grocery-bot-gpu/two_phase_planner.py"
+      ],
+      "evidence": [
+        "planner.py, planner_v2.py, planner_v3.py: three MAPF planner versions with overlapping functionality",
+        "optimizer.py, gpu_optimizer.py, parallel_optimizer.py: three optimizer variants",
+        "beam_search.py (CPU) and gpu_beam_search.py (GPU): beam_search.py appears to be the pre-GPU version",
+        "Production code (live_gpu_stream.py, optimize_and_save.py, production_run.py) only imports from gpu_sequential_solver.py and gpu_beam_search.py"
+      ],
+      "suggestion": "Move inactive solver variants to an archive/ or experimental/ subdirectory. Keep only the active production solvers (gpu_beam_search, gpu_sequential_solver) and the MAPF planner (planner.py, which is still used by live_gpu_stream's _mapf_worker) in the main directory.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "high_level_elegance",
+      "identifier": "multiple-overlapping-pipeline-orchestrators",
+      "summary": "Four separate pipeline orchestration scripts exist with overlapping responsibilities: production_run.py (CLI iterative pipeline with token fetch), capture_and_solve_stream.py (Zig capture + GPU solve, JSON streaming), pipeline.py (capture + solve + replay), and iterate_local.py (local simulate-discover loop). Additionally, the SvelteKit iterate/+server.js reimplements pipeline orchestration in JavaScript. Each has its own subprocess management, error handling, and progress reporting, creating maintenance burden when the pipeline changes.",
+      "related_files": [
+        "grocery-bot-gpu/production_run.py",
+        "grocery-bot-gpu/capture_and_solve_stream.py",
+        "grocery-bot-gpu/pipeline.py",
+        "grocery-bot-gpu/iterate_local.py",
+        "grocery-bot-zig/replay/app/src/routes/api/pipeline/iterate/+server.js"
+      ],
+      "evidence": [
+        "production_run.py: CLI pipeline with subprocess.Popen for live_gpu_stream + optimize_and_save + replay_solution",
+        "capture_and_solve_stream.py: Zig capture + GPU solve with JSON streaming",
+        "pipeline.py: older capture + solve + replay pipeline using direct Python imports",
+        "iterate_local.py: local seed-based solve-simulate-discover loop",
+        "iterate/+server.js: 700-line JavaScript reimplementation of the pipeline with spawn() for Python subprocesses"
+      ],
+      "suggestion": "Consolidate into a single pipeline orchestrator that supports both CLI and JSON streaming modes. The iterate/+server.js should call a single Python pipeline script rather than reimplementing orchestration logic in JavaScript.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "design_coherence",
+      "identifier": "solve-sequential-wide-parameter-surface",
+      "summary": "solve_sequential() in gpu_sequential_solver.py accepts 11 config parameters via SolveConfig dataclass PLUS legacy **kwargs for backward compatibility, which are unpacked into 14 local variables. The function signature is capture_data, seed, difficulty, device, config, callbacks, verbose, all_orders_override, **kwargs. The legacy kwargs bridge (lines 282-297) manually copies fields from kwargs to config/callbacks, creating a dual-interface maintenance burden.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_sequential_solver.py"
+      ],
+      "evidence": [
+        "gpu_sequential_solver.py line 275-297: solve_sequential accepts config=SolveConfig plus **kwargs, then manually copies 11 config keys and 3 callback keys from kwargs to the dataclass",
+        "Lines 299-313: all config fields are then unpacked into local variables, losing the grouping benefit of the dataclass",
+        "SolveConfig has 11 fields; SolveCallbacks has 3 fields; plus 4 direct parameters (capture_data, seed, difficulty, device) = 18 effective parameters"
+      ],
+      "suggestion": "Remove the legacy **kwargs bridge and require callers to use SolveConfig/SolveCallbacks directly. The few callers (optimize_and_save.py, live_gpu_stream.py, iterate_local.py) can be updated in one pass. This eliminates the dual interface and the 14-line unpack block.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "design_coherence",
+      "identifier": "gpubeamsearcher-monolith-constructor",
+      "summary": "GPUBeamSearcher.__init__ in gpu_beam_search.py is approximately 370 lines long, performing: parameter storage, locked trajectory upload, TF32 configuration, grid upload, precomputed table loading, trip cost precomputation (with nested combinatorics), action pattern building, adjacency precomputation, hash constant allocation, torch.compile setup, and preferred type mask creation. This single method handles initialization for 6+ distinct subsystems.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_beam_search.py"
+      ],
+      "evidence": [
+        "gpu_beam_search.py lines 41-377: __init__ method spans 336 lines",
+        "Lines 41-101: parameter storage + locked trajectory setup",
+        "Lines 113-161: static data upload + locked precomputation",
+        "Lines 205-261: trip cost precomputation with nested for loops + combinatorics",
+        "Lines 278-296: adjacency precomputation",
+        "Lines 335-361: torch.compile setup with 3-level fallback chain"
+      ],
+      "suggestion": "Extract initialization into focused private methods: _init_locked_trajectories(), _init_trip_costs(), _init_adjacency_tables(), _init_compile(). The main __init__ would read as a clear sequence of setup stages.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "incomplete_migration",
+      "identifier": "legacy-kwargs-bridge-in-solve-sequential",
+      "summary": "solve_sequential() maintains a legacy **kwargs bridge alongside the new SolveConfig/SolveCallbacks dataclass interface. The docstring explicitly says 'Legacy kwargs for backward compat - prefer config/callbacks'. This dual interface means both old-style and new-style callers coexist, and the kwargs-to-config translation code (lines 282-297) is pure migration shim.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/optimize_and_save.py",
+        "grocery-bot-gpu/live_gpu_stream.py"
+      ],
+      "evidence": [
+        "gpu_sequential_solver.py line 278: comment says 'Legacy kwargs for backward compat - prefer config/callbacks'",
+        "optimize_and_save.py line 61-73: calls solve_sequential with kwargs dict spread, not SolveConfig",
+        "live_gpu_stream.py: also calls solve_sequential with individual kwargs"
+      ],
+      "suggestion": "Complete the migration: update all callers to construct SolveConfig/SolveCallbacks directly, then remove the **kwargs bridge code.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "incomplete_migration",
+      "identifier": "planner-version-coexistence",
+      "summary": "Three planner versions coexist: planner.py (MAPF, actively used by live_gpu_stream.py), planner_v2.py (reservation-based, imports from planner.py), and planner_v3.py (delivery-throttled, imports from planner.py). Only planner.py is imported by production code (live_gpu_stream.py _mapf_worker). The v2/v3 variants appear to be evolutionary experiments that were superseded but not removed.",
+      "related_files": [
+        "grocery-bot-gpu/planner.py",
+        "grocery-bot-gpu/planner_v2.py",
+        "grocery-bot-gpu/planner_v3.py",
+        "grocery-bot-gpu/live_gpu_stream.py"
+      ],
+      "evidence": [
+        "planner_v2.py line 22-27: imports BotController, ST_*, find_best_adj_cell etc from planner.py",
+        "planner_v3.py line 25-30: imports BotController, ST_*, find_best_adj_cell, assign_items_globally etc from planner.py",
+        "live_gpu_stream.py line ~184: 'from planner import solve as planner_solve' \u00e2\u20ac\u201d only planner.py is used",
+        "No production file imports from planner_v2 or planner_v3"
+      ],
+      "suggestion": "Archive planner_v2.py and planner_v3.py to an experimental/ directory, or delete them if the reservation-based and delivery-throttled approaches are confirmed inferior.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "api_surface_coherence",
+      "identifier": "inconsistent-function-signatures-across-solvers",
+      "summary": "Different solver entry points have inconsistent parameter naming and ordering. solve_sequential takes (capture_data, seed, difficulty, device, config, callbacks). The older planner.solve takes (game_factory, verbose, max_active_bots, pipeline_depth). cpu_verify takes (gs_template, all_orders, combined_actions, num_bots, _zig_ctx). refine_from_solution has yet another signature. There is no consistent pattern for how game state, configuration, and callbacks are passed.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_sequential_solver.py",
+        "grocery-bot-gpu/planner.py",
+        "grocery-bot-gpu/optimizer.py"
+      ],
+      "evidence": [
+        "solve_sequential: (capture_data, seed, difficulty, device, config, callbacks, verbose, all_orders_override, **kwargs)",
+        "planner.solve: (game_factory, verbose, max_active_bots, pipeline_depth) \u00e2\u20ac\u201d uses factory pattern, not capture_data",
+        "cpu_verify: (gs_template, all_orders, combined_actions, num_bots, _zig_ctx) \u00e2\u20ac\u201d takes GameState not capture",
+        "refine_from_solution: (existing_actions, capture_data, ...) \u00e2\u20ac\u201d actions first, then capture"
+      ],
+      "suggestion": "Standardize the solver interface: all solvers should accept either (capture_data, config) or (game_state, all_orders, config) consistently. Create a common SolverInput type that wraps the game initialization.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "sveltekit-js-reimplements-python-pipeline-logic",
+      "summary": "The iterate/+server.js endpoint (706 lines) reimplements pipeline orchestration logic in JavaScript that duplicates Python-side logic: difficulty detection from bot counts, game log parsing, order capture extraction, score tracking, and iterative optimize-replay loops. This creates a cross-language seam where changes to the Python pipeline require parallel changes in JavaScript.",
+      "related_files": [
+        "grocery-bot-zig/replay/app/src/routes/api/pipeline/iterate/+server.js",
+        "grocery-bot-gpu/production_run.py",
+        "grocery-bot-gpu/capture_and_solve_stream.py"
+      ],
+      "evidence": [
+        "iterate/+server.js lines 111-135: detectDifficultyFromLog reimplements configs.py detect_difficulty in JavaScript",
+        "iterate/+server.js lines 73-81 and 138-147: findLatestLog and findNewestLog are nearly identical functions in the same file",
+        "iterate/+server.js lines 85-108: captureOrders spawns Python capture_from_game_log.py then parses its stderr for order count \u00e2\u20ac\u201d fragile cross-process contract",
+        "The 700-line JS file essentially orchestrates the same Zig-play -> capture -> GPU-optimize -> replay cycle as production_run.py"
+      ],
+      "suggestion": "Have the SvelteKit endpoint call a single Python orchestrator script (e.g., production_run.py with --json-stream mode) that handles all pipeline logic, rather than reimplementing orchestration in JavaScript. The JS side should only stream events to the frontend.",
+      "confidence": "high"
+    },
+    {
+      "dimension": "mid_level_elegance",
+      "identifier": "duplicate-findlog-functions",
+      "summary": "iterate/+server.js contains two nearly identical functions for finding the latest game log: findLatestLog (line 73) and findNewestLog (line 138). Both read a directory, filter for game_log_*.jsonl files, filter by mtime, and sort by mtime descending. The only difference is the parameter name.",
+      "related_files": [
+        "grocery-bot-zig/replay/app/src/routes/api/pipeline/iterate/+server.js"
+      ],
+      "evidence": [
+        "iterate/+server.js lines 73-82: findLatestLog(afterMs) searches GPU_DIR",
+        "iterate/+server.js lines 138-147: findNewestLog(dir, afterMs) searches arbitrary dir \u00e2\u20ac\u201d functionally identical except it takes a dir param",
+        "findLatestLog could be replaced by findNewestLog(GPU_DIR, afterMs)"
+      ],
+      "suggestion": "Remove findLatestLog and replace its call sites with findNewestLog(GPU_DIR, afterMs).",
+      "confidence": "high"
+    },
+    {
+      "dimension": "abstraction_fitness",
+      "identifier": "anytimegpustream-god-class",
+      "summary": "AnytimeGPUStream in live_gpu_stream.py manages WebSocket communication, capture data, plan state, MAPF background worker, GPU background worker, per-round GPU worker, anti-congestion state, seed cracking, JSON event streaming, game log recording, and greedy fallback logic. Its __init__ declares 30+ instance variables across 6 concerns. While cohesive in that everything serves 'play a live game', the class mixes transport, solver orchestration, state management, and UI concerns.",
+      "related_files": [
+        "grocery-bot-gpu/live_gpu_stream.py"
+      ],
+      "evidence": [
+        "live_gpu_stream.py lines 78-129: __init__ has 30+ instance variables grouped into 6 sections (shared state, per-round GPU, bookkeeping, anti-congestion, seed cracking)",
+        "Class manages threading (3 background workers), WebSocket protocol, solver invocation, and JSON streaming",
+        "The _run method (main game loop) handles WS parsing, capture building, greedy fallback, plan following, and anti-congestion \u00e2\u20ac\u201d all in one method"
+      ],
+      "suggestion": "Extract anti-congestion logic into a separate AntiCongestion helper class. Extract WebSocket protocol handling into a GameConnection class. The AnytimeGPUStream would compose these rather than owning all state directly.",
+      "confidence": "low"
+    },
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "constants-duplicated-between-python-and-javascript",
+      "summary": "Difficulty detection logic (bot count to difficulty name mapping) is duplicated between Python configs.py and JavaScript iterate/+server.js. The bot-count thresholds (1=easy, 3=medium, 5=hard, 10=expert) and grid-width fallbacks exist in both languages without a shared source of truth.",
+      "related_files": [
+        "grocery-bot-gpu/configs.py",
+        "grocery-bot-zig/replay/app/src/routes/api/pipeline/iterate/+server.js"
+      ],
+      "evidence": [
+        "configs.py lines 26-31: _DIFFICULTY_DIMS and _BOTS_TO_DIFF map bot counts to difficulty names",
+        "iterate/+server.js lines 119-129: hardcoded if/else chain mapping botCount to difficulty string",
+        "iterate/+server.js lines 192-198: duplicate bot-count-to-difficulty mapping in Zig bot stderr parsing"
+      ],
+      "suggestion": "Have the JavaScript endpoint derive difficulty from the Python capture output (which already includes difficulty field) rather than reimplementing the detection logic.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "cross_module_architecture",
+      "identifier": "sveltekit-build-output-checked-into-repo",
+      "summary": "The .svelte-kit/adapter-node/ and .svelte-kit/output/ directories appear to be SvelteKit build output that is tracked in the repository. These generated files duplicate the source code in src/routes/ and are regenerated on every build. They inflate the codebase size and create noise in code analysis.",
+      "related_files": [
+        "grocery-bot-zig/replay/app/.svelte-kit/adapter-node/index.js",
+        "grocery-bot-zig/replay/app/.svelte-kit/output/server/index.js"
+      ],
+      "evidence": [
+        "The blind packet investigation_batches heavily reference .svelte-kit/adapter-node/ and .svelte-kit/output/ files, which are generated SvelteKit build artifacts",
+        "adapter-node/entries/ mirrors src/routes/ exactly \u00e2\u20ac\u201d pure build output",
+        "These files should be in .gitignore but appear in the working tree"
+      ],
+      "suggestion": "Add .svelte-kit/ to .gitignore and remove the tracked build output. Build artifacts should be generated during deployment, not checked into source control.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "initialization_coupling",
+      "identifier": "module-level-argparse-in-optimize-and-save",
+      "summary": "optimize_and_save.py runs argparse.parse_args() at module level (lines 13-22), meaning importing the module triggers argument parsing. This prevents the module from being imported as a library and ties it to CLI-only usage.",
+      "related_files": [
+        "grocery-bot-gpu/optimize_and_save.py"
+      ],
+      "evidence": [
+        "optimize_and_save.py lines 12-22: 'parser = argparse.ArgumentParser()' followed by args = parser.parse_args() at module scope",
+        "Lines 31-39: module-level calls to load_capture(args.difficulty), load_meta, etc. \u00e2\u20ac\u201d these run at import time",
+        "This pattern also exists in iterate_local.py, production_run.py, and several other scripts"
+      ],
+      "suggestion": "Wrap the argparse and module-level logic in an 'if __name__ == \"__main__\"' guard. This allows the optimization logic to be imported and called programmatically.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "low_level_elegance",
+      "identifier": "nested-try-except-compile-fallback-chain",
+      "summary": "gpu_beam_search.py lines 335-361 contain a 3-level nested try/except chain for torch.compile backend selection (triton -> inductor-cpp -> aot_eager -> no compile). Each level catches Exception broadly. The nesting makes the fallback logic hard to follow.",
+      "related_files": [
+        "grocery-bot-gpu/gpu_beam_search.py"
+      ],
+      "evidence": [
+        "Lines 337-354: try import triton -> try inductor cpp_wrapper -> try aot_eager -> pass",
+        "Lines 355-361: outer try wrapping the actual compile calls, also catching Exception",
+        "4 levels of exception handling for a single concern (backend selection)"
+      ],
+      "suggestion": "Refactor into a helper function that iterates over a list of (backend_name, compile_factory) tuples, trying each in order and returning the first that succeeds. This linearizes the fallback chain.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "convention_outlier",
+      "identifier": "mixed-stderr-logging-conventions",
+      "summary": "Logging to stderr uses inconsistent patterns across the Python codebase. Most GPU solver files use print(msg, file=sys.stderr), but some files use bare print() to stdout for status. The SvelteKit endpoints use sendEvent() for structured logging. Within live_gpu_stream.py alone, logging mixes: print(f'  [label] msg', file=sys.stderr) with self._emit({'type': 'event', ...}) to stdout JSON. The bracket-prefix convention ([mapf], [gpu], [zig], [replay]) is consistent within iterate/+server.js but not used in the Python files.",
+      "related_files": [
+        "grocery-bot-gpu/live_gpu_stream.py",
+        "grocery-bot-gpu/gpu_beam_search.py",
+        "grocery-bot-gpu/optimize_and_save.py",
+        "grocery-bot-gpu/production_run.py"
+      ],
+      "evidence": [
+        "live_gpu_stream.py: mixes print(file=sys.stderr) for debug and self._emit() for JSON streaming \u00e2\u20ac\u201d two output channels in one class",
+        "gpu_beam_search.py line 374-377: print(f'  GPU init: ...', file=sys.stderr) \u00e2\u20ac\u201d stderr",
+        "optimize_and_save.py line 29: emit = print(json.dumps(event), flush=True) \u00e2\u20ac\u201d stdout JSON",
+        "production_run.py line 37: print(f'  Fetching ...', file=sys.stderr) \u00e2\u20ac\u201d stderr"
+      ],
+      "suggestion": "Standardize on a single logging approach: use Python logging module or at minimum a shared log() helper that consistently writes to stderr with a uniform prefix format.",
+      "confidence": "low"
+    },
+    {
+      "dimension": "ai_generated_debt",
+      "identifier": "boilerplate-subprocess-orchestration-duplication",
+      "summary": "The subprocess orchestration pattern (spawn process, parse stdout/stderr line by line, extract scores via regex, handle process exit) is repeated nearly identically in iterate/+server.js for runZigBot, runLivePlay, runGpuOptimize, and runReplay. Each function is 50-100 lines with the same structure: create Promise, spawn process, attach data handlers, parse JSON/regex from output, resolve on close.",
+      "related_files": [
+        "grocery-bot-zig/replay/app/src/routes/api/pipeline/iterate/+server.js"
+      ],
+      "evidence": [
+        "iterate/+server.js lines 150-268: runZigBot \u00e2\u20ac\u201d spawn, stderr parsing, score extraction, close handler",
+        "iterate/+server.js lines 272-333: runLivePlay \u00e2\u20ac\u201d same pattern with stdout JSON parsing",
+        "iterate/+server.js lines 336-393: runGpuOptimize \u00e2\u20ac\u201d same pattern",
+        "iterate/+server.js lines 396-523: runReplay \u00e2\u20ac\u201d same pattern plus log file polling"
+      ],
+      "suggestion": "Extract a generic runPythonProcess(script, args, { onStdout, onStderr, onClose }) helper that handles the common spawn/parse/cleanup pattern. Each phase function becomes a thin wrapper specifying phase-specific parsing logic.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "logic_clarity",
+      "identifier": "dead-code-parallel-optimizer",
+      "summary": "parallel_optimizer.py contains a fully superseded optimization approach that is never called from any active pipeline or script, creating confusion about which solver to use.",
+      "related_files": [
+        "grocery-bot-gpu/parallel_optimizer.py"
+      ],
+      "evidence": [
+        "parallel_optimizer.py is imported nowhere in the active codebase",
+        "gpu_sequential_solver.py has fully replaced this module for all difficulties"
+      ],
+      "suggestion": "Mark parallel_optimizer.py as deprecated with a module-level comment, or remove it if truly unused.",
+      "confidence": "medium"
+    },
+    {
+      "dimension": "dependency_health",
+      "identifier": "unpinned-torch-version",
+      "summary": "requirements.txt lists torch without a version pin, risking breakage on major version upgrades since the codebase relies on CUDA-specific torch APIs and torch.compile behavior.",
+      "related_files": [
+        "grocery-bot-gpu/requirements.txt"
+      ],
+      "evidence": [
+        "requirements.txt has torch without version constraint",
+        "gpu_beam_search.py uses torch.compile with mode=default and Triton 3.6 specifics"
+      ],
+      "suggestion": "Pin torch to a compatible range (e.g., torch>=2.10,<3.0) in requirements.txt.",
+      "confidence": "low"
+    },
+    {
+      "dimension": "authorization_consistency",
+      "identifier": "ws-url-passed-as-plaintext-cli-arg",
+      "summary": "WebSocket game URLs (containing auth tokens) are passed as plaintext CLI arguments to subprocesses, visible in process listings.",
+      "related_files": [
+        "grocery-bot-gpu/production_run.py",
+        "grocery-bot-gpu/capture_and_solve_stream.py"
+      ],
+      "evidence": [
+        "production_run.py passes ws_url directly to subprocess args",
+        "Token URLs are visible via ps/tasklist on the host"
+      ],
+      "suggestion": "Pass WebSocket URLs via environment variable or stdin instead of CLI arguments to avoid token exposure in process listings.",
+      "confidence": "low"
+    }
+  ]
+}
