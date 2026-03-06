@@ -2060,6 +2060,191 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
     return best_score, combined
 
 
+def duo_refine_from_solution(
+    combined_actions: list[list[tuple[int, int]]],
+    capture_data: CaptureData | None = None,
+    seed: int | None = None,
+    difficulty: str | None = None,
+    device: str = 'cuda',
+    max_states: int = 200_000,
+    max_pairs: int = 5,
+    max_time_s: float | None = None,
+    speed_bonus: float = 100.0,
+    no_filler: bool = True,
+    no_compile: bool = False,
+    verbose: bool = True,
+) -> tuple[int, list[list[tuple[int, int]]]]:
+    """Duo refinement: re-plan pairs of bots jointly via 2-bot DP.
+
+    Pairs the weakest bot (by marginal contribution) with each stronger bot
+    in turn, planning them jointly while all other bots are locked. Keeps
+    the result only if it improves the total score.
+
+    This breaks the sequential DP ceiling by allowing 2 bots to coordinate
+    their paths simultaneously — one bot can yield a pickup to the other
+    if it produces a better joint outcome.
+
+    Args:
+        combined_actions: Existing solution (300 rounds × num_bots).
+        max_states: State budget for 2-bot joint DP (default 200K).
+        max_pairs: Maximum number of pair attempts (default 5).
+        max_time_s: Time budget in seconds.
+        Other args: same as refine_from_solution.
+
+    Returns:
+        (best_score, best_combined_actions) tuple.
+    """
+    t0 = time.time()
+
+    if capture_data:
+        num_orders = len(capture_data['orders']) if no_filler else 100
+        gs, all_orders = init_game_from_capture(capture_data, num_orders=num_orders)
+        diff = capture_data.get('difficulty', difficulty or 'hard')
+    elif seed and difficulty:
+        gs, all_orders = init_game(seed, difficulty)
+        diff = difficulty
+    else:
+        raise ValueError("Need capture_data or (seed + difficulty)")
+
+    ms = gs.map_state
+    num_bots = len(gs.bot_positions)
+
+    if num_bots < 2:
+        if verbose:
+            print("  Duo refine: need at least 2 bots, skipping", file=sys.stderr)
+        return 0, combined_actions
+
+    # Build Zig FFI context
+    _zig_seed = seed if seed else (capture_data.get('seed') if capture_data else None)
+    if _ZIG_AVAILABLE and _zig_seed:
+        _zig_ctx = {'diff_idx': _DIFF_IDX.get(diff, 0), 'seed': _zig_seed, 'mode': 'seed'}
+    elif _ZIG_AVAILABLE and capture_data is not None:
+        _zig_ctx = {'capture_data': capture_data, 'mode': 'live'}
+    else:
+        _zig_ctx = None
+
+    # Convert to per-bot format
+    bot_actions = {}
+    for bid in range(num_bots):
+        bot_actions[bid] = [(r_acts[bid][0], r_acts[bid][1])
+                            for r_acts in combined_actions]
+
+    # Verify starting score
+    gs_v = _fresh_gs(gs, capture_data, no_filler)
+    best_score = cpu_verify(gs_v, all_orders, _make_combined(bot_actions, num_bots),
+                            num_bots, _zig_ctx=_zig_ctx)
+    best_actions = {k: list(v) for k, v in bot_actions.items()}
+
+    # Compute marginal contributions
+    dp_bot_ids = list(range(num_bots))
+    contribs = compute_bot_contributions(
+        _fresh_gs(gs, capture_data, no_filler), all_orders,
+        bot_actions, num_bots, dp_bot_ids,
+        _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+
+    sorted_bots = sorted(dp_bot_ids, key=lambda b: contribs.get(b, 0))
+
+    if verbose:
+        contrib_str = ', '.join(f'b{b}:{contribs.get(b, 0)}' for b in sorted_bots)
+        print(f"\nDuo refinement: {diff}, {num_bots} bots, "
+              f"starting_score={best_score}, max_states={max_states}",
+              file=sys.stderr)
+        print(f"  Contributions (weak→strong): {contrib_str}", file=sys.stderr)
+
+    # Build pair candidates: weakest bot paired with each stronger bot
+    weakest = sorted_bots[0]
+    partners = sorted_bots[1:]  # strongest last
+
+    # Also try pairing 2nd-weakest with strongest
+    pair_candidates = [(weakest, p) for p in reversed(partners)]
+    if len(sorted_bots) >= 3:
+        second_weakest = sorted_bots[1]
+        strongest = sorted_bots[-1]
+        if (second_weakest, strongest) not in pair_candidates:
+            pair_candidates.append((second_weakest, strongest))
+
+    pair_candidates = pair_candidates[:max_pairs]
+
+    if verbose:
+        pairs_str = ', '.join(f'({a},{b})' for a, b in pair_candidates)
+        print(f"  Pair candidates: {pairs_str}", file=sys.stderr)
+
+    for pair_idx, (bot_a, bot_b) in enumerate(pair_candidates):
+        if max_time_s is not None and (time.time() - t0) > max_time_s:
+            if verbose:
+                print(f"  Time budget reached after {pair_idx} pairs", file=sys.stderr)
+            break
+
+        t_pair = time.time()
+        # Ensure bot_a < bot_b for consistent ID ordering
+        if bot_a > bot_b:
+            bot_a, bot_b = bot_b, bot_a
+
+        if verbose:
+            print(f"\n=== Duo pair {pair_idx+1}/{len(pair_candidates)}: "
+                  f"bots ({bot_a},{bot_b}) "
+                  f"[contrib: {contribs.get(bot_a, 0)}, {contribs.get(bot_b, 0)}] ===",
+                  file=sys.stderr)
+
+        # Lock all bots except this pair
+        locked_ids = sorted(b for b in range(num_bots) if b != bot_a and b != bot_b)
+        locked = pre_simulate_locked(
+            _fresh_gs(gs, capture_data, no_filler), all_orders,
+            bot_actions, locked_ids, _zig_ctx=_zig_ctx)
+
+        searcher = GPUBeamSearcher2Bot(
+            ms, all_orders, device=device, num_bots=num_bots,
+            locked_trajectories=locked,
+            candidate_bot_ids=(bot_a, bot_b),
+            no_compile=no_compile, speed_bonus=speed_bonus)
+
+        gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
+        dp_score, acts_a, acts_b = searcher.dp_search_2bot(
+            gs_for_dp, max_states=max_states, verbose=verbose,
+            bot_ids=(bot_a, bot_b))
+
+        del searcher
+        if device == 'cuda':
+            torch.cuda.empty_cache()
+
+        pair_time = time.time() - t_pair
+
+        # Try replacing and verify
+        old_a = bot_actions[bot_a]
+        old_b = bot_actions[bot_b]
+        bot_actions[bot_a] = acts_a
+        bot_actions[bot_b] = acts_b
+
+        combined = _make_combined(bot_actions, num_bots)
+        gs_v = _fresh_gs(gs, capture_data, no_filler)
+        new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx)
+
+        if new_score > best_score:
+            delta = new_score - best_score
+            best_score = new_score
+            best_actions = {k: list(v) for k, v in bot_actions.items()}
+            if verbose:
+                print(f"  Pair ({bot_a},{bot_b}): DP={dp_score}, CPU={new_score} "
+                      f"(+{delta}! best={best_score}), time={pair_time:.1f}s",
+                      file=sys.stderr)
+        else:
+            # Revert
+            bot_actions[bot_a] = old_a
+            bot_actions[bot_b] = old_b
+            if verbose:
+                print(f"  Pair ({bot_a},{bot_b}): DP={dp_score}, CPU={new_score} "
+                      f"(no improvement, reverted), time={pair_time:.1f}s",
+                      file=sys.stderr)
+
+    combined = _make_combined(best_actions, num_bots)
+    total_time = time.time() - t0
+    if verbose:
+        print(f"\nDuo refinement: final_score={best_score}, "
+              f"total_time={total_time:.1f}s", file=sys.stderr)
+
+    return best_score, combined
+
+
 if __name__ == '__main__':
     import argparse
 

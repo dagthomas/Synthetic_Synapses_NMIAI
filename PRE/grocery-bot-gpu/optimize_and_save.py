@@ -36,6 +36,12 @@ def main() -> None:
                         help='Speed bonus coefficient (0=off, 100=aggressive)')
     parser.add_argument('--no-compile', action='store_true',
                         help='Disable torch.compile (default: compile enabled for 3.5x speedup)')
+    parser.add_argument('--duo-refine', action='store_true',
+                        help='Run 2-bot joint DP refinement (pairs weakest bot with stronger bots)')
+    parser.add_argument('--duo-states', type=int, default=200000,
+                        help='Max states for duo 2-bot DP (default: 200K)')
+    parser.add_argument('--duo-pairs', type=int, default=5,
+                        help='Max pair attempts for duo refine (default: 5)')
     args = parser.parse_args()
 
     # Default orderings: multi-bot difficulties benefit from trying multiple bot orders
@@ -61,7 +67,7 @@ def main() -> None:
         "orders": n_orders,
     })
 
-    from gpu_sequential_solver import solve_sequential, refine_from_solution
+    from gpu_sequential_solver import solve_sequential, refine_from_solution, duo_refine_from_solution
     from solution_store import load_solution
 
     t0 = time.time()
@@ -154,6 +160,53 @@ def main() -> None:
                     emit({"type": "gpu_phase", "phase": "warm_refine_failed",
                           "iteration": 0, "score": score,
                           "elapsed": round(time.time() - t0, 1)})
+
+    # Duo refinement: 2-bot joint DP on weakest+strongest pairs
+    if args.duo_refine and score > 0:
+        remaining = args.max_time - (time.time() - t0) if args.max_time else 300
+        if remaining > 30:
+            emit({"type": "gpu_phase", "phase": "duo_refine",
+                  "iteration": 0, "score": score,
+                  "elapsed": round(time.time() - t0, 1)})
+            try:
+                duo_score, duo_actions = duo_refine_from_solution(
+                    actions, capture_data=capture,
+                    difficulty=args.difficulty, device='cuda',
+                    max_states=args.duo_states, max_pairs=args.duo_pairs,
+                    max_time_s=remaining - 5,
+                    speed_bonus=args.speed_bonus,
+                    no_filler=True, no_compile=args.no_compile,
+                    verbose=True)
+                if duo_score > score:
+                    emit({"type": "gpu_phase", "phase": "duo_refine_improved",
+                          "iteration": 0, "score": duo_score,
+                          "elapsed": round(time.time() - t0, 1)})
+                    score, actions = duo_score, duo_actions
+            except Exception as e:
+                emit({"type": "gpu_phase", "phase": "duo_refine_failed",
+                      "iteration": 0, "score": score,
+                      "elapsed": round(time.time() - t0, 1)})
+                print(f"  Duo refine error: {e}", file=sys.stderr)
+    elif args.duo_refine and existing_actions and prev_score > 0:
+        # Duo-only mode: refine existing solution even if cold start scored 0
+        remaining = args.max_time - (time.time() - t0) if args.max_time else 300
+        if remaining > 30:
+            emit({"type": "gpu_phase", "phase": "duo_refine_existing",
+                  "iteration": 0, "score": prev_score,
+                  "elapsed": round(time.time() - t0, 1)})
+            try:
+                duo_score, duo_actions = duo_refine_from_solution(
+                    existing_actions, capture_data=capture,
+                    difficulty=args.difficulty, device='cuda',
+                    max_states=args.duo_states, max_pairs=args.duo_pairs,
+                    max_time_s=remaining - 5,
+                    speed_bonus=args.speed_bonus,
+                    no_filler=True, no_compile=args.no_compile,
+                    verbose=True)
+                if duo_score > max(score, prev_score):
+                    score, actions = duo_score, duo_actions
+            except Exception as e:
+                print(f"  Duo refine error: {e}", file=sys.stderr)
 
     elapsed = time.time() - t0
 

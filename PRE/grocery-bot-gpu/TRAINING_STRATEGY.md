@@ -33,40 +33,55 @@ The grocery bot competition (NM i AI, March 19, 2026) is a WebSocket-based game 
 
 ## The Core Loop
 
+```mermaid
+graph LR
+    A[CAPTURE<br/>Zig bot plays live] --> B[TRAIN<br/>GPU DP offline]
+    B --> C[REPLAY<br/>Send optimal actions]
+    C --> D[DISCOVER<br/>2-5 new orders]
+    D --> B
+
+    style A fill:#4a9eff,stroke:#333,color:#fff
+    style B fill:#ff6b6b,stroke:#333,color:#fff
+    style C fill:#51cf66,stroke:#333,color:#fff
+    style D fill:#ffd43b,stroke:#333,color:#000
 ```
-┌─────────────────────────────────────────────────────┐
-│                                                     │
-│   CAPTURE ──> TRAIN ──> REPLAY ──> DISCOVER ──┐    │
-│      ^                                         │    │
-│      └─────────────────────────────────────────┘    │
-│                                                     │
-│   Each cycle discovers 2-5 new orders               │
-│   More orders + better plans = higher scores        │
-│   Repeat until score plateaus or token expires       │
-└─────────────────────────────────────────────────────┘
+
+> Each cycle discovers 2-5 new orders. More orders + better plans = higher scores.
+> Repeat until score plateaus or token expires.
+
+```mermaid
+flowchart TD
+    subgraph Phase1["Phase 1: Initial Capture (Zig Bot)"]
+        P1A[Zig bot plays reactively] --> P1B[Score 50-130]
+        P1B --> P1C["Discovers 8-20 orders"]
+        P1C --> P1D["Output: game_log → capture.json"]
+    end
+
+    subgraph Phase2["Phase 2: GPU DP Training (Offline)"]
+        P2A[Load capture data] --> P2B[Sequential per-bot DP on CUDA]
+        P2B --> P2C[Optimal action sequence for 300 rounds]
+    end
+
+    subgraph Phase3["Phase 3: Live Replay"]
+        P3A[Send pre-computed actions via WebSocket] --> P3B[Score higher → discover 2-5 more orders]
+        P3B --> P3C[Merge new orders into capture data]
+    end
+
+    subgraph Phase4["Phase 4: Re-train + Re-replay"]
+        P4A[More orders known] --> P4B[GPU DP finds better plans]
+        P4B --> P4C[Each cycle builds on the last]
+    end
+
+    Phase1 --> Phase2
+    Phase2 --> Phase3
+    Phase3 --> Phase4
+    Phase4 -->|"Until token expires (~288s)"| Phase2
+
+    style Phase1 fill:#e3f2fd,stroke:#1976d2
+    style Phase2 fill:#fce4ec,stroke:#c62828
+    style Phase3 fill:#e8f5e9,stroke:#2e7d32
+    style Phase4 fill:#fff8e1,stroke:#f57f17
 ```
-
-### Phase 1: Initial Capture (Zig Bot)
-- The Zig bot plays reactively (per-round decisions)
-- Typically scores 50-130 depending on difficulty
-- Discovers the first 8-20 orders
-- Output: `game_log_*.jsonl` → parsed into `capture.json`
-
-### Phase 2: GPU DP Training (Offline)
-- Load capture data (map, items, known orders)
-- Run sequential per-bot DP on CUDA
-- Find optimal action sequence for all 300 rounds
-- Can run for seconds (pipeline) or hours (deep training)
-
-### Phase 3: Live Replay
-- Send pre-computed actions over WebSocket
-- Score higher than Zig bot → discover more orders
-- Newly discovered orders merge into capture data
-
-### Phase 4: Re-train + Re-replay
-- With more orders known, GPU DP finds better plans
-- Each cycle builds on the last
-- Continue until token expires (~288s) or score plateaus
 
 ---
 
@@ -75,11 +90,17 @@ The grocery bot competition (NM i AI, March 19, 2026) is a WebSocket-based game 
 Orders are revealed 2 at a time: 1 active + 1 preview. New orders only appear when the active order is completed (all items delivered). You can only discover new orders by **completing more orders than your previous best run**.
 
 ### Order Accumulation
-```
-Run 1 (Zig):     Orders 0-7 discovered (score 57)
-Run 2 (GPU v1):  Orders 0-12 discovered (score 120)
-Run 3 (GPU v2):  Orders 0-18 discovered (score 160)
-Run 4 (GPU v3):  Orders 0-21 discovered (score 180)
+
+```mermaid
+graph LR
+    R1["Run 1 (Zig)<br/>Score: 57<br/>Orders 0-7"] -->|"+5 orders"| R2["Run 2 (GPU v1)<br/>Score: 120<br/>Orders 0-12"]
+    R2 -->|"+6 orders"| R3["Run 3 (GPU v2)<br/>Score: 160<br/>Orders 0-18"]
+    R3 -->|"+3 orders"| R4["Run 4 (GPU v3)<br/>Score: 180<br/>Orders 0-21"]
+
+    style R1 fill:#ffcdd2,stroke:#c62828
+    style R2 fill:#fff9c4,stroke:#f57f17
+    style R3 fill:#c8e6c9,stroke:#2e7d32
+    style R4 fill:#b3e5fc,stroke:#0277bd
 ```
 
 ### Storage
@@ -99,11 +120,23 @@ Orders change daily. Captures from March 5 do NOT work on March 6. Always re-cap
 
 The GPU DP solver (`gpu_beam_search.py`) does **exhaustive BFS with deduplication** on CUDA. For each bot:
 
-1. Start from initial position with empty inventory
-2. At each round, expand all states by all valid actions (move/pickup/dropoff/wait)
-3. Deduplicate states by hash: `(x, y, inv[3], active_order_idx, delivery_mask)`
-4. Prune to top `max_states` by evaluation score
-5. After 300 rounds, extract best action sequence via backtracking
+```mermaid
+flowchart TD
+    Init["Round 0: Initial state<br/>(start pos, empty inventory)"] --> Expand
+
+    subgraph BFS["BFS Loop (300 rounds)"]
+        Expand["Expand all states<br/>× all valid actions<br/>(move/pickup/dropoff/wait)"] --> Dedup["Deduplicate by hash<br/>(x, y, inv[3], order_idx, delivery_mask)"]
+        Dedup --> Prune["Prune to top max_states<br/>by eval score"]
+        Prune --> NextRound{Round < 300?}
+        NextRound -->|Yes| Expand
+    end
+
+    NextRound -->|No| Backtrack["Backtrack from best state<br/>→ optimal action sequence"]
+
+    style Init fill:#e3f2fd,stroke:#1565c0
+    style BFS fill:#fafafa,stroke:#9e9e9e
+    style Backtrack fill:#c8e6c9,stroke:#2e7d32
+```
 
 ### State Representation
 - Position: (x, y) on the grid
@@ -112,6 +145,33 @@ The GPU DP solver (`gpu_beam_search.py`) does **exhaustive BFS with deduplicatio
 - Packed into int64 hash for GPU-efficient dedup
 
 ### Evaluation Heuristic (`_eval`)
+
+```mermaid
+flowchart TD
+    State["State to Evaluate"] --> Base["Base Score<br/>items × 100K + orders × 500K"]
+    State --> Progress["Active Order Progress<br/>partial delivery: 60-70K/item"]
+    State --> Inventory["Inventory Value<br/>matching items: 50K each"]
+    State --> Trip["Trip Planning<br/>distance gradient penalty"]
+    State --> Preview["Preview Speculation<br/>preview items: 30K bonus"]
+    State --> Chain["Chain Reaction Potential<br/>auto-delivery bonus"]
+    State --> Coord["Coordination Signals"]
+
+    Base --> Total((Total<br/>Eval<br/>Score))
+    Progress --> Total
+    Inventory --> Total
+    Trip --> Total
+    Preview --> Total
+    Chain --> Total
+    Coord --> Total
+
+    Coord --> C1["+30K unique coverage"]
+    Coord --> C2["-20K redundancy penalty"]
+    Coord --> C3["-4K aisle congestion"]
+
+    style Total fill:#ffd43b,stroke:#f57f17,color:#000
+    style Coord fill:#e3f2fd,stroke:#1565c0
+```
+
 The heuristic scores states with 100K eval units per game point:
 - **Base score**: items_delivered * 100K + orders_completed * 500K
 - **Active order progress**: partial delivery value (60K-70K per item)
@@ -136,24 +196,48 @@ The heuristic scores states with 100K eval units per game point:
 The multi-bot solver (`gpu_sequential_solver.py`) can't do joint state-space search (exponential in bot count). Instead:
 
 ### Pass 1: Sequential Planning
-```
-Bot 0: Plan alone (no locked bots)
-Bot 1: Plan with Bot 0's trajectory locked
-Bot 2: Plan with Bots 0,1 locked
-Bot 3: Plan with Bots 0,1,2 locked
-Bot 4: Plan with Bots 0,1,2,3 locked
+
+```mermaid
+flowchart LR
+    B0["Bot 0<br/>Plan alone"] --> B1["Bot 1<br/>Bot 0 locked"]
+    B1 --> B2["Bot 2<br/>Bots 0,1 locked"]
+    B2 --> B3["Bot 3<br/>Bots 0,1,2 locked"]
+    B3 --> B4["Bot 4<br/>Bots 0-3 locked"]
+
+    B0 -.->|"trajectory"| B1
+    B1 -.->|"trajectories"| B2
+    B2 -.->|"trajectories"| B3
+    B3 -.->|"trajectories"| B4
+
+    style B0 fill:#4a9eff,stroke:#333,color:#fff
+    style B1 fill:#5cb3ff,stroke:#333,color:#fff
+    style B2 fill:#6ec4ff,stroke:#333,color:#fff
+    style B3 fill:#80d5ff,stroke:#333,color:#000
+    style B4 fill:#92e6ff,stroke:#333,color:#000
 ```
 
 Multiple orderings are tried (forward, reverse, random) to find the best initial plan. Each "pass1 ordering" produces a different solution, and the best is kept.
 
 ### Pass 2+: Iterative Refinement
-```
-For each iteration:
-  For each bot (in some order):
-    Lock all OTHER bots
-    Re-plan this bot with GPU DP
-    If new plan improves total score: keep it
-    Else: revert to previous plan
+
+```mermaid
+flowchart TD
+    Start([Start Iteration]) --> SelectBot[Select next bot in order]
+    SelectBot --> Lock["Lock ALL other bots'<br/>trajectories"]
+    Lock --> Replan["Re-plan this bot<br/>with GPU DP"]
+    Replan --> Check{New plan<br/>improves total<br/>score?}
+    Check -->|Yes| Keep[Keep new plan]
+    Check -->|No| Revert[Revert to previous plan]
+    Keep --> More{More bots<br/>to process?}
+    Revert --> More
+    More -->|Yes| SelectBot
+    More -->|No| Done([Next Iteration])
+
+    style Start fill:#e8f5e9,stroke:#2e7d32
+    style Check fill:#fff3e0,stroke:#e65100
+    style Keep fill:#c8e6c9,stroke:#2e7d32
+    style Revert fill:#ffcdd2,stroke:#c62828
+    style Done fill:#e3f2fd,stroke:#1565c0
 ```
 
 ### Refinement Bot Order
@@ -165,14 +249,26 @@ For each iteration:
 For each bot, simulate the game WITHOUT that bot (replace with wait actions). The contribution = total_score - score_without_bot. Bots with 0 or low contribution are re-planned first since they have the most room to improve.
 
 ### Perturbation Escape
-When refinement stalls (no improvement for N iterations):
-1. Compute contributions of all DP bots
-2. Reset the weakest bot(s) to all-wait actions
-3. Single perturbation: reset 1 bot (first stall)
-4. Pair perturbation: reset 2 weakest bots (subsequent stalls)
-5. Reshuffle type assignments (which bot targets which item types)
-6. Re-plan from the perturbed state
-7. Up to 6 escape attempts for deep training (>300s budget)
+
+```mermaid
+flowchart TD
+    Stall([Refinement Stalled<br/>No improvement for N iters]) --> Contrib[Compute marginal<br/>contributions of all bots]
+    Contrib --> First{First stall?}
+    First -->|Yes| Single["Reset 1 weakest bot<br/>to all-wait actions"]
+    First -->|No| Pair["Reset 2 weakest bots<br/>to all-wait actions"]
+    Single --> Reshuffle[Reshuffle type assignments]
+    Pair --> Reshuffle
+    Reshuffle --> Replan["Re-plan from<br/>perturbed state"]
+    Replan --> Improved{Score<br/>improved?}
+    Improved -->|Yes| Continue([Continue Refinement])
+    Improved -->|No| Attempts{Escape attempts<br/>< limit?}
+    Attempts -->|Yes| Contrib
+    Attempts -->|"No (max 6)"| Stop([Accept best score])
+
+    style Stall fill:#ffcdd2,stroke:#c62828
+    style Continue fill:#c8e6c9,stroke:#2e7d32
+    style Stop fill:#e0e0e0,stroke:#616161
+```
 
 ### Locked Bot Simulation
 When planning bot K, all other bots' trajectories are "locked":
@@ -186,6 +282,28 @@ When planning bot K, all other bots' trajectories are "locked":
 ## Multi-Bot Coordination
 
 ### Current Approach (Sequential DP)
+
+```mermaid
+mindmap
+  root((Multi-Bot<br/>Coordination))
+    Eval Heuristic
+      Unique coverage bonus
+      Redundancy penalty
+      Aisle congestion
+    Type Specialization
+      2-3 types per bot
+      Minimize overlap
+    Zone Assignments
+      Preferred column ranges
+      Reduce interference
+    Iterative Refinement
+      Re-plan with locked trajectories
+      Weakest-first ordering
+    Contribution Analysis
+      Marginal value per bot
+      Reset lowest contributors
+```
+
 Each bot is planned independently with others locked. Coordination happens through:
 - **Eval heuristic**: unique coverage bonus, redundancy penalty, aisle congestion
 - **Type specialization**: each bot is assigned 2-3 item types to focus on
@@ -224,12 +342,25 @@ penalty) handle work distribution better because they dynamically analyze locked
 Enable with `use_order_assignment=True` in SolveConfig. May work better with joint optimization.
 
 ### Sparse 2-Bot Joint DP (NEW)
+
+```mermaid
+flowchart LR
+    Dist{Bot Distance?} -->|"≤2 (close)"| Full["Full N×N<br/>action cross-product<br/>(49 combos)"]
+    Dist -->|"3-5 (medium)"| Top3["Top-3 × Top-3<br/>proxy-scored<br/>(9 combos)"]
+    Dist -->|">5 (far)"| Top1["Top-1 × Top-1<br/>best action each<br/>(1 combo)"]
+
+    Full --> Sparse[".nonzero() sparse expansion<br/>10x fewer states"]
+    Top3 --> Sparse
+    Top1 --> Sparse
+
+    style Full fill:#ffcdd2,stroke:#c62828
+    style Top3 fill:#fff9c4,stroke:#f57f17
+    style Top1 fill:#c8e6c9,stroke:#2e7d32
+```
+
 Distance-adaptive 2-bot DP for refinement (`GPUBeamSearcher2Bot`):
-- Close bots (dist≤2): full N×N action cross-product
-- Medium distance (3-5): top-3×top-3 actions (proxy-scored)
-- Far bots (dist>5): top-1×top-1 actions
-- Uses `.nonzero()` sparse expansion → 10x fewer expanded states than dense grid
 - Runs every 3 refinement iterations on the 2 weakest bots
+- Uses `.nonzero()` sparse expansion → 10x fewer expanded states than dense grid
 
 ### What Would Help (Future Work)
 - **Joint state-space search** with 200K+ states (needs more VRAM efficiency)
@@ -241,26 +372,71 @@ Distance-adaptive 2-bot DP for refinement (`GPUBeamSearcher2Bot`):
 ## Live Replay
 
 ### `replay_solution.py` — Adaptive Replay
-Sends pre-computed actions over WebSocket with desync correction:
-- Tracks actual vs expected game state each round
-- On desync (position mismatch): falls back to goal-based pathfinding
-- On order desync: adjusts action sequence to match actual order state
-- Greedy fallback for unplanned situations
+
+```mermaid
+sequenceDiagram
+    participant R as Replay Engine
+    participant WS as WebSocket Server
+    participant FB as Fallback Logic
+
+    loop Each Round (1-300)
+        WS->>R: Game state (positions, orders)
+        R->>R: Compare actual vs expected state
+        alt In sync
+            R->>WS: Pre-computed action
+        else Position desync
+            R->>FB: Goal-based pathfinding
+            FB->>WS: Corrective action
+        else Order desync
+            R->>FB: Adjust action for actual order state
+            FB->>WS: Adapted action
+        else Unplanned situation
+            R->>FB: Greedy fallback
+            FB->>WS: Best-effort action
+        end
+    end
+```
 
 ### `live_gpu_stream.py` — Anytime Online Solver
-GPU-powered per-round decisions (not pre-computed):
-- Background threads: MAPF planning, GPU refinement, per-round GPU
-- For multi-bot: MAPF/gpu_refine plan with lenient 1/3 sync
-- For single-bot: strict sync with plan recovery
-- Used for live play when no pre-computed solution exists
+
+```mermaid
+flowchart TD
+    subgraph Threads["Background Threads"]
+        T1["MAPF Planning"]
+        T2["GPU Refinement"]
+        T3["Per-Round GPU"]
+    end
+
+    subgraph MultiBot["Multi-Bot Mode"]
+        MB1["MAPF/gpu_refine plan"] --> MB2["Lenient 1/3 sync"]
+    end
+
+    subgraph SingleBot["Single-Bot Mode"]
+        SB1["Strict sync"] --> SB2["Plan recovery"]
+    end
+
+    Threads --> MultiBot
+    Threads --> SingleBot
+
+    style Threads fill:#e3f2fd,stroke:#1565c0
+    style MultiBot fill:#fff3e0,stroke:#e65100
+    style SingleBot fill:#f3e5f5,stroke:#7b1fa2
+```
+
+GPU-powered per-round decisions (not pre-computed). Used for live play when no pre-computed solution exists.
 
 ### Desync Handling
-Desyncs happen when:
-- Bots collide differently than expected (locked trajectory drift)
-- Server processes actions differently than our simulator
-- Network latency causes round skipping
 
-Recovery: goal-based correction tries to get back on track within 5-10 rounds.
+```mermaid
+flowchart LR
+    D1["Bot collision drift"] --> Desync((DESYNC))
+    D2["Simulator mismatch"] --> Desync
+    D3["Network latency"] --> Desync
+    Desync --> Recovery["Goal-based correction<br/>5-10 rounds to recover"]
+
+    style Desync fill:#ff8a80,stroke:#c62828
+    style Recovery fill:#c8e6c9,stroke:#2e7d32
+```
 
 ---
 
@@ -269,13 +445,26 @@ Recovery: goal-based correction tries to get back on track within 5-10 rounds.
 ### `production_run.py` — Full Automated Pipeline
 
 Within a single 288s token:
-```
-1. Zig capture (score ~50-130, discovers 8-20 orders)     [~30s]
-2. GPU optimize (50K states, 3 orderings, no-filler)       [~25s]
-3. Replay solution (discover 2-5 more orders)              [~15s]
-4. GPU re-optimize with expanded order set                 [~18s]
-5. Replay again (discover more orders)                     [~15s]
-6. ... repeat until token expires ...
+
+```mermaid
+gantt
+    title Production Pipeline (~288s token window)
+    dateFormat s
+    axisFormat %S s
+
+    section Cycle 1
+    Zig Capture (score ~50-130, 8-20 orders)    :c1, 0, 30s
+    GPU Optimize (50K states, 3 orderings)       :g1, after c1, 25s
+    Replay + Discover (2-5 new orders)           :r1, after g1, 15s
+
+    section Cycle 2
+    GPU Re-optimize (expanded order set)         :g2, after r1, 18s
+    Replay + Discover (more orders)              :r2, after g2, 15s
+
+    section Cycle 3+
+    GPU Optimize (warm-start)                    :g3, after r2, 18s
+    Replay + Discover                            :r3, after g3, 15s
+    ... repeat until ~275s ...                   :done, after r3, 15s
 ```
 
 ### Key Flags
@@ -285,6 +474,18 @@ Within a single 288s token:
 - `--time-budget 275`: leave 13s margin before token expires
 
 ### `optimize_and_save.py` — Offline Deep Training
+
+```mermaid
+flowchart LR
+    A["Load capture data<br/>(map, items, orders)"] --> B["GPU DP Solve<br/>(100K states, 3 orderings)"]
+    B --> C["Iterative Refinement<br/>(20 iterations)"]
+    C --> D{Score improved<br/>vs saved?}
+    D -->|Yes| E["Save solution"]
+    D -->|No| F["Discard"]
+
+    style E fill:#c8e6c9,stroke:#2e7d32
+    style F fill:#ffcdd2,stroke:#c62828
+```
 
 For unlimited-time offline optimization:
 ```bash
@@ -362,6 +563,26 @@ Loads capture data, runs GPU DP, saves only if score improves.
 - Greedy ceiling: ~+18 points over DP-only
 
 ### Determinism Exploit ("Time Millionaire" Strategy)
+
+```mermaid
+flowchart TD
+    subgraph Day["Competition Day Timeline"]
+        direction LR
+        Morning["Morning<br/>Initial Capture"] --> Train1["Deep Train<br/>(hours, 200K states)"]
+        Train1 --> Replay1["Replay<br/>Discover orders"]
+        Replay1 --> Train2["Deep Train<br/>(expanded orders)"]
+        Train2 --> Replay2["Replay<br/>More orders"]
+        Replay2 --> TrainN["... Deep Train ..."]
+        TrainN --> Final["Final Replay<br/>Best Score"]
+    end
+
+    Key["Same day = same game = same orders<br/>Unlimited offline training between tokens"]
+
+    style Morning fill:#fff9c4,stroke:#f57f17
+    style Final fill:#c8e6c9,stroke:#2e7d32
+    style Key fill:#e3f2fd,stroke:#1565c0
+```
+
 - Same day = same game = same orders
 - Capture once, train for hours offline, replay next day (if same seed)
 - Competition day: capture early, train all day, replay for final score
@@ -376,15 +597,28 @@ Loads capture data, runs GPU DP, saves only if score improves.
 
 ### As of 2026-03-06
 
-| Difficulty | Our Score | Leader | Gap | Orders Known |
-|-----------|-----------|--------|-----|-------------|
-| Easy | 142 | ~142 | 0 | 17 |
-| Medium | 184 | 214 | -30 | 22 |
-| Hard | 180 | 252 | -72 | 21 |
-| Expert | 139 | 303 | -164 | 15 |
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4a9eff'}}}%%
+xychart-beta
+    title "Our Score vs Leader (2026-03-06)"
+    x-axis ["Easy", "Medium", "Hard", "Expert"]
+    y-axis "Score" 0 --> 320
+    bar [142, 188, 196, 139]
+    bar [142, 214, 252, 303]
+```
+
+| Difficulty | Our Score | Source | Leader | Gap | Orders Known |
+|-----------|-----------|--------|--------|-----|-------------|
+| Easy | 142 | GPU DP | ~142 | 0 | 17 |
+| Medium | 188 | GPU DP | 214 | -26 | 22 |
+| Hard | **196** | **Live solver** | 252 | -56 | 21 |
+| Expert | 139 | GPU DP | 303 | -164 | 15 |
+
+Note: Hard 196 came from `live_gpu_stream.py` (reactive per-round), NOT offline GPU DP (max 180). The offline GPU DP solver has never beaten 180 on Hard.
 
 ### Bottlenecks
-- **Medium/Hard**: Sequential DP ceiling. Need better multi-bot coordination.
+- **Hard**: Live solver produced 196 but offline DP caps at 180. Need to either improve live solver consistency or break the sequential DP ceiling.
+- **Medium**: Sequential DP ceiling. Need better multi-bot coordination.
 - **Expert**: Not enough orders + too many bots for current coordination quality.
 - **All**: Order counts may be stale (orders change daily). Need fresh captures on competition day.
 
@@ -392,10 +626,88 @@ Loads capture data, runs GPU DP, saves only if score improves.
 
 ## Known Limitations
 
-### Sequential DP Ceiling
-The fundamental limitation: each bot is planned independently. Bot 0 may take the shortest path that blocks Bot 1 from an even better path. Refinement helps but can't escape local optima where multiple bots need to change simultaneously.
+### The 196 Hard Deadlock — Live Solver vs Offline GPU DP
 
-Evidence: Hard stuck at 180 across 600s+ training with 100K states, 20 refine iters, pair perturbation, type reshuffling. All escape attempts converge to the same score.
+**Critical finding (2026-03-06):** Our best Hard score (196 points) was NOT produced by the offline GPU DP solver. It came from `live_gpu_stream.py` — the **anytime online solver** that makes per-round reactive GPU decisions. The offline sequential DP solver (`gpu_sequential_solver.py`) has never beaten 180 on Hard.
+
+This is evident from `solutions/hard/meta.json` showing `optimizations_run: 0` — the solution was saved directly from a live game, never refined by offline DP.
+
+**Why the live solver can beat offline DP**: The live solver makes per-round decisions with full knowledge of the current game state. It doesn't commit to a 300-round plan upfront, so it naturally adapts to congestion, order transitions, and bot interactions in real time. The offline DP, by contrast, locks trajectories sequentially — bot 0's plan is fixed before bot 1 is even considered.
+
+**The idle bot problem**: In the 196 solution, bot 2 performs zero useful work for all 300 rounds. It executes 19 pickup actions, but ALL target items that are 4-20 tiles away (pickup requires Manhattan distance 1). Even in complete isolation, only 3 of those pickups would succeed, scoring 0 points. This happened because the live solver's per-round heuristic sent bot 2 chasing items it could never reach in time.
+
+### Sequential DP Ceiling (the "Local Optimum Deadlock")
+
+```mermaid
+flowchart TD
+    Problem["Sequential DP<br/>Local Optimum"] --> C1["Order Coupling<br/>Completing order N at round 100<br/>vs 105 cascades through game"]
+    Problem --> C2["Single-Bot Scope<br/>Can only replan 1 bot<br/>Need 2-3 bot coordination"]
+    Problem --> C3["Trajectory Locking<br/>Frozen bots can't cooperate<br/>No dynamic waiting"]
+    Problem --> C4["Emergent Solutions<br/>Live solver found 196<br/>Sequential DP can't represent it"]
+
+    C1 --> Stuck((Stuck at<br/>180 on Hard))
+    C2 --> Stuck
+    C3 --> Stuck
+    C4 --> Stuck
+
+    Stuck --> F1["Joint 2+ bot DP<br/>(needs 200K+ states)"]
+    Stuck --> F2["Hybrid: live solver + DP refine"]
+    Stuck --> F3["MAPF-style path planning"]
+    Stuck --> F4["Population-based training"]
+
+    style Problem fill:#ffcdd2,stroke:#c62828
+    style Stuck fill:#ff8a80,stroke:#c62828,color:#fff
+    style F1 fill:#c8e6c9,stroke:#2e7d32
+    style F2 fill:#c8e6c9,stroke:#2e7d32
+    style F3 fill:#c8e6c9,stroke:#2e7d32
+    style F4 fill:#c8e6c9,stroke:#2e7d32
+```
+
+The fundamental limitation: each bot is planned independently with others locked. When the team is collectively near-optimal, **no single bot can improve** because:
+
+1. The other 4 bots already complete all available orders (~21 orders = ~180-196 points)
+2. Re-planning any single bot can only redistribute work, not create new capacity
+3. Any change to one bot's timing shifts order completion boundaries, breaking the locked bots' plans
+
+**Concrete evidence (Hard, 196 solution, refine attempt):**
+
+| Bot Re-planned | DP Score (isolated) | Total Score (with others) | Delta |
+|----------------|--------------------|-----------------------------|-------|
+| Bot 0 | 196 | 196 | +0 |
+| Bot 1 | 124 | 196 | +0 |
+| Bot 2 | 94 | 196 | +0 |
+| Bot 3 | 196 | 196 | +0 |
+| Bot 4 | 179 | 196 | +0 |
+
+Every bot's DP plan either matches the existing plan exactly (bots 0, 3) or produces a worse isolated score that can't improve the team total (bots 1, 2, 4).
+
+**Bot 2's paradox**: Bot 2 can achieve DP score 94 in isolation (with others locked), but inserting that plan drops the team total from 196 to 88. Bot 2's pickups alter the order state progression — items it delivers shift when orders complete, breaking the timing assumptions embedded in the locked bots' pre-computed trajectories.
+
+**Fresh solve also can't reach 196**: A clean `solve_sequential` run (no warm-start) scores only 162. The 196 solution occupies a region of the solution space that sequential DP cannot reach from scratch — it was found by the live solver's reactive exploration.
+
+**Additional evidence of the ceiling:**
+- 600s+ training with 100K states, 20 refine iters, pair perturbation, type reshuffling — all converge to ≤180
+- Exhaustive orderings (43/120 tried on Hard) — best pass1 = 143
+- 200K states per bot in refinement — reaches 178-179, never 180+
+- 1200s budget with 22 orders, 5 orderings, 30 refine — scores 165
+
+### Why Breaking Past the Deadlock Is Hard
+
+The deadlock exists because sequential DP is trapped between two constraints:
+
+1. **Order coupling**: Orders are sequential. Completing order N reveals order N+1. Bot A delivering item X at round 100 means order N completes at round 100, not round 105. Every other bot's plan depends on this exact timing. Moving one delivery by 1 round can cascade through the entire remaining game.
+
+2. **Single-bot replanning scope**: Refinement can only change ONE bot at a time. To escape the local optimum, you'd need to simultaneously reassign work across 2-3 bots — "bot 0 stops picking up yogurt so bot 2 can pick it up faster from a closer shelf, while bot 3 shifts to pasta to compensate." Sequential DP cannot express this kind of coordinated reassignment.
+
+3. **Trajectory locking is lossy**: When bot K is planned, other bots are frozen trajectories. But in reality, bots interact dynamically — bot 0 might wait 1 round for bot 1 to clear a doorway, then both benefit. The locked model can't represent these cooperative waits.
+
+4. **The live solver found a solution that sequential DP can't represent**: The 196 solution emerged from 300 rounds of reactive per-round decisions where all 5 bots adapted to each other simultaneously. Translating this into "plan bot 0, then bot 1, then..." loses the emergent coordination.
+
+**What might break through:**
+- **True joint optimization**: Joint 2+ bot DP with enough state budget (needs 200K+ states per pair, currently impractical)
+- **Hybrid approach**: Use live solver to generate candidate solutions, then refine with DP per-bot
+- **MAPF-style coordination**: Plan collision-free paths first, then assign orders to paths
+- **Population-based training**: Maintain multiple diverse solutions, crossover the best parts
 
 ### State Budget vs Bot Count
 More bots = more sequential DP passes = less time per bot. With 10 Expert bots at 50K states, each bot gets ~6s. Joint optimization would need exponential state space.
@@ -405,6 +717,9 @@ Orders are deterministic PER DAY. Captures from March 5 are useless on March 6. 
 
 ### Token Expiry
 JWT tokens expire after ~288s. All pipeline operations must complete within this window. Fetch new tokens for additional cycles.
+
+### Known Bug: `verify_against_cpu` for Non-Zero Bot IDs
+`gpu_beam_search.py` `verify_against_cpu()` always uses `cpu_state.bot_positions[0]` and puts the action at index 0, regardless of `candidate_bot_id`. This means verification is broken for bot IDs > 0. The GPU `_step()` function itself is correct (verified via round-by-round comparison) — only the verification helper is buggy.
 
 ---
 

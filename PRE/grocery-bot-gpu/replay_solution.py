@@ -473,7 +473,7 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
 
     timestamp = int(time.time())
     log_path = os.path.join(log_dir, f'game_log_{timestamp}.jsonl')
-    log_lines = []  # Buffer log in memory, write to disk after game ends
+    log_file = open(log_path, 'w')  # Write incrementally so pipeline can poll
 
     # ── Pre-compute BEFORE connecting (avoids server timeout at R0) ────
     # For expert (10 bots), predict_full_sim takes ~10s inside the WS loop,
@@ -587,7 +587,8 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
             last_recv = time.time()
             data = json.loads(message)
 
-            log_lines.append(message)
+            log_file.write(message + '\n')
+            log_file.flush()
 
             if data["type"] == "game_over":
                 final_score = data.get('score', 0)
@@ -932,7 +933,8 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
                 print(f"R{rnd}/{max_rounds} Score:{score} [{mode}] dp_rnd={dp_rnd} "
                       f"(synced:{synced_rounds} desynced:{desync_rounds}){gi_str}", file=sys.stderr)
 
-            log_lines.append(response_str)
+            log_file.write(response_str + '\n')
+            log_file.flush()
 
             # Send immediately — no delay, response is pre-built
             try:
@@ -957,9 +959,7 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
     ws_elapsed = time.time() - ws_start
     print(f"WebSocket session: {ws_elapsed:.1f}s, {recv_count} messages received", file=sys.stderr)
 
-    # Write buffered log to disk after game ends (zero I/O during hot loop)
-    with open(log_path, 'w') as log_file:
-        log_file.write('\n'.join(log_lines) + '\n')
+    log_file.close()
     print(f"Log saved: {log_path}", file=sys.stderr)
     print(f"Stats: synced_rounds={synced_rounds} desync_rounds={desync_rounds} "
           f"total_desyncs={desync_count}", file=sys.stderr)
