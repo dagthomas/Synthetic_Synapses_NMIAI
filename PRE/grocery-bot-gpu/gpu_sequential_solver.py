@@ -577,7 +577,7 @@ def greedy_plan_bots(gs_template: GameState, all_orders: list[Order],
         round_acts = []
         for bid in range(num_bots):
             if bid not in greedy_set:
-                if bid in existing_bot_actions:
+                if bid in existing_bot_actions and r < len(existing_bot_actions[bid]):
                     round_acts.append(existing_bot_actions[bid][r])
                 else:
                     round_acts.append((ACT_WAIT, -1))
@@ -1850,9 +1850,12 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
             f"Solution has {solution_bots} bots but game needs {num_bots}. "
             f"Clear stale solution: rm solutions/{diff}/best.json")
     bot_actions = {}
+    _wait_pad = (ACT_WAIT, -1)
     for bid in range(num_bots):
-        bot_actions[bid] = [(r_acts[bid][0], r_acts[bid][1])
-                            for r_acts in combined_actions]
+        acts = [(r_acts[bid][0], r_acts[bid][1]) for r_acts in combined_actions]
+        while len(acts) < MAX_ROUNDS:
+            acts.append(_wait_pad)
+        bot_actions[bid] = acts
 
     # Pipeline bots: last n_pipeline bots get pipeline_mode=True (dynamic from active order).
     import math
@@ -2128,9 +2131,12 @@ def duo_refine_from_solution(
 
     # Convert to per-bot format
     bot_actions = {}
+    _wait_pad = (ACT_WAIT, -1)
     for bid in range(num_bots):
-        bot_actions[bid] = [(r_acts[bid][0], r_acts[bid][1])
-                            for r_acts in combined_actions]
+        acts = [(r_acts[bid][0], r_acts[bid][1]) for r_acts in combined_actions]
+        while len(acts) < MAX_ROUNDS:
+            acts.append(_wait_pad)
+        bot_actions[bid] = acts
 
     # Verify starting score
     gs_v = _fresh_gs(gs, capture_data, no_filler)
