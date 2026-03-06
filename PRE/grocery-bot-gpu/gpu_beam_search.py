@@ -50,7 +50,9 @@ class GPUBeamSearcher:
                  no_compile: bool = False,
                  order_cap: int | None = None,
                  speed_bonus: float = 0.0,
-                 preferred_zone: tuple[int, ...] | None = None) -> None:
+                 preferred_zone: tuple[int, ...] | None = None,
+                 order_modulo: int | None = None,
+                 order_slot: int | None = None) -> None:
         self.device = device
         self.ms = map_state
         self.all_orders = all_orders
@@ -71,6 +73,14 @@ class GPUBeamSearcher:
         # None = unlimited (default). Only used in Pass 1 for Hard/Expert.
         self.order_cap = order_cap
         self.speed_bonus = speed_bonus
+        # coord_temperature: 0.0 = full coordination penalties, 1.0 = zero penalties.
+        # Used for eval annealing in early refinement iterations (simulated annealing).
+        self.coord_temperature = 0.0
+        # LNS Order Assignment: soft order-to-bot assignment.
+        # order_modulo = number of primary bots, order_slot = this bot's slot.
+        # When active_idx % modulo != slot, active delivery value is dampened to 15%.
+        self.order_modulo = order_modulo
+        self.order_slot = order_slot if order_slot is not None else 0
         # preferred_types: set of item type IDs this bot should specialize in.
         # Soft hint (bonus) to avoid competition between bots for the same types.
         # Set via compute_type_assignments() in gpu_sequential_solver.py.
@@ -1309,7 +1319,7 @@ class GPUBeamSearcher:
         active_inv_value = (70000 - dist_drop * 1750).clamp(min=0)
         ev = ev + num_active_items * active_inv_value
 
-        # Dead inventory (quick check)
+        # Dead inventory (quick check)  # _eval_2bot
         has_item_flat = (inv >= 0)
         is_dead = has_item_flat & ~inv_matches_active
         ev = ev - is_dead.sum(dim=1).float() * 40000
@@ -1406,6 +1416,11 @@ class GPUBeamSearcher:
         # At dist_drop=20: 35000
         # At dist_drop=40: 0 (item far from deliverable)
         active_inv_value = (70000 - dist_drop * 1750).clamp(min=0)
+        # LNS Order Assignment: dampen delivery value for non-assigned orders.
+        # My order (aidx % modulo == slot): full value. Others: 50%.
+        if self.order_modulo is not None:
+            is_my_order = ((aidx % self.order_modulo) == self.order_slot).float()
+            active_inv_value = active_inv_value * (0.5 + 0.5 * is_my_order)
         ev = ev + num_active_items * active_inv_value
 
         # Preview order matching (pipeline_depth determines which order ahead to target)
@@ -1551,6 +1566,8 @@ class GPUBeamSearcher:
         # === Aisle congestion penalty (multi-bot) ===
         # Penalize candidate bot for being in the same 1-tile aisle column as
         # a locked bot. Narrow aisles create deadlocks and wasted rounds.
+        # coord_temperature anneals this: 0.0=full penalty, 1.0=no penalty.
+        _ct_scale = 1.0 - self.coord_temperature
         if self.num_locked > 0 and 'locked_bx' in state and self._aisle_columns.any():
             _cand_in_aisle = self._aisle_columns[bot_x]  # [B] bool
             _cand_not_corridor = ~self._corridor_rows[bot_y]  # [B] bool
@@ -1566,7 +1583,7 @@ class GPUBeamSearcher:
                 _num_locked_same = _locked_same_aisle.sum(dim=1).float()  # [B]
                 # Scale: -4000 per locked bot in same aisle (moderate — less than
                 # active_inv_value but enough to prefer different-aisle routing)
-                ev = ev - _cand_in_narrow.float() * _num_locked_same * 4000
+                ev = ev - _cand_in_narrow.float() * _num_locked_same * 4000 * _ct_scale
 
         # === Dropoff queue system ===
         # When multiple bots are heading to dropoff with items, they should
@@ -1590,7 +1607,7 @@ class GPUBeamSearcher:
             locked_at_drop = ((locked_bx_state == self.drop_x) &
                               (locked_by_state == self.drop_y)).sum(dim=1).float()
             near_drop = dist_drop < 3
-            ev = ev - near_drop.float() * locked_at_drop * 500
+            ev = ev - near_drop.float() * locked_at_drop * 500 * _ct_scale
 
             locked_inv_state = state.get('locked_inv')  # [B, num_locked, INV_CAP]
             if locked_inv_state is not None:
@@ -1635,7 +1652,7 @@ class GPUBeamSearcher:
                 # so temporary redundancy often resolves naturally during the game.
                 _nl = self.num_locked
                 unique_bonus = 30000 + _nl * 3000   # 33K (medium) to 57K (expert)
-                redundant_pen = 20000 + _nl * 2000   # 22K (medium) to 38K (expert)
+                redundant_pen = (20000 + _nl * 2000) * _ct_scale  # annealed
                 ev = ev + cand_covers_unique * unique_bonus
                 ev = ev - cand_redundant * redundant_pen
 
@@ -2368,12 +2385,105 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         return h
 
     @torch.no_grad()
-    def _dp_expand_2bot(self, state):
-        """Position-aware Cartesian product expansion for 2-bot DP.
+    def _score_single_bot_actions(self, state, bot_key: str, round_num: int):
+        """Lightweight per-action scoring for one bot in 2-bot state.
 
-        Generates all valid (bot1_action, bot2_action) combos per state.
-        Returns (expanded, b1_acts, b1_items, b2_acts, b2_items, valid, N).
-        N = dp_num_actions (per bot); total actions per state = N*N.
+        Scores each of N actions based on: pickup value > dropoff > move-toward-item > wait.
+        Uses distance heuristics — fast enough to run every round.
+
+        Returns [B, N] float32 action values (higher = better).
+        """
+        B = state[f'{bot_key}_x'].shape[0]
+        d = self.device
+        N = self.dp_num_actions
+
+        bx = state[f'{bot_key}_x'].long()
+        by = state[f'{bot_key}_y'].long()
+        inv = state[f'{bot_key}_inv']
+        aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
+        act_req = self.order_req[aidx]  # [B, MAX_ORDER_SIZE]
+        act_del = state['active_del']
+
+        # Base action scores
+        scores = torch.zeros(B, N, device=d)
+
+        # Score pickups (indices 6+): huge bonus for matching active/preview order
+        adj = self.adj_items[by, bx]  # [B, MAX_ADJ]
+        inv_count = (inv >= 0).sum(dim=1)
+        has_space = inv_count < INV_CAP
+        active_needed = (act_req >= 0) & (act_del == 0)
+        needed_types = set()
+        for os in range(MAX_ORDER_SIZE):
+            needed = active_needed[:, os]
+            if needed.any():
+                needed_types.add(os)
+
+        for ai in range(self.MAX_ADJ):
+            item_idx = adj[:, ai].long()
+            item_valid = item_idx >= 0
+            itype = self.item_types[item_idx.clamp(0)]  # [B]
+            # Check if type matches active order
+            matches_active = torch.zeros(B, dtype=torch.bool, device=d)
+            for os in range(MAX_ORDER_SIZE):
+                matches_active = matches_active | (
+                    (itype == act_req[:, os]) & (act_del[:, os] == 0) & (act_req[:, os] >= 0))
+            # Preview match
+            pidx = (aidx + 1).clamp(0, self.num_orders - 1)
+            prev_req = self.order_req[pidx]
+            matches_preview = torch.zeros(B, dtype=torch.bool, device=d)
+            for os in range(MAX_ORDER_SIZE):
+                matches_preview = matches_preview | ((itype == prev_req[:, os]) & (prev_req[:, os] >= 0))
+
+            slot = 6 + ai
+            if slot < N:
+                scores[:, slot] += (item_valid & has_space & matches_active).float() * 100.0
+                scores[:, slot] += (item_valid & has_space & matches_preview & ~matches_active).float() * 40.0
+                scores[:, slot] += (item_valid & has_space & ~matches_active & ~matches_preview).float() * -50.0
+
+        # Score dropoff (index 5): high if carrying active items
+        has_active = (inv.unsqueeze(2) == act_req.unsqueeze(1)).any(dim=2).any(dim=1)
+        at_drop = (bx == self.drop_x) & (by == self.drop_y)
+        scores[:, 5] += (has_active & at_drop).float() * 120.0
+        scores[:, 5] += (has_active & ~at_drop).float() * -10.0  # don't dropoff when not at dropoff
+
+        # Score moves (indices 1-4): prefer moving toward needed items / dropoff
+        dist_drop = self.dist_to_dropoff[by, bx].float()
+        for mi, (dx, dy) in enumerate([(0, -1), (0, 1), (-1, 0), (1, 0)]):
+            nx = (bx + dx).clamp(0, self.W - 1)
+            ny = (by + dy).clamp(0, self.H - 1)
+            new_dist_drop = self.dist_to_dropoff[ny, nx].float()
+            # Toward dropoff when carrying items
+            scores[:, mi + 1] += has_active.float() * (dist_drop - new_dist_drop) * 5.0
+            # Toward nearest needed item when not carrying
+            if not has_active.all():
+                for os in range(MAX_ORDER_SIZE):
+                    needed = active_needed[:, os] & ~has_active
+                    if needed.any():
+                        nt = act_req[:, os].long().clamp(0, self.num_types - 1)
+                        old_d = self.dist_to_type[nt, by, bx].float()
+                        new_d = self.dist_to_type[nt, ny, nx].float()
+                        scores[:, mi + 1] += needed.float() * (old_d - new_d) * 3.0
+
+        # Wait (index 0): slight penalty to prefer action
+        scores[:, 0] -= 2.0
+
+        return scores
+
+    @torch.no_grad()
+    def _dp_expand_2bot_sparse(self, state, round_num: int = 0):
+        """Spatially-sparse joint expansion for 2-bot DP.
+
+        Instead of expanding the full N*N grid for all states, computes
+        which (state, action1, action2) triples are worth exploring:
+        - dist > 5: top-1 x top-1 = 1 combo per state (independent)
+        - dist 3-5: top-3 x top-3 = 9 combos per state (mild coupling)
+        - dist <= 2: all valid combos (tight coupling for collision resolution)
+
+        Uses .nonzero() to extract sparse valid combinations, reducing
+        expanded states from B*N*N (~5M) to ~150K-300K.
+
+        Returns (expanded_states, b1_acts, b1_items, b2_acts, b2_items,
+                 parent_indices) — all already filtered to valid combos only.
         """
         B = state['bot1_x'].shape[0]
         d = self.device
@@ -2382,7 +2492,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         # Bot1 actions from bot1's position
         by1 = state['bot1_y'].long()
         bx1 = state['bot1_x'].long()
-        adj1 = self.adj_items[by1, bx1]       # [B, MAX_ADJ]
+        adj1 = self.adj_items[by1, bx1]
 
         acts1 = self._dp_acts_template.expand(B, N).clone()
         items1 = torch.full((B, N), -1, dtype=torch.int16, device=d)
@@ -2403,29 +2513,72 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         valid2[:, 6:6 + self.MAX_ADJ] = adj2 >= 0
         valid2[:, 1:5] &= self.valid_moves[by2, bx2]
 
-        # Cartesian product: [B] → [B * N * N]
-        BNN = B * N * N
+        # === Build [B, N, N] validity mask with distance-adaptive pruning ===
+        # Start with physical validity: both actions must be independently valid
+        joint_valid = valid1.unsqueeze(2) & valid2.unsqueeze(1)  # [B, N, N]
 
+        # Distance-based pruning
+        mdist = (bx1 - bx2).abs() + (by1 - by2).abs()  # [B]
+        is_close = mdist <= 2
+        is_medium = (mdist > 2) & (mdist <= 5)
+        is_far = mdist > 5
+
+        n_needs_pruning = (is_medium | is_far).sum().item()
+
+        if n_needs_pruning > 0:
+            # Lightweight proxy scores for top-K selection
+            scores1 = self._score_single_bot_actions(state, 'bot1', round_num)
+            scores2 = self._score_single_bot_actions(state, 'bot2', round_num)
+            scores1 = torch.where(valid1, scores1, torch.full_like(scores1, -1e9))
+            scores2 = torch.where(valid2, scores2, torch.full_like(scores2, -1e9))
+
+            # === FAR states: top-1 x top-1 ===
+            if is_far.any():
+                far_idx = is_far.nonzero(as_tuple=True)[0]
+                top1_a1 = scores1[far_idx].argmax(dim=1)  # [F]
+                top1_a2 = scores2[far_idx].argmax(dim=1)  # [F]
+                # Zero out joint_valid for far states, then re-enable only top1
+                joint_valid[far_idx] = False
+                joint_valid[far_idx, top1_a1, top1_a2] = True
+
+            # === MEDIUM states: top-3 x top-3 ===
+            if is_medium.any():
+                med_idx = is_medium.nonzero(as_tuple=True)[0]
+                M = med_idx.shape[0]
+                top3_a1 = scores1[med_idx].topk(min(3, N), dim=1).indices  # [M, 3]
+                top3_a2 = scores2[med_idx].topk(min(3, N), dim=1).indices  # [M, 3]
+                # Zero out, then re-enable top3 x top3
+                joint_valid[med_idx] = False
+                t1 = top3_a1.unsqueeze(2)  # [M, 3, 1]
+                t2 = top3_a2.unsqueeze(1)  # [M, 1, 3]
+                joint_valid[
+                    med_idx.unsqueeze(1).unsqueeze(2).expand(M, min(3, N), min(3, N)),
+                    t1.expand(M, min(3, N), min(3, N)),
+                    t2.expand(M, min(3, N), min(3, N))
+                ] = True
+
+        # === Sparse extraction via .nonzero() ===
+        state_idx, a1_idx, a2_idx = joint_valid.nonzero(as_tuple=True)
+        BF = state_idx.shape[0]
+
+        if BF == 0:
+            return None, None, None, None, None, None
+
+        # Gather parent states (only the valid combinations)
         expanded = {}
         for k, v in state.items():
             if v.dim() == 1:
-                expanded[k] = v.repeat_interleave(N * N, output_size=BNN)
-            elif v.dim() == 2:
-                expanded[k] = v.repeat_interleave(N * N, dim=0, output_size=BNN)
+                expanded[k] = v[state_idx]
             else:
-                expanded[k] = v.repeat_interleave(N * N, dim=0, output_size=BNN)
+                expanded[k] = v[state_idx]
 
-        # Bot1 acts: [B, N, 1] → [B, N, N] → [BNN]
-        b1_acts = acts1.unsqueeze(2).expand(B, N, N).reshape(-1)
-        b1_items = items1.unsqueeze(2).expand(B, N, N).reshape(-1)
-        # Bot2 acts: [B, 1, N] → [B, N, N] → [BNN]
-        b2_acts = acts2.unsqueeze(1).expand(B, N, N).reshape(-1)
-        b2_items = items2.unsqueeze(1).expand(B, N, N).reshape(-1)
+        # Gather corresponding actions
+        b1_acts = acts1[state_idx, a1_idx]
+        b1_items = items1[state_idx, a1_idx]
+        b2_acts = acts2[state_idx, a2_idx]
+        b2_items = items2[state_idx, a2_idx]
 
-        # Valid: both must be valid
-        valid = (valid1.unsqueeze(2) & valid2.unsqueeze(1)).reshape(-1)
-
-        return expanded, b1_acts, b1_items, b2_acts, b2_items, valid, N
+        return expanded, b1_acts, b1_items, b2_acts, b2_items, state_idx
 
     def _move_candidate(self, acts, cand_x, cand_y,
                         other_xs, other_ys,
@@ -3047,22 +3200,11 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         for rnd in range(MAX_ROUNDS):
             B = state['bot1_x'].shape[0]
 
-            # Expand: Cartesian product of bot1 × bot2 actions
-            expanded, b1a, b1i, b2a, b2i, valid, N_per = \
-                self._dp_expand_2bot(state)
+            # Sparse expand: distance-adaptive, returns only valid combos
+            result = self._dp_expand_2bot_sparse(state, round_num=rnd)
+            filt_exp, filt_b1a, filt_b1i, filt_b2a, filt_b2i, parent_idx_raw = result
 
-            # Pre-filter: step only valid combos
-            filt_idx = valid.nonzero(as_tuple=True)[0]
-            filt_exp = {k: v[filt_idx] for k, v in expanded.items()}
-            filt_b1a = b1a[filt_idx]
-            filt_b1i = b1i[filt_idx]
-            filt_b2a = b2a[filt_idx]
-            filt_b2i = b2i[filt_idx]
-            NN = N_per * N_per  # actions per parent state
-            filt_parent = filt_idx // NN
-            BF = filt_idx.shape[0]
-
-            if BF == 0:
+            if filt_exp is None:
                 # No valid actions — just keep current state with wait
                 parent_idx_history.append(torch.zeros(B, dtype=torch.long, device=d))
                 b1_act_history.append(torch.zeros(B, dtype=torch.int8, device=d))
@@ -3070,6 +3212,8 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
                 b2_act_history.append(torch.zeros(B, dtype=torch.int8, device=d))
                 b2_item_history.append(torch.full((B,), -1, dtype=torch.int16, device=d))
                 continue
+
+            BF = filt_b1a.shape[0]
 
             # Step both bots
             new_state = self._step_2bot(
@@ -3105,8 +3249,8 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
             unique_idx = sort_idx[valid_mask]
             B_new = unique_idx.shape[0]
 
-            # Parent tracking
-            parent_idx = filt_parent[unique_idx]
+            # Parent tracking (sparse: parent_idx_raw already has state indices)
+            parent_idx = parent_idx_raw[unique_idx]
             parent_idx_history.append(parent_idx)
             b1_act_history.append(filt_b1a[unique_idx])
             b1_item_history.append(filt_b1i[unique_idx])

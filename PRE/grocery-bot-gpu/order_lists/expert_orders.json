@@ -1,57 +1,57 @@
 {
   "difficulty": "expert",
   "date": "2026-03-06",
-  "total_orders": 15,
+  "total_orders": 11,
   "orders": [
     {
       "index": 0,
       "items_required": [
-        "milk",
+        "flour",
         "bananas",
-        "bread",
-        "milk",
-        "oats",
-        "cereal"
+        "flour",
+        "rice",
+        "yogurt"
       ]
     },
     {
       "index": 1,
       "items_required": [
-        "flour",
-        "onions",
-        "yogurt",
-        "eggs"
+        "apples",
+        "bananas",
+        "cheese",
+        "pasta",
+        "apples"
       ]
     },
     {
       "index": 2,
       "items_required": [
         "butter",
-        "cereal",
-        "yogurt",
+        "tomatoes",
         "bananas",
-        "cream",
-        "milk"
+        "tomatoes",
+        "cereal",
+        "cheese"
       ]
     },
     {
       "index": 3,
       "items_required": [
-        "onions",
-        "oats",
-        "bread",
+        "flour",
+        "tomatoes",
         "apples",
-        "butter",
-        "pasta"
+        "cheese",
+        "yogurt"
       ]
     },
     {
       "index": 4,
       "items_required": [
-        "onions",
-        "pasta",
+        "flour",
+        "milk",
         "yogurt",
-        "cereal",
+        "tomatoes",
+        "oats",
         "butter"
       ]
     },
@@ -59,106 +59,66 @@
       "index": 5,
       "items_required": [
         "oats",
-        "bread",
-        "pasta",
-        "tomatoes",
-        "tomatoes",
-        "onions"
+        "onions",
+        "butter",
+        "cream",
+        "cereal",
+        "cereal"
       ]
     },
     {
       "index": 6,
       "items_required": [
-        "cereal",
+        "bananas",
+        "milk",
+        "onions",
         "cream",
-        "bread",
-        "oats",
-        "oats",
-        "eggs"
+        "butter",
+        "apples"
       ]
     },
     {
       "index": 7,
       "items_required": [
-        "rice",
-        "cereal",
-        "yogurt",
         "cheese",
-        "oats",
+        "onions",
+        "onions",
+        "rice",
+        "milk",
         "cream"
       ]
     },
     {
       "index": 8,
       "items_required": [
-        "bananas",
-        "bananas",
+        "pasta",
+        "yogurt",
+        "milk",
         "rice",
-        "cereal",
-        "apples"
+        "milk",
+        "cream"
       ]
     },
     {
       "index": 9,
       "items_required": [
-        "butter",
-        "butter",
-        "rice",
+        "onions",
         "bread",
-        "cheese",
-        "tomatoes"
+        "tomatoes",
+        "tomatoes",
+        "bananas",
+        "milk"
       ]
     },
     {
       "index": 10,
       "items_required": [
-        "eggs",
-        "bananas",
-        "eggs",
-        "cream",
-        "yogurt"
-      ]
-    },
-    {
-      "index": 11,
-      "items_required": [
-        "milk",
-        "butter",
-        "pasta",
-        "rice",
-        "cereal"
-      ]
-    },
-    {
-      "index": 12,
-      "items_required": [
-        "bananas",
-        "pasta",
-        "butter",
-        "flour",
-        "tomatoes",
-        "cheese"
-      ]
-    },
-    {
-      "index": 13,
-      "items_required": [
-        "tomatoes",
-        "flour",
-        "cream",
-        "milk",
-        "flour"
-      ]
-    },
-    {
-      "index": 14,
-      "items_required": [
-        "rice",
-        "cream",
         "onions",
-        "cream",
         "onions",
-        "milk"
+        "bananas",
+        "bread",
+        "onions",
+        "rice"
       ]
     }
   ]

@@ -1,112 +1,68 @@
-# Next Steps — GPU Optimal Solver (2026-03-02)
+# Next Steps — GPU Optimal Solver (2026-03-06)
 
-## What Failed Tonight
+## Current State
 
-### Problem: Live Score = 18 (Expected 130+)
+| Difficulty | Score | Leader | Orders | Bottleneck |
+|-----------|-------|--------|--------|-----------|
+| Easy | 142 | ~142 | 17 | Done (optimal) |
+| Medium | 184 | 214 | 22 | Sequential DP ceiling + need more orders |
+| Hard | 180 | 252 | 21 | Sequential DP ceiling + need more orders |
+| Expert | 139 | 303 | 15 | Need fresh capture + better coordination |
 
-Both `ReactiveSolver` and `LiveMultiSolver` fail catastrophically on live games:
+## What's Blocking Progress
 
-1. **`LiveMultiSolver` precomputes all 300 rounds at round 0** using only 2 visible orders + 98 random filler orders. After the first 2 real orders complete, the precomputed actions target wrong items → **dead inventory** → bot stuck forever → score plateaus at 18.
+### Sequential DP Ceiling (Primary)
+Each bot is planned independently with others locked. This can't find globally optimal multi-bot plans. Hard is stuck at 180 regardless of:
+- Training time (tested up to 600s)
+- State count (tested 50K-100K)
+- Refinement iterations (tested up to 20)
+- Perturbation strategies (single/pair reset, type reshuffling)
+- Escape attempts (up to 6)
 
-2. **`ReactiveSolver`** is too basic — constant escape loops, only scored 26.
+After perturbation resets, all bots converge to the same local optimum.
 
-3. **Only 4-5 orders captured** because the bot barely completes any orders, so few new ones are revealed.
+### Insufficient Order Discovery
+More orders require beating current score first. The virtuous cycle (better score → more orders → better training → better score) is stalled because training can't improve.
 
-### Root Cause
+## Priority Actions
 
-The Python live solver (`LiveMultiSolver`) is NOT reactive. It precomputes a full 300-round action sequence at round 0 and replays it. This works on sim_server (where all orders are known) but fails on the live game server (where orders are revealed 2 at a time).
+### 1. Break the Sequential DP Ceiling
+Ideas (by feasibility):
 
-The Zig bot IS reactive (makes per-round decisions) and gets **115-131 on Easy live**. We should use the Zig bot for capture.
+**A. Order assignment pre-optimization**
+Before DP, decide which bot handles which orders. Currently, type specialization hints at this, but each bot still sees all orders in DP. Explicit order assignment would reduce each bot's search space and improve coordination.
 
-## Fix Plan (Priority Order)
+**B. Multi-phase coordination**
+Split the 300-round game into phases (e.g., 3x100 rounds). In each phase, assign explicit goals per bot. Optimize the phase-goal assignment globally, then run DP per bot within each phase.
 
-### Fix 1: Use Zig Bot for Capture (Fastest Path)
+**C. Post-DP collision resolution**
+Plan all bots independently (ignoring collisions), then resolve conflicts with MAPF post-processing. This lets each bot find its globally best path before worrying about coordination.
 
-The Zig bot already:
-- Plays reactively (per-round decisions based on actual game state)
-- Gets ~115-131 on Easy live
-- Writes `game_log_*.jsonl` with full game state every round
+**D. Genetic algorithm over DP seeds**
+Run many fast DP passes with different random orderings, type assignments, and order caps. Use a GA to evolve the meta-parameters that produce the best combined score.
 
-**Desired workflow (single button, one or two tokens):**
-1. Paste token → Run Zig bot → plays full 300-round game, writes game_log
-2. Parse game_log → extract ALL orders seen during the game → save capture.json
-3. GPU DP on capture → optimal solution → save best.json
-4. Replay optimal with same token (if server allows reconnect) or new token
+**E. Joint 2-bot DP with larger state budget**
+The 2-bot DP failed at 50K states (49x expansion). With 500K+ states and better pruning, it might become viable for the 2 most congested bots while others use single-bot DP.
 
-**New script needed**: `capture_from_game_log.py`
-```python
-# Parse a game_log_*.jsonl to extract capture data
-# Accumulates all orders seen during the game
-# Saves to solutions/<difficulty>/capture.json
-```
+### 2. Fresh Captures for Competition Day
+- Orders change daily — all captures must be redone on March 19
+- Plan: capture early morning, train all day, final replay in evening
+- Have automated pipeline ready: `production_run.py` handles the full loop
 
-**Update `/api/optimize/play/+server.js`**: Spawn Zig bot exe instead of Python live_solver. Parse its game_log for SSE streaming. After game ends, auto-extract capture and auto-run GPU DP.
+### 3. More Order Discovery Cycles
+Even at current quality, more replay cycles discover more orders:
+- Medium: 22 orders (probably 30+ exist)
+- Hard: 21 orders (probably 30+ exist)
+- Expert: 15 orders (probably 20+ exist, need fresh capture first)
 
-**Ideal one-button flow on dashboard:**
-1. User pastes token
-2. Click "CAPTURE & SOLVE"
-3. Backend: Zig bot plays game → parse game_log → capture.json → GPU DP → best.json
-4. User pastes same/new token
-5. Click "REPLAY" → replay_solution.py sends optimal actions
+## What Works (Don't Change)
+- Pipeline architecture (zig capture → GPU → replay → iterate)
+- 50K states for pipeline, 100K for deep training
+- 3 pass1 orderings (forward, reverse, random)
+- Type specialization and zone assignments
+- Contribution-based weakest-first refinement
+- `--no-filler` flag (mandatory)
+- Zig FFI for fast verification
 
-### Fix 2: Make LiveMultiSolver Reactive (Better Long-Term)
-
-Make the Python solver re-plan when new orders appear:
-- Track known orders
-- When `data['orders']` contains a new order ID → re-run planner from current state
-- Keep using MAPF planner but re-plan every time the order set changes
-
-This is harder but would give the Python solver competitive live scores.
-
-### Fix 3: GPU DP as Live Single-Connection Solver (Hardest)
-
-The GPU DP takes ~4s for Easy. If we could:
-1. Connect to game at round 0, read 2 orders
-2. GPU DP those 2 orders → optimal first ~30 rounds
-3. Play those rounds, get new orders as they appear
-4. Re-run GPU DP with updated order set
-5. Repeat
-
-This requires incremental GPU DP (warm-start from current state). Complex but would be the ultimate solver.
-
-## Dashboard Fixes Needed
-
-### Terminal Log Reset
-The system log in `/gpu` needs to reset when starting a new action. Currently old log lines accumulate.
-
-**Fix**: In `startCapture()`, `startSolve()`, `startReplay()` — add `terminalLines = [];` at the start (already done for `startSolve()` but not for others consistently).
-
-### Workflow
-The 3-step workflow (CAPTURE → GPU SOLVE → REPLAY) is displayed but CAPTURE currently fails. After Fix 1, the CAPTURE button should spawn the Zig bot instead of the Python solver.
-
-## GPU DP Performance (Working Correctly)
-
-When given a GOOD capture (30+ orders from a full game), GPU DP works perfectly:
-- Easy seed 7001 (yesterday): **score=137** (provably optimal, 0 pruning)
-- 5-seed average: **mean=165.4, max=175**
-- Time: ~4 seconds on RTX 5090
-- Previous best CPU beam search: 139
-
-The GPU DP is not the problem. The capture step is.
-
-## Competition Context
-
-- Competition: March 19, 2026
-- Seeds fixed per day per difficulty
-- Leaderboard = sum of best scores across all 4 maps
-- Current leader: Easy=141, Medium=189, Hard=217, Expert=219
-- Our previous best: Easy=148, Medium=139, Hard=160, Expert=125
-
-## Files Reference
-
-| File | Purpose |
-|------|---------|
-| `gpu_beam_search.py` | GPU DP solver (dp_search method) — WORKS |
-| `gpu_solve_stream.py` | Streaming JSON wrapper for dashboard — WORKS |
-| `live_solver.py` | Live game solver — BROKEN for capture (precomputes, not reactive) |
-| `replay_solution.py` | Replay saved solution over WebSocket — WORKS |
-| `solution_store.py` | Save/load solutions — WORKS |
-| `replay/app/src/routes/gpu/+page.svelte` | Matrix dashboard — WORKS (needs terminal reset) |
-| `replay/app/src/routes/api/gpu/solve/+server.js` | GPU solve SSE endpoint — WORKS |
-| `replay/app/src/routes/api/optimize/play/+server.js` | Capture SSE endpoint — needs to use Zig bot |
-| `replay/app/src/routes/api/optimize/solutions/+server.js` | Solutions CRUD — WORKS (GET + DELETE) |
+## Comprehensive Strategy Doc
+See `TRAINING_STRATEGY.md` for full documentation of all processes, tuning, and findings.

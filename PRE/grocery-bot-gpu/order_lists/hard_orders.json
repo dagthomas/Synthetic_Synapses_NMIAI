@@ -1,0 +1,221 @@
+{
+  "difficulty": "hard",
+  "date": "2026-03-06",
+  "total_orders": 23,
+  "orders": [
+    {
+      "index": 0,
+      "items_required": [
+        "yogurt",
+        "pasta",
+        "bread",
+        "bread",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 1,
+      "items_required": [
+        "milk",
+        "yogurt",
+        "eggs",
+        "eggs",
+        "pasta"
+      ]
+    },
+    {
+      "index": 2,
+      "items_required": [
+        "cheese",
+        "cream",
+        "cream"
+      ]
+    },
+    {
+      "index": 3,
+      "items_required": [
+        "bread",
+        "cereal",
+        "cereal",
+        "rice",
+        "eggs"
+      ]
+    },
+    {
+      "index": 4,
+      "items_required": [
+        "cereal",
+        "cream",
+        "pasta",
+        "cereal",
+        "flour"
+      ]
+    },
+    {
+      "index": 5,
+      "items_required": [
+        "milk",
+        "oats",
+        "cheese",
+        "eggs"
+      ]
+    },
+    {
+      "index": 6,
+      "items_required": [
+        "cereal",
+        "oats",
+        "cheese",
+        "milk"
+      ]
+    },
+    {
+      "index": 7,
+      "items_required": [
+        "rice",
+        "butter",
+        "eggs",
+        "cheese",
+        "oats"
+      ]
+    },
+    {
+      "index": 8,
+      "items_required": [
+        "cream",
+        "eggs",
+        "rice"
+      ]
+    },
+    {
+      "index": 9,
+      "items_required": [
+        "eggs",
+        "milk",
+        "yogurt",
+        "butter",
+        "butter"
+      ]
+    },
+    {
+      "index": 10,
+      "items_required": [
+        "cheese",
+        "milk",
+        "eggs"
+      ]
+    },
+    {
+      "index": 11,
+      "items_required": [
+        "bread",
+        "cereal",
+        "cereal",
+        "bread",
+        "cereal"
+      ]
+    },
+    {
+      "index": 12,
+      "items_required": [
+        "flour",
+        "yogurt",
+        "eggs",
+        "eggs",
+        "cream"
+      ]
+    },
+    {
+      "index": 13,
+      "items_required": [
+        "bread",
+        "rice",
+        "cereal",
+        "eggs",
+        "cereal"
+      ]
+    },
+    {
+      "index": 14,
+      "items_required": [
+        "cream",
+        "oats",
+        "oats",
+        "flour",
+        "milk"
+      ]
+    },
+    {
+      "index": 15,
+      "items_required": [
+        "cereal",
+        "eggs",
+        "flour",
+        "cheese",
+        "pasta"
+      ]
+    },
+    {
+      "index": 16,
+      "items_required": [
+        "bread",
+        "rice",
+        "milk"
+      ]
+    },
+    {
+      "index": 17,
+      "items_required": [
+        "cheese",
+        "milk",
+        "rice",
+        "rice"
+      ]
+    },
+    {
+      "index": 18,
+      "items_required": [
+        "yogurt",
+        "flour",
+        "butter"
+      ]
+    },
+    {
+      "index": 19,
+      "items_required": [
+        "cream",
+        "milk",
+        "milk",
+        "pasta"
+      ]
+    },
+    {
+      "index": 20,
+      "items_required": [
+        "flour",
+        "cream",
+        "yogurt",
+        "cereal"
+      ]
+    },
+    {
+      "index": 21,
+      "items_required": [
+        "rice",
+        "milk",
+        "butter",
+        "milk"
+      ]
+    },
+    {
+      "index": 22,
+      "items_required": [
+        "milk",
+        "rice",
+        "eggs",
+        "milk",
+        "pasta"
+      ]
+    }
+  ]
+}
