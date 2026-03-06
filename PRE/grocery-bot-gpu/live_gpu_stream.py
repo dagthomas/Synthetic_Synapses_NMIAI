@@ -62,10 +62,11 @@ PASSES = {
 # ── Per-round GPU DP parameters per difficulty ─────────────────────────────────
 # max_states: state budget per bot per round, horizon: rounds to look ahead
 PR_PARAMS = {
-    'easy':   {'max_states': 50_000, 'horizon': 80},
-    'medium': {'max_states': 25_000, 'horizon': 55},
-    'hard':   {'max_states': 40_000, 'horizon': 60},
-    'expert': {'max_states': 20_000, 'horizon': 50},
+    'easy':      {'max_states': 50_000, 'horizon': 80},
+    'medium':    {'max_states': 25_000, 'horizon': 55},
+    'hard':      {'max_states': 40_000, 'horizon': 60},
+    'expert':    {'max_states': 20_000, 'horizon': 50},
+    'nightmare': {'max_states': 15_000, 'horizon': 40},
 }
 
 ACTION_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
@@ -1346,7 +1347,7 @@ class AnytimeGPUStream:
                         # Priority-scale state budget and horizon
                         scale = 1.5 - rank * (1.0 / max(1, n_bots_total - 1))
                         scaled_states = max(5000, int(max_states * scale))
-                        bot_horizon = max(horizon // 2, 20) if rank >= 3 else horizon
+                        bot_horizon = min(max(horizon // 2, 20) if rank >= 3 else horizon, remaining)
 
                         # Build locked trajectories from previously planned bots
                         locked_trajs = None
