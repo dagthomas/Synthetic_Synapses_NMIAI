@@ -1,13 +1,13 @@
 {
   "difficulty": "easy",
-  "date": "2026-03-05",
-  "total_orders": 4,
+  "date": "2026-03-06",
+  "total_orders": 19,
   "orders": [
     {
       "index": 0,
       "items_required": [
-        "cheese",
         "milk",
+        "yogurt",
         "yogurt"
       ]
     },
@@ -15,26 +15,151 @@
       "index": 1,
       "items_required": [
         "cheese",
-        "cheese",
-        "cheese",
+        "yogurt",
         "cheese"
       ]
     },
     {
       "index": 2,
       "items_required": [
-        "milk",
         "cheese",
-        "yogurt",
+        "butter",
         "cheese"
       ]
     },
     {
       "index": 3,
       "items_required": [
+        "butter",
+        "cheese",
+        "butter"
+      ]
+    },
+    {
+      "index": 4,
+      "items_required": [
         "milk",
         "yogurt",
+        "butter",
         "milk"
+      ]
+    },
+    {
+      "index": 5,
+      "items_required": [
+        "cheese",
+        "cheese",
+        "yogurt",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 6,
+      "items_required": [
+        "milk",
+        "butter",
+        "cheese"
+      ]
+    },
+    {
+      "index": 7,
+      "items_required": [
+        "yogurt",
+        "butter",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 8,
+      "items_required": [
+        "butter",
+        "cheese",
+        "cheese"
+      ]
+    },
+    {
+      "index": 9,
+      "items_required": [
+        "yogurt",
+        "cheese",
+        "cheese",
+        "cheese"
+      ]
+    },
+    {
+      "index": 10,
+      "items_required": [
+        "butter",
+        "yogurt",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 11,
+      "items_required": [
+        "cheese",
+        "milk",
+        "cheese",
+        "cheese"
+      ]
+    },
+    {
+      "index": 12,
+      "items_required": [
+        "yogurt",
+        "milk",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 13,
+      "items_required": [
+        "yogurt",
+        "yogurt",
+        "milk"
+      ]
+    },
+    {
+      "index": 14,
+      "items_required": [
+        "milk",
+        "butter",
+        "cheese",
+        "milk"
+      ]
+    },
+    {
+      "index": 15,
+      "items_required": [
+        "cheese",
+        "yogurt",
+        "milk"
+      ]
+    },
+    {
+      "index": 16,
+      "items_required": [
+        "milk",
+        "cheese",
+        "yogurt",
+        "butter"
+      ]
+    },
+    {
+      "index": 17,
+      "items_required": [
+        "milk",
+        "butter",
+        "butter"
+      ]
+    },
+    {
+      "index": 18,
+      "items_required": [
+        "cheese",
+        "cheese",
+        "yogurt",
+        "yogurt"
       ]
     }
   ]

@@ -199,6 +199,56 @@ class AnytimeGPUStream:
         """MapState reference (read-only, safe without lock)."""
         return self._map_state
 
+    # ── solution preload ─────────────────────────────────────────────────────
+
+    def _preload_solution(self) -> None:
+        """Load best existing solution from DB and set as initial plan.
+
+        This gives the live solver immediate plan-following from round 0
+        instead of relying on greedy until MAPF/GPU background threads finish.
+        The gpu_refine_worker will warm-start refinement from this plan.
+        """
+        try:
+            from solution_store import load_solution as db_load_solution, load_meta as db_load_meta
+
+            diff = self._difficulty
+            meta = db_load_meta(diff)
+            if not meta or meta.get('score', 0) <= 0:
+                print(f"  [preload_sol] No existing solution for {diff}", file=sys.stderr)
+                return
+
+            actions = db_load_solution(diff)
+            if not actions:
+                print(f"  [preload_sol] Solution load failed for {diff}", file=sys.stderr)
+                return
+
+            score = meta['score']
+            ms = self._map_ref()
+            cap = self._capture_snapshot()
+
+            # Simulate to get expected positions and goals
+            exp_pos = None
+            goals = None
+            try:
+                exp_pos = predict_full_sim(actions, cap, ms)
+                goals = extract_goals(actions, ms, exp_pos)
+            except Exception as e:
+                print(f"  [preload_sol] Sim failed (plan still usable): {e}",
+                      file=sys.stderr)
+
+            with self._lock:
+                self._plan = PlanState(
+                    score=score, actions=actions,
+                    expected_pos=exp_pos, goals=goals,
+                    source='preloaded')
+            print(f"  [preload_sol] Loaded solution: score={score} "
+                  f"rounds={len(actions)}", file=sys.stderr)
+            self._emit({"type": "plan_upgrade", "from_source": "none",
+                        "to_source": "preloaded", "score_estimate": score})
+
+        except Exception as e:
+            print(f"  [preload_sol] Error: {e}", file=sys.stderr)
+
     # ── MAPF background tier ──────────────────────────────────────────────────
 
     def _mapf_worker(self, gen):
@@ -423,6 +473,16 @@ class AnytimeGPUStream:
                 budgets = _budgets_with_seed.get(diff, _budgets.get(diff, [8_000, 20_000, 60_000]))
             else:
                 budgets = _budgets.get(diff, [8_000, 20_000, 60_000])
+
+            # When preloaded solution exists, skip small budgets (can't improve 180+ plans)
+            # and start at higher budgets for more effective warm refinement.
+            with self._lock:
+                preloaded_score = self._plan.score if self._plan else 0
+            if preloaded_score >= 100 and len(budgets) > 2:
+                # Skip first budget (50K too small for warm refine of strong plans)
+                budgets = budgets[1:]
+                print(f"  [gpu_seq] Preloaded score={preloaded_score}, "
+                      f"skipping small budgets", file=sys.stderr)
 
             print(f"  [gpu_seq] Starting: diff={diff}, orders={len(capture['orders'])}, "
                   f"gen={current_gen}, budgets={budgets}, "
@@ -649,23 +709,19 @@ class AnytimeGPUStream:
         # Orders already in seen_order_ids (from live round 0) are skipped.
         # When those orders appear later in the live game, gen won't be bumped.
         if self.preload_capture:
-            import os
             diff = self._difficulty
-            preload_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                'solutions', diff, 'capture.json'
-            )
             preloaded_cap = None
-            if os.path.exists(preload_path):
-                try:
-                    import json as _json
-                    with open(preload_path) as f:
-                        preloaded_cap = _json.load(f)
-                    print(f"  [preload] Loaded capture: {preload_path}", file=sys.stderr)
-                except Exception as e:
-                    print(f"  [preload] Failed to load {preload_path}: {e}", file=sys.stderr)
-            else:
-                print(f"  [preload] No capture found at {preload_path}", file=sys.stderr)
+            try:
+                from solution_store import load_capture as db_load_capture
+                preloaded_cap = db_load_capture(diff)
+                if preloaded_cap:
+                    print(f"  [preload] Loaded capture from DB: "
+                          f"{len(preloaded_cap.get('orders', []))} orders",
+                          file=sys.stderr)
+                else:
+                    print(f"  [preload] No capture in DB for {diff}", file=sys.stderr)
+            except Exception as e:
+                print(f"  [preload] DB load failed: {e}", file=sys.stderr)
 
             if preloaded_cap:
                 injected = 0
@@ -730,6 +786,12 @@ class AnytimeGPUStream:
         print(f"  [init] {self._difficulty} {self._num_bots}bots "
               f"orders={len(capture['orders'])} walkable={len(self._walkable)}",
               file=sys.stderr)
+
+        # Pre-load best existing solution as initial plan warm seed.
+        # This gives the live solver a strong starting point — all background
+        # threads try to improve from this plan instead of starting from zero.
+        if self.preload_capture:
+            self._preload_solution()
 
         # Build per-round searcher (no locked bots) for immediate fast actions
         self._rebuild_pr_searcher()
@@ -1266,9 +1328,25 @@ class AnytimeGPUStream:
                     # Map WS bot id → game engine index (0..N-1)
                     bot_id_to_idx = {b['id']: i for i, b in enumerate(live_bots)}
 
-                    for bot in priority_sorted:
+                    n_bots_total = len(priority_sorted)
+                    for rank, bot in enumerate(priority_sorted):
                         real_bid = bot_id_to_idx.get(bot['id'], len(planned_bots))
                         bot_pos = tuple(bot['position'])
+
+                        # P1: Adaptive time budget — hard cutoff when running low
+                        remaining_time = 1.5 - (time.time() - t0)
+                        if remaining_time < 0.3 and rank > 0:
+                            bot_acts_by_id[bot['id']] = (ACT_WAIT, -1)
+                            planned_bots.append((real_bid, [(ACT_WAIT, -1)] * horizon,
+                                                 [bot_pos] * horizon))
+                            locked_positions_cur.append(bot_pos)
+                            locked_inventories_cur.append([-1] * INV_CAP)
+                            continue
+
+                        # Priority-scale state budget and horizon
+                        scale = 1.5 - rank * (1.0 / max(1, n_bots_total - 1))
+                        scaled_states = max(5000, int(max_states * scale))
+                        bot_horizon = max(horizon // 2, 20) if rank >= 3 else horizon
 
                         # Build locked trajectories from previously planned bots
                         locked_trajs = None
@@ -1283,8 +1361,8 @@ class AnytimeGPUStream:
                         if init_state is None:
                             bot_acts_by_id[bot['id']] = (ACT_WAIT, -1)
                             # Treat as stationary locked bot with empty inv
-                            planned_bots.append((real_bid, [(ACT_WAIT, -1)] * horizon,
-                                                 [bot_pos] * horizon))
+                            planned_bots.append((real_bid, [(ACT_WAIT, -1)] * bot_horizon,
+                                                 [bot_pos] * bot_horizon))
                             locked_positions_cur.append(bot_pos)
                             locked_inventories_cur.append([-1] * INV_CAP)
                             continue
@@ -1301,10 +1379,10 @@ class AnytimeGPUStream:
 
                         score, acts = cur_searcher.dp_search(
                             game_state=None,
-                            max_states=max_states,
+                            max_states=scaled_states,
                             verbose=False,
                             start_rnd=rnd,
-                            max_rounds=horizon,
+                            max_rounds=bot_horizon,
                             init_state=init_state,
                             bot_id=real_bid,
                         )
@@ -1312,8 +1390,8 @@ class AnytimeGPUStream:
                         if locked_trajs:
                             del cur_searcher  # free immediately to save GPU memory
 
-                        full_acts = acts if acts else [(ACT_WAIT, -1)] * horizon
-                        positions = self._simulate_single_bot(bot_pos, full_acts, rnd, horizon)
+                        full_acts = acts if acts else [(ACT_WAIT, -1)] * bot_horizon
+                        positions = self._simulate_single_bot(bot_pos, full_acts, rnd, bot_horizon)
                         planned_bots.append((real_bid, full_acts, positions))
                         locked_positions_cur.append(bot_pos)
                         # Record actual inventory for this bot (for subsequent locked bots)
@@ -1632,6 +1710,45 @@ class AnytimeGPUStream:
         # 6. Nothing to do → just wait (don't route all the way to spawn)
         return (ACT_WAIT, -1, None)
 
+    def _smart_idle_action(self, bot, data, occupied, claimed_types=None):
+        """Action for idle bots: target preview items with type coordination.
+
+        Returns (act, item_idx, claimed_type).
+        claimed_types: mutable set of types already claimed by other idle bots.
+        """
+        if claimed_types is None:
+            claimed_types = set()
+        inv = list(bot.get('inventory', []))
+
+        # Find preview order types not yet claimed by other idle bots
+        preview_targets = set()
+        for order in data.get('orders', []):
+            if order.get('status') != 'preview':
+                continue
+            counts = {}
+            for t in order['items_required']:
+                counts[t] = counts.get(t, 0) + 1
+            for t in order.get('items_delivered', []):
+                if t in counts:
+                    counts[t] -= 1
+            for t in inv:
+                if t in counts:
+                    counts[t] -= 1
+            for t, c in counts.items():
+                if c > 0 and t not in claimed_types:
+                    preview_targets.add(t)
+            break  # first preview order only
+
+        if preview_targets:
+            act, item_idx, claimed = self._greedy_action(
+                bot, data, occupied, target_types=preview_targets, allow_preview=False)
+            if claimed:
+                claimed_types.add(claimed)
+            return (act, item_idx, claimed)
+
+        # No unclaimed preview targets — regular greedy
+        return self._greedy_action(bot, data, occupied)
+
     # ── per-round action computation ──────────────────────────────────────────
 
     def _format_ws(self, act, item_idx, bot_id):
@@ -1681,78 +1798,137 @@ class AnytimeGPUStream:
             )
             offset = self._round_offset
 
-        # ── Multi-bot: plan (synced) > per-round GPU > greedy ─────────────────
+        # ── Multi-bot: per-bot plan adherence ─────────────────────────────
         if self._num_bots and self._num_bots > 1:
             if plan.actions:
                 dp_rnd = rnd - offset
                 if 0 <= dp_rnd < len(plan.actions):
-                    # Lenient sync: allow up to 1/3 of bots out of position
-                    num_lb = len(live_bots)
-                    max_miss = max(1, num_lb // 3)
-                    synced = True
-                    if plan.expected_pos and dp_rnd < len(plan.expected_pos):
-                        mismatches = sum(
-                            1 for bid_idx, bot in enumerate(live_bots)
-                            if bid_idx < len(plan.expected_pos[dp_rnd])
-                            and tuple(bot['position']) != tuple(plan.expected_pos[dp_rnd][bid_idx])
-                        )
-                        synced = mismatches <= max_miss
-
-                    if synced:
-                        ws_actions = []
-                        # Track occupied cells for greedy coordination of idle bots
-                        greedy_occ = set(tuple(b['position']) for b in live_bots)
-                        assigned_greedy = {}  # type -> count for greedy coordination
-                        for bid_idx, bot in enumerate(live_bots):
-                            if bid_idx < len(plan.actions[dp_rnd]):
-                                act, item_idx = plan.actions[dp_rnd][bid_idx]
+                    # ── Per-bot sync classification ──
+                    synced_bots = []   # (bid_idx, bot)
+                    desynced_bots = []  # (bid_idx, bot)
+                    for bid_idx, bot in enumerate(live_bots):
+                        if (plan.expected_pos and dp_rnd < len(plan.expected_pos)
+                                and bid_idx < len(plan.expected_pos[dp_rnd])):
+                            if tuple(bot['position']) == tuple(plan.expected_pos[dp_rnd][bid_idx]):
+                                synced_bots.append((bid_idx, bot))
                             else:
-                                act, item_idx = ACT_WAIT, -1
-                            # Override WAIT for bots with no future plan goals —
-                            # let them contribute via greedy instead of standing idle
-                            if act == ACT_WAIT and plan.goals is not None:
-                                bot_goals = plan.goals.get(bid_idx, [])
-                                if not any(g[0] >= dp_rnd for g in bot_goals):
-                                    g_act, g_item, g_claimed = self._greedy_action(
-                                        bot, data, greedy_occ)
-                                    if g_act != ACT_WAIT:
-                                        act, item_idx = g_act, g_item
-                                        if g_claimed:
-                                            assigned_greedy[g_claimed] = assigned_greedy.get(g_claimed, 0) + 1
-                            ws_actions.append(self._format_ws(act, item_idx, bot['id']))
-                        return ws_actions, plan.source
+                                desynced_bots.append((bid_idx, bot))
+                        else:
+                            synced_bots.append((bid_idx, bot))
 
-                    # Desynced: missed-round offset detection
-                    if plan.expected_pos and dp_rnd > 0:
+                    # ── Round offset detection (only when some bots desynced) ──
+                    if desynced_bots and plan.expected_pos and dp_rnd > 0:
                         prev = dp_rnd - 1
-                        if prev < len(plan.expected_pos):
+                        num_lb = len(live_bots)
+                        max_miss = max(1, num_lb // 3)
+                        if 0 <= prev < len(plan.expected_pos):
                             prev_mm = sum(
-                                1 for bid_idx, bot in enumerate(live_bots)
-                                if bid_idx < len(plan.expected_pos[prev])
-                                and tuple(bot['position']) != tuple(plan.expected_pos[prev][bid_idx])
+                                1 for bi, b in enumerate(live_bots)
+                                if bi < len(plan.expected_pos[prev])
+                                and tuple(b['position']) != tuple(plan.expected_pos[prev][bi])
                             )
                             if prev_mm <= max_miss:
                                 with self._lock:
                                     self._round_offset += 1
-                                dp_rnd2 = rnd - (offset + 1)
-                                if 0 <= dp_rnd2 < len(plan.actions):
-                                    ws_actions = []
-                                    greedy_occ2 = set(tuple(b['position']) for b in live_bots)
+                                offset += 1
+                                dp_rnd = rnd - offset
+                                # Re-classify with adjusted dp_rnd
+                                if 0 <= dp_rnd < len(plan.actions):
+                                    synced_bots = []
+                                    desynced_bots = []
                                     for bid_idx, bot in enumerate(live_bots):
-                                        if bid_idx < len(plan.actions[dp_rnd2]):
-                                            act, item_idx = plan.actions[dp_rnd2][bid_idx]
+                                        if (plan.expected_pos and dp_rnd < len(plan.expected_pos)
+                                                and bid_idx < len(plan.expected_pos[dp_rnd])):
+                                            if tuple(bot['position']) == tuple(plan.expected_pos[dp_rnd][bid_idx]):
+                                                synced_bots.append((bid_idx, bot))
+                                            else:
+                                                desynced_bots.append((bid_idx, bot))
                                         else:
-                                            act, item_idx = ACT_WAIT, -1
-                                        # Override idle bots with greedy
-                                        if act == ACT_WAIT and plan.goals is not None:
-                                            bot_goals = plan.goals.get(bid_idx, [])
-                                            if not any(g[0] >= dp_rnd2 for g in bot_goals):
-                                                g_act, g_item, _ = self._greedy_action(
-                                                    bot, data, greedy_occ2)
-                                                if g_act != ACT_WAIT:
-                                                    act, item_idx = g_act, g_item
-                                        ws_actions.append(self._format_ws(act, item_idx, bot['id']))
-                                    return ws_actions, plan.source
+                                            synced_bots.append((bid_idx, bot))
+
+                    n_synced = len(synced_bots)
+                    n_desynced = len(desynced_bots)
+
+                    if n_synced > 0 and 0 <= dp_rnd < len(plan.actions):
+                        ws_actions = [None] * len(live_bots)
+                        greedy_occ = set(tuple(b['position']) for b in live_bots)
+                        idle_claimed = set()   # preview types claimed by idle bots
+                        committed_next = set()  # cells synced bots will occupy next
+
+                        # Phase 1: Synced bots follow plan
+                        for bid_idx, bot in synced_bots:
+                            bx, by = bot['position']
+                            if bid_idx < len(plan.actions[dp_rnd]):
+                                act, item_idx = plan.actions[dp_rnd][bid_idx]
+                            else:
+                                act, item_idx = ACT_WAIT, -1
+                            # Override WAIT for idle bots (no future goals)
+                            if act == ACT_WAIT and plan.goals is not None:
+                                bot_goals = plan.goals.get(bid_idx, [])
+                                if not any(g[0] >= dp_rnd for g in bot_goals):
+                                    g_act, g_item, g_claimed = self._smart_idle_action(
+                                        bot, data, greedy_occ, idle_claimed)
+                                    if g_act != ACT_WAIT:
+                                        act, item_idx = g_act, g_item
+                            # Track where this bot will be
+                            if act in (ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT):
+                                committed_next.add((bx + DX[act], by + DY[act]))
+                            else:
+                                committed_next.add((bx, by))
+                            ws_actions[bid_idx] = self._format_ws(act, item_idx, bot['id'])
+
+                        # Phase 2: Desynced bots get recovery actions
+                        pr_bot_map = {}
+                        if pr_result is not None:
+                            for pa in pr_result[0]:
+                                pr_bot_map[pa['bot']] = pa
+                        recovery_occ = greedy_occ | committed_next
+
+                        for bid_idx, bot in desynced_bots:
+                            bx, by = bot['position']
+                            act, item_idx = ACT_WAIT, -1
+
+                            # Try 1: per-round GPU action for this bot
+                            if bot['id'] in pr_bot_map:
+                                ws_actions[bid_idx] = pr_bot_map[bot['id']]
+                                _am = {'move_up': ACT_MOVE_UP, 'move_down': ACT_MOVE_DOWN,
+                                       'move_left': ACT_MOVE_LEFT, 'move_right': ACT_MOVE_RIGHT}
+                                a_int = _am.get(pr_bot_map[bot['id']].get('action', 'wait'))
+                                if a_int is not None:
+                                    committed_next.add((bx + DX[a_int], by + DY[a_int]))
+                                else:
+                                    committed_next.add((bx, by))
+                                continue
+
+                            # Try 2: BFS toward next plan goal
+                            if plan.goals and bid_idx in plan.goals:
+                                for g_rnd, g_pos, g_act, g_item in plan.goals[bid_idx]:
+                                    if g_rnd >= dp_rnd:
+                                        if (bx, by) == g_pos:
+                                            act, item_idx = g_act, g_item
+                                        else:
+                                            act = bfs_next_action(
+                                                (bx, by), g_pos, self._walkable,
+                                                recovery_occ, self._map_state)
+                                        break
+
+                            # Try 3: greedy fallback
+                            if act == ACT_WAIT:
+                                g_act, g_item, _ = self._greedy_action(
+                                    bot, data, recovery_occ)
+                                if g_act != ACT_WAIT:
+                                    act, item_idx = g_act, g_item
+
+                            # Track destination
+                            if act in (ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT):
+                                committed_next.add((bx + DX[act], by + DY[act]))
+                            else:
+                                committed_next.add((bx, by))
+                            ws_actions[bid_idx] = self._format_ws(act, item_idx, bot['id'])
+
+                        source = (plan.source if n_desynced == 0
+                                  else f'{plan.source}_hybrid({n_synced}s/{n_desynced}d)')
+                        return ws_actions, source
 
             # Fallback: per-round GPU or greedy
             if pr_result is not None:
@@ -1911,10 +2087,16 @@ class AnytimeGPUStream:
                 self._bot_stall_count[bid] = self._bot_stall_count.get(bid, 0) + 1
             else:
                 self._bot_stall_count[bid] = 0
-        # Staging cell: 1 step right of dropoff (bots queue here when dropoff occupied)
-        staging_pos = (drop_pos[0] + 1, drop_pos[1])
-        if staging_pos not in walkable:
-            staging_pos = drop_pos  # fallback if right side is a wall
+        # Dynamic staging cell: best walkable adjacent-to-dropoff not in aisle column
+        staging_pos = drop_pos  # fallback
+        for _da in [ACT_MOVE_RIGHT, ACT_MOVE_LEFT, ACT_MOVE_UP, ACT_MOVE_DOWN]:
+            sx, sy = drop_pos[0] + DX[_da], drop_pos[1] + DY[_da]
+            if (sx, sy) in walkable:
+                if sx not in self._aisle_cols:
+                    staging_pos = (sx, sy)
+                    break
+                elif staging_pos == drop_pos:
+                    staging_pos = (sx, sy)  # aisle is better than dropoff itself
 
         # ── Active order analysis ────────────────────────────────────────────
         order_need = {}
@@ -2082,14 +2264,16 @@ class AnytimeGPUStream:
                 # items. Step 1 cell to any adjacent free cell to clear the corridor.
                 has_dead_inv_full = len(inv) >= INV_CAP and not has_useful
                 if has_dead_inv_full:
-                    # Move 1 step to any adjacent free cell to clear the corridor.
-                    act = ACT_WAIT
-                    for try_act in (ACT_MOVE_UP, ACT_MOVE_DOWN,
-                                    ACT_MOVE_LEFT, ACT_MOVE_RIGHT):
-                        tx, ty = bx + DX[try_act], by + DY[try_act]
-                        if (tx, ty) in walkable and (tx, ty) not in eff_occ:
-                            act = try_act
-                            break
+                    # Route toward dropoff (chain reaction may auto-deliver on order change)
+                    act = bfs_next_action(bpos, drop_off, walkable, eff_occ, ms)
+                    if act == ACT_WAIT:
+                        # Blocked toward dropoff — try any adjacent free cell
+                        for try_act in (ACT_MOVE_UP, ACT_MOVE_DOWN,
+                                        ACT_MOVE_LEFT, ACT_MOVE_RIGHT):
+                            tx, ty = bx + DX[try_act], by + DY[try_act]
+                            if (tx, ty) in walkable and (tx, ty) not in eff_occ:
+                                act = try_act
+                                break
                     item_idx = -1
                 else:
                     allowed = {t for t, c in still_needed.items()
