@@ -1,0 +1,13 @@
+{
+  "params": {
+    "spec_threshold": 35,
+    "marginal_cost": 3,
+    "max_detour": 14
+  },
+  "score": 120,
+  "overrides": {
+    "0,2": "move_up",
+    "200,2": "move_up",
+    "153,5": "move_up"
+  }
+}
