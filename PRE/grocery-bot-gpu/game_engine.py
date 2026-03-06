@@ -508,7 +508,9 @@ def simulate_game(
     state, all_orders = init_game(seed, difficulty)
     action_log = []
 
-    for rnd in range(MAX_ROUNDS):
+    from configs import DIFF_ROUNDS
+    _num_rounds = DIFF_ROUNDS.get(difficulty, 300)
+    for rnd in range(_num_rounds):
         state.round = rnd
         actions = action_fn(state, all_orders, rnd)
         action_log.append(actions)
@@ -574,7 +576,7 @@ def state_to_ws_format(state: GameState, all_orders: list[Order]) -> dict[str, A
     return {
         'type': 'game_state',
         'round': state.round,
-        'max_rounds': MAX_ROUNDS,
+        'max_rounds': 300,  # Default; callers should override with actual round count
         'grid': {'width': ms.width, 'height': ms.height, 'walls': wall_list},
         'bots': bot_list,
         'items': item_list,

@@ -965,6 +965,7 @@
 					{shelfSet}
 					{itemMap}
 					dropOff={gameInit.drop_off}
+					dropOffZones={gameInit.drop_off_zones}
 					spawn={gameInit.spawn}
 					bots={botsTyped}
 					{botPositions}

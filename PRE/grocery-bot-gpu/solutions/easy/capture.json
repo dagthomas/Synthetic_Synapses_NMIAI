@@ -1,1 +1,494 @@
-{"grid": {"width": 12, "height": 10, "walls": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0], [7, 0], [8, 0], [9, 0], [10, 0], [11, 0], [0, 1], [11, 1], [0, 2], [2, 2], [6, 2], [10, 2], [11, 2], [0, 3], [2, 3], [6, 3], [10, 3], [11, 3], [0, 4], [2, 4], [6, 4], [10, 4], [11, 4], [0, 5], [11, 5], [0, 6], [2, 6], [6, 6], [10, 6], [11, 6], [0, 7], [11, 7], [0, 8], [11, 8], [0, 9], [1, 9], [2, 9], [3, 9], [4, 9], [5, 9], [6, 9], [7, 9], [8, 9], [9, 9], [10, 9], [11, 9]]}, "items": [{"id": "item_0", "type": "cheese", "position": [3, 2]}, {"id": "item_1", "type": "butter", "position": [5, 2]}, {"id": "item_2", "type": "yogurt", "position": [3, 3]}, {"id": "item_3", "type": "milk", "position": [5, 3]}, {"id": "item_4", "type": "cheese", "position": [3, 4]}, {"id": "item_5", "type": "butter", "position": [5, 4]}, {"id": "item_6", "type": "yogurt", "position": [7, 2]}, {"id": "item_7", "type": "milk", "position": [9, 2]}, {"id": "item_8", "type": "cheese", "position": [7, 3]}, {"id": "item_9", "type": "butter", "position": [9, 3]}, {"id": "item_10", "type": "yogurt", "position": [7, 4]}, {"id": "item_11", "type": "milk", "position": [9, 4]}, {"id": "item_12", "type": "butter", "position": [3, 6]}, {"id": "item_13", "type": "yogurt", "position": [5, 6]}, {"id": "item_14", "type": "milk", "position": [7, 6]}, {"id": "item_15", "type": "butter", "position": [9, 6]}], "drop_off": [1, 8], "num_bots": 1, "difficulty": "easy", "orders": [{"items_required": ["cheese", "milk", "yogurt"]}, {"items_required": ["cheese", "cheese", "cheese", "cheese"]}, {"items_required": ["milk", "cheese", "yogurt", "cheese"]}, {"items_required": ["milk", "yogurt", "milk"]}]}
+{
+  "grid": {
+    "width": 12,
+    "height": 10,
+    "walls": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        0
+      ],
+      [
+        4,
+        0
+      ],
+      [
+        5,
+        0
+      ],
+      [
+        6,
+        0
+      ],
+      [
+        7,
+        0
+      ],
+      [
+        8,
+        0
+      ],
+      [
+        9,
+        0
+      ],
+      [
+        10,
+        0
+      ],
+      [
+        11,
+        0
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        11,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        2,
+        2
+      ],
+      [
+        6,
+        2
+      ],
+      [
+        10,
+        2
+      ],
+      [
+        11,
+        2
+      ],
+      [
+        0,
+        3
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        10,
+        3
+      ],
+      [
+        11,
+        3
+      ],
+      [
+        0,
+        4
+      ],
+      [
+        2,
+        4
+      ],
+      [
+        6,
+        4
+      ],
+      [
+        10,
+        4
+      ],
+      [
+        11,
+        4
+      ],
+      [
+        0,
+        5
+      ],
+      [
+        11,
+        5
+      ],
+      [
+        0,
+        6
+      ],
+      [
+        2,
+        6
+      ],
+      [
+        6,
+        6
+      ],
+      [
+        10,
+        6
+      ],
+      [
+        11,
+        6
+      ],
+      [
+        0,
+        7
+      ],
+      [
+        11,
+        7
+      ],
+      [
+        0,
+        8
+      ],
+      [
+        11,
+        8
+      ],
+      [
+        0,
+        9
+      ],
+      [
+        1,
+        9
+      ],
+      [
+        2,
+        9
+      ],
+      [
+        3,
+        9
+      ],
+      [
+        4,
+        9
+      ],
+      [
+        5,
+        9
+      ],
+      [
+        6,
+        9
+      ],
+      [
+        7,
+        9
+      ],
+      [
+        8,
+        9
+      ],
+      [
+        9,
+        9
+      ],
+      [
+        10,
+        9
+      ],
+      [
+        11,
+        9
+      ]
+    ]
+  },
+  "items": [
+    {
+      "id": "item_0",
+      "type": "cheese",
+      "position": [
+        3,
+        2
+      ]
+    },
+    {
+      "id": "item_1",
+      "type": "butter",
+      "position": [
+        5,
+        2
+      ]
+    },
+    {
+      "id": "item_2",
+      "type": "yogurt",
+      "position": [
+        3,
+        3
+      ]
+    },
+    {
+      "id": "item_3",
+      "type": "milk",
+      "position": [
+        5,
+        3
+      ]
+    },
+    {
+      "id": "item_4",
+      "type": "cheese",
+      "position": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "item_5",
+      "type": "butter",
+      "position": [
+        5,
+        4
+      ]
+    },
+    {
+      "id": "item_6",
+      "type": "yogurt",
+      "position": [
+        7,
+        2
+      ]
+    },
+    {
+      "id": "item_7",
+      "type": "milk",
+      "position": [
+        9,
+        2
+      ]
+    },
+    {
+      "id": "item_8",
+      "type": "cheese",
+      "position": [
+        7,
+        3
+      ]
+    },
+    {
+      "id": "item_9",
+      "type": "butter",
+      "position": [
+        9,
+        3
+      ]
+    },
+    {
+      "id": "item_10",
+      "type": "yogurt",
+      "position": [
+        7,
+        4
+      ]
+    },
+    {
+      "id": "item_11",
+      "type": "milk",
+      "position": [
+        9,
+        4
+      ]
+    },
+    {
+      "id": "item_12",
+      "type": "butter",
+      "position": [
+        3,
+        6
+      ]
+    },
+    {
+      "id": "item_13",
+      "type": "yogurt",
+      "position": [
+        5,
+        6
+      ]
+    },
+    {
+      "id": "item_14",
+      "type": "milk",
+      "position": [
+        7,
+        6
+      ]
+    },
+    {
+      "id": "item_15",
+      "type": "butter",
+      "position": [
+        9,
+        6
+      ]
+    }
+  ],
+  "drop_off": [
+    1,
+    8
+  ],
+  "num_bots": 1,
+  "difficulty": "easy",
+  "orders": [
+    {
+      "items_required": [
+        "milk",
+        "yogurt",
+        "yogurt"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "yogurt",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "butter",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "butter",
+        "cheese",
+        "butter"
+      ]
+    },
+    {
+      "items_required": [
+        "milk",
+        "yogurt",
+        "butter",
+        "milk"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "cheese",
+        "yogurt",
+        "yogurt"
+      ]
+    },
+    {
+      "items_required": [
+        "milk",
+        "butter",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "yogurt",
+        "butter",
+        "yogurt"
+      ]
+    },
+    {
+      "items_required": [
+        "butter",
+        "cheese",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "yogurt",
+        "cheese",
+        "cheese",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "butter",
+        "yogurt",
+        "yogurt"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "milk",
+        "cheese",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "yogurt",
+        "milk",
+        "yogurt"
+      ]
+    },
+    {
+      "items_required": [
+        "yogurt",
+        "yogurt",
+        "milk"
+      ]
+    },
+    {
+      "items_required": [
+        "milk",
+        "butter",
+        "cheese",
+        "milk"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "yogurt",
+        "milk"
+      ]
+    },
+    {
+      "items_required": [
+        "milk",
+        "cheese",
+        "yogurt",
+        "butter"
+      ]
+    },
+    {
+      "items_required": [
+        "milk",
+        "butter",
+        "butter"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "cheese",
+        "yogurt",
+        "yogurt"
+      ]
+    }
+  ]
+}

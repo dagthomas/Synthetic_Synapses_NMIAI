@@ -52,7 +52,8 @@ class GPUBeamSearcher:
                  speed_bonus: float = 0.0,
                  preferred_zone: tuple[int, ...] | None = None,
                  order_modulo: int | None = None,
-                 order_slot: int | None = None) -> None:
+                 order_slot: int | None = None,
+                 num_rounds: int | None = None) -> None:
         self.device = device
         self.ms = map_state
         self.all_orders = all_orders
@@ -67,6 +68,9 @@ class GPUBeamSearcher:
         self.drop_off_zones = getattr(map_state, 'drop_off_zones', [map_state.drop_off])
         self._multi_drop = len(self.drop_off_zones) > 1
         self.num_bots = num_bots
+        # num_rounds: actual game length (300 for easy-expert, 500 for nightmare)
+        # Defaults to MAX_ROUNDS (500) for backward compat; callers should pass explicitly
+        self.num_rounds = num_rounds if num_rounds is not None else MAX_ROUNDS
         self.pipeline_mode = pipeline_mode  # pre-fetches preview items proactively
         # pipeline_depth: which order ahead to target (1=order+1, 2=order+2, etc.)
         # Only used when pipeline_mode=True.
@@ -114,7 +118,7 @@ class GPUBeamSearcher:
                 real_id: idx for idx, real_id in enumerate(self.locked_bot_ids)}
             # Precomputed lookup tables (built in __init__ after item_types is ready)
             self._locked_all_planned_mask = None      # set after item_types upload
-            self._locked_remaining_planned = None     # [MAX_ROUNDS+1, num_types] bool GPU
+            self._locked_remaining_planned = None     # [num_rounds+1, num_types] bool GPU
         else:
             self.num_locked = 0
             self.locked_bot_ids = []
@@ -155,7 +159,7 @@ class GPUBeamSearcher:
             # _locked_all_planned_mask: bool [num_types] — True if any locked bot ever picks
             planned_set_all = set()
             for lb in range(self.num_locked):
-                for r in range(MAX_ROUNDS):
+                for r in range(self.num_rounds):
                     if self._locked_actions_np[lb, r] == ACT_PICKUP:
                         iidx = int(self._locked_action_items_np[lb, r])
                         if 0 <= iidx < self.num_items:
@@ -169,12 +173,12 @@ class GPUBeamSearcher:
             else:
                 self._locked_all_planned_mask = None
 
-            # _locked_remaining_planned: int16 [MAX_ROUNDS+1, num_types] — for each round r,
-            # COUNT of how many pickups of type t locked bots will make in [r, MAX_ROUNDS).
+            # _locked_remaining_planned: int16 [num_rounds+1, num_types] — for each round r,
+            # COUNT of how many pickups of type t locked bots will make in [r, num_rounds).
             # Suffix sum: remaining[r] = remaining[r+1] + (pickups at round r).
             # Used in _eval for count-aware coordination.
-            remaining = np.zeros((MAX_ROUNDS + 1, self.num_types), dtype=np.int16)
-            for r in range(MAX_ROUNDS - 1, -1, -1):
+            remaining = np.zeros((self.num_rounds + 1, self.num_types), dtype=np.int16)
+            for r in range(self.num_rounds - 1, -1, -1):
                 remaining[r] = remaining[r + 1]  # inherit future pickup counts
                 for lb in range(self.num_locked):
                     if self._locked_actions_np[lb, r] == ACT_PICKUP:
@@ -183,9 +187,9 @@ class GPUBeamSearcher:
                             tp = int(_itp[iidx])
                             if 0 <= tp < self.num_types:
                                 remaining[r, tp] += 1
-            # Upload to GPU as float [MAX_ROUNDS+1, num_types] for easy arithmetic
+            # Upload to GPU as float [num_rounds+1, num_types] for easy arithmetic
             self._locked_remaining_planned = torch.tensor(
-                remaining, dtype=torch.float32, device=device)  # [MAX_ROUNDS+1, num_types]
+                remaining, dtype=torch.float32, device=device)  # [num_rounds+1, num_types]
 
         # Walkable mask [H, W]
         self.walkable = (
@@ -1298,7 +1302,7 @@ class GPUBeamSearcher:
         inv = state['bot_inv']
         aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
 
-        rounds_left = MAX_ROUNDS - round_num - 1
+        rounds_left = self.num_rounds - round_num - 1
 
         # Score is dominant
         ev = state['score'].float() * 100000
@@ -1381,7 +1385,7 @@ class GPUBeamSearcher:
         inv = state['bot_inv']   # [B, INV_CAP] int8 (type index, -1=empty)
         aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
 
-        rounds_left = MAX_ROUNDS - round_num - 1
+        rounds_left = self.num_rounds - round_num - 1
         rl_f = float(max(rounds_left, 1))
 
         # Score is dominant factor (1 point = 100000 eval units)
@@ -1654,7 +1658,7 @@ class GPUBeamSearcher:
 
                 remaining_cover = None
                 if self._locked_remaining_planned is not None and round_num >= 0:
-                    rn = min(round_num, MAX_ROUNDS)
+                    rn = min(round_num, self.num_rounds)
                     remaining_cover = self._locked_remaining_planned[rn]  # [num_types] float (counts)
 
                 # locked_covers_slot[b, os]: True if any locked bot carries or will pick
@@ -1834,7 +1838,7 @@ class GPUBeamSearcher:
         parent_history = []
         act_offset_history = []
 
-        for rnd in range(MAX_ROUNDS):
+        for rnd in range(self.num_rounds):
             t_rnd = time.time()
             B = state['bot_x'].shape[0]
 
@@ -1903,11 +1907,11 @@ class GPUBeamSearcher:
             act_offset_history.append((taken_acts, taken_items))
 
             # Verbose diagnostics (only sync to CPU when printing)
-            if verbose and (rnd < 5 or rnd % 25 == 0 or rnd == MAX_ROUNDS - 1):
+            if verbose and (rnd < 5 or rnd % 25 == 0 or rnd == self.num_rounds - 1):
                 dt = time.time() - t_rnd
                 best_score = state['score'].max().item()
                 num_unique = 0
-                if rnd < 5 or rnd % 50 == 0 or rnd == MAX_ROUNDS - 1:
+                if rnd < 5 or rnd % 50 == 0 or rnd == self.num_rounds - 1:
                     hashes = self._hash(state)
                     num_unique = int(torch.unique(hashes).shape[0])
                 uniq_str = f", unique={num_unique}" if num_unique > 0 else ""
@@ -1924,7 +1928,7 @@ class GPUBeamSearcher:
         idx = best_idx
 
         wait_pad = [(ACT_WAIT, -1)] * (self.num_bots - 1)
-        for rnd in range(MAX_ROUNDS - 1, -1, -1):
+        for rnd in range(self.num_rounds - 1, -1, -1):
             taken_acts, taken_items = act_offset_history[rnd]
             act_type = int(taken_acts[idx])
             item = int(taken_items[idx])
@@ -2131,7 +2135,7 @@ class GPUBeamSearcher:
                       for streaming progress updates.
             bot_id: Which bot in the game state to optimize (default 0).
             start_rnd: Starting round index (default 0). Used for locked bot lookup.
-            max_rounds: Max rounds to run (default MAX_ROUNDS - start_rnd).
+            max_rounds: Max rounds to run (default num_rounds - start_rnd).
             init_state: Optional GPU state dict to start from instead of game_state.
                         If provided, game_state may be None.
 
@@ -2146,7 +2150,7 @@ class GPUBeamSearcher:
         d = self.device
 
         if max_rounds is None:
-            max_rounds = MAX_ROUNDS - start_rnd
+            max_rounds = self.num_rounds - start_rnd
 
         # Use position-filtered expand (6+MAX_ADJ actions vs 6+num_items)
         use_dp_expand = True
@@ -2342,14 +2346,16 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
                  locked_trajectories: dict[str, np.ndarray] | None = None,
                  candidate_bot_ids: tuple[int, int] = (0, 1),
                  no_compile: bool = False,
-                 speed_bonus: float = 0.0) -> None:
+                 speed_bonus: float = 0.0,
+                 num_rounds: int | None = None) -> None:
         # Store candidate IDs before parent init (parent sets candidate_bot_id=0)
         self.bot1_real_id = candidate_bot_ids[0]
         self.bot2_real_id = candidate_bot_ids[1]
         super().__init__(
             map_state, all_orders, device=device, num_bots=num_bots,
             locked_trajectories=locked_trajectories,
-            no_compile=no_compile, speed_bonus=speed_bonus)
+            no_compile=no_compile, speed_bonus=speed_bonus,
+            num_rounds=num_rounds)
 
     def _from_game_state_2bot(self, gs: GameState,
                                bot1_id: int = 0, bot2_id: int = 1
@@ -3020,7 +3026,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         inv2 = state['bot2_inv']
         aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
 
-        rounds_left = MAX_ROUNDS - round_num - 1
+        rounds_left = self.num_rounds - round_num - 1
 
         # Score is dominant
         ev = state['score'].float() * 100000
@@ -3228,7 +3234,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
 
         pruned_rounds = 0
 
-        for rnd in range(MAX_ROUNDS):
+        for rnd in range(self.num_rounds):
             B = state['bot1_x'].shape[0]
 
             # Sparse expand: distance-adaptive, returns only valid combos
@@ -3307,7 +3313,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
                 B_new = keep
 
             # Verbose output
-            if verbose and (rnd < 10 or rnd % 25 == 0 or rnd == MAX_ROUNDS - 1):
+            if verbose and (rnd < 10 or rnd % 25 == 0 or rnd == self.num_rounds - 1):
                 dt = time.time() - t0
                 best_score = state['score'].max().item()
                 print(f"  R{rnd:3d}: score={best_score:3d}, "
@@ -3330,7 +3336,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         bot1_seq = []
         bot2_seq = []
         idx = best_idx
-        for j in range(MAX_ROUNDS - 1, -1, -1):
+        for j in range(self.num_rounds - 1, -1, -1):
             bot1_seq.append((int(b1_act_history[j][idx]),
                              int(b1_item_history[j][idx])))
             bot2_seq.append((int(b2_act_history[j][idx]),
