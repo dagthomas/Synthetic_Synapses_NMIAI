@@ -97,7 +97,8 @@ def run_live_gpu(ws_url: str, difficulty: str, max_states: int = 5000) -> Tuple[
     live_script = os.path.join(SCRIPT_DIR, 'live_gpu_stream.py')
     t0 = time.time()
     cmd = [sys.executable, live_script, ws_url,
-           '--max-states', str(max_states), '--no-refine', '--save']
+           '--max-states', str(max_states), '--no-refine', '--save',
+           '--preload-capture']
     score = 0
     log_path = None
 
@@ -554,6 +555,26 @@ def main():
             n_new = capture_from_log(replay_log, diff)
             if n_new == 0:
                 print(f"  No new orders discovered, capture converged", file=sys.stderr)
+
+    # ── Phase 3: Perturbation search (post-processing) ──
+    elapsed_total = time.time() - t_start
+    remaining = args.time_budget - elapsed_total
+    if remaining > 10:
+        print(f"\n--- Phase 3: Perturbation search ({remaining:.0f}s left) ---", file=sys.stderr)
+        try:
+            from perturb_search import full_search
+            perturb_score = full_search(
+                diff, max_iterations=5, n_random=1000,
+                time_budget=remaining - 3, n_workers=None, search_all=False,
+            )
+            if perturb_score > best_score:
+                best_score = perturb_score
+                print(f"  Perturbation improved: {best_score}!", file=sys.stderr)
+                iteration_scores.append(('perturb', perturb_score, time.time() - t_start - elapsed_total))
+        except Exception as e:
+            print(f"  Perturbation search failed: {e}", file=sys.stderr)
+    else:
+        print(f"\n  Skipping perturbation search ({remaining:.0f}s left)", file=sys.stderr)
 
     # ── Summary ──
     total_time = time.time() - t_start

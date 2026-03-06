@@ -1,7 +1,7 @@
 {
   "difficulty": "expert",
   "date": "2026-03-06",
-  "total_orders": 14,
+  "total_orders": 16,
   "orders": [
     {
       "index": 0,
@@ -26,6 +26,26 @@
     {
       "index": 2,
       "items_required": [
+        "flour",
+        "bananas",
+        "flour",
+        "rice",
+        "yogurt"
+      ]
+    },
+    {
+      "index": 3,
+      "items_required": [
+        "apples",
+        "bananas",
+        "cheese",
+        "pasta",
+        "apples"
+      ]
+    },
+    {
+      "index": 4,
+      "items_required": [
         "butter",
         "tomatoes",
         "bananas",
@@ -35,7 +55,7 @@
       ]
     },
     {
-      "index": 3,
+      "index": 5,
       "items_required": [
         "flour",
         "tomatoes",
@@ -45,7 +65,7 @@
       ]
     },
     {
-      "index": 4,
+      "index": 6,
       "items_required": [
         "flour",
         "milk",
@@ -56,7 +76,7 @@
       ]
     },
     {
-      "index": 5,
+      "index": 7,
       "items_required": [
         "oats",
         "onions",
@@ -67,7 +87,7 @@
       ]
     },
     {
-      "index": 6,
+      "index": 8,
       "items_required": [
         "bananas",
         "milk",
@@ -78,7 +98,7 @@
       ]
     },
     {
-      "index": 7,
+      "index": 9,
       "items_required": [
         "cheese",
         "onions",
@@ -89,7 +109,7 @@
       ]
     },
     {
-      "index": 8,
+      "index": 10,
       "items_required": [
         "pasta",
         "yogurt",
@@ -100,7 +120,7 @@
       ]
     },
     {
-      "index": 9,
+      "index": 11,
       "items_required": [
         "onions",
         "bread",
@@ -111,7 +131,7 @@
       ]
     },
     {
-      "index": 10,
+      "index": 12,
       "items_required": [
         "onions",
         "onions",
@@ -122,7 +142,7 @@
       ]
     },
     {
-      "index": 11,
+      "index": 13,
       "items_required": [
         "pasta",
         "bread",
@@ -133,7 +153,7 @@
       ]
     },
     {
-      "index": 12,
+      "index": 14,
       "items_required": [
         "rice",
         "cream",
@@ -144,7 +164,7 @@
       ]
     },
     {
-      "index": 13,
+      "index": 15,
       "items_required": [
         "pasta",
         "cereal",

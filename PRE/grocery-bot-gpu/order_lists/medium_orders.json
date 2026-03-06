@@ -1,7 +1,7 @@
 {
   "difficulty": "medium",
   "date": "2026-03-06",
-  "total_orders": 22,
+  "total_orders": 24,
   "orders": [
     {
       "index": 0,
@@ -23,13 +23,30 @@
     {
       "index": 2,
       "items_required": [
+        "pasta",
+        "cream",
+        "milk"
+      ]
+    },
+    {
+      "index": 3,
+      "items_required": [
+        "yogurt",
+        "pasta",
+        "eggs",
+        "butter"
+      ]
+    },
+    {
+      "index": 4,
+      "items_required": [
         "bread",
         "yogurt",
         "bread"
       ]
     },
     {
-      "index": 3,
+      "index": 5,
       "items_required": [
         "cheese",
         "cream",
@@ -37,7 +54,7 @@
       ]
     },
     {
-      "index": 4,
+      "index": 6,
       "items_required": [
         "butter",
         "cheese",
@@ -46,7 +63,7 @@
       ]
     },
     {
-      "index": 5,
+      "index": 7,
       "items_required": [
         "pasta",
         "cream",
@@ -56,7 +73,7 @@
       ]
     },
     {
-      "index": 6,
+      "index": 8,
       "items_required": [
         "cream",
         "milk",
@@ -65,7 +82,7 @@
       ]
     },
     {
-      "index": 7,
+      "index": 9,
       "items_required": [
         "bread",
         "bread",
@@ -74,30 +91,12 @@
       ]
     },
     {
-      "index": 8,
+      "index": 10,
       "items_required": [
         "milk",
         "cheese",
         "cheese",
         "pasta"
-      ]
-    },
-    {
-      "index": 9,
-      "items_required": [
-        "milk",
-        "milk",
-        "butter",
-        "eggs"
-      ]
-    },
-    {
-      "index": 10,
-      "items_required": [
-        "butter",
-        "cream",
-        "bread",
-        "bread"
       ]
     },
     {
@@ -106,12 +105,30 @@
         "milk",
         "milk",
         "butter",
+        "eggs"
+      ]
+    },
+    {
+      "index": 12,
+      "items_required": [
+        "butter",
+        "cream",
+        "bread",
+        "bread"
+      ]
+    },
+    {
+      "index": 13,
+      "items_required": [
+        "milk",
+        "milk",
+        "butter",
         "cream",
         "milk"
       ]
     },
     {
-      "index": 12,
+      "index": 14,
       "items_required": [
         "pasta",
         "bread",
@@ -121,7 +138,7 @@
       ]
     },
     {
-      "index": 13,
+      "index": 15,
       "items_required": [
         "milk",
         "eggs",
@@ -130,7 +147,7 @@
       ]
     },
     {
-      "index": 14,
+      "index": 16,
       "items_required": [
         "milk",
         "butter",
@@ -140,7 +157,7 @@
       ]
     },
     {
-      "index": 15,
+      "index": 17,
       "items_required": [
         "bread",
         "pasta",
@@ -149,7 +166,7 @@
       ]
     },
     {
-      "index": 16,
+      "index": 18,
       "items_required": [
         "eggs",
         "pasta",
@@ -159,7 +176,7 @@
       ]
     },
     {
-      "index": 17,
+      "index": 19,
       "items_required": [
         "eggs",
         "cream",
@@ -167,7 +184,7 @@
       ]
     },
     {
-      "index": 18,
+      "index": 20,
       "items_required": [
         "milk",
         "butter",
@@ -177,7 +194,7 @@
       ]
     },
     {
-      "index": 19,
+      "index": 21,
       "items_required": [
         "yogurt",
         "milk",
@@ -186,7 +203,7 @@
       ]
     },
     {
-      "index": 20,
+      "index": 22,
       "items_required": [
         "butter",
         "milk",
@@ -196,7 +213,7 @@
       ]
     },
     {
-      "index": 21,
+      "index": 23,
       "items_required": [
         "bread",
         "pasta",
