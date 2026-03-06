@@ -265,7 +265,7 @@ def run_stepladder(difficulty: str, hours: float = 6.0,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stepladder pipeline')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--hours', type=float, default=6.0)
     parser.add_argument('--max-states', type=int, default=None)
     parser.add_argument('--gpu', default='auto', choices=['auto', 'b200', '5090', 'generic'])

@@ -186,7 +186,7 @@ async def main():
     parser = argparse.ArgumentParser(
         description='Compare two production runs for determinism')
     parser.add_argument('difficulty', nargs='?', default='hard',
-                        choices=['easy', 'medium', 'hard', 'expert'])
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--rounds', type=int, default=5,
                         help='Rounds to capture per run (default: 5)')
     parser.add_argument('--url1', help='WS URL for run 1 (skip token fetch)')

@@ -221,7 +221,7 @@ def deep_optimize(difficulty: str, budget_s: float = 7200,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Deep offline optimization')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--budget', type=float, default=7200,
                         help='Time budget in seconds (default: 7200 = 2h)')
     parser.add_argument('--max-states', type=int, default=None)

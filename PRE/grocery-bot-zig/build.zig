@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const Difficulty = enum { auto, easy, medium, hard, expert };
+    const Difficulty = enum { auto, easy, medium, hard, expert, nightmare };
     const difficulty = b.option(Difficulty, "difficulty", "Target difficulty (auto = runtime detection)") orelse .auto;
 
     const name = switch (difficulty) {
@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
         .medium => "grocery-bot-medium",
         .hard => "grocery-bot-hard",
         .expert => "grocery-bot-expert",
+        .nightmare => "grocery-bot-nightmare",
     };
 
     const options = b.addOptions();
@@ -45,6 +46,7 @@ pub fn build(b: *std.Build) void {
         .medium => "grocery-sim-medium",
         .hard => "grocery-sim-hard",
         .expert => "grocery-sim-expert",
+        .nightmare => "grocery-sim-nightmare",
     };
 
     const sim_exe = b.addExecutable(.{

@@ -60,7 +60,7 @@ DY = [0, -1, 1, 0, 0, 0, 0]
 class MapState:
     """Static map data, built once per difficulty."""
     __slots__ = [
-        'width', 'height', 'grid', 'drop_off', 'spawn',
+        'width', 'height', 'grid', 'drop_off', 'drop_off_zones', 'spawn',
         'items', 'item_positions', 'item_types', 'item_type_names',
         'type_name_to_id', 'num_types', 'num_items',
         'item_adjacencies',  # walkable cells adjacent to each item
@@ -292,6 +292,7 @@ def build_map(difficulty: str) -> MapState:
     ms.height = h
     ms.grid = grid
     ms.drop_off = drop_off
+    ms.drop_off_zones = [drop_off]
     ms.spawn = spawn
     ms.items = items
     ms.item_positions = item_positions
@@ -448,7 +449,7 @@ def step(state: GameState, actions: list[tuple[int, int]], all_orders: list[Orde
                     state.bot_inv_add(bid, type_id)
 
         elif act_type == ACT_DROPOFF:
-            if bx == ms.drop_off[0] and by == ms.drop_off[1]:
+            if any(bx == dz[0] and by == dz[1] for dz in ms.drop_off_zones):
                 if state.bot_inv_count(bid) > 0:
                     active = state.get_active_order()
                     if active:
@@ -482,7 +483,7 @@ def step(state: GameState, actions: list[tuple[int, int]], all_orders: list[Orde
                                 for b2 in range(num_bots):
                                     bx2 = int(state.bot_positions[b2, 0])
                                     by2 = int(state.bot_positions[b2, 1])
-                                    if bx2 == ms.drop_off[0] and by2 == ms.drop_off[1]:
+                                    if any(bx2 == dz[0] and by2 == dz[1] for dz in ms.drop_off_zones):
                                         d = state.bot_inv_remove_matching(b2, new_active)
                                         score_delta += d
                                         state.score += d
@@ -579,6 +580,7 @@ def state_to_ws_format(state: GameState, all_orders: list[Order]) -> dict[str, A
         'items': item_list,
         'orders': order_list,
         'drop_off': list(ms.drop_off),
+        'drop_off_zones': [list(z) for z in ms.drop_off_zones] if len(ms.drop_off_zones) > 1 else None,
         'score': state.score,
     }
 
@@ -599,9 +601,11 @@ def build_map_from_capture(capture_data: dict[str, Any]) -> MapState:
         ix, iy = item['position']
         grid[iy, ix] = CELL_SHELF
 
-    # Dropoff
+    # Dropoff(s)
     drop_off = tuple(capture_data['drop_off'])
-    grid[drop_off[1], drop_off[0]] = CELL_DROPOFF
+    drop_off_zones = [tuple(z) for z in capture_data.get('drop_off_zones', [drop_off])]
+    for dz in drop_off_zones:
+        grid[dz[1], dz[0]] = CELL_DROPOFF
 
     # Spawn = bottom-right inside border
     spawn = (width - 2, height - 2)
@@ -652,6 +656,7 @@ def build_map_from_capture(capture_data: dict[str, Any]) -> MapState:
     ms.height = height
     ms.grid = grid
     ms.drop_off = drop_off
+    ms.drop_off_zones = drop_off_zones
     ms.spawn = spawn
     ms.items = items
     ms.item_positions = item_positions

@@ -80,6 +80,7 @@ def extract_capture(game_log_path, difficulty=None):
                 grid = data['grid']
                 items = data['items']
                 drop_off = data['drop_off']
+                drop_off_zones = data.get('drop_off_zones')
                 num_bots = len(data['bots'])
                 width = grid['width']
                 height = grid['height']
@@ -113,6 +114,8 @@ def extract_capture(game_log_path, difficulty=None):
         'difficulty': difficulty,
         'orders': orders_in_order,
     }
+    if drop_off_zones:
+        capture['drop_off_zones'] = drop_off_zones
 
     return capture, final_score, difficulty
 
@@ -199,7 +202,7 @@ def main():
     parser.add_argument('game_log', nargs='?',
                         help='Path to game_log_*.jsonl (or --latest)')
     parser.add_argument('difficulty', nargs='?',
-                        choices=['easy', 'medium', 'hard', 'expert'],
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'],
                         help='Difficulty (auto-detected if omitted)')
     parser.add_argument('--latest', action='store_true',
                         help='Use most recent game_log file')

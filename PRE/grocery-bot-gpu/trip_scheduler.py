@@ -449,7 +449,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Trip scheduler standalone test')
     parser.add_argument('difficulty', default='expert', nargs='?',
-                        choices=['easy', 'medium', 'hard', 'expert'])
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('seed', type=int, default=42, nargs='?')
     parser.add_argument('--time', type=float, default=5.0,
                         help='ILS time budget in seconds')

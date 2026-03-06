@@ -513,7 +513,7 @@ def full_search(difficulty, max_iterations=10, n_random=2000,
 
 def main():
     parser = argparse.ArgumentParser(description='Perturbation search on GPU DP solutions')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--iter', type=int, default=10, help='Max iterations for hill climbing')
     parser.add_argument('--random', type=int, default=2000, help='Random multi-perturbation trials')
     parser.add_argument('--budget', type=float, default=None, help='Time budget in seconds')

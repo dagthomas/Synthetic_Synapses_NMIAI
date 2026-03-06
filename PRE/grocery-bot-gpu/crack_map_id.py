@@ -176,7 +176,7 @@ def get_available_counts(difficulty: str) -> dict[str, int]:
 
 def main():
     parser = argparse.ArgumentParser(description='Crack orders from map_id')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--map-id', type=str, help='map_id UUID')
     parser.add_argument('--map-seed', type=int, help='map_seed from token')
     parser.add_argument('--token', type=str, help='JWT token (or full wss:// URL)')

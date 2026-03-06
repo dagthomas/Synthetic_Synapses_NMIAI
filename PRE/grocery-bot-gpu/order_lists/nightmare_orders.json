@@ -1,0 +1,220 @@
+{
+  "difficulty": "nightmare",
+  "seed": 7005,
+  "date": "2026-03-06",
+  "orders": [
+    {
+      "items_required": [
+        "bread",
+        "cheese",
+        "cream",
+        "yogurt"
+      ]
+    },
+    {
+      "items_required": [
+        "oats",
+        "peppers",
+        "tomatoes",
+        "yogurt"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "cereal",
+        "eggs",
+        "apples",
+        "eggs"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "lettuce",
+        "cheese",
+        "cheese",
+        "cereal",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "apples",
+        "bread",
+        "sugar",
+        "milk",
+        "butter",
+        "tomatoes",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "carrots",
+        "onions",
+        "sugar",
+        "sugar",
+        "bread",
+        "yogurt",
+        "oats"
+      ]
+    },
+    {
+      "items_required": [
+        "cream",
+        "carrots",
+        "rice",
+        "juice",
+        "rice"
+      ]
+    },
+    {
+      "items_required": [
+        "cereal",
+        "juice",
+        "bananas",
+        "peppers",
+        "pasta",
+        "flour"
+      ]
+    },
+    {
+      "items_required": [
+        "pasta",
+        "cream",
+        "onions",
+        "eggs",
+        "cheese"
+      ]
+    },
+    {
+      "items_required": [
+        "tomatoes",
+        "apples",
+        "apples",
+        "tomatoes",
+        "yogurt",
+        "pasta"
+      ]
+    },
+    {
+      "items_required": [
+        "lettuce",
+        "apples",
+        "cream",
+        "cereal",
+        "cereal",
+        "onions",
+        "sugar"
+      ]
+    },
+    {
+      "items_required": [
+        "pasta",
+        "cereal",
+        "eggs",
+        "juice",
+        "bananas",
+        "sugar",
+        "eggs"
+      ]
+    },
+    {
+      "items_required": [
+        "lettuce",
+        "bananas",
+        "lettuce",
+        "cereal"
+      ]
+    },
+    {
+      "items_required": [
+        "peppers",
+        "cereal",
+        "lettuce",
+        "eggs",
+        "lettuce",
+        "cereal"
+      ]
+    },
+    {
+      "items_required": [
+        "cereal",
+        "bread",
+        "sugar",
+        "cheese",
+        "peppers"
+      ]
+    },
+    {
+      "items_required": [
+        "cheese",
+        "lettuce",
+        "juice",
+        "onions"
+      ]
+    },
+    {
+      "items_required": [
+        "oats",
+        "apples",
+        "apples",
+        "cream",
+        "sugar",
+        "yogurt",
+        "cereal"
+      ]
+    },
+    {
+      "items_required": [
+        "oats",
+        "butter",
+        "carrots",
+        "bread"
+      ]
+    },
+    {
+      "items_required": [
+        "lettuce",
+        "cheese",
+        "peppers",
+        "flour"
+      ]
+    },
+    {
+      "items_required": [
+        "yogurt",
+        "pasta",
+        "tomatoes",
+        "bread"
+      ]
+    },
+    {
+      "items_required": [
+        "cereal",
+        "bananas",
+        "bananas",
+        "milk"
+      ]
+    },
+    {
+      "items_required": [
+        "pasta",
+        "cereal",
+        "yogurt",
+        "milk",
+        "flour"
+      ]
+    },
+    {
+      "items_required": [
+        "lettuce",
+        "rice",
+        "milk",
+        "apples",
+        "eggs"
+      ]
+    }
+  ]
+}

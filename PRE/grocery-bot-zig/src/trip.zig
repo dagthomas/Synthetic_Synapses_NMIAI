@@ -140,7 +140,7 @@ pub fn planBestTrip(
         .easy => true, // Single bot: round-trip cost
         .medium => false, // Pure bot distance (orchestrator handles round-trip)
         .hard => false,
-        .expert => false, // EXPERIMENT: pure distance
+        .expert, .nightmare => false,
         .auto => bot_count <= 1 or bot_count >= 8,
     };
     for (0..all_count) |i| {

@@ -50,9 +50,31 @@ pub fn parseGameState(data: []const u8, state: *GameState) !bool {
         state.grid[wy][wx] = .wall;
     }
 
-    const drop = root.get("drop_off").?.array.items;
-    state.dropoff = .{ .x = @intCast(drop[0].integer), .y = @intCast(drop[1].integer) };
-    state.grid[@intCast(state.dropoff.y)][@intCast(state.dropoff.x)] = .dropoff;
+    // Parse dropoff(s): try drop_off_zones (array of positions), fall back to single drop_off
+    state.dropoff_count = 0;
+    if (root.get("drop_off_zones")) |zones_val| {
+        // Multi-dropoff: [[x1,y1], [x2,y2], ...]
+        const zones = zones_val.array.items;
+        for (zones) |z| {
+            if (state.dropoff_count >= types.MAX_DROPOFFS) break;
+            const zx: i16 = @intCast(z.array.items[0].integer);
+            const zy: i16 = @intCast(z.array.items[1].integer);
+            state.dropoffs[state.dropoff_count] = .{ .x = zx, .y = zy };
+            state.dropoff_count += 1;
+            state.grid[@intCast(zy)][@intCast(zx)] = .dropoff;
+        }
+        if (state.dropoff_count > 0) {
+            state.dropoff = state.dropoffs[0]; // primary = first
+        }
+    }
+    if (state.dropoff_count == 0) {
+        // Single dropoff (backward compat)
+        const drop = root.get("drop_off").?.array.items;
+        state.dropoff = .{ .x = @intCast(drop[0].integer), .y = @intCast(drop[1].integer) };
+        state.dropoffs[0] = state.dropoff;
+        state.dropoff_count = 1;
+        state.grid[@intCast(state.dropoff.y)][@intCast(state.dropoff.x)] = .dropoff;
+    }
 
     const items = root.get("items").?.array.items;
     state.item_count = @intCast(@min(items.len, MAX_ITEMS));
@@ -112,8 +134,8 @@ pub fn parseGameState(data: []const u8, state: *GameState) !bool {
     }
 
     if (state.round == 0) {
-        std.debug.print("R0: {d}x{d} grid, {d} bots, {d} items, dropoff ({d},{d})\n", .{
-            state.width, state.height, state.bot_count, state.item_count, state.dropoff.x, state.dropoff.y,
+        std.debug.print("R0: {d}x{d} grid, {d} bots, {d} items, {d} dropoffs, primary ({d},{d})\n", .{
+            state.width, state.height, state.bot_count, state.item_count, state.dropoff_count, state.dropoff.x, state.dropoff.y,
         });
     }
     return true;

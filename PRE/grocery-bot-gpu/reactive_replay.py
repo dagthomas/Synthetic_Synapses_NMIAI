@@ -235,7 +235,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Reactive GPU replay (re-solves on unknown orders)')
     parser.add_argument('ws_url', help='WebSocket URL')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     args = parser.parse_args()
 
     score = asyncio.run(reactive_replay(args.ws_url, args.difficulty))

@@ -97,7 +97,7 @@ def try_record(difficulty, seed, port, db_url):
 def main():
     parser = argparse.ArgumentParser(description="Sweep runner for grocery bot")
     parser.add_argument("difficulty", nargs="?", default="medium",
-                        choices=["easy", "medium", "hard", "expert"])
+                        choices=["easy", "medium", "hard", "expert", "nightmare"])
     parser.add_argument("--seeds", type=int, default=50, help="Number of seeds to test")
     parser.add_argument("--port", type=int, default=9880, help="Base port")
     parser.add_argument("--no-record", action="store_true", help="Skip DB recording")

@@ -95,14 +95,14 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
 
         // 1. At dropoff with active items → drop_off
-        if (bpos.eql(state.dropoff) and bot.inv_len > 0 and has_active) {
+        if (state.isAtDropoff(bpos) and bot.inv_len > 0 and has_active) {
             try writer.print("{{\"bot\":{d},\"action\":\"drop_off\"}}", .{bot.id});
             expected_next_pos[bi] = bpos;
             continue;
         }
 
         // 1b. At dropoff, order fully covered → drop_off for chain reaction
-        if (bpos.eql(state.dropoff) and bot.inv_len > 0 and active.count == 0) {
+        if (state.isAtDropoff(bpos) and bot.inv_len > 0 and active.count == 0) {
             var has_active_order = false;
             for (0..state.order_count) |oi| {
                 if (state.orders[oi].is_active and !state.orders[oi].complete) { has_active_order = true; break; }
@@ -147,7 +147,8 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
         // 3. Has active items → go deliver
         if (has_active) {
-            const res = pathfinding.bfs(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+            const q_drop = state.nearestDropoff(bpos);
+            const res = pathfinding.bfs(state, bpos, q_drop, @intCast(bi), &bot_positions);
             if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                 try writeMove(writer, bot.id, d);
                 updateBotPos(&bot_positions[bi], d);
@@ -222,10 +223,11 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
         // 6. Has preview items → camp near dropoff
         if (bot.inv_len > 0 and has_preview) {
-            const dm_drop = pathfinding.getPrecomputedDm(state, state.dropoff);
+            const q_camp_drop = state.nearestDropoff(bpos);
+            const dm_drop = pathfinding.getPrecomputedDm(state, q_camp_drop);
             const dist_drop = pathfinding.distFromMap(dm_drop, bpos);
             if (dist_drop > 2) {
-                const res = pathfinding.bfs(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+                const res = pathfinding.bfs(state, bpos, q_camp_drop, @intCast(bi), &bot_positions);
                 if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                     try writeMove(writer, bot.id, d);
                     updateBotPos(&bot_positions[bi], d);

@@ -31,7 +31,7 @@ const UNREACHABLE = types.UNREACHABLE;
 // Auto includes MAPF code but gates on bot_count >= 5 at runtime.
 const USE_MAPF = switch (DIFFICULTY) {
     .easy, .medium => false,
-    .hard, .expert, .auto => true,
+    .hard, .expert, .nightmare, .auto => true,
 };
 
 /// Navigate from start to target using MAPF (ST-A*) when available, else BFS.
@@ -522,7 +522,13 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     }
 
     // ── Distance from dropoff (pre-computed at round 0, walls never change) ──
-    var dm_drop: DistMap = pathfinding.getPrecomputedDm(state, state.dropoff).*;
+    // Multi-source BFS: distance to nearest dropoff across all drop zones
+    var dm_drop: DistMap = undefined;
+    if (state.dropoff_count <= 1) {
+        dm_drop = pathfinding.getPrecomputedDm(state, state.dropoff).*;
+    } else {
+        pathfinding.bfsMultiSourceDistMap(state, state.dropoffs[0..state.dropoff_count], &dm_drop);
+    }
 
     // ── Detect stuck order (Fix 2: add reachability check) ──
     var order_stuck = false;
@@ -834,7 +840,8 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
             .medium => state.bot_count,
             .hard => 4,
             .expert => 7,
-            .auto => if (state.bot_count >= 8) 7 else if (state.bot_count >= 5) 4 else state.bot_count,
+            .nightmare => 10,
+            .auto => if (state.bot_count >= 20) 10 else if (state.bot_count >= 8) 7 else if (state.bot_count >= 5) 4 else state.bot_count,
         };
 
         // Greedily assign: for each type, find closest (bot, item) pair
@@ -870,14 +877,14 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                             .easy => false, // Single bot: pure pickup distance
                             .medium => true, // Round-trip cost reduces total cycle time
                             .hard => true,
-                            .expert => false,
+                            .expert, .nightmare => false,
                             .auto => state.bot_count > 1 and state.bot_count < 8,
                         };
                         const trip_cost: u16 = if (use_roundtrip and d_back < UNREACHABLE) raw_d + d_back else raw_d;
                         // Concentration bonus: prefer bots that already have assignments
                         const conc_bonus: u16 = switch (DIFFICULTY) {
                             .medium => if (bot_assigned[bk] > 0) 8 else 0,
-                            .expert => if (bot_assigned[bk] > 0) 3 else 0,
+                            .expert, .nightmare => if (bot_assigned[bk] > 0) 3 else 0,
                             .auto => if (bot_assigned[bk] > 0 and state.bot_count == 3) 8 else 0,
                             else => 0,
                         };
@@ -1063,8 +1070,9 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // Reserve paths for delivering bots → picking bots will route around them
         // Skip bots with committed plans to dropoff (already re-reserved)
         for (del_bots[0..del_count]) |db| {
-            if (spacetime.getCommitted(db.bi, state.dropoff) == null) {
-                _ = spacetime.planAndReserve(state, eff_pos[db.bi], state.dropoff, db.bi, &bot_positions);
+            const db_drop = state.nearestDropoff(eff_pos[db.bi]);
+            if (spacetime.getCommitted(db.bi, db_drop) == null) {
+                _ = spacetime.planAndReserve(state, eff_pos[db.bi], db_drop, db.bi, &bot_positions);
             }
         }
         // Reserve stalled bots as stationary obstacles (they won't move soon)
@@ -1157,7 +1165,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // ─── 0. Auto-delivery completion: order fully satisfied but not completed ──
         // When auto-delivery fills ALL items of the new active order, no bot has has_active=true
         // because active needs are empty. But drop_off still triggers the completion check (+5).
-        if (order_auto_complete and (bpos.eql(state.dropoff) or bot.pos.eql(state.dropoff)) and bot.inv_len > 0) {
+        if (order_auto_complete and (state.isAtDropoff(bpos) or state.isAtDropoff(bot.pos)) and bot.inv_len > 0) {
             try writer.print("{{\"bot\":{d},\"action\":\"drop_off\"}}", .{bot.id});
             pb.has_trip = false;
             pb.delivering = false;
@@ -1168,7 +1176,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
         // ─── 1. At dropoff → drop off ───────────────────────────────
         // Only drop off if bot has items matching the active order (drop_off ignores non-matching items)
-        if ((bpos.eql(state.dropoff) or bot.pos.eql(state.dropoff)) and bot.inv_len > 0 and has_active) {
+        if ((state.isAtDropoff(bpos) or state.isAtDropoff(bot.pos)) and bot.inv_len > 0 and has_active) {
             try writer.print("{{\"bot\":{d},\"action\":\"drop_off\"}}", .{bot.id});
             pb.has_trip = false;
             pb.delivering = false;
@@ -1178,7 +1186,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         }
 
         // ─── 1b. At dropoff but shouldn't be → evacuate (multi-bot) or fall through (single) ──
-        if ((bpos.eql(state.dropoff) or bot.pos.eql(state.dropoff)) and !has_active) {
+        if ((state.isAtDropoff(bpos) or state.isAtDropoff(bot.pos)) and !has_active) {
             if (state.bot_count > 1) {
                 const flee_dir = fleeDropoff(state, bpos, @intCast(bi), &bot_positions);
                 if (flee_dir) |d| {
@@ -1334,7 +1342,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
 
         // Endgame yielding: bots that can't reach dropoff in time should get out of the way
         // so bots that CAN deliver aren't blocked in corridors
-        if (state.bot_count > 1 and rounds_left <= 15 and dist_to_drop > rounds_left and !bpos.eql(state.dropoff)) {
+        if (state.bot_count > 1 and rounds_left <= 15 and dist_to_drop > rounds_left and !state.isAtDropoff(bpos)) {
             // This bot can't deliver in time — flee from dropoff to clear paths
             const flee_dir = fleeDropoff(state, bpos, @intCast(bi), &bot_positions);
             if (flee_dir) |d| {
@@ -1464,11 +1472,12 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                     }
                 }
             }
-            const res = navigateTo(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+            const my_drop = state.nearestDropoff(bpos);
+            const res = navigateTo(state, bpos, my_drop, @intCast(bi), &bot_positions);
             if (res.dist < UNREACHABLE) {
                 if (res.first_dir) |d| {
                     // Anti-oscillation: if near dropoff and BFS would move us further away, wait (max 3 rounds)
-                    const cur_mdist = @abs(bpos.x - state.dropoff.x) + @abs(bpos.y - state.dropoff.y);
+                    const cur_mdist = @abs(bpos.x - my_drop.x) + @abs(bpos.y - my_drop.y);
                     if (cur_mdist <= 2 and state.bot_count > 1 and pb.stall_count < 3) {
                         var next_pos = bpos;
                         switch (d) {
@@ -1477,7 +1486,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                             .left => next_pos.x -= 1,
                             .right => next_pos.x += 1,
                         }
-                        const next_mdist = @abs(next_pos.x - state.dropoff.x) + @abs(next_pos.y - state.dropoff.y);
+                        const next_mdist = @abs(next_pos.x - my_drop.x) + @abs(next_pos.y - my_drop.y);
                         if (next_mdist > cur_mdist) {
                             // Would move away from dropoff — wait instead of detouring (max 2 rounds)
                             try writer.print("{{\"bot\":{d},\"action\":\"wait\"}}", .{bot.id});
@@ -1599,14 +1608,15 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // ─── 7. Have active items → go deliver ─────────────────────
         if (bot.inv_len > 0 and has_active) {
             pb.delivering = true;
-            const res = navigateTo(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+            const del_drop = state.nearestDropoff(bpos);
+            const res = navigateTo(state, bpos, del_drop, @intCast(bi), &bot_positions);
             if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                 // Anti-oscillation near dropoff (max 3 rounds wait)
-                const cur_md = @abs(bpos.x - state.dropoff.x) + @abs(bpos.y - state.dropoff.y);
+                const cur_md = @abs(bpos.x - del_drop.x) + @abs(bpos.y - del_drop.y);
                 if (cur_md <= 2 and state.bot_count > 1 and pb.stall_count < 3) {
                     var np = bpos;
                     switch (d) { .up => np.y -= 1, .down => np.y += 1, .left => np.x -= 1, .right => np.x += 1 }
-                    const next_md = @abs(np.x - state.dropoff.x) + @abs(np.y - state.dropoff.y);
+                    const next_md = @abs(np.x - del_drop.x) + @abs(np.y - del_drop.y);
                     if (next_md > cur_md) {
                         try writer.print("{{\"bot\":{d},\"action\":\"wait\"}}", .{bot.id});
                         pending_is_move[bi] = false;
@@ -1770,9 +1780,10 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 const rush_to_dropoff = pick_remaining.count <= 2;
                 const target_dist: u16 = if (rush_to_dropoff) 0 else 3;
                 if (dd_dist > target_dist) {
-                    const res = navigateTo(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+                    const dd_drop = state.nearestDropoff(bpos);
+                    const res = navigateTo(state, bpos, dd_drop, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
-                        if (!rush_to_dropoff or !bpos.eql(state.dropoff)) {
+                        if (!rush_to_dropoff or !state.isAtDropoff(bpos)) {
                             try writeMove(writer, bot.id, d);
                             updateBotPos(&bot_positions[bi], d);
                             pending_dirs[bi] = d;
@@ -1809,7 +1820,8 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
                 // Full dead-inv bots (<5 bots): camp near dropoff for auto-delivery when order cycles
                 // Being near dropoff means instant auto-delivery if next order includes dead items
                 if (dd_dist > 3) {
-                    const res = navigateTo(state, bpos, state.dropoff, @intCast(bi), &bot_positions);
+                    const camp_drop = state.nearestDropoff(bpos);
+                    const res = navigateTo(state, bpos, camp_drop, @intCast(bi), &bot_positions);
                     if (res.dist < UNREACHABLE) if (res.first_dir) |d| {
                         try writeMove(writer, bot.id, d);
                         updateBotPos(&bot_positions[bi], d);

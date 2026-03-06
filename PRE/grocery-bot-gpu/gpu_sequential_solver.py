@@ -51,9 +51,9 @@ except (ImportError, OSError):
     pass  # zig_ffi DLL is optional; solver works without it (slower verification)
 
 # Difficulty-aware defaults: more refinement for harder difficulties with more bots
-DEFAULT_REFINE_ITERS = {'easy': 0, 'medium': 3, 'hard': 10, 'expert': 10}
-DEFAULT_PASS1_ORDERINGS = {'easy': 1, 'medium': 1, 'hard': 3, 'expert': 3}
-DEFAULT_MAX_DP_BOTS = {'easy': 1, 'medium': 3, 'hard': 5, 'expert': 7}
+DEFAULT_REFINE_ITERS = {'easy': 0, 'medium': 3, 'hard': 10, 'expert': 10, 'nightmare': 5}
+DEFAULT_PASS1_ORDERINGS = {'easy': 1, 'medium': 1, 'hard': 3, 'expert': 3, 'nightmare': 3}
+DEFAULT_MAX_DP_BOTS = {'easy': 1, 'medium': 3, 'hard': 5, 'expert': 7, 'nightmare': 10}
 
 
 def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
@@ -100,9 +100,11 @@ def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
     locked_pos_y = np.zeros((num_locked, MAX_ROUNDS), dtype=np.int16)
 
     # Record actions for locked bots
+    _wait_act = (ACT_WAIT, -1)
     for i, bid in enumerate(locked_bot_ids):
+        acts = bot_actions[bid]
         for r in range(MAX_ROUNDS):
-            a, item = bot_actions[bid][r]
+            a, item = acts[r] if r < len(acts) else _wait_act
             locked_actions[i, r] = a
             locked_action_items[i, r] = item
 
@@ -113,7 +115,7 @@ def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
     for r in range(MAX_ROUNDS):
         round_actions = []
         for bid in range(num_total_bots):
-            if bid in bot_actions:
+            if bid in bot_actions and r < len(bot_actions[bid]):
                 round_actions.append(bot_actions[bid][r])
             else:
                 round_actions.append((ACT_WAIT, -1))
@@ -184,7 +186,7 @@ def _make_combined(bot_actions, num_bots):
     for r in range(MAX_ROUNDS):
         round_acts = []
         for bid in range(num_bots):
-            if bid in bot_actions:
+            if bid in bot_actions and r < len(bot_actions[bid]):
                 round_acts.append(bot_actions[bid][r])
             else:
                 round_acts.append(_wait)
@@ -240,6 +242,7 @@ DEFAULT_MAX_STATES = {
     'medium': 500_000,
     'hard': 100_000,
     'expert': 100_000,
+    'nightmare': 50_000,
 }
 
 
@@ -2249,7 +2252,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='Sequential per-bot GPU DP solver')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--max-states', type=int, default=None,
                         help='Max states per bot (default: difficulty-aware)')

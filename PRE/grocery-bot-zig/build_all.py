@@ -5,7 +5,7 @@ import subprocess, sys, os  # nosec B404
 ZIG = r"C:\Users\dagth\zig15\zig-x86_64-windows-0.15.2\zig.exe"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-difficulties = ["easy", "medium", "hard", "expert"]
+difficulties = ["easy", "medium", "hard", "expert", "nightmare"]
 
 def build_one(difficulty=None):
     cmd = [ZIG, "build", "-Doptimize=ReleaseFast"]

@@ -17,12 +17,13 @@ const MAX_ITEMS = types.MAX_ITEMS;
 const MAX_ORDERS = types.MAX_ORDERS;
 const INV_CAP = types.INV_CAP;
 
-const MAX_ROUNDS = 300;
+const MAX_ROUNDS = 500;
 const MAX_ALL_ORDERS = 64;
 
-const ALL_TYPES = [16][]const u8{
+const ALL_TYPES = [24][]const u8{
     "milk", "bread", "eggs", "butter", "cheese", "pasta", "rice", "juice",
     "yogurt", "cereal", "flour", "sugar", "coffee", "tea", "oil", "salt",
+    "honey", "beans", "corn", "soup", "cream", "oats", "apples", "lettuce",
 };
 
 pub const DiffConfig = struct {
@@ -40,6 +41,7 @@ pub const CONFIGS = struct {
     pub const medium = DiffConfig{ .w = 16, .h = 12, .bots = 3, .aisles = 3, .type_count = 8, .order_min = 3, .order_max = 5 };
     pub const hard = DiffConfig{ .w = 22, .h = 14, .bots = 5, .aisles = 4, .type_count = 12, .order_min = 3, .order_max = 5 };
     pub const expert = DiffConfig{ .w = 28, .h = 18, .bots = 10, .aisles = 5, .type_count = 16, .order_min = 4, .order_max = 6 };
+    pub const nightmare = DiffConfig{ .w = 30, .h = 18, .bots = 20, .aisles = 6, .type_count = 21, .order_min = 4, .order_max = 7 };
 };
 
 // ── Sim Game State ─────────────────────────────────────────────────────
@@ -73,7 +75,7 @@ pub const SimGame = struct {
     // Map info
     dropoff: [2]i16,
     spawn: [2]i16,
-    item_types: [16]ItemType,
+    item_types: [24]ItemType,
     type_count: u8,
     // Score
     score: i32,
@@ -337,11 +339,12 @@ pub const SimGame = struct {
         }
 
         // Item types: use ALL_TYPES names for distinctness (indices match Python type IDs)
-        for (0..num_types) |i| {
-            game.item_types[i] = ItemType.fromStr(ALL_TYPES[i % ALL_TYPES.len]);
+        const nt: usize = @min(@as(usize, num_types), ALL_TYPES.len);
+        for (0..nt) |i| {
+            game.item_types[i] = ItemType.fromStr(ALL_TYPES[i]);
         }
-        for (num_types..16) |i| {
-            game.item_types[i] = ItemType.fromStr(ALL_TYPES[i % ALL_TYPES.len]);
+        for (nt..ALL_TYPES.len) |i| {
+            game.item_types[i] = ItemType.fromStr(ALL_TYPES[i]);
         }
 
         // Items (already sorted by (x,y) from Python)

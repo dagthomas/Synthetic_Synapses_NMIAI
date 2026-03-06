@@ -6,21 +6,24 @@ CONFIGS = {
     "medium": {"w": 16, "h": 12, "bots": 3, "aisles": 3, "types": 8, "order_size": (3, 5)},
     "hard":   {"w": 22, "h": 14, "bots": 5, "aisles": 4, "types": 12, "order_size": (3, 5)},
     "expert": {"w": 28, "h": 18, "bots": 10, "aisles": 5, "types": 16, "order_size": (4, 6)},
+    "nightmare": {"w": 30, "h": 18, "bots": 20, "aisles": 6, "types": 21, "order_size": (4, 7)},
 }
 
 ALL_TYPES = [
     "milk", "bread", "eggs", "butter", "cheese", "pasta", "rice", "juice",
     "yogurt", "cereal", "flour", "sugar", "coffee", "tea", "oil", "salt",
+    "honey", "beans", "corn", "soup", "cream", "oats", "apples", "lettuce",
 ]
 
-MAX_ROUNDS = 300
+MAX_ROUNDS = 500  # Global max (nightmare uses 500, others use 300)
+DIFF_ROUNDS = {'easy': 300, 'medium': 300, 'hard': 300, 'expert': 300, 'nightmare': 500}
 INV_CAP = 3
-MAX_BOTS = 10
+MAX_BOTS = 24
 MAX_ITEMS = 200
 MAX_ORDERS = 100
-MAX_ORDER_SIZE = 6
+MAX_ORDER_SIZE = 7
 
-DIFF_IDX = {'easy': 0, 'medium': 1, 'hard': 2, 'expert': 3}
+DIFF_IDX = {'easy': 0, 'medium': 1, 'hard': 2, 'expert': 3, 'nightmare': 4}
 
 # Reverse lookup: (width, height, num_bots) -> difficulty name
 _DIFFICULTY_DIMS = {

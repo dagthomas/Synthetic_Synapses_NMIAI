@@ -285,7 +285,7 @@ def run_iterative(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--max-time', type=int, default=600, help='Total time budget')
     parser.add_argument('--max-states', type=int, default=50000)

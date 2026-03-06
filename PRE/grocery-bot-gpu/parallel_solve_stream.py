@@ -96,7 +96,7 @@ def solve(difficulty, time_limit=240.0, num_workers=None):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Parallel solve with streaming output')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--time', type=float, default=240.0, help='Time budget in seconds')
     parser.add_argument('--workers', type=int, default=None, help='Number of parallel workers')
     args = parser.parse_args()

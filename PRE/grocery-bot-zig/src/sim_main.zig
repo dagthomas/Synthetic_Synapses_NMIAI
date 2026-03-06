@@ -22,6 +22,7 @@ pub fn main() !void {
             .medium => "medium",
             .hard => "hard",
             .expert => "expert",
+            .nightmare => "nightmare",
             .auto => "hard",
         };
     }

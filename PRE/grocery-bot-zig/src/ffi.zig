@@ -11,9 +11,9 @@ const sim = @import("sim.zig");
 
 const SimGame = sim.SimGame;
 const ActionRec = SimGame.ActionRec;
-const MAX_ROUNDS = 300;
+const MAX_ROUNDS = 500;
 const MAX_ALL_ORDERS: u16 = 64;
-const MAX_BOTS: u8 = 16;
+const MAX_BOTS: u8 = 24;
 
 fn getDiffConfig(difficulty: u8) sim.DiffConfig {
     return switch (difficulty) {
@@ -21,6 +21,7 @@ fn getDiffConfig(difficulty: u8) sim.DiffConfig {
         1 => sim.CONFIGS.medium,
         2 => sim.CONFIGS.hard,
         3 => sim.CONFIGS.expert,
+        4 => sim.CONFIGS.nightmare,
         else => sim.CONFIGS.easy,
     };
 }
