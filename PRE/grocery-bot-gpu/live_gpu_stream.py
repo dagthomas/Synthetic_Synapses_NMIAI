@@ -66,7 +66,7 @@ PR_PARAMS = {
     'medium':    {'max_states': 25_000, 'horizon': 55},
     'hard':      {'max_states': 40_000, 'horizon': 60},
     'expert':    {'max_states': 20_000, 'horizon': 50},
-    'nightmare': {'max_states': 15_000, 'horizon': 40},
+    'nightmare': {'max_states': 5_000, 'horizon': 15, 'max_gpu_bots': 3},
 }
 
 ACTION_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
@@ -1030,9 +1030,11 @@ class AnytimeGPUStream:
             except ImportError:
                 dev = 'cpu'
 
+            from configs import DIFF_ROUNDS as _DR
+            _mr = _DR.get(self._difficulty, 300)
             searcher = GPUBeamSearcher(
                 ms, all_orders, device=dev, num_bots=self._num_bots,
-                no_compile=True)
+                no_compile=True, max_rounds=_mr)
 
             with self._pr_lock:
                 self._pr_searcher = searcher
@@ -1223,26 +1225,46 @@ class AnytimeGPUStream:
             'locked_bot_ids': locked_bot_ids,
         }
 
-    @staticmethod
-    def _pr_priority_key(bot, drop_pos, tables):
+    def _nearest_dropoff(self, pos):
+        """Return the nearest dropoff zone position to `pos`."""
+        ms = self._map_state
+        if ms is None:
+            return (0, 0)
+        zones = getattr(ms, 'drop_off_zones', None) or [ms.drop_off]
+        best, best_d = tuple(ms.drop_off), 999999
+        for dz in zones:
+            dz = tuple(dz)
+            d = self._dist(pos, dz)
+            if d < best_d:
+                best, best_d = dz, d
+        return best
+
+    def _at_any_dropoff(self, pos):
+        """Check if pos is at any dropoff zone."""
+        ms = self._map_state
+        if ms is None:
+            return False
+        zones = getattr(ms, 'drop_off_zones', None) or [ms.drop_off]
+        return any(tuple(pos) == tuple(dz) for dz in zones)
+
+    def _pr_priority_key(self, bot, drop_pos, tables):
         """Sort key for per-round GPU worker priority ordering.
 
-        Delivery bots (carrying active-order items) first, by distance to dropoff.
-        Others last.
+        Delivery bots (carrying active-order items) first, by distance to
+        nearest dropoff. Others last.
         """
         bpos = tuple(bot['position'])
         inv = bot.get('inventory', [])
-        # Heuristic: any non-empty inventory bot is "potentially delivering"
-        # (we don't have active order data here, use non-empty as proxy)
         if inv:
+            # Use nearest dropoff for multi-dropoff maps
+            nearest = self._nearest_dropoff(bpos)
             if tables is not None:
                 try:
-                    dist = int(tables.get_distance(bpos, drop_pos))
+                    dist = int(tables.get_distance(bpos, nearest))
                 except Exception:
-                    # Table lookup can fail if position is outside precomputed grid; fall back to Manhattan
-                    dist = abs(bpos[0] - drop_pos[0]) + abs(bpos[1] - drop_pos[1])
+                    dist = abs(bpos[0] - nearest[0]) + abs(bpos[1] - nearest[1])
             else:
-                dist = abs(bpos[0] - drop_pos[0]) + abs(bpos[1] - drop_pos[1])
+                dist = abs(bpos[0] - nearest[0]) + abs(bpos[1] - nearest[1])
             return (0, dist, bot['id'])
         return (1, 0, bot['id'])
 
@@ -1330,6 +1352,10 @@ class AnytimeGPUStream:
                     bot_id_to_idx = {b['id']: i for i, b in enumerate(live_bots)}
 
                     n_bots_total = len(priority_sorted)
+                    max_gpu_bots = params.get('max_gpu_bots', n_bots_total)
+                    # Track greedy-assigned bot positions for collision avoidance
+                    greedy_occupied = {tuple(b['position']) for b in live_bots}
+
                     for rank, bot in enumerate(priority_sorted):
                         real_bid = bot_id_to_idx.get(bot['id'], len(planned_bots))
                         bot_pos = tuple(bot['position'])
@@ -1342,6 +1368,30 @@ class AnytimeGPUStream:
                                                  [bot_pos] * horizon))
                             locked_positions_cur.append(bot_pos)
                             locked_inventories_cur.append([-1] * INV_CAP)
+                            continue
+
+                        # P2: Beyond GPU bot cap → smart greedy action
+                        if rank >= max_gpu_bots:
+                            g_occ = greedy_occupied - {bot_pos}
+                            act, item_idx, _ = self._greedy_action(
+                                bot, ws_data, g_occ, allow_preview=True)
+                            bot_acts_by_id[bot['id']] = (act, item_idx)
+                            # Track where this greedy bot will be
+                            if ACT_MOVE_UP <= act <= ACT_MOVE_RIGHT:
+                                next_pos = (bot_pos[0] + DX[act], bot_pos[1] + DY[act])
+                                greedy_occupied.discard(bot_pos)
+                                greedy_occupied.add(next_pos)
+                            # Still record as planned for locked trajectories
+                            g_acts = [(act, item_idx)] + [(ACT_WAIT, -1)] * (horizon - 1)
+                            g_positions = self._simulate_single_bot(bot_pos, g_acts, rnd, horizon)
+                            planned_bots.append((real_bid, g_acts, g_positions))
+                            locked_positions_cur.append(bot_pos)
+                            bot_inv_ids = []
+                            for type_name in bot.get('inventory', []):
+                                bot_inv_ids.append(ms.type_name_to_id.get(type_name, -1))
+                            while len(bot_inv_ids) < INV_CAP:
+                                bot_inv_ids.append(-1)
+                            locked_inventories_cur.append(bot_inv_ids[:INV_CAP])
                             continue
 
                         # Priority-scale state budget and horizon
@@ -1370,11 +1420,13 @@ class AnytimeGPUStream:
 
                         # Create searcher with locked trajectories for this bot
                         if locked_trajs:
+                            from configs import DIFF_ROUNDS as _DR2
+                            _mr2 = _DR2.get(self._difficulty, 300)
                             cur_searcher = GPUBeamSearcher(
                                 ms, all_orders, device=dev,
                                 num_bots=num_bots,
                                 locked_trajectories=locked_trajs,
-                                no_compile=True)
+                                no_compile=True, max_rounds=_mr2)
                         else:
                             cur_searcher = searcher  # first bot: reuse base searcher
 
@@ -1409,9 +1461,11 @@ class AnytimeGPUStream:
 
                 elapsed = time.time() - t0
 
-                # Format as WS actions in priority order for conflict resolution
+                # Format as WS actions in bot-ID order for conflict resolution
+                # (matches game engine processing order)
+                id_sorted = sorted(priority_sorted, key=lambda b: b['id'])
                 ws_actions_by_priority = []
-                for bot in priority_sorted:
+                for bot in id_sorted:
                     act, item_idx = bot_acts_by_id.get(bot['id'], (ACT_WAIT, -1))
                     a = {'bot': bot['id'], 'action': ACTION_NAMES[act]}
                     if act == ACT_PICKUP and ms and 0 <= item_idx < len(ms.items):
@@ -1447,25 +1501,99 @@ class AnytimeGPUStream:
 
         ws_actions_with_bots: list of (action_dict, bot) in PRIORITY order.
         Higher-priority bots (earlier in list) win cell conflicts.
+        Handles: same-cell moves, head-on swaps, stationary bot blocking.
         Modifies action dicts in-place.
         """
         _act_map = {
             'move_up': ACT_MOVE_UP, 'move_down': ACT_MOVE_DOWN,
             'move_left': ACT_MOVE_LEFT, 'move_right': ACT_MOVE_RIGHT,
         }
-        claimed_cells = set()
+
+        # Build position→movement map for all bots
+        bot_positions = {}   # bot_id → current (x,y)
+        bot_targets = {}     # bot_id → target (x,y) or None if staying
+        for ws_act, bot in ws_actions_with_bots:
+            bpos = tuple(bot['position'])
+            bot_positions[bot['id']] = bpos
+            act_int = _act_map.get(ws_act.get('action', 'wait'))
+            if act_int is not None:
+                bot_targets[bot['id']] = (bpos[0] + DX[act_int], bpos[1] + DY[act_int])
+            else:
+                bot_targets[bot['id']] = None  # staying in place
+
+        # Dropoff zones are exempt from blocking
+        ms = self._map_state
+        dropoff_zones = set()
+        if ms:
+            zones = getattr(ms, 'drop_off_zones', None) or [ms.drop_off]
+            dropoff_zones = {tuple(dz) for dz in zones}
+        spawn = tuple(ms.spawn) if ms else None
+
+        claimed_cells = set()  # cells committed by higher-priority bots
+        committed_moves = {}   # bot_id → committed target (for swap detection)
 
         for ws_act, bot in ws_actions_with_bots:
             action_name = ws_act.get('action', 'wait')
             act_int = _act_map.get(action_name)
+            bpos = tuple(bot['position'])
+            bid = bot['id']
+
             if act_int is not None:
-                bx, by = bot['position']
-                target = (bx + DX[act_int], by + DY[act_int])
+                target = (bpos[0] + DX[act_int], bpos[1] + DY[act_int])
+
+                # Skip conflict checks for dropoff zones and spawn
+                if target in dropoff_zones or target == spawn:
+                    committed_moves[bid] = target
+                    continue
+
+                blocked = False
+
+                # Check 1: Target cell already claimed by higher-priority bot
                 if target in claimed_cells:
+                    blocked = True
+
+                # Check 2: Head-on swap — we want to move to A's cell, A wants
+                # to move to our cell
+                if not blocked:
+                    for other_id, other_target in committed_moves.items():
+                        if other_target == bpos and target == bot_positions.get(other_id):
+                            blocked = True
+                            break
+
+                # Check 3: Stationary bot blocking — a bot that isn't moving
+                # occupies its cell (unless higher-priority already moved away)
+                if not blocked:
+                    for ws_act2, bot2 in ws_actions_with_bots:
+                        if bot2['id'] == bid:
+                            continue
+                        b2pos = tuple(bot2['position'])
+                        if b2pos != target:
+                            continue
+                        # bot2 is at our target — is it staying there?
+                        b2_target = bot_targets.get(bot2['id'])
+                        if b2_target is None:  # stationary (wait/pickup/dropoff)
+                            blocked = True
+                            break
+                        # bot2 is moving away — if already committed, it's safe
+                        if bot2['id'] in committed_moves:
+                            continue  # committed to move away — cell will be free
+                        # Not yet processed (lower priority). For many bots (20+),
+                        # assume they WILL move (optimistic); for few bots, assume
+                        # they might stay (conservative).
+                        if len(ws_actions_with_bots) < 15:
+                            blocked = True
+                            break
+
+                if blocked:
                     ws_act['action'] = 'wait'
+                    claimed_cells.add(bpos)  # we stay at our position
                 else:
                     claimed_cells.add(target)
-            # dropoff: multiple bots can be at dropoff, no conflict
+                    committed_moves[bid] = target
+            else:
+                # Non-move action (wait/pickup/dropoff) — we stay in place
+                if bpos not in dropoff_zones and bpos != spawn:
+                    claimed_cells.add(bpos)
 
     def _resolve_pr_conflicts(self, ws_actions, live_bots):
         """Basic conflict resolution for per-round GPU actions (legacy).
@@ -1575,12 +1703,13 @@ class AnytimeGPUStream:
 
         ms = self._map_state
         walkable = self._walkable
-        drop_off = ms.drop_off
+        # Multi-dropoff: use nearest dropoff zone for routing
+        drop_off = self._nearest_dropoff((bx, by))
 
-        # 1. At dropoff → deliver ONLY if we have items the active order still needs.
+        # 1. At any dropoff → deliver ONLY if we have items the active order still needs.
         # Dead inventory (items not matching current order) falls through so the bot
         # can pick up new items or evacuate, instead of camping uselessly at dropoff.
-        if (bx, by) == drop_off:
+        if self._at_any_dropoff((bx, by)):
             active_needs = set()
             for order in data.get('orders', []):
                 if order.get('status') != 'active':
@@ -1627,7 +1756,7 @@ class AnytimeGPUStream:
 
         # 3. Inventory full → deliver or wait if dead inventory
         if inv_full:
-            if (bx, by) == drop_off:
+            if self._at_any_dropoff((bx, by)):
                 # Full at dropoff but didn't match active_needs above → dead inventory.
                 # Move 1 step away to clear the tile — do NOT route to spawn.
                 for _a in [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]:
@@ -1935,6 +2064,8 @@ class AnytimeGPUStream:
             if pr_result is not None:
                 pr_actions, pr_score = pr_result
                 return pr_actions, 'per_round_gpu'
+            if self._num_bots and self._num_bots >= 15:
+                return self._nightmare_greedy(live_bots, data, occupied), 'greedy'
             return self._greedy_all(live_bots, data, occupied), 'greedy'
 
         # ── Single-bot: plan (synced) > per-round GPU > plan (recovery) > greedy ──
@@ -2052,6 +2183,429 @@ class AnytimeGPUStream:
 
         return ws_actions, f'{plan.source}_recovery'
 
+    def _nightmare_greedy(self, live_bots, data, occupied):
+        """Greedy solver for nightmare (20+ bots, 3 dropoff zones, 500 rounds).
+
+        Key design: process in game-engine ID order with accurate collision tracking.
+        Uses 'remaining' set (unprocessed bot positions) + 'decided' set (processed bot
+        destinations) so BFS routing matches actual game-engine collision resolution.
+
+        Phase 0: Pre-evacuate useless bots from dropoffs (free the zones).
+        Phase 1: Main decision loop in ID order.
+        """
+        ms = self._map_state
+        walkable = self._walkable
+
+        # Dropoff zones
+        drop_zones = set()
+        if hasattr(ms, 'drop_off_zones') and ms.drop_off_zones:
+            drop_zones = {tuple(dz) for dz in ms.drop_off_zones}
+        else:
+            drop_zones = {tuple(ms.drop_off)}
+
+        # Active order needs
+        order_need = {}
+        for order in data.get('orders', []):
+            if order.get('status') != 'active':
+                continue
+            for t in order['items_required']:
+                order_need[t] = order_need.get(t, 0) + 1
+            for t in order.get('items_delivered', []):
+                if t in order_need:
+                    order_need[t] -= 1
+        order_need = {t: c for t, c in order_need.items() if c > 0}
+
+        # Preview order needs
+        preview_need = {}
+        for order in data.get('orders', []):
+            if order.get('status') != 'preview':
+                continue
+            for t in order['items_required']:
+                preview_need[t] = preview_need.get(t, 0) + 1
+            for t in order.get('items_delivered', []):
+                if t in preview_need:
+                    preview_need[t] -= 1
+        preview_need = {t: c for t, c in preview_need.items() if c > 0}
+
+        # Per-zone type carrying and routing counts
+        n_bots_total = len(live_bots)
+        zone_type_carrying = [{} for _ in range(n_zones)]
+        for bot in live_bots:
+            bzi = bot_zone.get(bot['id'], 0)
+            for t in bot.get('inventory', []):
+                zone_type_carrying[bzi][t] = zone_type_carrying[bzi].get(t, 0) + 1
+        zone_type_routed = [{} for _ in range(n_zones)]
+
+        # Zone-local bot counts for cap calculation
+        zone_bot_count = [0] * n_zones
+        for bid_i in range(n_bots_total):
+            zone_bot_count[bot_zone.get(bid_i, 0)] += 1
+
+        def _type_cap(needed, is_active, zone_bots):
+            """How many bots in a zone can target this type."""
+            return needed + max(1, zone_bots // 4)
+
+        # Build item adjacency map
+        items_by_type = {}
+        for item_idx, item in enumerate(ms.items):
+            t = item.get('type', '')
+            if t not in items_by_type:
+                items_by_type[t] = []
+            for adj in ms.item_adjacencies.get(item_idx, []):
+                items_by_type[t].append((item_idx, adj))
+
+        spawn = tuple(ms.spawn) if hasattr(ms, 'spawn') else (ms.width - 2, ms.height - 2)
+
+        # --- Zone definitions for nightmare ---
+        # 3 zones split by shelf x-coordinate, each with dedicated dropoff.
+        # LEFT: shelves 3,5,7,9  → dropoff (1,16)
+        # MIDDLE: shelves 11,13,15,17 → dropoff (15,16)
+        # RIGHT: shelves 19,21,23,25 → dropoff (28,1)
+        # Detects dropoff positions dynamically from map data.
+        dz_list = sorted(drop_zones, key=lambda dz: dz[0])  # sort left-to-right
+        if len(dz_list) >= 3:
+            zone_defs = [
+                {'dropoff': dz_list[0], 'x_max': 10},   # LEFT
+                {'dropoff': dz_list[1], 'x_max': 19},   # MIDDLE
+                {'dropoff': dz_list[2], 'x_max': 30},   # RIGHT
+            ]
+        else:
+            # Fallback: single zone with all items (non-nightmare layout)
+            zone_defs = [{'dropoff': dz_list[0], 'x_max': 30}]
+
+        # Bot zone assignment: 7 LEFT, 7 MIDDLE, 6 RIGHT
+        n_zones = len(zone_defs)
+        bot_zone = {}
+        if n_zones == 3:
+            for bid_i in range(n_bots_total):
+                if bid_i < 7:
+                    bot_zone[bid_i] = 0
+                elif bid_i < 14:
+                    bot_zone[bid_i] = 1
+                else:
+                    bot_zone[bid_i] = 2
+        else:
+            for bid_i in range(n_bots_total):
+                bot_zone[bid_i] = 0
+
+        # Build per-zone items_by_type (filter by item shelf position)
+        zone_items_by_type = [{} for _ in range(n_zones)]
+        for item_idx_z, item_z in enumerate(ms.items):
+            tz = item_z.get('type', '')
+            ix = item_z['position'][0]
+            zi = 0
+            for zi_check in range(n_zones):
+                if ix < zone_defs[zi_check]['x_max']:
+                    zi = zi_check
+                    break
+            if tz not in zone_items_by_type[zi]:
+                zone_items_by_type[zi][tz] = []
+            for adj_z in ms.item_adjacencies.get(item_idx_z, []):
+                zone_items_by_type[zi][tz].append((item_idx_z, adj_z))
+
+        # --- Collision tracking ---
+        # 'remaining': positions of bots not yet processed (will block moves)
+        # 'decided': positions of processed bots (staying or moved to)
+        # BFS blocked = remaining | decided. Only spawn is exempt (multi-overlap).
+        bot_pos = {}
+        for bot in live_bots:
+            bot_pos[bot['id']] = tuple(bot['position'])
+
+        remaining = {}  # pos -> count of unprocessed bots
+        for pos in bot_pos.values():
+            remaining[pos] = remaining.get(pos, 0) + 1
+        decided = set()
+
+        def _blocked():
+            return set(remaining.keys()) | decided
+
+        ws_actions_by_id = {}
+
+        # --- Phase 0: Pre-evacuate useless bots from dropoffs ---
+        # Dead/empty bots at dropoff zones must leave so delivery bots can access.
+        # Process in ID order (matches game engine).
+        pre_evacuated = {}  # bid -> action
+        for bot in sorted(live_bots, key=lambda b: b['id']):
+            bid = bot['id']
+            bpos = bot_pos[bid]
+            if bpos not in drop_zones:
+                continue
+            inv_evac = bot.get('inventory', [])
+            has_useful = any(t in order_need for t in inv_evac)
+            has_preview_evac = any(t in preview_need for t in inv_evac)
+            if has_useful or has_preview_evac:
+                continue  # will deliver useful/preview items, don't evacuate
+
+            # Must evacuate: try all 4 directions, prefer non-blocked
+            bx, by = bpos
+            best_act = ACT_WAIT
+            for try_act in [ACT_MOVE_LEFT, ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_RIGHT]:
+                nx, ny = bx + DX[try_act], by + DY[try_act]
+                if (nx, ny) in walkable and (nx, ny) not in _blocked():
+                    best_act = try_act
+                    break
+            if best_act != ACT_WAIT:
+                pre_evacuated[bid] = best_act
+                nx, ny = bx + DX[best_act], by + DY[best_act]
+                # Update tracking: this bot moves from bpos to (nx, ny)
+                remaining[bpos] -= 1
+                if remaining[bpos] <= 0:
+                    del remaining[bpos]
+                decided.add((nx, ny))
+
+        # --- Phase 1: Main decision loop (ID order) ---
+        for bot in sorted(live_bots, key=lambda b: b['id']):
+            bid = bot['id']
+            bpos = bot_pos[bid]
+            bx, by = bpos
+            inv = list(bot.get('inventory', []))
+            inv_full = len(inv) >= INV_CAP
+            has_useful = any(t in order_need for t in inv)
+            has_preview = any(t in preview_need for t in inv)
+
+            # Zone assignment for this bot
+            zi = bot_zone.get(bid, 0)
+            my_items = zone_items_by_type[zi]
+            my_dropoff = zone_defs[zi]['dropoff']
+
+            # Per-bot inventory type counts (prevent hoarding same type)
+            bot_type_count = {}
+            for t_inv in inv:
+                bot_type_count[t_inv] = bot_type_count.get(t_inv, 0) + 1
+
+            # If pre-evacuated, use that action
+            if bid in pre_evacuated:
+                act = pre_evacuated[bid]
+                # remaining already updated in phase 0, decided already set
+                ws_actions_by_id[bid] = self._format_ws(act, -1, bid)
+                # stall tracking
+                hist = self._bot_pos_history.get(bid, [])
+                hist.append(bpos)
+                if len(hist) > 6: hist = hist[-6:]
+                self._bot_pos_history[bid] = hist
+                self._bot_stall_count[bid] = 0
+                continue
+
+            # Remove this bot from remaining (it's being processed now)
+            if bpos in remaining:
+                remaining[bpos] -= 1
+                if remaining[bpos] <= 0:
+                    del remaining[bpos]
+
+            blocked = _blocked()
+            exempt = {spawn} | drop_zones  # Allow BFS paths through dropoffs
+
+            act, item_idx = ACT_WAIT, -1
+
+            # 1. At any dropoff with active-order items -> deliver
+            if bpos in drop_zones and has_useful:
+                act = ACT_DROPOFF
+            # 2. At dropoff without useful -> move away
+            elif bpos in drop_zones:
+                for try_act in [ACT_MOVE_LEFT, ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_RIGHT]:
+                    nx, ny = bx + DX[try_act], by + DY[try_act]
+                    if (nx, ny) in walkable and (nx, ny) not in blocked:
+                        act = try_act
+                        break
+            # 3. Adjacent to needed item -> pick up (active only; preview if carrying active)
+            #    Per-bot limit: don't pick more of a type than the order needs (diversify inventory)
+            elif not inv_full:
+                bot_type_count = {}
+                for t_inv in inv:
+                    bot_type_count[t_inv] = bot_type_count.get(t_inv, 0) + 1
+                for idx_nd, need_dict in enumerate([order_need, preview_need]):
+                    if act == ACT_PICKUP:
+                        break
+                    is_active = (idx_nd == 0)
+                    if not is_active and not has_useful:
+                        continue
+                    for t in need_dict:
+                        if need_dict[t] <= 0:
+                            continue
+                        # Per-bot: don't hoard same type (max 1 unless order needs more)
+                        if bot_type_count.get(t, 0) >= need_dict[t]:
+                            continue
+                        ztc = zone_type_carrying[zi]
+                        ztr = zone_type_routed[zi]
+                        total = ztc.get(t, 0) + ztr.get(t, 0)
+                        if total >= _type_cap(need_dict[t], is_active, zone_bot_count[zi]):
+                            continue
+                        for item_idx_c, adj in my_items.get(t, []):
+                            if adj == bpos:
+                                act = ACT_PICKUP
+                                item_idx = item_idx_c
+                                ztc[t] = ztc.get(t, 0) + 1
+                                bot_type_count[t] = bot_type_count.get(t, 0) + 1
+                                break
+                        if act == ACT_PICKUP:
+                            break
+
+            # 4. Has useful items -> go to zone's dropoff (deliver at any if already there)
+            if act == ACT_WAIT and has_useful:
+                a = self._bfs_avoid(bpos, my_dropoff, walkable, blocked, exempt)
+                if a != ACT_WAIT:
+                    act = a
+
+            # 5. Not full -> route to nearest needed item (respecting per-bot diversity)
+            if act == ACT_WAIT and not inv_full:
+                best_dist, best_adj, best_idx, best_type = 9999, None, -1, None
+                for idx_nd, need_dict in enumerate([order_need, preview_need]):
+                    if best_adj is not None:
+                        break
+                    is_active = (idx_nd == 0)
+                    if not is_active and not has_useful:
+                        continue
+                    for t in need_dict:
+                        if need_dict[t] <= 0:
+                            continue
+                        if bot_type_count.get(t, 0) >= need_dict[t]:
+                            continue
+                        ztc5 = zone_type_carrying[zi]
+                        ztr5 = zone_type_routed[zi]
+                        total = ztc5.get(t, 0) + ztr5.get(t, 0)
+                        if total >= _type_cap(need_dict[t], is_active, zone_bot_count[zi]):
+                            continue
+                        for idx_c, adj in my_items.get(t, []):
+                            d = self._dist(bpos, adj)
+                            if d < best_dist:
+                                best_dist = d
+                                best_adj = adj
+                                best_idx = idx_c
+                                best_type = t
+                if best_adj is not None:
+                    if bpos == best_adj:
+                        act = ACT_PICKUP
+                        item_idx = best_idx
+                        zone_type_carrying[zi][best_type] = zone_type_carrying[zi].get(best_type, 0) + 1
+                    else:
+                        act = self._bfs_avoid(bpos, best_adj, walkable, blocked, exempt)
+                        zone_type_routed[zi][best_type] = zone_type_routed[zi].get(best_type, 0) + 1
+
+            # 6. Has useful or preview items -> deliver at zone's dropoff
+            if act == ACT_WAIT and inv and (has_useful or has_preview):
+                a = self._bfs_avoid(bpos, my_dropoff, walkable, blocked, exempt)
+                if a != ACT_WAIT:
+                    act = a
+
+            # 6b. Dead-inv bots near dropoff -> flee to clear corridor
+            if act == ACT_WAIT and inv_full and not has_useful and not has_preview:
+                near_any_dz = any(abs(bx-dz[0])+abs(by-dz[1]) <= 3 for dz in drop_zones)
+                if near_any_dz:
+                    ndz = min(drop_zones, key=lambda dz: abs(bx-dz[0])+abs(by-dz[1]))
+                    best_act, best_d = ACT_WAIT, abs(bx-ndz[0])+abs(by-ndz[1])
+                    for try_act in [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]:
+                        nx, ny = bx + DX[try_act], by + DY[try_act]
+                        if (nx, ny) in walkable and (nx, ny) not in blocked:
+                            d = abs(nx-ndz[0])+abs(ny-ndz[1])
+                            if d > best_d:
+                                best_d = d
+                                best_act = try_act
+                    if best_act != ACT_WAIT:
+                        act = best_act
+
+            # 7. Idle -> approach nearest active-order item (no type cap)
+            if act == ACT_WAIT and not inv_full:
+                best_dist, best_adj = 9999, None
+                for t in order_need:
+                    if order_need[t] <= 0:
+                        continue
+                    for idx_c, adj in my_items.get(t, []):
+                        d = self._dist(bpos, adj)
+                        if d < best_dist:
+                            best_dist = d
+                            best_adj = adj
+                if best_adj is not None:
+                    act = self._bfs_avoid(bpos, best_adj, walkable, blocked, exempt)
+
+            # 8. Anti-stall: if stuck for 4+ rounds, random valid move
+            stall = self._bot_stall_count.get(bid, 0)
+            if act == ACT_WAIT and stall >= 4:
+                import random
+                moves = [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]
+                random.shuffle(moves)
+                for try_act in moves:
+                    nx, ny = bx + DX[try_act], by + DY[try_act]
+                    if (nx, ny) in walkable and (nx, ny) not in blocked:
+                        act = try_act
+                        break
+                # If all blocked, try any walkable (ignore blocked)
+                if act == ACT_WAIT:
+                    for try_act in moves:
+                        nx, ny = bx + DX[try_act], by + DY[try_act]
+                        if (nx, ny) in walkable:
+                            act = try_act
+                            break
+
+            # Update stall tracking
+            hist = self._bot_pos_history.get(bid, [])
+            hist.append(bpos)
+            if len(hist) > 6:
+                hist = hist[-6:]
+            self._bot_pos_history[bid] = hist
+            if len(hist) >= 2 and hist[-1] == hist[-2]:
+                self._bot_stall_count[bid] = self._bot_stall_count.get(bid, 0) + 1
+            else:
+                self._bot_stall_count[bid] = 0
+
+            # Update collision tracking
+            if act in (ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT):
+                nx, ny = bx + DX[act], by + DY[act]
+                if (nx, ny) in walkable:
+                    decided.add((nx, ny))
+                else:
+                    decided.add(bpos)
+                    act = ACT_WAIT
+            else:
+                decided.add(bpos)
+
+            ws_actions_by_id[bid] = self._format_ws(act, item_idx, bid)
+
+        return [ws_actions_by_id[bot['id']] for bot in live_bots]
+
+    @staticmethod
+    def _bfs_avoid(start, goal, walkable, blocked, exempt):
+        """BFS avoiding blocked cells (except goal and exempt cells like spawn/dropoff)."""
+        if start == goal:
+            return ACT_WAIT
+        from collections import deque
+
+        def ok(pos):
+            if pos not in walkable:
+                return False
+            if pos in blocked and pos != goal and pos not in exempt:
+                return False
+            return True
+
+        queue = deque()
+        visited = {start: None}
+        for act in [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]:
+            nx, ny = start[0] + DX[act], start[1] + DY[act]
+            if ok((nx, ny)) and (nx, ny) not in visited:
+                visited[(nx, ny)] = act
+                if (nx, ny) == goal:
+                    return act
+                queue.append((nx, ny))
+        while queue:
+            cx, cy = queue.popleft()
+            first_act = visited[(cx, cy)]
+            for act in [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]:
+                nx, ny = cx + DX[act], cy + DY[act]
+                if ok((nx, ny)) and (nx, ny) not in visited:
+                    visited[(nx, ny)] = first_act
+                    if (nx, ny) == goal:
+                        return first_act
+                    queue.append((nx, ny))
+        # No path avoiding blocked — try ignoring blocks (best manhattan direction)
+        best_act, best_d = ACT_WAIT, 9999
+        for act in [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]:
+            nx, ny = start[0] + DX[act], start[1] + DY[act]
+            if (nx, ny) in walkable:
+                d = abs(nx - goal[0]) + abs(ny - goal[1])
+                if d < best_d:
+                    best_d = d
+                    best_act = act
+        return best_act
+
     def _greedy_all(self, live_bots, data, occupied):
         """Coordinate bots with yield-first ordering.
 
@@ -2071,9 +2625,14 @@ class AnytimeGPUStream:
         """
         ms = self._map_state
         walkable = self._walkable
-        drop_off = ms.drop_off
+        drop_off = ms.drop_off  # primary dropoff (used as fallback)
         spawn = ms.spawn
         drop_pos = tuple(drop_off)
+        drop_zones = set()
+        if hasattr(ms, 'drop_off_zones') and ms.drop_off_zones:
+            drop_zones = {tuple(dz) for dz in ms.drop_off_zones}
+        else:
+            drop_zones = {drop_pos}
 
         # ── Update per-bot position history and stall counts ─────────────
         for bot in live_bots:
@@ -2129,9 +2688,10 @@ class AnytimeGPUStream:
             if not any(t in order_need for t in inv):
                 continue
             bpos = tuple(bot['position'])
-            if bpos == drop_off:
+            if bpos in drop_zones:
                 continue  # already delivering, no "next cell" needed
-            act = bfs_next_action(bpos, drop_off, walkable, set(), ms)
+            nearest_dz = self._nearest_dropoff(bpos)
+            act = bfs_next_action(bpos, nearest_dz, walkable, set(), ms)
             if act != ACT_WAIT:
                 bx, by = bpos
                 delivery_wants.add((bx + DX[act], by + DY[act]))
@@ -2152,7 +2712,7 @@ class AnytimeGPUStream:
             if is_yield:
                 return (0, 0, bot['id'])    # yield: by bot ID (stable)
             elif has_useful:
-                d = self._dist(bpos, drop_off)
+                d = self._dist(bpos, self._nearest_dropoff(bpos))
                 return (1, d, bot['id'])    # delivery: closest to dropoff first
             elif full_dead:
                 # Full dead inventory: process bottommost first (highest y).
@@ -2167,16 +2727,25 @@ class AnytimeGPUStream:
         # bots in our sorted order can plan around earlier bots' movements.
         assigned_pickup = {}
         ws_actions_by_id = {}
+        many_bots = len(live_bots) >= 15
         tentative_occ = set(occupied)  # starts as current positions
         yield_stuck_at_drop = False     # True if a yield bot at dropoff is completely stuck
         # Dropoff occupancy limit: only 1 delivery bot on the dropoff cell at a time.
         # bots already at dropoff count as occupying it from round start.
         dropoff_reserved = any(
-            tuple(b['position']) == drop_pos for b in live_bots
+            tuple(b['position']) in drop_zones for b in live_bots
             if any(t in order_need for t in b.get('inventory', []))
         )
 
-        for bot in sorted(live_bots, key=_sort_key):
+        # For many-bot games (nightmare 20 bots), process in bot-ID order to
+        # match game engine collision resolution. For fewer bots, keep priority
+        # sort (yield → delivery → pickup) for better coordination.
+        if many_bots:
+            sorted_bots = sorted(live_bots, key=lambda b: b['id'])
+        else:
+            sorted_bots = sorted(live_bots, key=_sort_key)
+
+        for bot in sorted_bots:
             bpos = tuple(bot['position'])
             bx, by = bpos
             inv = bot.get('inventory', [])
@@ -2191,7 +2760,7 @@ class AnytimeGPUStream:
                 # adjacent free cell (clears the delivery path locally).
                 # Empty yield bots elsewhere → chain-clear toward dropoff.
                 has_dead_inv = len(inv) > 0 and not has_useful
-                if bpos == drop_off or has_dead_inv:
+                if bpos in drop_zones or has_dead_inv:
                     # Move 1 step to any adjacent free cell to clear the corridor
                     act = ACT_WAIT
                     for try_act in (ACT_MOVE_LEFT, ACT_MOVE_UP,
@@ -2200,11 +2769,12 @@ class AnytimeGPUStream:
                         if (tx, ty) in walkable and (tx, ty) not in eff_occ:
                             act = try_act
                             break
-                    if act == ACT_WAIT and bpos == drop_off:
+                    if act == ACT_WAIT and bpos in drop_zones:
                         yield_stuck_at_drop = True  # mark so delivery bots back away
                 else:
-                    # Empty yield bot → yield toward dropoff to chain-clear path
-                    act = bfs_next_action(bpos, drop_off, walkable, eff_occ, ms)
+                    # Empty yield bot → yield toward nearest dropoff to chain-clear path
+                    nearest_dz = self._nearest_dropoff(bpos)
+                    act = bfs_next_action(bpos, nearest_dz, walkable, eff_occ, ms)
                     if act == ACT_WAIT:
                         # Blocked toward dropoff — try any adjacent free cell
                         for try_act in (ACT_MOVE_LEFT, ACT_MOVE_UP,
@@ -2226,13 +2796,13 @@ class AnytimeGPUStream:
                 # it this round should back away to give the yield bot room to escape.
                 if yield_stuck_at_drop and act != ACT_WAIT:
                     ncx, ncy = bx + DX[act], by + DY[act]
-                    if (ncx, ncy) == drop_pos:
+                    if (ncx, ncy) in drop_zones:
                         backed = False
                         for back_act in (ACT_MOVE_UP, ACT_MOVE_DOWN,
                                          ACT_MOVE_LEFT, ACT_MOVE_RIGHT):
                             rx, ry = bx + DX[back_act], by + DY[back_act]
                             if ((rx, ry) in walkable and (rx, ry) not in eff_occ
-                                    and (rx, ry) != drop_pos):
+                                    and (rx, ry) not in drop_zones):
                                 act = back_act
                                 item_idx = -1
                                 backed = True
@@ -2242,9 +2812,9 @@ class AnytimeGPUStream:
 
                 # Dropoff staging: if dropoff already reserved by another delivery bot,
                 # redirect this bot to staging cell instead of colliding.
-                if act != ACT_WAIT and bpos != drop_pos:
+                if act != ACT_WAIT and bpos not in drop_zones:
                     ncx, ncy = bx + DX[act], by + DY[act]
-                    if (ncx, ncy) == drop_pos and dropoff_reserved:
+                    if (ncx, ncy) in drop_zones and dropoff_reserved:
                         # Route to staging cell unless already adjacent to dropoff
                         if staging_pos != drop_pos and (bx, by) != staging_pos:
                             stage_act = bfs_next_action(bpos, staging_pos, walkable, eff_occ, ms)
@@ -2253,9 +2823,9 @@ class AnytimeGPUStream:
                                 item_idx = -1
                             else:
                                 act = ACT_WAIT  # hold position until dropoff clears
-                if bpos != drop_pos and act != ACT_WAIT:
+                if bpos not in drop_zones and act != ACT_WAIT:
                     ncx, ncy = bx + DX[act], by + DY[act]
-                    if (ncx, ncy) == drop_pos and not dropoff_reserved:
+                    if (ncx, ncy) in drop_zones and not dropoff_reserved:
                         dropoff_reserved = True  # this bot claims dropoff next round
 
             else:
@@ -2265,8 +2835,9 @@ class AnytimeGPUStream:
                 # items. Step 1 cell to any adjacent free cell to clear the corridor.
                 has_dead_inv_full = len(inv) >= INV_CAP and not has_useful
                 if has_dead_inv_full:
-                    # Route toward dropoff (chain reaction may auto-deliver on order change)
-                    act = bfs_next_action(bpos, drop_off, walkable, eff_occ, ms)
+                    # Route toward nearest dropoff (chain reaction may auto-deliver on order change)
+                    nearest_dz = self._nearest_dropoff(bpos)
+                    act = bfs_next_action(bpos, nearest_dz, walkable, eff_occ, ms)
                     if act == ACT_WAIT:
                         # Blocked toward dropoff — try any adjacent free cell
                         for try_act in (ACT_MOVE_UP, ACT_MOVE_DOWN,
@@ -2279,6 +2850,12 @@ class AnytimeGPUStream:
                 else:
                     allowed = {t for t, c in still_needed.items()
                                if assigned_pickup.get(t, 0) < c}
+                    # For many-bot games, limit pickers to avoid congestion
+                    total_assigned = sum(assigned_pickup.values())
+                    max_pickers = 10 if many_bots else 999
+                    if total_assigned >= max_pickers and allowed:
+                        # Too many pickers — this bot should prefetch preview instead
+                        allowed = set()
                     allow_prev = not allowed
                     act, item_idx, claimed = self._greedy_action(
                         bot, data, eff_occ, target_types=allowed, allow_preview=allow_prev)

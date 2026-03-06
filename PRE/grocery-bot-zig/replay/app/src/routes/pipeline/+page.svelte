@@ -1,5 +1,6 @@
 <script>
 	import Grid from '$lib/components/Grid.svelte';
+	import { onMount } from 'svelte';
 
 	// Adaptive cell size — bigger for small grids, smaller for large ones
 	let adaptiveCell = $derived(
@@ -162,6 +163,21 @@
 	})));
 	let botPositions = $derived(new Map(botsTyped.map(b => [`${b.position[0]},${b.position[1]}`, b])));
 	let selectedBot  = $state(null);
+
+	// ── Auto-start from query params (e.g. from Replay button on runs page) ────
+	onMount(() => {
+		const params = new URLSearchParams(window.location.search);
+		const urlParam = params.get('url');
+		const modeParam = params.get('mode');
+		if (urlParam) {
+			wsUrl = urlParam;
+			if (modeParam === 'iterate') {
+				mode = 'iterate';
+				// Tick to let reactivity settle, then auto-start
+				requestAnimationFrame(() => startIterate());
+			}
+		}
+	});
 
 	// ── JWT parse ────────────────────────────────────────────────────────────────
 	function parseToken(url) {
@@ -971,6 +987,7 @@
 					botColors={BOT_COLORS}
 					{selectedBot}
 					onSelectBot={(id) => selectedBot = selectedBot === id ? null : id}
+					difficulty={detectedDiff || tokenInfo?.difficulty}
 				/>
 			</div>
 			{:else}

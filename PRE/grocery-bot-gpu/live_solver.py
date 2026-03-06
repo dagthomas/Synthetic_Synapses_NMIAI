@@ -39,6 +39,9 @@ def ws_to_capture(data):
         'difficulty': detect_difficulty(len(data['bots'])),
         'orders': [],
     }
+    # Multi-dropoff zones (nightmare has 3)
+    if 'drop_off_zones' in data:
+        capture['drop_off_zones'] = data['drop_off_zones']
 
     for order in data.get('orders', []):
         capture['orders'].append({

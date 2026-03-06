@@ -398,6 +398,7 @@
 					botColors={BOT_COLORS}
 					{selectedBot}
 					onSelectBot={(id) => selectedBot = selectedBot === id ? null : id}
+					{difficulty}
 				/>
 			</div>
 

@@ -28,6 +28,7 @@ DIFFICULTY_MAP = {
     (16, 12, 3): "medium",
     (22, 14, 5): "hard",
     (28, 18, 10): "expert",
+    (30, 18, 20): "nightmare",
 }
 
 
@@ -73,6 +74,7 @@ def parse_log_file(path):
     bot_count = len(r0["bots"])
     items = r0["items"]
     drop_off = r0["drop_off"]
+    drop_off_zones = r0.get("drop_off_zones", [drop_off])  # Nightmare has 3 zones
     spawn = [width - 2, height - 2]  # Standard spawn position
 
     # Derive shelves from item positions (items sit adjacent to shelves)
@@ -174,6 +176,7 @@ def parse_log_file(path):
         "shelves": shelves,
         "items": items_db,
         "drop_off": drop_off,
+        "drop_off_zones": drop_off_zones,
         "spawn": spawn,
         "final_score": final_score,
         "items_delivered": items_delivered,
@@ -190,9 +193,9 @@ def save_to_db(db_url, record, run_type='live'):
         cur.execute("""
             INSERT INTO runs (seed, difficulty, grid_width, grid_height, bot_count,
                               item_types, order_size_min, order_size_max,
-                              walls, shelves, items, drop_off, spawn,
+                              walls, shelves, items, drop_off, drop_off_zones, spawn,
                               final_score, items_delivered, orders_completed, run_type)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             record["seed"], record["difficulty"],
@@ -200,6 +203,7 @@ def save_to_db(db_url, record, run_type='live'):
             record["item_types"], record["order_size_min"], record["order_size_max"],
             json.dumps(record["walls"]), json.dumps(record["shelves"]),
             json.dumps(record["items"]), json.dumps(record["drop_off"]),
+            json.dumps(record["drop_off_zones"]),
             json.dumps(record["spawn"]),
             record["final_score"], record["items_delivered"], record["orders_completed"],
             run_type,

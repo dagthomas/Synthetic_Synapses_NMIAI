@@ -41,7 +41,7 @@ from game_engine import (
     DX, DY,
 )
 from gpu_beam_search import GPUBeamSearcher, GPUBeamSearcher2Bot
-from configs import CONFIGS, DIFF_IDX as _DIFF_IDX
+from configs import CONFIGS, DIFF_IDX as _DIFF_IDX, DIFF_ROUNDS as _DIFF_ROUNDS
 
 _ZIG_AVAILABLE = False
 try:
@@ -53,7 +53,7 @@ except (ImportError, OSError):
 # Difficulty-aware defaults: more refinement for harder difficulties with more bots
 DEFAULT_REFINE_ITERS = {'easy': 0, 'medium': 3, 'hard': 10, 'expert': 10, 'nightmare': 5}
 DEFAULT_PASS1_ORDERINGS = {'easy': 1, 'medium': 1, 'hard': 3, 'expert': 3, 'nightmare': 3}
-DEFAULT_MAX_DP_BOTS = {'easy': 1, 'medium': 3, 'hard': 5, 'expert': 7, 'nightmare': 10}
+DEFAULT_MAX_DP_BOTS = {'easy': 1, 'medium': 3, 'hard': 5, 'expert': 7, 'nightmare': 5}
 
 
 def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
@@ -690,6 +690,7 @@ def solve_sequential(capture_data: CaptureData | None = None,
 
     ms = gs.map_state
     num_bots = len(gs.bot_positions)
+    _max_rounds = _DIFF_ROUNDS.get(diff, 300)
 
     # max_dp_bots: only DP-plan this many bots; rest get CPU greedy plans.
     # For Expert (10 bots), planning all 10 takes ~130s cold + ~600s refine.
@@ -711,6 +712,19 @@ def solve_sequential(capture_data: CaptureData | None = None,
                 if ts)
             print(f"  Type assignments: {assign_str}", file=sys.stderr)
 
+    # Traffic flow: one-way lane system for medium (3-bot) maps.
+    # Leftmost aisle col for going UP (after dropoff), second aisle col for going DOWN.
+    _traffic_flow = None
+    if diff == 'medium' and num_bots >= 2:
+        _aisle_cols = sorted(x for x in range(ms.width)
+                             if sum(1 for y in range(ms.height)
+                                    if ms.grid[y, x] in (0, 3)) >= ms.height * 0.6)
+        if len(_aisle_cols) >= 2:
+            _traffic_flow = {'up_col': _aisle_cols[0], 'down_col': _aisle_cols[1]}
+            if verbose:
+                print(f"  Traffic flow: UP col={_aisle_cols[0]}, DOWN col={_aisle_cols[1]}",
+                      file=sys.stderr)
+
     # Build Zig FFI context.
     # Priority: explicit seed > capture seed > live capture (no seed).
     _zig_seed = seed if seed else (capture_data.get('seed') if capture_data else None)
@@ -731,7 +745,8 @@ def solve_sequential(capture_data: CaptureData | None = None,
     # For single-bot, just run standard DP (no refinement needed)
     if num_bots == 1:
         searcher = GPUBeamSearcher(ms, all_orders, device=device, num_bots=num_bots,
-                                    no_compile=no_compile, speed_bonus=speed_bonus)
+                                    no_compile=no_compile, speed_bonus=speed_bonus,
+                                    max_rounds=_max_rounds)
         if verbose:
             gs_v = gs.copy()
             ok = searcher.verify_against_cpu(gs_v, all_orders, num_rounds=100)
@@ -950,7 +965,8 @@ def solve_sequential(capture_data: CaptureData | None = None,
                 searcher = GPUBeamSearcher(
                     ms, all_orders, device=device, num_bots=num_bots,
                     locked_trajectories=locked, no_compile=no_compile,
-                    speed_bonus=speed_bonus)
+                    speed_bonus=speed_bonus, traffic_flow=_traffic_flow,
+                    max_rounds=_max_rounds)
 
                 gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
                 dp_score, bot_acts = searcher.dp_search(
@@ -1002,7 +1018,8 @@ def solve_sequential(capture_data: CaptureData | None = None,
                     pipeline_depth=p_depth, preferred_types=pref_types,
                     no_compile=no_compile, order_cap=bot_order_cap,
                     speed_bonus=speed_bonus, preferred_zone=bot_zone,
-                    order_modulo=_om, order_slot=_os)
+                    order_modulo=_om, order_slot=_os,
+                    traffic_flow=_traffic_flow, max_rounds=_max_rounds)
 
                 # Verify on first bot of first ordering only
                 if p1_idx == 0 and bot_id == plan_order[0] and verbose:
@@ -1192,7 +1209,8 @@ def solve_sequential(capture_data: CaptureData | None = None,
                     pipeline_depth=p_depth, preferred_types=pref_types,
                     no_compile=no_compile, speed_bonus=speed_bonus,
                     preferred_zone=bot_zone,
-                    order_modulo=_om_r, order_slot=_os_r)
+                    order_modulo=_om_r, order_slot=_os_r,
+                    traffic_flow=_traffic_flow, max_rounds=_max_rounds)
 
                 # Eval annealing disabled — testing showed it hurts more than helps.
                 # coord_temperature stays at 0.0 (full penalties).
@@ -1824,6 +1842,7 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
 
     ms = gs.map_state
     num_bots = len(gs.bot_positions)
+    _max_rounds = _DIFF_ROUNDS.get(diff, 300)
 
     # max_dp_bots: only refine this many bots via GPU DP; rest get CPU greedy
     max_dp_bots_r = config.max_dp_bots
@@ -1879,6 +1898,15 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
     _type_assignments_r = compute_type_assignments(
         all_orders, num_bots, ms.num_types) if num_bots >= 3 else {}
     _zone_assignments_r = compute_zone_assignments(ms, num_bots, n_pipeline=n_pipeline)
+
+    # Traffic flow for medium maps
+    _traffic_flow = None
+    if diff == 'medium' and num_bots >= 2:
+        _aisle_cols = sorted(x for x in range(ms.width)
+                             if sum(1 for y in range(ms.height)
+                                    if ms.grid[y, x] in (0, 3)) >= ms.height * 0.6)
+        if len(_aisle_cols) >= 2:
+            _traffic_flow = {'up_col': _aisle_cols[0], 'down_col': _aisle_cols[1]}
 
     # Generate greedy plans for non-DP bots
     if _greedy_bot_ids_r:
@@ -1969,7 +1997,8 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
                     pipeline_depth=p_depth, preferred_types=pref_types_r,
                     no_compile=no_compile, speed_bonus=speed_bonus,
                     preferred_zone=bot_zone_r,
-                    order_modulo=_om_rfn, order_slot=_os_rfn)
+                    order_modulo=_om_rfn, order_slot=_os_rfn,
+                    traffic_flow=_traffic_flow, max_rounds=_max_rounds)
 
                 def round_cb(rnd, score, unique, expanded, elapsed, _bid=bot_id):
                     if on_round:

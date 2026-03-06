@@ -445,12 +445,14 @@
 						{shelfSet}
 						{itemMap}
 						dropOff={gameInit.drop_off}
+						dropOffZones={gameInit.drop_off_zones}
 						spawn={gameInit.spawn}
 						{bots}
 						{botPositions}
 						botColors={BOT_COLORS}
 						{selectedBot}
 						onSelectBot={(id) => selectedBot = selectedBot === id ? null : id}
+						{difficulty}
 					/>
 				</div>
 			</div>

@@ -1,11 +1,14 @@
 <script>
 	import Grid from '$lib/components/Grid.svelte';
+	import Grid3D from '$lib/components/Grid3D.svelte';
 
 	let { data } = $props();
 	let run = $derived(data.run);
 	let rounds = $derived(data.rounds);
 
 	const CELL = 28;
+	const CELLW = Math.round(CELL * 4 / 3); // 4:3 wide cells
+	const ICON_OFF = (CELLW - CELL) / 2;     // center icon in wider cell
 	const BOT_COLORS = [
 		'#00FF41', '#0DF0E3', '#FF0055', '#F39C12', '#A200FF',
 		'#FFEA00', '#FF3300', '#0066FF', '#FFFFFF', '#FF00AA',
@@ -31,6 +34,7 @@
 	})();
 
 	// State
+	let viewMode = $state('crt'); // 'crt' or '3d'
 	let currentRound = $state(0);
 	let playing = $state(false);
 	let speed = $state(5);
@@ -53,16 +57,6 @@
 	let previewTypes = $derived(new Set(
 		orders.filter(o => o.status === 'preview').flatMap(o => o.items_required)
 	));
-
-	// Shelf items for overlay (same as Grid.svelte shelfItems)
-	let shelfItems = $derived.by(() => {
-		const result = [];
-		for (const [key, items] of itemMap) {
-			const [x, y] = key.split(',').map(Number);
-			result.push({ x, y, items, type: items[0].type });
-		}
-		return result;
-	});
 
 	// Build cumulative event history up to current round
 	let eventHistory = $derived.by(() => {
@@ -149,6 +143,8 @@
 		yogurt: '#a29bfe', cereal: '#e67e22', flour: '#b2bec3', sugar: '#dfe6e9',
 		coffee: '#6d4c2a', tea: '#4dbd6a', oil: '#fdcb6e', salt: '#b2bec3',
 		cream: '#dfe6e9', oats: '#d4a76a',
+		apples: '#33FF00', bananas: '#556655', carrots: '#AA0000', lettuce: '#AA6677',
+		onions: '#665544', peppers: '#FF6600', tomatoes: '#DDAA00',
 	};
 
 	const ITEM_ABBR = {
@@ -156,13 +152,45 @@
 		cheese: 'Ch', pasta: 'Pa', rice: 'Ri', juice: 'Ju',
 		yogurt: 'Yo', cereal: 'Ce', flour: 'Fl', sugar: 'Su',
 		coffee: 'Co', tea: 'Te', oil: 'Oi', salt: 'Sa',
+		apples: 'Ap', bananas: 'Ba', carrots: 'Ca', lettuce: 'Le',
+		onions: 'On', peppers: 'Pe', tomatoes: 'To',
 	};
 
 	function getItemAbbr(t) { return ITEM_ABBR[t] || t.slice(0, 2).toUpperCase(); }
 	function getItemColor(t) { return ITEM_CLR[t] || '#aaa'; }
-	function getCyberIcon(t, size = 20) { return CYBER_SVGS[t] ? CYBER_SVGS[t].replace(/width="28"/, `width="${size}"`).replace(/height="28"/, `height="${size}"`) : ''; }
+	function getCyberIcon(t, size = 20) { const svgs = isNightmare ? NIGHTMARE_SVGS : CYBER_SVGS; return svgs[t] ? svgs[t].replace(/width="28"/, `width="${size}"`).replace(/height="28"/, `height="${size}"`) : ''; }
+
+	const isNightmare = run.difficulty === 'nightmare';
 
 	function getBotSvg(botId, color, size = 24) {
+		if (isNightmare) {
+			return `<svg width="${size}" height="${size}" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" style="--goat-color: ${color};">
+				<style>
+					@keyframes floatGoat{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+					@keyframes eyeGlow{0%,100%{fill:var(--goat-color);filter:drop-shadow(0 0 2px var(--goat-color))}50%{fill:#FF0000;filter:drop-shadow(0 0 4px #FF0000)}}
+					@keyframes breatheSnout{0%,100%{transform:scaleX(1)}50%{transform:scaleX(1.05)}}
+					@keyframes shadowPulse{0%,100%{opacity:.2;transform:scale(1)}50%{opacity:.4;transform:scale(1.2)}}
+					.fG{animation:floatGoat 3s infinite ease-in-out;transform-origin:center}
+					.eG{animation:eyeGlow 1.5s infinite}
+					.bS{animation:breatheSnout 2.5s infinite ease-in-out;transform-origin:14px 15px}
+					.sP{animation:shadowPulse 3s infinite ease-in-out;transform-origin:14px 24px}
+				</style>
+				<rect width="28" height="28" fill="#050202" rx="4"/>
+				<ellipse cx="14" cy="24" rx="7" ry="2" fill="#330000" class="sP"/>
+				<g class="fG">
+					<path d="M14 5 L16 11 L22 11 L17 15 L19 21 L14 17 L9 21 L11 15 L6 11 L12 11 Z" fill="none" stroke="#FF0000" stroke-width="0.5" opacity="0.2"/>
+					<path d="M11 9 C8 4, 3 3, 2 8 C3 9, 6 8, 9 11 Z" fill="#110505" stroke="${color}" stroke-width="1.2" stroke-linejoin="round"/>
+					<path d="M17 9 C20 4, 25 3, 26 8 C25 9, 22 8, 19 11 Z" fill="#110505" stroke="${color}" stroke-width="1.2" stroke-linejoin="round"/>
+					<path d="M9 11.5 L3 15 L8 16 Z" fill="#110505" stroke="${color}" stroke-width="1.2" stroke-linejoin="round"/>
+					<path d="M19 11.5 L25 15 L20 16 Z" fill="#110505" stroke="${color}" stroke-width="1.2" stroke-linejoin="round"/>
+					<path class="bS" d="M9 11 L19 11 L16 20 L12 20 Z" fill="#0A0303" stroke="${color}" stroke-width="1.2" stroke-linejoin="round"/>
+					<path d="M10 13 L12 14 L10 15 Z" fill="#FF0000" class="eG"/>
+					<path d="M18 13 L16 14 L18 15 Z" fill="#FF0000" class="eG"/>
+					<path d="M13 18 L14 19 L15 18" fill="none" stroke="${color}" stroke-width="1" stroke-linecap="round"/>
+					<text x="14" y="25" text-anchor="middle" dominant-baseline="central" font-size="4.5" font-weight="900" fill="${color}" font-family="monospace">${botId}</text>
+				</g>
+			</svg>`;
+		}
 		return `<svg width="${size}" height="${size}" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" style="--bot-color: ${color};">
 			<style>
 				@keyframes sbHover{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
@@ -190,6 +218,31 @@
 		</svg>`;
 	}
 
+	// Nightmare satanic SVG icons
+	const NIGHTMARE_SVGS = {
+		milk: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes bloodDrop{0%{transform:translateY(0) scale(1);opacity:1}80%{transform:translateY(8px) scale(0.8);opacity:1}100%{transform:translateY(10px) scale(0);opacity:0}}@keyframes shadow{0%,100%{opacity:.2}50%{opacity:.4}}.s{animation:shadow 3s infinite}.d{animation:bloodDrop 1.5s infinite linear}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="24" rx="7" ry="1.5" fill="#300" class="s"/><path d="M 8 7 C 8 7, 8 13, 14 16 C 20 13, 20 7, 20 7 Z" fill="#1A1111" stroke="#AA8844" stroke-width="1.2"/><path d="M 13 15.5 V 21 M 10 21 H 18" stroke="#AA8844" stroke-width="1.2" stroke-linecap="round"/><ellipse cx="14" cy="7" rx="6" ry="2" fill="#800" stroke="#AA8844" stroke-width="1.2"/><circle cx="14" cy="9" r="1.5" fill="#FF0000" class="d"/><path d="M 12 7 V 10" stroke="#FF0000" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+		bread: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes blink{0%,45%,55%,100%{transform:scaleY(1)}50%{transform:scaleY(0)}}@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}.b{animation:breathe 2.5s infinite ease-in-out;transform-origin:center}.e{animation:blink 4s infinite;transform-origin:14px 14px}</style><rect width="28" height="28" fill="#050202" rx="4"/><g class="b"><rect x="7" y="6" width="14" height="16" fill="#331A1A" stroke="#220505" stroke-width="1.2" rx="1"/><path d="M 10 6 V 22 M 18 6 V 22" stroke="#552222" stroke-width="1"/><ellipse cx="14" cy="14" rx="4" ry="2.5" fill="#110505" stroke="#880000" stroke-width="1.2"/><ellipse cx="14" cy="14" rx="1.5" ry="2.5" fill="#FFCC00" class="e"/><circle cx="14" cy="14" r="0.8" fill="#000" class="e"/><path d="M 7 10 H 9 M 7 18 H 9 M 19 10 H 21 M 19 18 H 21" stroke="#000" stroke-width="1.2"/></g></svg>`,
+		eggs: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes twitch{0%,100%{transform:translate(0,0)}10%,30%{transform:translate(-1px,1px)}20%,40%{transform:translate(1px,-1px)}50%{transform:translate(0,0)}}.t{animation:twitch 3s infinite steps(2,start)}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><g class="t"><circle cx="11" cy="16" r="4.5" fill="#EEDDDD" stroke="#800" stroke-width="1"/><circle cx="17" cy="15" r="4" fill="#EEDDDD" stroke="#800" stroke-width="1"/><circle cx="14" cy="11" r="5" fill="#EEDDDD" stroke="#800" stroke-width="1"/><circle cx="10" cy="16" r="1.5" fill="#000"/><circle cx="18" cy="14" r="1" fill="#000"/><circle cx="14" cy="10" r="1.8" fill="#000"/><path d="M 14 6 C 13 8, 11 9, 10 10 M 17 11 C 18 12, 19 12, 20 13 M 9 14 C 8 15, 7 15, 6 16" stroke="#C00" stroke-width="0.5" fill="none"/></g></svg>`,
+		butter: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes stab{0%,100%{transform:translate(4px,-4px);opacity:0}20%,80%{transform:translate(0,0);opacity:1}}.p{animation:stab 2s infinite ease-in}</style><rect width="28" height="28" fill="#050202" rx="4"/><path d="M 14 6 C 12 6, 11 8, 11 10 C 11 11, 12 12, 14 12 C 16 12, 17 11, 17 10 C 17 8, 16 6, 14 6 Z M 11 12 H 17 V 18 H 11 Z M 11 12 L 8 15 M 17 12 L 20 15 M 12 18 L 12 22 M 16 18 L 16 22" fill="none" stroke="#A86" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="9" x2="13" y2="10" stroke="#000" stroke-width="1"/><line x1="13" y1="9" x2="12" y2="10" stroke="#000" stroke-width="1"/><line x1="15" y1="9" x2="16" y2="10" stroke="#000" stroke-width="1"/><line x1="16" y1="9" x2="15" y2="10" stroke="#000" stroke-width="1"/><line x1="13" y1="15" x2="17" y2="15" stroke="#000" stroke-width="1" stroke-dasharray="1 1"/><line x1="18" y1="10" x2="14" y2="14" stroke="#F00" stroke-width="1" class="p"/><circle cx="18" cy="10" r="1.5" fill="#F00" class="p"/></svg>`,
+		cheese: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes jaw{0%,100%{transform:translateY(0)}50%{transform:translateY(2px)}}@keyframes eye{0%,100%{opacity:.2}50%{opacity:1}}.j{animation:jaw 1.5s infinite steps(2,start);transform-origin:center}.e{animation:eye 3s infinite}</style><rect width="28" height="28" fill="#050202" rx="4"/><path d="M 9 10 C 9 6, 19 6, 19 10 C 19 14, 17 16, 17 16 H 11 C 11 16, 9 14, 9 10 Z" fill="#DDB" stroke="#332" stroke-width="1.2"/><path d="M 12 17 V 19 H 16 V 17 Z" fill="#DDB" stroke="#332" stroke-width="1.2" class="j"/><line x1="14" y1="17" x2="14" y2="19" stroke="#332" stroke-width="1" class="j"/><ellipse cx="12" cy="11" rx="1.5" ry="2" fill="#050202"/><ellipse cx="16" cy="11" rx="1.5" ry="2" fill="#050202"/><path d="M 14 14 L 13 15 H 15 Z" fill="#050202"/><circle cx="12" cy="11" r="0.5" fill="#F00" class="e"/><path d="M 12 6 L 14 9 M 18 8 L 16 10" stroke="#050202" stroke-width="1"/></svg>`,
+		pasta: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes writhe{0%,100%{stroke-dashoffset:0}50%{stroke-dashoffset:4}}@keyframes tongue{0%,100%{opacity:0;transform:scaleX(0)}50%{opacity:1;transform:scaleX(1)}}.w{animation:writhe 2s infinite linear;stroke-dasharray:6 2}.t{animation:tongue 1s infinite steps(2,start);transform-origin:left}</style><rect width="28" height="28" fill="#050202" rx="4"/><path class="w" d="M 8 10 C 12 6, 16 14, 20 10 C 24 6, 12 20, 8 16 C 4 12, 10 20, 14 20" fill="none" stroke="#263" stroke-width="2.5" stroke-linecap="round"/><circle cx="8" cy="10" r="1.5" fill="#132"/><circle cx="14" cy="20" r="1.5" fill="#132"/><path d="M 8 10 L 5 9 L 4 10 M 5 9 L 6 7" fill="none" stroke="#F00" stroke-width="0.8" class="t"/><circle cx="8" cy="10" r="0.5" fill="#F00"/><circle cx="14" cy="20" r="0.5" fill="#F00"/></svg>`,
+		rice: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes squirm1{0%,100%{transform:rotate(0)}50%{transform:rotate(15deg)}}@keyframes squirm2{0%,100%{transform:rotate(0)}50%{transform:rotate(-15deg)}}.s1{animation:squirm1 1s infinite ease-in-out;transform-origin:center}.s2{animation:squirm2 1.2s infinite ease-in-out;transform-origin:center}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="22" rx="7" ry="2" fill="#300"/><g fill="#DDCCBB" stroke="#443322" stroke-width="1"><rect x="10" y="10" width="8" height="3" rx="1.5" class="s1"/><rect x="12" y="14" width="7" height="3" rx="1.5" class="s2"/><rect x="7" y="15" width="6" height="3" rx="1.5" transform="rotate(45 10 16)" class="s1"/><rect x="15" y="8" width="6" height="3" rx="1.5" transform="rotate(-30 18 9)" class="s2"/><rect x="11" y="18" width="7" height="3" rx="1.5" transform="rotate(-15 14 19)" class="s1"/></g></svg>`,
+		juice: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(2px)}}@keyframes bubble{0%{transform:translateY(0);opacity:1}100%{transform:translateY(-8px);opacity:0}}.b{animation:bob 3s infinite ease-in-out}.bu1{animation:bubble 2s infinite linear 0s}.bu2{animation:bubble 2s infinite linear 1s}</style><rect width="28" height="28" fill="#050202" rx="4"/><path d="M 8 7 H 20 V 23 H 8 Z" fill="#0A1A10" stroke="#335544" stroke-width="1.2"/><path d="M 7 6 H 21 V 8 H 7 Z" fill="#112211" stroke="#335544" stroke-width="1.2"/><g class="b"><ellipse cx="14" cy="14" rx="4" ry="5" fill="#667755" stroke="#223322" stroke-width="1"/><path d="M 12 13 L 13 14 M 16 13 L 15 14" stroke="#111" stroke-width="1"/><line x1="13" y1="17" x2="15" y2="17" stroke="#111" stroke-width="1"/></g><circle cx="10" cy="18" r="1" fill="#44FF88" class="bu1"/><circle cx="18" cy="20" r="1" fill="#44FF88" class="bu2"/><circle cx="12" cy="21" r="0.5" fill="#44FF88" class="bu1"/></svg>`,
+		yogurt: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes beat{0%,100%{transform:scale(1)}15%{transform:scale(1.1)}30%{transform:scale(1)}}.ht{animation:beat 1s infinite;transform-origin:14px 14px}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><g class="ht"><path d="M 14 19 C 14 19, 8 14, 8 10 C 8 7, 11 6, 14 9 C 17 6, 20 7, 20 10 C 20 14, 14 19, 14 19 Z" fill="#800" stroke="#400" stroke-width="1.2"/><path d="M 14 9 V 5 M 12 7 V 4 M 16 8 V 6" stroke="#400" stroke-width="1.5" stroke-linecap="round"/><path d="M 14 9 C 12 12, 12 15, 14 19" fill="none" stroke="#500" stroke-width="1"/></g></svg>`,
+		cereal: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}.f1{animation:float 2s infinite ease-in-out 0s}.f2{animation:float 2.2s infinite ease-in-out 0.5s}.f3{animation:float 1.8s infinite ease-in-out 1s}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><path d="M 6 14 C 6 20, 22 20, 22 14 Z" fill="#222" stroke="#444" stroke-width="1.2"/><ellipse cx="14" cy="14" rx="8" ry="2" fill="#111"/><g fill="#DDD" stroke="#222" stroke-width="0.8"><rect x="10" y="11" width="4" height="2" rx="1" class="f1" transform="rotate(20 12 12)"/><rect x="15" y="10" width="4" height="2" rx="1" class="f2" transform="rotate(-30 17 11)"/><circle cx="13" cy="14" r="1.5" class="f3"/><circle cx="16" cy="13" r="1" class="f1"/><path class="f2" d="M 13 9 C 13 8, 15 8, 15 9 V 11 C 15 12, 13 12, 13 11 Z" transform="rotate(45 14 10)"/></g></svg>`,
+		flour: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes drift{0%{transform:translate(0,0);opacity:1}100%{transform:translate(-4px,-8px) scale(2);opacity:0}}.a1{animation:drift 2s infinite linear 0s}.a2{animation:drift 2s infinite linear 0.7s}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><path d="M 12 6 H 16 L 15 8 C 18 10, 19 15, 17 20 H 11 C 9 15, 10 10, 13 8 Z" fill="#2A2A30" stroke="#111" stroke-width="1.2"/><path d="M 10 14 C 14 16, 18 12, 18 14" fill="none" stroke="#111" stroke-width="1"/><circle cx="14" cy="6" r="1" fill="#777" class="a1"/><circle cx="15" cy="5" r="0.8" fill="#555" class="a2"/><circle cx="13" cy="4" r="1.2" fill="#999" class="a1" style="animation-delay: 1.2s"/></svg>`,
+		sugar: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes glint{0%,80%{opacity:0}90%{opacity:1}100%{opacity:0}}@keyframes drip{0%{transform:translateY(0);opacity:1}100%{transform:translateY(6px);opacity:0}}.g{animation:glint 2s infinite linear}.d{animation:drip 1.5s infinite ease-in}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><path d="M 14 2 L 15 6 L 14 18 L 13 6 Z" fill="#99A" stroke="#556" stroke-width="1" stroke-linejoin="round"/><path d="M 11 18 H 17 V 19 H 11 Z" fill="#DA4"/><path d="M 13 19 H 15 V 24 L 14 25 L 13 24 Z" fill="#311" stroke="#DA4" stroke-width="0.8"/><circle cx="14" cy="21" r="1" fill="#F00"/><path d="M 14 2 L 14 18" stroke="#FFF" stroke-width="0.5" class="g"/><circle cx="14" cy="18" r="1" fill="#800" class="d"/></svg>`,
+		cream: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes tw{0%,90%{transform:rotate(0)}95%{transform:rotate(-5deg)}100%{transform:rotate(5deg)}}.tw{animation:tw 2s infinite;transform-origin:left bottom}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><g transform="rotate(-15 14 14)"><path d="M 6 16 C 6 12, 10 12, 12 12 H 16 V 20 H 12 C 10 20, 6 20, 6 16 Z" fill="#887777" stroke="#443333" stroke-width="1.2"/><path d="M 16 13 H 20 C 21 13, 21 15, 20 15 H 16 Z" fill="#887777" stroke="#443333" stroke-width="1" class="tw"/><path d="M 16 15 H 22 C 23 15, 23 17, 22 17 H 16 Z" fill="#887777" stroke="#443333" stroke-width="1" class="tw" style="animation-delay:0.1s"/><path d="M 16 17 H 21 C 22 17, 22 19, 21 19 H 16 Z" fill="#887777" stroke="#443333" stroke-width="1" class="tw" style="animation-delay:0.2s"/><path d="M 13 18 L 15 22 C 16 23, 14 24, 13 22 L 11 19 Z" fill="#887777" stroke="#443333" stroke-width="1"/><ellipse cx="6" cy="16" rx="1.5" ry="4" fill="#A00"/></g><circle cx="8" cy="21" r="1" fill="#A00"/><circle cx="5" cy="19" r="1" fill="#A00"/></svg>`,
+		oats: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes pulseAura{0%,100%{opacity:.3;transform:scale(1)}50%{opacity:.6;transform:scale(1.1)}}@keyframes spinPenta{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}.a{animation:pulseAura 3s infinite ease-in-out;transform-origin:center}.sp{animation:spinPenta 10s infinite linear;transform-origin:center}</style><rect width="28" height="28" fill="#050202" rx="4"/><circle cx="14" cy="14" r="10" fill="none" stroke="#F00" stroke-width="2" class="a"/><g class="sp"><circle cx="14" cy="14" r="8" fill="none" stroke="#800" stroke-width="1"/><path d="M 14 6 L 16.5 20 L 4.5 11 H 23.5 L 11.5 20 Z" fill="none" stroke="#F00" stroke-width="1"/><circle cx="14" cy="14" r="2" fill="#800"/></g><circle cx="14" cy="4" r="1" fill="#FA0"/><circle cx="4.5" cy="11" r="1" fill="#FA0"/><circle cx="23.5" cy="11" r="1" fill="#FA0"/><circle cx="8.5" cy="22" r="1" fill="#FA0"/><circle cx="19.5" cy="22" r="1" fill="#FA0"/></svg>`,
+		apples: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes wriggle{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(10deg)}}@keyframes glow{0%,100%{filter:drop-shadow(0 0 2px #3F0)}50%{filter:drop-shadow(0 0 5px #3F0)}}.w{animation:wriggle 1.5s infinite ease-in-out;transform-origin:10px 14px}.g{animation:glow 2s infinite}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><path d="M 14 8 C 21 8, 22 14, 20 19 C 19 22, 15 22, 14 20 C 13 22, 9 22, 8 19 C 6 14, 7 8, 14 8 Z" fill="#2A0505" stroke="#110202" stroke-width="1.2"/><path d="M 14 8 Q 15 4 18 5" fill="none" stroke="#111" stroke-width="1.5"/><ellipse cx="10" cy="14" rx="2" ry="3" fill="#050202"/><g class="w"><path d="M 10 14 Q 5 10 7 18" fill="none" stroke="#3F0" stroke-width="2" stroke-linecap="round" class="g"/><circle cx="7" cy="18" r="1.5" fill="#3F0" class="g"/><circle cx="7.5" cy="18" r="0.5" fill="#000"/></g></svg>`,
+		bananas: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes fingerTwitch{0%,90%{transform:rotate(0)}95%{transform:rotate(-4deg)}100%{transform:rotate(2deg)}}.ft{animation:fingerTwitch 2.5s infinite;transform-origin:18px 20px}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><g class="ft"><path d="M 17 20 Q 12 18 8 10 L 6 12 Q 10 21 16 22 Z" fill="#4A554A" stroke="#223322" stroke-width="1"/><path d="M 18 20 Q 15 15 12 7 L 10 8 Q 14 18 17 22 Z" fill="#556655" stroke="#223322" stroke-width="1"/><path d="M 19 20 Q 19 14 18 6 L 16 6 Q 17 15 18 22 Z" fill="#334433" stroke="#223322" stroke-width="1"/><path d="M 8 10 L 5 7 L 6 12 Z M 12 7 L 10 3 L 10 8 Z M 18 6 L 19 2 L 16 6 Z" fill="#111"/><path d="M 15 18 H 21 V 23 H 15 Z" fill="#600" stroke="#300" stroke-width="1"/><path d="M 16 19 H 20 M 16 21 H 20" stroke="#200" stroke-width="1"/></g></svg>`,
+		carrots: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes drip{0%{transform:translateY(0);opacity:1}80%{transform:translateY(8px);opacity:1}100%{transform:translateY(10px);opacity:0}}.d1{animation:drip 1.5s infinite linear}.d2{animation:drip 2s infinite linear 0.5s}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><path d="M 8 6 H 12 L 10 20 Z" fill="#444" stroke="#222" stroke-width="1"/><path d="M 16 4 H 20 L 18 22 Z" fill="#444" stroke="#222" stroke-width="1"/><path d="M 12 8 H 16 L 14 24 Z" fill="#555" stroke="#222" stroke-width="1"/><path d="M 8 6 H 12 V 8 H 8 Z M 16 4 H 20 V 6 H 16 Z M 12 8 H 16 V 10 H 12 Z" fill="#222"/><path d="M 9 14 L 11 20 M 17 14 L 19 22 M 13 16 L 15 24" stroke="#A00" stroke-width="1.5"/><circle cx="10" cy="20" r="1.5" fill="#A00" class="d1"/><circle cx="18" cy="22" r="1.5" fill="#A00" class="d2"/><circle cx="14" cy="24" r="1.5" fill="#A00" class="d1" style="animation-delay: 1s"/></svg>`,
+		lettuce: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes throb{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}.t{animation:throb 1.2s infinite ease-in-out;transform-origin:14px 14px}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><path d="M 14 22 C 6 22, 4 16, 6 10 C 8 6, 20 6, 22 10 C 24 16, 22 22, 14 22 Z" fill="#1A2A1A" stroke="#051105" stroke-width="1.5"/><g class="t"><ellipse cx="14" cy="14" rx="6" ry="5" fill="#A67" stroke="#423" stroke-width="1.2"/><path d="M 14 9 V 19 M 11 10 C 13 12, 9 14, 11 16 M 17 10 C 15 12, 19 14, 17 16" fill="none" stroke="#634" stroke-width="1.2" stroke-linecap="round"/><circle cx="14" cy="14" r="5" fill="none" stroke="#F00" stroke-width="0.5" opacity="0.5"/></g></svg>`,
+		onions: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes swing{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(5deg)}}.s{animation:swing 2.5s infinite ease-in-out;transform-origin:14px 0px}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><g class="s"><line x1="14" y1="0" x2="14" y2="8" stroke="#543" stroke-width="1" stroke-dasharray="2 1"/><ellipse cx="14" cy="14" rx="5" ry="6" fill="#654" stroke="#321" stroke-width="1.2"/><path d="M 12 12 L 16 12" stroke="#210" stroke-width="1.5"/><path d="M 11 11 L 13 13 M 15 11 L 17 13 M 13 11 L 11 13 M 17 11 L 15 13" stroke="#111" stroke-width="1"/><path d="M 12 17 L 16 17" stroke="#111" stroke-width="1"/><line x1="12.5" y1="16" x2="12.5" y2="18" stroke="#111" stroke-width="1"/><line x1="14" y1="16" x2="14" y2="18" stroke="#111" stroke-width="1"/><line x1="15.5" y1="16" x2="15.5" y2="18" stroke="#111" stroke-width="1"/><path d="M 9 14 Q 7 18 8 22 M 19 14 Q 21 18 20 22 M 11 20 Q 14 24 17 20" fill="none" stroke="#111" stroke-width="1"/></g></svg>`,
+		peppers: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes beatHeat{0%,100%{transform:scale(1);fill:#A00}15%{transform:scale(1.1);fill:#F00}30%{transform:scale(1);fill:#A00}}@keyframes flame{0%,100%{transform:scaleY(1);opacity:.8}50%{transform:scaleY(1.3);opacity:1}}.b{animation:beatHeat 1.2s infinite;transform-origin:14px 16px}.f{animation:flame .8s infinite alternate;transform-origin:14px 8px}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><path class="f" d="M 14 4 Q 12 8 14 10 Q 16 8 14 4 Z" fill="#FA0"/><g class="b"><path d="M 14 20 C 14 20, 9 14, 9 10 C 9 7, 13 7, 14 10 C 15 7, 19 7, 19 10 C 19 14, 14 20, 14 20 Z" fill="#A00" stroke="#400" stroke-width="1.2"/><path d="M 9 12 Q 14 15 19 11 M 10 16 Q 14 18 17 14" fill="none" stroke="#333" stroke-width="1.5"/><circle cx="14" cy="14" r="1.5" fill="#333"/><path d="M 14 14 L 12 12 M 14 14 L 16 16" stroke="#333" stroke-width="1.5"/></g></svg>`,
+		tomatoes: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes dart{0%,10%,100%{transform:translate(0,0)}20%,40%{transform:translate(-2px,1px)}50%,70%{transform:translate(2px,-1px)}80%,90%{transform:translate(0,-2px)}}@keyframes pulseVein{0%,100%{stroke:#600}50%{stroke:#F00}}.d{animation:dart 3s infinite steps(2,start)}.v{animation:pulseVein 1.5s infinite}</style><rect width="28" height="28" fill="#050202" rx="4"/><ellipse cx="14" cy="23" rx="7" ry="2" fill="#300"/><ellipse cx="14" cy="14" rx="7" ry="6.5" fill="#EEDDDD" stroke="#511" stroke-width="1.2"/><path class="v" d="M 7 14 Q 10 12 11 14 M 21 14 Q 18 16 17 14 M 14 7 Q 16 10 14 11 M 14 21 Q 12 18 14 17" fill="none" stroke="#600" stroke-width="1"/><g class="d"><circle cx="14" cy="14" r="3" fill="#DA0"/><ellipse cx="14" cy="14" rx="1" ry="2.5" fill="#000"/><circle cx="15" cy="13" r="0.5" fill="#FFF"/></g></svg>`,
+	};
+
 	// Cyberpunk SVG icons — exact designs with embedded <style> animations
 	const CYBER_SVGS = {
 		milk: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes dashFlow{to{stroke-dashoffset:-12}}@keyframes blinkNode{0%,100%{opacity:1}50%{opacity:0}}@keyframes shadowPulse{0%,100%{opacity:.15;transform:scale(1)}50%{opacity:.25;transform:scale(1.1)}}.shadow{animation:shadowPulse 3s infinite ease-in-out;transform-origin:14px 23px}.flow{stroke-dasharray:4 4;animation:dashFlow 1.5s linear infinite}.dot{animation:blinkNode 1s steps(2,start) infinite}</style><rect width="28" height="28" fill="#0D1117" rx="4"/><ellipse cx="14" cy="23" rx="6" ry="1.5" fill="#00FF41" class="shadow"/><path d="M10 11 L14 7 L18 11 V21 C18 21.5 17.5 22 17 22 H11 C10.5 22 10 21.5 10 21 Z" fill="#161B22" stroke="#00FF41" stroke-width="1.2" stroke-linejoin="round" opacity=".3"/><path d="M10 11 L14 7 L18 11 V21 C18 21.5 17.5 22 17 22 H11 C10.5 22 10 21.5 10 21 Z" fill="none" stroke="#00FF41" stroke-width="1.2" stroke-linejoin="round" class="flow"/><path d="M9 11 H19" stroke="#00FF41" stroke-width="1.2" stroke-linecap="round"/><rect x="12" y="14" width="4" height="4" fill="none" stroke="#0DF0E3" stroke-width="1"/><circle cx="14" cy="16" r="1" fill="#FF0055" class="dot"/></svg>`,
@@ -212,13 +265,14 @@
 		salt: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes matrixRain{0%{transform:translateY(-3px);opacity:0}20%,80%{opacity:1}100%{transform:translateY(6px);opacity:0}}@keyframes shadowPulse{0%,100%{opacity:.15}50%{opacity:.25}}.shadow{animation:shadowPulse 3s infinite ease-in-out}.rain1{animation:matrixRain 1.5s infinite 0s linear}.rain2{animation:matrixRain 1.5s infinite .4s linear}.rain3{animation:matrixRain 1.5s infinite .8s linear}</style><rect width="28" height="28" fill="#0D1117" rx="4"/><ellipse cx="14" cy="23" rx="6" ry="1.5" fill="#00FF41" class="shadow"/><rect x="11" y="10" width="6" height="12" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/><path d="M 11 10 C 11 7, 17 7, 17 10 Z" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2"/><rect x="13" y="7.5" width="1" height="1" fill="#FF0055"/><rect x="15" y="8.5" width="1" height="1" fill="#FF0055"/><rect x="12" y="8.5" width="1" height="1" fill="#FF0055"/><line x1="12.5" y1="12" x2="12.5" y2="14" stroke="#0DF0E3" stroke-width="1" class="rain1"/><line x1="14" y1="11" x2="14" y2="13" stroke="#FF0055" stroke-width="1" class="rain2"/><line x1="15.5" y1="13" x2="15.5" y2="15" stroke="#00FF41" stroke-width="1" class="rain3"/></svg>`,
 	};
 
-	// Preload cyberpunk SVGs as Image objects for canvas drawing (CRT shader applies to these)
+	// Preload SVGs as Image objects for canvas drawing (CRT shader applies to these)
+	const ACTIVE_SVGS = isNightmare ? NIGHTMARE_SVGS : CYBER_SVGS;
 	let _itemImages = new Map();
 	let _itemImagesReady = $state(false);
 	if (typeof Image !== 'undefined') {
 		let loaded = 0;
-		const total = Object.keys(CYBER_SVGS).length;
-		for (const [type, svg] of Object.entries(CYBER_SVGS)) {
+		const total = Object.keys(ACTIVE_SVGS).length;
+		for (const [type, svg] of Object.entries(ACTIVE_SVGS)) {
 			const img = new Image();
 			img.onload = () => {
 				loaded++;
@@ -237,6 +291,7 @@
 		medium: '#d29922',
 		hard: '#f85149',
 		expert: '#da3633',
+		nightmare: '#880000',
 	};
 
 	// Keyboard controls
@@ -355,7 +410,6 @@ void main(){
 }`;
 
 	let _crt = null;
-	let _crtDirty = true;
 
 	function _crtCompile(gl, type, src) {
 		const s = gl.createShader(type);
@@ -399,7 +453,7 @@ void main(){
 			unis[n] = gl.getUniformLocation(prog, n);
 
 		const scene = document.createElement('canvas');
-		const w = run.grid_width * CELL;
+		const w = run.grid_width * CELLW;
 		const h = run.grid_height * CELL;
 		scene.width = w;
 		scene.height = h;
@@ -408,18 +462,15 @@ void main(){
 		const ctx = scene.getContext('2d');
 
 		_crt = { gl, prog, vao, tex, unis, scene, ctx };
-		_crtDirty = true;
-		_drawGrid(); // initial capture
 
 		let animId;
 		function render(ts) {
 			if (!_crt) return;
-			if (_crtDirty && scene.width > 0) {
-				gl.bindTexture(gl.TEXTURE_2D, tex);
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, scene);
-				_crtDirty = false;
-			}
 			const t = ts * 0.001;
+			// Redraw grid every frame for animated glows
+			_drawGrid(t);
+			gl.bindTexture(gl.TEXTURE_2D, tex);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, scene);
 			// Subtle organic drift — each on a different slow cycle
 			const bloom = CRT.bloomIntensity + Math.sin(t * 0.37) * 0.06 + Math.sin(t * 1.1) * 0.02;
 			const bright = CRT.brightness + Math.sin(t * 0.23) * 0.025;
@@ -457,156 +508,243 @@ void main(){
 		};
 	});
 
-	function _drawGrid() {
+	// Build dropoff set for multi-dropoff support
+	const _dropOffZones = run.drop_off_zones || [run.drop_off];
+	const _dropOffSet = new Set(_dropOffZones.map(d => `${d[0]},${d[1]}`));
+
+	function _drawGrid(time = 0) {
 		if (!_crt) return;
 		const { ctx: c, scene } = _crt;
-		const C = CELL, gw = run.grid_width, gh = run.grid_height;
+		const C = CELL, W = CELLW, IO = ICON_OFF, gw = run.grid_width, gh = run.grid_height;
+		const nm = isNightmare;
 		c.clearRect(0, 0, scene.width, scene.height);
 
 		// Floor
-		c.fillStyle = '#010409';
-		c.fillRect(0, 0, gw * C, gh * C);
+		c.fillStyle = nm ? '#1a1818' : '#1a2230';
+		c.fillRect(0, 0, gw * W, gh * C);
 
 		// Cells
 		for (let y = 0; y < gh; y++) {
 			for (let x = 0; x < gw; x++) {
 				const key = `${x},${y}`;
 				if (wallSet.has(key)) {
-					c.fillStyle = (x === 0 || y === 0 || x === gw - 1 || y === gh - 1) ? '#2d333b' : '#373e47';
-					c.fillRect(x * C, y * C, C, C);
+					const edge = (x === 0 || y === 0 || x === gw - 1 || y === gh - 1);
+					c.fillStyle = nm ? (edge ? '#2a1010' : '#351515') : (edge ? '#2d333b' : '#373e47');
+					c.fillRect(x * W, y * C, W, C);
 				} else if (shelfSet.has(key)) {
-					c.fillStyle = '#0d2818';
-					c.fillRect(x * C, y * C, C, C);
-					c.strokeStyle = '#1a4d2e';
+					c.fillStyle = nm ? '#1a0a0a' : '#0d2818';
+					c.fillRect(x * W, y * C, W, C);
+					c.strokeStyle = nm ? '#442222' : '#1a4d2e';
 					c.lineWidth = 1;
-					c.strokeRect(x * C + 0.5, y * C + 0.5, C - 1, C - 1);
+					c.strokeRect(x * W + 0.5, y * C + 0.5, W - 1, C - 1);
+				} else {
+					// Floor grid lines
+					c.strokeStyle = nm ? '#2a2626' : '#161b22';
+					c.lineWidth = 0.5;
+					c.strokeRect(x * W + 0.5, y * C + 0.5, W - 1, C - 1);
 				}
 			}
 		}
 
-		// Drop-off
-		const [dx, dy] = run.drop_off;
-		c.fillStyle = 'rgba(57,211,83,0.2)';
-		c.fillRect(dx * C, dy * C, C, C);
-		c.strokeStyle = '#39d353';
-		c.lineWidth = 2;
-		c.strokeRect(dx * C + 1, dy * C + 1, C - 2, C - 2);
-		c.fillStyle = '#39d353';
+		// Drop-off zones (all of them)
 		c.font = `bold ${Math.floor(C * 0.45)}px sans-serif`;
 		c.textAlign = 'center';
 		c.textBaseline = 'middle';
-		c.fillText('D', dx * C + C / 2, dy * C + C / 2);
-
-		// Spawn
-		const [sx, sy] = run.spawn;
-		c.fillStyle = 'rgba(88,166,255,0.2)';
-		c.fillRect(sx * C, sy * C, C, C);
-		c.strokeStyle = '#58a6ff';
-		c.lineWidth = 2;
-		c.strokeRect(sx * C + 1, sy * C + 1, C - 2, C - 2);
-		c.fillStyle = '#58a6ff';
-		c.fillText('S', sx * C + C / 2, sy * C + C / 2);
-
-		// Items on shelves (cyberpunk SVG icons) + active/preview highlights
-		for (const [key, items] of itemMap) {
-			const [ix, iy] = key.split(',').map(Number);
-			const t = items[0].type;
-			// Active/preview cell highlight
-			if (activeTypes.has(t)) {
-				c.fillStyle = 'rgba(57, 211, 83, 0.15)';
-				c.fillRect(ix * C + 1, iy * C + 1, C - 2, C - 2);
-				c.strokeStyle = 'rgba(57, 211, 83, 0.5)';
-				c.lineWidth = 1.5;
-				c.strokeRect(ix * C + 1.5, iy * C + 1.5, C - 3, C - 3);
-			} else if (previewTypes.has(t)) {
-				c.fillStyle = 'rgba(210, 153, 34, 0.12)';
-				c.fillRect(ix * C + 1, iy * C + 1, C - 2, C - 2);
-				c.strokeStyle = 'rgba(210, 153, 34, 0.4)';
-				c.lineWidth = 1.5;
-				c.strokeRect(ix * C + 1.5, iy * C + 1.5, C - 3, C - 3);
-			}
-			// Draw item icon (static, but CRT shader applies scanlines/bloom)
-			const img = _itemImages.get(t);
-			if (img && img.complete && img.naturalWidth > 0) {
-				c.drawImage(img, ix * C, iy * C, C, C);
+		for (const [dx, dy] of _dropOffZones) {
+			if (nm) {
+				// Pentagram dropoff
+				c.fillStyle = 'rgba(136,0,0,0.15)';
+				c.fillRect(dx * W, dy * C, W, C);
+				c.strokeStyle = '#880000';
+				c.lineWidth = 2;
+				c.strokeRect(dx * W + 1, dy * C + 1, W - 2, C - 2);
+				// Draw pentagram (centered icon)
+				const pcx = dx * W + W / 2, pcy = dy * C + C / 2, pr = C * 0.35;
+				c.beginPath();
+				for (let i = 0; i < 5; i++) {
+					const a = -Math.PI / 2 + (i * 4 * Math.PI) / 5 + time * 0.3;
+					const method = i === 0 ? 'moveTo' : 'lineTo';
+					c[method](pcx + pr * Math.cos(a), pcy + pr * Math.sin(a));
+				}
+				c.closePath();
+				c.strokeStyle = '#AA0000';
+				c.lineWidth = 1.2;
+				c.stroke();
 			} else {
-				// Fallback text
-				const ccx = ix * C + C / 2, ccy = iy * C + C / 2;
-				c.fillStyle = '#00FF41'; c.font = `bold ${Math.floor(C * 0.26)}px monospace`;
-				c.textAlign = 'center'; c.textBaseline = 'middle';
-				c.fillText(ITEM_ABBR[t] || t.slice(0, 2).toUpperCase(), ccx, ccy + 1);
+				c.fillStyle = 'rgba(57,211,83,0.2)';
+				c.fillRect(dx * W, dy * C, W, C);
+				c.strokeStyle = '#39d353';
+				c.lineWidth = 2;
+				c.strokeRect(dx * W + 1, dy * C + 1, W - 2, C - 2);
+				c.fillStyle = '#39d353';
+				c.fillText('D', dx * W + W / 2, dy * C + C / 2);
 			}
 		}
 
-		// Bots (Cyber Drone style)
+		// Spawn
+		const [sx, sy] = run.spawn;
+		if (nm) {
+			c.fillStyle = 'rgba(170,0,51,0.15)';
+			c.fillRect(sx * W, sy * C, W, C);
+			c.strokeStyle = '#AA0033';
+			c.lineWidth = 2;
+			c.strokeRect(sx * W + 1, sy * C + 1, W - 2, C - 2);
+			c.fillStyle = '#FF0000';
+			c.fillText('S', sx * W + W / 2, sy * C + C / 2);
+		} else {
+			c.fillStyle = 'rgba(88,166,255,0.2)';
+			c.fillRect(sx * W, sy * C, W, C);
+			c.strokeStyle = '#58a6ff';
+			c.lineWidth = 2;
+			c.strokeRect(sx * W + 1, sy * C + 1, W - 2, C - 2);
+			c.fillStyle = '#58a6ff';
+			c.fillText('S', sx * W + W / 2, sy * C + C / 2);
+		}
+
+		// Items on shelves + animated active/preview highlights
+		for (const [key, items] of itemMap) {
+			const [ix, iy] = key.split(',').map(Number);
+			const itype = items[0].type;
+			const isActive = activeTypes.has(itype);
+			const isPreview = !isActive && previewTypes.has(itype);
+			// Animated active/preview cell glow (desynced: active peaks when preview fades)
+			if (isActive) {
+				const wave = time * 2.5;
+				const pulse = Math.cos(wave) * 0.5 + 0.5;
+				const fillA = 0.08 + pulse * 0.18;
+				const strokeA = 0.3 + pulse * 0.5;
+				const spread = pulse * 2;
+				const ar = nm ? 255 : 250, ag = nm ? 20 : 204, ab = nm ? 147 : 21;
+				c.fillStyle = `rgba(${ar}, ${ag}, ${ab}, ${fillA})`;
+				c.fillRect(ix * W + IO - spread, iy * C - spread, C + spread * 2, C + spread * 2);
+				c.strokeStyle = `rgba(${ar}, ${ag}, ${ab}, ${strokeA})`;
+				c.lineWidth = 1.5 + pulse;
+				c.strokeRect(ix * W + IO - spread + 0.5, iy * C - spread + 0.5, C + spread * 2 - 1, C + spread * 2 - 1);
+			} else if (isPreview) {
+				const wave = time * 2.5;
+				const pulse = Math.sin(wave) * 0.5 + 0.5;
+				const fillA = 0.05 + pulse * 0.12;
+				const strokeA = 0.2 + pulse * 0.4;
+				const pr = nm ? 255 : 244, pg = nm ? 255 : 114, pb = nm ? 255 : 182;
+				c.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${fillA})`;
+				c.fillRect(ix * W + IO, iy * C, C, C);
+				c.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${strokeA})`;
+				c.lineWidth = 1 + pulse * 0.5;
+				c.strokeRect(ix * W + IO + 0.5, iy * C + 0.5, C - 1, C - 1);
+			}
+			// Draw item icon (square, centered in wider cell)
+			const img = _itemImages.get(itype);
+			if (img && img.complete && img.naturalWidth > 0) {
+				c.drawImage(img, ix * W + IO, iy * C, C, C);
+			} else {
+				const ccx = ix * W + W / 2, ccy = iy * C + C / 2;
+				c.fillStyle = nm ? '#880000' : '#00FF41';
+				c.font = `bold ${Math.floor(C * 0.26)}px monospace`;
+				c.textAlign = 'center'; c.textBaseline = 'middle';
+				c.fillText(ITEM_ABBR[itype] || itype.slice(0, 2).toUpperCase(), ccx, ccy + 1);
+			}
+		}
+
+		// Bots
 		for (const bot of bots) {
 			const [bx, by] = bot.position;
 			const clr = BOT_COLORS[bot.id % BOT_COLORS.length];
-			const cx = bx * C, cy = by * C;
-			// Shadow
-			c.fillStyle = 'rgba(0,0,0,0.35)';
-			c.beginPath();
-			c.ellipse(cx + C / 2, cy + C - 2, C / 3, 2, 0, 0, Math.PI * 2);
-			c.fill();
-			// Angular chassis (no border)
-			c.fillStyle = '#161B22';
-			c.shadowColor = clr;
-			c.shadowBlur = 4;
-			// Top hull
-			c.beginPath();
-			c.moveTo(cx + C * 0.32, cy + C * 0.32);
-			c.lineTo(cx + C * 0.68, cy + C * 0.32);
-			c.lineTo(cx + C * 0.75, cy + C * 0.54);
-			c.lineTo(cx + C * 0.25, cy + C * 0.54);
-			c.closePath();
-			c.fill();
-			// Bottom hull
-			c.beginPath();
-			c.moveTo(cx + C * 0.25, cy + C * 0.54);
-			c.lineTo(cx + C * 0.39, cy + C * 0.68);
-			c.lineTo(cx + C * 0.61, cy + C * 0.68);
-			c.lineTo(cx + C * 0.75, cy + C * 0.54);
-			c.fill();
-			c.shadowBlur = 0;
-			// Visor
-			c.fillStyle = '#0D1117';
-			c.fillRect(cx + C * 0.36, cy + C * 0.41, C * 0.28, C * 0.11);
-			c.strokeStyle = clr;
-			c.lineWidth = 0.8;
-			c.strokeRect(cx + C * 0.36, cy + C * 0.41, C * 0.28, C * 0.11);
-			// Scanner dot
-			c.fillStyle = '#FF0055';
-			c.fillRect(cx + C * 0.46, cy + C * 0.43, C * 0.08, C * 0.07);
-			// ID
-			c.fillStyle = clr;
-			c.font = `bold ${Math.floor(C * 0.22)}px monospace`;
-			c.textAlign = 'center';
-			c.textBaseline = 'middle';
-			c.fillText(String(bot.id), cx + C / 2, cy + C * 0.62);
+			const cx = bx * W + IO, cy = by * C;
+
+			if (nm) {
+				// Nightmare goat bot (simplified canvas version)
+				// Shadow
+				c.fillStyle = 'rgba(51,0,0,0.4)';
+				c.beginPath();
+				c.ellipse(cx + C / 2, cy + C - 2, C / 3, 2, 0, 0, Math.PI * 2);
+				c.fill();
+				// Head (trapezoid)
+				c.fillStyle = '#0A0303';
+				c.strokeStyle = clr;
+				c.lineWidth = 1.2;
+				c.beginPath();
+				c.moveTo(cx + C * 0.32, cy + C * 0.39);
+				c.lineTo(cx + C * 0.68, cy + C * 0.39);
+				c.lineTo(cx + C * 0.57, cy + C * 0.71);
+				c.lineTo(cx + C * 0.43, cy + C * 0.71);
+				c.closePath();
+				c.fill(); c.stroke();
+				// Horns
+				c.beginPath();
+				c.moveTo(cx + C * 0.39, cy + C * 0.32);
+				c.quadraticCurveTo(cx + C * 0.18, cy + C * 0.07, cx + C * 0.07, cy + C * 0.29);
+				c.strokeStyle = clr; c.lineWidth = 1.5; c.stroke();
+				c.beginPath();
+				c.moveTo(cx + C * 0.61, cy + C * 0.32);
+				c.quadraticCurveTo(cx + C * 0.82, cy + C * 0.07, cx + C * 0.93, cy + C * 0.29);
+				c.stroke();
+				// Eyes (red triangles)
+				const eyePulse = Math.sin(time * 3 + bot.id) * 0.5 + 0.5;
+				c.fillStyle = `rgba(255, ${Math.floor(eyePulse * 80)}, 0, ${0.7 + eyePulse * 0.3})`;
+				c.beginPath();
+				c.moveTo(cx + C * 0.36, cy + C * 0.46);
+				c.lineTo(cx + C * 0.43, cy + C * 0.5);
+				c.lineTo(cx + C * 0.36, cy + C * 0.54);
+				c.fill();
+				c.beginPath();
+				c.moveTo(cx + C * 0.64, cy + C * 0.46);
+				c.lineTo(cx + C * 0.57, cy + C * 0.5);
+				c.lineTo(cx + C * 0.64, cy + C * 0.54);
+				c.fill();
+				// ID
+				c.fillStyle = clr;
+				c.font = `bold ${Math.floor(C * 0.18)}px monospace`;
+				c.textAlign = 'center'; c.textBaseline = 'middle';
+				c.fillText(String(bot.id), cx + C / 2, cy + C * 0.88);
+			} else {
+				// Cyberpunk drone bot
+				c.fillStyle = 'rgba(0,0,0,0.35)';
+				c.beginPath();
+				c.ellipse(cx + C / 2, cy + C - 2, C / 3, 2, 0, 0, Math.PI * 2);
+				c.fill();
+				c.fillStyle = '#161B22';
+				c.shadowColor = clr;
+				c.shadowBlur = 4;
+				c.beginPath();
+				c.moveTo(cx + C * 0.32, cy + C * 0.32);
+				c.lineTo(cx + C * 0.68, cy + C * 0.32);
+				c.lineTo(cx + C * 0.75, cy + C * 0.54);
+				c.lineTo(cx + C * 0.25, cy + C * 0.54);
+				c.closePath();
+				c.fill();
+				c.beginPath();
+				c.moveTo(cx + C * 0.25, cy + C * 0.54);
+				c.lineTo(cx + C * 0.39, cy + C * 0.68);
+				c.lineTo(cx + C * 0.61, cy + C * 0.68);
+				c.lineTo(cx + C * 0.75, cy + C * 0.54);
+				c.fill();
+				c.shadowBlur = 0;
+				c.fillStyle = '#0D1117';
+				c.fillRect(cx + C * 0.36, cy + C * 0.41, C * 0.28, C * 0.11);
+				c.strokeStyle = clr;
+				c.lineWidth = 0.8;
+				c.strokeRect(cx + C * 0.36, cy + C * 0.41, C * 0.28, C * 0.11);
+				const scanX = Math.sin(time * 2 + bot.id) * C * 0.08;
+				c.fillStyle = '#FF0055';
+				c.fillRect(cx + C * 0.46 + scanX, cy + C * 0.43, C * 0.08, C * 0.07);
+				c.fillStyle = clr;
+				c.font = `bold ${Math.floor(C * 0.22)}px monospace`;
+				c.textAlign = 'center'; c.textBaseline = 'middle';
+				c.fillText(String(bot.id), cx + C / 2, cy + C * 0.62);
+			}
 			// Inventory dots below
 			bot.inventory.forEach((item, i) => {
 				c.fillStyle = ITEM_CLR[item] || '#aaa';
 				c.beginPath();
 				c.arc(
-					bx * C + C / 2 - (bot.inventory.length - 1) * 3 + i * 6,
+					bx * W + W / 2 - (bot.inventory.length - 1) * 3 + i * 6,
 					by * C + C + 3, 2.5, 0, Math.PI * 2
 				);
 				c.fill();
 			});
 		}
 
-		_crtDirty = true;
 	}
-
-	// Re-draw when round changes (track all reactive deps used in _drawGrid)
-	$effect(() => {
-		const _ = currentRound;
-		const _b = bots; // track bot positions
-		const _at = activeTypes; // track active order types
-		const _pt = previewTypes; // track preview order types
-		if (!_crt) return;
-		_drawGrid();
-	});
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -631,6 +769,12 @@ void main(){
 
 	<div class="main-area">
 		<div class="grid-section">
+			<div class="view-toggle">
+				<button class="view-btn" class:active={viewMode === 'crt'} onclick={() => viewMode = 'crt'}>CRT</button>
+				<button class="view-btn" class:active={viewMode === '3d'} onclick={() => viewMode = '3d'}>3D</button>
+			</div>
+
+			{#if viewMode === 'crt'}
 			<div class="crt-monitor">
 				<div class="crt-bezel">
 					<div class="crt-screen" bind:this={gridWrapper}>
@@ -642,6 +786,7 @@ void main(){
 							{shelfSet}
 							{itemMap}
 							dropOff={run.drop_off}
+							dropOffZones={run.drop_off_zones}
 							spawn={run.spawn}
 							{bots}
 							{botPositions}
@@ -650,26 +795,33 @@ void main(){
 							onSelectBot={(id) => selectedBot = selectedBot === id ? null : id}
 							{activeTypes}
 							{previewTypes}
+							difficulty={run.difficulty}
 						/>
-						<!-- Highlight overlay for active/preview order items -->
-					<div class="item-overlay">
-						{#each shelfItems as si}
-							{@const isActive = activeTypes.has(si.type)}
-							{@const isPreview = !isActive && previewTypes.has(si.type)}
-							{#if isActive || isPreview}
-								<div
-									class="item-cell"
-									class:item-active={isActive}
-									class:item-preview={isPreview}
-									style="left: {si.x / run.grid_width * 100}%; top: {si.y / run.grid_height * 100}%; width: {100 / run.grid_width}%; height: {100 / run.grid_height}%;"
-								></div>
-							{/if}
-						{/each}
-					</div>
 					<canvas bind:this={crtCanvas} class="crt-overlay"></canvas>
 					</div>
 				</div>
 			</div>
+			{:else}
+			<div class="threed-wrapper">
+				<Grid3D
+					width={run.grid_width}
+					height={run.grid_height}
+					{wallSet}
+					{shelfSet}
+					{itemMap}
+					dropOff={run.drop_off}
+					dropOffZones={run.drop_off_zones}
+					spawn={run.spawn}
+					{bots}
+					botColors={BOT_COLORS}
+					{selectedBot}
+					onSelectBot={(id) => selectedBot = selectedBot === id ? null : id}
+					{activeTypes}
+					{previewTypes}
+					difficulty={run.difficulty}
+				/>
+			</div>
+			{/if}
 
 			<!-- Controls -->
 			<div class="controls card">
@@ -722,37 +874,6 @@ void main(){
 							{order.items_delivered.length} / {order.items_required.length} delivered
 						</div>
 					</div>
-				{/each}
-			</div>
-
-			<!-- Bots -->
-			<div class="panel-section card">
-				<h3>Bots</h3>
-				{#each bots as bot}
-					<button
-						class="bot-row"
-						class:selected={selectedBot === bot.id}
-						onclick={() => selectedBot = selectedBot === bot.id ? null : bot.id}
-						style="--bot-color: {BOT_COLORS[bot.id % BOT_COLORS.length]}"
-					>
-						<div class="bot-header">
-							<span class="cyber-icon-wrap">{@html getBotSvg(bot.id, BOT_COLORS[bot.id % BOT_COLORS.length], 24)}</span>
-							<span class="bot-pos mono">({bot.position[0]}, {bot.position[1]})</span>
-							<span class="bot-action">{getBotAction(bot.id)}</span>
-						</div>
-						<div class="bot-inv">
-							{#if bot.inventory.length === 0}
-								<span class="empty-inv">empty</span>
-							{:else}
-								{#each bot.inventory as item}
-									<span class="inv-item">
-										<span class="cyber-icon-wrap sm">{@html getCyberIcon(item, 18)}</span>
-										<span class="item-name">{getItemTypeName(item)}</span>
-									</span>
-								{/each}
-							{/if}
-						</div>
-					</button>
 				{/each}
 			</div>
 
@@ -809,6 +930,37 @@ void main(){
 					{/each}
 				</div>
 			</div>
+
+			<!-- Bots -->
+			<div class="panel-section card">
+				<h3>Bots</h3>
+				{#each bots as bot}
+					<button
+						class="bot-row"
+						class:selected={selectedBot === bot.id}
+						onclick={() => selectedBot = selectedBot === bot.id ? null : bot.id}
+						style="--bot-color: {BOT_COLORS[bot.id % BOT_COLORS.length]}"
+					>
+						<div class="bot-header">
+							<span class="cyber-icon-wrap">{@html getBotSvg(bot.id, BOT_COLORS[bot.id % BOT_COLORS.length], 24)}</span>
+							<span class="bot-pos mono">({bot.position[0]}, {bot.position[1]})</span>
+							<span class="bot-action">{getBotAction(bot.id)}</span>
+						</div>
+						<div class="bot-inv">
+							{#if bot.inventory.length === 0}
+								<span class="empty-inv">empty</span>
+							{:else}
+								{#each bot.inventory as item}
+									<span class="inv-item">
+										<span class="cyber-icon-wrap sm">{@html getCyberIcon(item, 18)}</span>
+										<span class="item-name">{getItemTypeName(item)}</span>
+									</span>
+								{/each}
+							{/if}
+						</div>
+					</button>
+				{/each}
+			</div>
 		</div>
 	</div>
 </div>
@@ -862,6 +1014,43 @@ void main(){
 	/* ── Grid + CRT Monitor ── */
 	.grid-section { display: flex; flex-direction: column; gap: 1rem; }
 
+	.view-toggle {
+		display: flex;
+		gap: 0;
+		align-self: flex-start;
+	}
+	.view-btn {
+		padding: 0.25rem 0.75rem;
+		background: transparent;
+		color: var(--text-muted);
+		border: 1px solid var(--border);
+		font-size: 0.7rem;
+		font-family: var(--font-mono);
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+	.view-btn:first-child { border-right: none; }
+	.view-btn.active {
+		background: rgba(57, 211, 83, 0.1);
+		color: var(--accent);
+		border-color: var(--accent);
+		text-shadow: 0 0 6px rgba(57, 211, 83, 0.4);
+	}
+	.view-btn:hover:not(.active) {
+		color: var(--accent);
+		border-color: var(--accent);
+	}
+
+	.threed-wrapper {
+		border: 3px solid #111;
+		border-radius: 6px;
+		background: #050505;
+		padding: 4px;
+		box-shadow: 0 0 20px rgba(0,0,0,0.8);
+	}
+
 	.crt-monitor {
 		position: relative;
 		background: #050505;
@@ -881,40 +1070,6 @@ void main(){
 	.crt-screen {
 		position: relative;
 		padding: 0.5rem;
-	}
-	.item-overlay {
-		position: absolute;
-		inset: 0.5rem;
-		pointer-events: none;
-		z-index: 3;
-	}
-	.item-cell {
-		position: absolute;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border-radius: 2px;
-	}
-	.item-cell.item-active {
-		box-shadow: 0 0 8px rgba(250, 204, 21, 0.7), inset 0 0 4px rgba(250, 204, 21, 0.2);
-		animation: itemActivePulse 1.5s ease-in-out infinite;
-	}
-	.item-cell.item-preview {
-		box-shadow: 0 0 6px rgba(244, 114, 182, 0.5), inset 0 0 3px rgba(244, 114, 182, 0.15);
-		animation: itemPreviewPulse 2s ease-in-out infinite;
-	}
-	@keyframes itemActivePulse {
-		0%, 100% { box-shadow: 0 0 6px rgba(250, 204, 21, 0.5), inset 0 0 3px rgba(250, 204, 21, 0.15); }
-		50% { box-shadow: 0 0 12px rgba(250, 204, 21, 0.8), inset 0 0 6px rgba(250, 204, 21, 0.3); }
-	}
-	@keyframes itemPreviewPulse {
-		0%, 100% { box-shadow: 0 0 4px rgba(244, 114, 182, 0.35), inset 0 0 2px rgba(244, 114, 182, 0.1); }
-		50% { box-shadow: 0 0 8px rgba(244, 114, 182, 0.6), inset 0 0 4px rgba(244, 114, 182, 0.2); }
-	}
-	:global(.item-cell svg) {
-		display: block;
-		width: 100% !important;
-		height: 100% !important;
 	}
 	.crt-overlay {
 		position: absolute;

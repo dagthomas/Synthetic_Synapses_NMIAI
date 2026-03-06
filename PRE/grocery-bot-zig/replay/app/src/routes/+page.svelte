@@ -39,10 +39,40 @@
 		medium: '#d29922',
 		hard: '#f85149',
 		expert: '#da3633',
+		nightmare: '#a855f7',
 	};
+
+	const diffOrder = { easy: 0, medium: 1, hard: 2, expert: 3, nightmare: 4 };
 
 	let filterDiff = $state('all');
 	let filterType = $state('all');
+
+	// Replay modal
+	let replayModal = $state(null); // { runId, difficulty }
+	let replayUrl = $state('');
+
+	function isToday(dateStr) {
+		const d = new Date(dateStr);
+		const now = new Date();
+		return d.getFullYear() === now.getFullYear() &&
+			d.getMonth() === now.getMonth() &&
+			d.getDate() === now.getDate();
+	}
+
+	function openReplayModal(run) {
+		replayModal = { runId: run.id, difficulty: run.difficulty };
+		replayUrl = '';
+	}
+
+	function startReplay() {
+		if (!replayUrl.trim() || !replayModal) return;
+		const params = new URLSearchParams({
+			url: replayUrl.trim(),
+			mode: 'iterate',
+		});
+		goto(`/pipeline?${params.toString()}`);
+		replayModal = null;
+	}
 
 	let filteredRuns = $derived(
 		data.runs.filter(r =>
@@ -51,8 +81,9 @@
 		)
 	);
 
-	let totalMaxSum = $derived(data.stats.reduce((sum, s) => sum + (s.max_score || 0), 0));
-	let totalAvgSum = $derived(data.stats.reduce((sum, s) => sum + (s.avg_score || 0), 0).toFixed(1));
+	let sortedStats = $derived([...data.stats].sort((a, b) => (diffOrder[a.difficulty] ?? 9) - (diffOrder[b.difficulty] ?? 9)));
+	let totalMaxSum = $derived(sortedStats.reduce((sum, s) => sum + (s.max_score || 0), 0));
+	let totalAvgSum = $derived(sortedStats.reduce((sum, s) => sum + (s.avg_score || 0), 0).toFixed(1));
 
 	let typeBreakdown = $derived(() => {
 		const map = {};
@@ -63,7 +94,7 @@
 		return map;
 	});
 
-	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310 };
+	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310, nightmare: 350 };
 
 	// Chart constants
 	const chartW = 700;
@@ -144,7 +175,7 @@
 	<h1>Game Runs <span class="run-count">{data.totalRuns}</span></h1>
 	<div class="filters">
 		<button class="chip" class:active={filterDiff === 'all'} onclick={() => filterDiff = 'all'}>All</button>
-		{#each ['easy', 'medium', 'hard', 'expert'] as diff}
+		{#each ['easy', 'medium', 'hard', 'expert', 'nightmare'] as diff}
 			<button
 				class="chip"
 				class:active={filterDiff === diff}
@@ -164,16 +195,16 @@
 	</div>
 </div>
 
-{#if panels.stats && data.stats.length > 0}
+{#if panels.stats && sortedStats.length > 0}
 <div class="stats-row" use:scrambleIn>
-	{#each data.stats as s}
+	{#each sortedStats as s}
 		<div class="stat-card card">
 			<div class="stat-label" style="color: {diffColors[s.difficulty]}">{s.difficulty}</div>
 			<div class="stat-main">{s.max_score}</div>
 			<div class="stat-sub">max / {s.avg_score} avg / {s.count} runs</div>
 		</div>
 	{/each}
-	{#if data.stats.length > 1}
+	{#if sortedStats.length > 1}
 		<div class="stat-card card total-card">
 			<div class="stat-label" style="color: var(--accent-light)">Total</div>
 			<div class="stat-main">{totalMaxSum}</div>
@@ -198,7 +229,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each ['easy', 'medium', 'hard', 'expert'] as diff}
+			{#each ['easy', 'medium', 'hard', 'expert', 'nightmare'] as diff}
 				{@const tb = typeBreakdown()[diff] || {}}
 				{@const best = Math.max(tb.live?.max_score || 0, tb.replay?.max_score || 0, tb.synthetic?.max_score || 0)}
 				{@const target = TARGETS[diff] || 250}
@@ -291,11 +322,38 @@
 					<td>{run.orders_completed}</td>
 					<td>{run.items_delivered}</td>
 					<td class="muted">{new Date(run.created_at).toLocaleString()}</td>
-					<td><a href="/run/{run.id}" class="view-btn">View</a></td>
+					<td>
+						<a href="/run/{run.id}" class="view-btn">View</a>
+						<a href="/api/run/{run.id}/export" download class="export-btn">Export</a>
+						{#if isToday(run.created_at)}
+							<button class="replay-btn" onclick={() => openReplayModal(run)}>Replay</button>
+						{/if}
+					</td>
 				</tr>
 			{/each}
 		</tbody>
 	</table>
+</div>
+{/if}
+
+{#if replayModal}
+<div class="modal-overlay" onclick={() => replayModal = null} onkeydown={(e) => e.key === 'Escape' && (replayModal = null)} role="dialog" tabindex="-1">
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div class="modal-card card" onclick={(e) => e.stopPropagation()} role="document">
+		<h3>Replay #{replayModal.runId} <span class="badge" style="background: {diffColors[replayModal.difficulty]}20; color: {diffColors[replayModal.difficulty]}; border: 1px solid {diffColors[replayModal.difficulty]}44">{replayModal.difficulty}</span></h3>
+		<p class="modal-desc">Paste a WSS token URL to start the iterate pipeline (replay, discover orders, optimize, repeat).</p>
+		<input
+			class="modal-input"
+			type="text"
+			placeholder="wss://game.ainm.no/ws?token=..."
+			bind:value={replayUrl}
+			onkeydown={(e) => e.key === 'Enter' && startReplay()}
+		/>
+		<div class="modal-actions">
+			<button class="modal-cancel" onclick={() => replayModal = null}>Cancel</button>
+			<button class="modal-start" disabled={!replayUrl.trim()} onclick={startReplay}>Start Pipeline</button>
+		</div>
+	</div>
 </div>
 {/if}
 
@@ -397,6 +455,7 @@
 		text-transform: capitalize;
 		letter-spacing: 0.02em;
 	}
+	td:has(.view-btn) { display: flex; gap: 0.35rem; align-items: center; }
 	.view-btn {
 		padding: 0.3rem 0.75rem;
 		background: transparent;
@@ -409,6 +468,69 @@
 		transition: all 0.2s ease;
 	}
 	.view-btn:hover { background: var(--accent); color: #0d1117; text-decoration: none; }
+	.export-btn {
+		padding: 0.3rem 0.75rem;
+		background: transparent;
+		border: 1px solid #8b949e;
+		color: #8b949e;
+		border-radius: var(--radius);
+		font-size: 0.8rem;
+		font-weight: 500;
+		letter-spacing: 0.02em;
+		transition: all 0.2s ease;
+	}
+	.export-btn:hover { background: #8b949e; color: #0d1117; text-decoration: none; }
+	.replay-btn {
+		padding: 0.3rem 0.75rem;
+		background: transparent;
+		border: 1px solid #a855f7;
+		color: #a855f7;
+		border-radius: var(--radius);
+		font-size: 0.8rem;
+		font-weight: 500;
+		letter-spacing: 0.02em;
+		transition: all 0.2s ease;
+		cursor: pointer;
+	}
+	.replay-btn:hover { background: #a855f7; color: #0d1117; }
+
+	/* Modal */
+	.modal-overlay {
+		position: fixed; inset: 0; z-index: 1000;
+		background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px);
+		display: flex; align-items: center; justify-content: center;
+	}
+	.modal-card {
+		width: 480px; max-width: 90vw; padding: 1.5rem;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+	}
+	.modal-card h3 {
+		font-size: 1.1rem; font-family: var(--font-display); font-weight: 600;
+		margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;
+	}
+	.modal-desc { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; }
+	.modal-input {
+		width: 100%; padding: 0.5rem 0.75rem;
+		background: #010409; border: 1px solid var(--border); border-radius: var(--radius);
+		color: var(--text); font-family: var(--font-mono); font-size: 0.8rem;
+		outline: none; transition: border-color 0.2s;
+	}
+	.modal-input:focus { border-color: var(--accent); }
+	.modal-actions {
+		display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;
+	}
+	.modal-cancel {
+		padding: 0.4rem 1rem; background: transparent; border: 1px solid var(--border);
+		color: var(--text-muted); border-radius: var(--radius); font-size: 0.8rem; cursor: pointer;
+	}
+	.modal-cancel:hover { border-color: #8b949e; color: var(--text); }
+	.modal-start {
+		padding: 0.4rem 1rem; background: #a855f7; border: 1px solid #a855f7;
+		color: #0d1117; border-radius: var(--radius); font-size: 0.8rem;
+		font-weight: 600; cursor: pointer; transition: opacity 0.2s;
+	}
+	.modal-start:disabled { opacity: 0.4; cursor: default; }
+	.modal-start:hover:not(:disabled) { opacity: 0.85; }
 	.empty { padding: 3rem; text-align: center; color: var(--text-muted); }
 	code { background: #010409; border: 1px solid rgba(48, 54, 61, 0.5); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.85em; }
 	.filter-sep { color: var(--border); padding: 0 0.25rem; align-self: center; }

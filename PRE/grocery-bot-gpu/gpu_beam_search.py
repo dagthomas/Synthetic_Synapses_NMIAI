@@ -52,9 +52,12 @@ class GPUBeamSearcher:
                  speed_bonus: float = 0.0,
                  preferred_zone: tuple[int, ...] | None = None,
                  order_modulo: int | None = None,
-                 order_slot: int | None = None) -> None:
+                 order_slot: int | None = None,
+                 traffic_flow: dict | None = None,
+                 max_rounds: int | None = None) -> None:
         self.device = device
         self.ms = map_state
+        self.max_rounds = max_rounds if max_rounds is not None else MAX_ROUNDS
         self.all_orders = all_orders
         self.num_items = map_state.num_items
         self.num_orders = len(all_orders)
@@ -91,6 +94,11 @@ class GPUBeamSearcher:
         # Pre-build preferred type mask (used 300x per search in _eval)
         self._pref_mask = None  # set after device is ready, below
 
+        # Traffic flow: one-way lane system for multi-bot collision avoidance.
+        # up_col: aisle column for bots going UP (away from dropoff, empty inv)
+        # down_col: aisle column for bots going DOWN (toward dropoff, has active inv)
+        self._traffic_up_col = traffic_flow.get('up_col') if traffic_flow else None
+        self._traffic_down_col = traffic_flow.get('down_col') if traffic_flow else None
 
         # === Locked trajectories for sequential multi-bot DP ===
         self.candidate_bot_id = 0  # Set by dp_search()
@@ -1298,7 +1306,7 @@ class GPUBeamSearcher:
         inv = state['bot_inv']
         aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
 
-        rounds_left = MAX_ROUNDS - round_num - 1
+        rounds_left = self.max_rounds - round_num - 1
 
         # Score is dominant
         ev = state['score'].float() * 100000
@@ -1381,7 +1389,7 @@ class GPUBeamSearcher:
         inv = state['bot_inv']   # [B, INV_CAP] int8 (type index, -1=empty)
         aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
 
-        rounds_left = MAX_ROUNDS - round_num - 1
+        rounds_left = self.max_rounds - round_num - 1
         rl_f = float(max(rounds_left, 1))
 
         # Score is dominant factor (1 point = 100000 eval units)
@@ -1601,6 +1609,26 @@ class GPUBeamSearcher:
                 # Scale: -4000 per locked bot in same aisle (moderate — less than
                 # active_inv_value but enough to prefer different-aisle routing)
                 ev = ev - _cand_in_narrow.float() * _num_locked_same * 4000 * _ct_scale
+
+        # === Traffic flow: one-way lane system ===
+        # Up lane (e.g. col 1): prefer for empty bots heading away from dropoff.
+        # Down lane (e.g. col 4): prefer for loaded bots heading toward dropoff.
+        # Only in non-corridor aisle rows to avoid interfering with corridor routing.
+        if self._traffic_up_col is not None and self._traffic_down_col is not None:
+            _up_col = self._traffic_up_col
+            _dn_col = self._traffic_down_col
+            _in_aisle_area = ~self._corridor_rows[bot_y]  # not in wide corridor
+            _at_up = (bot_x == _up_col) & _in_aisle_area  # [B]
+            _at_dn = (bot_x == _dn_col) & _in_aisle_area  # [B]
+
+            # Empty bot (no active inv) in up-lane col: bonus (correct flow)
+            ev = ev + (~has_active_inv & _at_up).float() * 2500
+            # Loaded bot in down-lane col: bonus (correct flow)
+            ev = ev + (has_active_inv & _at_dn).float() * 2500
+            # Loaded bot in up-lane col: penalty (wrong way — blocks empty bots)
+            ev = ev - (has_active_inv & _at_up).float() * 2500
+            # Empty bot in down-lane col: mild penalty (should use up-lane)
+            ev = ev - (~has_active_inv & _at_dn).float() * 1500
 
         # === Dropoff queue system ===
         # When multiple bots are heading to dropoff with items, they should
@@ -1834,7 +1862,7 @@ class GPUBeamSearcher:
         parent_history = []
         act_offset_history = []
 
-        for rnd in range(MAX_ROUNDS):
+        for rnd in range(self.max_rounds):
             t_rnd = time.time()
             B = state['bot_x'].shape[0]
 
@@ -1903,11 +1931,11 @@ class GPUBeamSearcher:
             act_offset_history.append((taken_acts, taken_items))
 
             # Verbose diagnostics (only sync to CPU when printing)
-            if verbose and (rnd < 5 or rnd % 25 == 0 or rnd == MAX_ROUNDS - 1):
+            if verbose and (rnd < 5 or rnd % 25 == 0 or rnd == self.max_rounds - 1):
                 dt = time.time() - t_rnd
                 best_score = state['score'].max().item()
                 num_unique = 0
-                if rnd < 5 or rnd % 50 == 0 or rnd == MAX_ROUNDS - 1:
+                if rnd < 5 or rnd % 50 == 0 or rnd == self.max_rounds - 1:
                     hashes = self._hash(state)
                     num_unique = int(torch.unique(hashes).shape[0])
                 uniq_str = f", unique={num_unique}" if num_unique > 0 else ""
@@ -1924,7 +1952,7 @@ class GPUBeamSearcher:
         idx = best_idx
 
         wait_pad = [(ACT_WAIT, -1)] * (self.num_bots - 1)
-        for rnd in range(MAX_ROUNDS - 1, -1, -1):
+        for rnd in range(self.max_rounds - 1, -1, -1):
             taken_acts, taken_items = act_offset_history[rnd]
             act_type = int(taken_acts[idx])
             item = int(taken_items[idx])
@@ -2131,7 +2159,7 @@ class GPUBeamSearcher:
                       for streaming progress updates.
             bot_id: Which bot in the game state to optimize (default 0).
             start_rnd: Starting round index (default 0). Used for locked bot lookup.
-            max_rounds: Max rounds to run (default MAX_ROUNDS - start_rnd).
+            max_rounds: Max rounds to run (default self.max_rounds - start_rnd).
             init_state: Optional GPU state dict to start from instead of game_state.
                         If provided, game_state may be None.
 
@@ -2146,7 +2174,7 @@ class GPUBeamSearcher:
         d = self.device
 
         if max_rounds is None:
-            max_rounds = MAX_ROUNDS - start_rnd
+            max_rounds = self.max_rounds - start_rnd
 
         # Use position-filtered expand (6+MAX_ADJ actions vs 6+num_items)
         use_dp_expand = True
@@ -3020,7 +3048,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         inv2 = state['bot2_inv']
         aidx = state['active_idx'].long().clamp(0, self.num_orders - 1)
 
-        rounds_left = MAX_ROUNDS - round_num - 1
+        rounds_left = self.max_rounds - round_num - 1
 
         # Score is dominant
         ev = state['score'].float() * 100000
@@ -3228,7 +3256,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
 
         pruned_rounds = 0
 
-        for rnd in range(MAX_ROUNDS):
+        for rnd in range(self.max_rounds):
             B = state['bot1_x'].shape[0]
 
             # Sparse expand: distance-adaptive, returns only valid combos
@@ -3307,7 +3335,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
                 B_new = keep
 
             # Verbose output
-            if verbose and (rnd < 10 or rnd % 25 == 0 or rnd == MAX_ROUNDS - 1):
+            if verbose and (rnd < 10 or rnd % 25 == 0 or rnd == self.max_rounds - 1):
                 dt = time.time() - t0
                 best_score = state['score'].max().item()
                 print(f"  R{rnd:3d}: score={best_score:3d}, "
@@ -3330,7 +3358,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         bot1_seq = []
         bot2_seq = []
         idx = best_idx
-        for j in range(MAX_ROUNDS - 1, -1, -1):
+        for j in range(self.max_rounds - 1, -1, -1):
             bot1_seq.append((int(b1_act_history[j][idx]),
                              int(b1_item_history[j][idx])))
             bot2_seq.append((int(b2_act_history[j][idx]),
