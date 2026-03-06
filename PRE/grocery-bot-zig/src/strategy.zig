@@ -444,7 +444,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
     }
     // Max bots allowed to carry preview items: limit to reduce dead inventory risk
     // CRITICAL: increasing this causes catastrophic dead-inv in Expert (10 bots)
-    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else if (state.bot_count >= 8) 6 else if (state.bot_count >= 5) 3 else 1;
+    const max_preview_carriers: u8 = if (state.bot_count <= 2) state.bot_count else if (state.bot_count >= 20) 10 else if (state.bot_count >= 8) 6 else if (state.bot_count >= 5) 3 else 1;
 
     // ── Fix 6: Track score changes for diagnostic logging ──
     if (state.score != last_score) {
@@ -925,7 +925,7 @@ pub fn decideActions(state: *GameState, out_buf: []u8) ![]const u8 {
         // the next order's active items. No risk of permanent dead inventory.
         const all_active_covered_orch = pick_remaining.count == 0;
         var total_preview_assigned: u8 = 0;
-        const max_orch_preview: u8 = if (all_active_covered_orch) preview.count else if (state.bot_count <= 2) 4 else if (state.bot_count <= 4) 2 else if (state.bot_count >= 8) 6 else 2;
+        const max_orch_preview: u8 = if (all_active_covered_orch) preview.count else if (state.bot_count <= 2) 4 else if (state.bot_count <= 4) 2 else if (state.bot_count >= 20) 10 else if (state.bot_count >= 8) 6 else 2;
         if (preview.count > 0 and (all_active_covered_orch or bots_with_preview_only < max_preview_carriers)) {
             var prev_track: [16]TypeTrack = undefined;
             var prev_track_len: u8 = 0;
