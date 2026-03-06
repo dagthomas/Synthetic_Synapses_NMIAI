@@ -195,7 +195,7 @@ def parse_seeds_args(seed_arg, seed_single):
 
 def main():
     parser = argparse.ArgumentParser(description='Benchmark AnytimeGPUStream in-process')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seed', type=int, default=None, help='Single seed')
     parser.add_argument('--seeds', type=str, default='7001-7003',
                         help='Seed range e.g. 7001-7005 or count e.g. 5 (=7001-7005)')

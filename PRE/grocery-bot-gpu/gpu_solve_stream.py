@@ -131,7 +131,7 @@ def solve(difficulty, seed=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GPU DP solver (streaming JSON)')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seed', type=int, default=None)
     args = parser.parse_args()
 

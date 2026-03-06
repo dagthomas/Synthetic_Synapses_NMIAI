@@ -488,7 +488,7 @@ def offline_reactive_solve(
 def main():
     parser = argparse.ArgumentParser(
         description='Offline reactive solver: per-round GPU decisions against local sim')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--max-states', type=int, default=200_000,
                         help='GPU states per bot per round (default: 200K)')
     parser.add_argument('--horizon', type=int, default=100,

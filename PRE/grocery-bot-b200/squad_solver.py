@@ -623,7 +623,7 @@ def solve_from_capture(difficulty: str, gpu: str = 'auto',
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='B200 Squad Solver')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--gpu', default='auto', choices=['auto', 'b200', '5090', 'generic'])
     parser.add_argument('--max-time', type=float, default=None)
     parser.add_argument('--max-states', type=int, default=None)

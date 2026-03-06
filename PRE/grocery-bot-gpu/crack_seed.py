@@ -95,7 +95,7 @@ def verify_seed(seed: int, difficulty: str, captured_orders: list[list[str]]) ->
 
 def main():
     parser = argparse.ArgumentParser(description='Crack game seed from captured orders')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--range', nargs=2, type=int, default=[0, 10_000_000],
                         help='Seed range to search (default: 0 to 10M)')
     parser.add_argument('--workers', type=int, default=8,

@@ -19,7 +19,7 @@ from ws_client import replay, save_actions, load_actions
 
 def main():
     parser = argparse.ArgumentParser(description='Grocery Bot GPU Beam Search Solver')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('seed', type=int)
     parser.add_argument('--beam-width', type=int, default=100, help='Beam width (default 100)')
     parser.add_argument('--max-per-bot', type=int, default=3, help='Max candidates per bot')

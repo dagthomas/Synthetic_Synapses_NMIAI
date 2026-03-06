@@ -41,7 +41,7 @@ def _clean_jwt_url(url: str) -> str:
             parts[-1] = sig[:43]
             return '.'.join(parts)
     return url
-DIFFICULTIES = ['easy', 'medium', 'hard', 'expert']
+DIFFICULTIES = ['easy', 'medium', 'hard', 'expert', 'nightmare']
 
 
 def _is_logged_in(page) -> bool:
@@ -51,7 +51,8 @@ def _is_logged_in(page) -> bool:
         return False
     try:
         btns = page.locator('button:has-text("Easy"), button:has-text("Medium"), '
-                            'button:has-text("Hard"), button:has-text("Expert")')
+                            'button:has-text("Hard"), button:has-text("Expert"), '
+                            'button:has-text("Nightmare")')
         return btns.count() >= 4
     except Exception:
         return False

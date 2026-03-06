@@ -200,7 +200,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Test seed cracker')
     parser.add_argument('difficulty', default='expert', nargs='?',
-                        choices=['easy', 'medium', 'hard', 'expert'])
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('seed', type=int, default=42, nargs='?')
     parser.add_argument('--range', type=int, default=10_000_000,
                         help='Search range [0, range)')

@@ -24,7 +24,7 @@ def emit(event: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--max-time', type=int, default=20, help='Time budget in seconds')
     parser.add_argument('--max-states', type=int, default=None)
     parser.add_argument('--refine-iters', type=int, default=20)

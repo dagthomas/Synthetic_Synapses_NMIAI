@@ -158,7 +158,7 @@ def solve(difficulty, seed=None, max_states=500000):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Sequential GPU DP solver (streaming JSON)')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--max-states', type=int, default=500000)
     args = parser.parse_args()

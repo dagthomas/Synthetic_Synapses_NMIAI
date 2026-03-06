@@ -146,7 +146,7 @@ if __name__ == '__main__':
     parser.add_argument('--config', type=str, default=None,
                         help='JSON schedule config file')
     parser.add_argument('--difficulty', type=str, default=None,
-                        choices=['easy', 'medium', 'hard', 'expert'],
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'],
                         help='Run single difficulty')
     parser.add_argument('--final-replays', action='store_true',
                         help='Just do final replays')

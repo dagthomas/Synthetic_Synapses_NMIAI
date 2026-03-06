@@ -74,7 +74,7 @@ def learn(difficulty, time_limit=120.0, num_workers=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Learn from captured game')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--time', type=float, default=120.0, help='Time limit in seconds')
     parser.add_argument('--workers', type=int, default=None, help='Number of parallel workers')
     args = parser.parse_args()

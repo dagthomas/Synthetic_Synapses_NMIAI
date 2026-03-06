@@ -13,12 +13,14 @@ CONFIGS = {
     "medium": {"w": 16, "h": 12, "bots": 3, "aisles": 3, "types": 8, "order_size": (3, 5)},
     "hard":   {"w": 22, "h": 14, "bots": 5, "aisles": 4, "types": 12, "order_size": (3, 5)},
     "expert": {"w": 28, "h": 18, "bots": 10, "aisles": 5, "types": 16, "order_size": (4, 6)},
+    "nightmare": {"w": 30, "h": 18, "bots": 20, "aisles": 6, "types": 21, "order_size": (4, 7), "dropoffs": 3},
 }
 
 ALL_TYPES = ["milk", "bread", "eggs", "butter", "cheese", "pasta", "rice", "juice",
-             "yogurt", "cereal", "flour", "sugar", "coffee", "tea", "oil", "salt"]
+             "yogurt", "cereal", "flour", "sugar", "coffee", "tea", "oil", "salt",
+             "honey", "beans", "corn", "soup"]
 
-MAX_ROUNDS = 300
+MAX_ROUNDS = 300  # overridden per-difficulty for nightmare (500)
 INV_CAP = 3
 
 
@@ -55,8 +57,15 @@ def build_map(cfg):
             shelves.add((ax, y))      # left shelf
             shelves.add((ax + 2, y))  # right shelf
 
-    # Drop-off: bottom-left area
-    drop_off = (1, h - 2)
+    # Drop-off zone(s)
+    num_dropoffs = cfg.get("dropoffs", 1)
+    if num_dropoffs >= 3:
+        drop_off_zones = [(1, h - 2), (w // 2, h - 2), (w - 2, 1)]
+    elif num_dropoffs == 2:
+        drop_off_zones = [(1, h - 2), (w - 2, h - 2)]
+    else:
+        drop_off_zones = [(1, h - 2)]
+    drop_off = drop_off_zones[0]  # primary
 
     # Bot spawn: bottom-right inside border
     spawn = (w - 2, h - 2)
@@ -69,7 +78,7 @@ def build_map(cfg):
         itype = item_types[i % len(item_types)]
         items.append({"id": f"item_{i}", "type": itype, "position": [sx, sy], "picked": False})
 
-    return w, h, walls, shelves, drop_off, spawn, items, item_types
+    return w, h, walls, shelves, drop_off, drop_off_zones, spawn, items, item_types
 
 
 def generate_order(idx, item_types, order_size, status, available_counts=None):
@@ -101,7 +110,7 @@ def generate_order(idx, item_types, order_size, status, available_counts=None):
     }
 
 
-def make_game_state(rnd, max_rounds, w, h, walls, shelves, bots, items, orders, drop_off, score, order_idx, total_orders):
+def make_game_state(rnd, max_rounds, w, h, walls, shelves, bots, items, orders, drop_off, drop_off_zones, score, order_idx, total_orders):
     # Include shelf positions as walls (shelves are always impassable)
     wall_list = [[x, y] for (x, y) in sorted(walls | shelves)]
     item_list = [{"id": it["id"], "type": it["type"], "position": it["position"]}
@@ -122,6 +131,7 @@ def make_game_state(rnd, max_rounds, w, h, walls, shelves, bots, items, orders, 
         "items": item_list,
         "orders": order_list,
         "drop_off": list(drop_off),
+        "drop_off_zones": [list(z) for z in drop_off_zones] if len(drop_off_zones) > 1 else None,
         "score": score,
         "active_order_index": order_idx,
         "total_orders": total_orders,
@@ -141,7 +151,8 @@ async def run_game(websocket, cfg, seed=None):
         seed = random.randint(0, 999999)  # nosec B311
     random.seed(seed)  # nosec B311
     print(f"Seed: {seed}")
-    w, h, walls, shelves, drop_off, spawn, items, item_types = build_map(cfg)
+    w, h, walls, shelves, drop_off, drop_off_zones, spawn, items, item_types = build_map(cfg)
+    max_rounds = 500 if cfg.get("dropoffs", 1) >= 3 else MAX_ROUNDS  # nightmare = 500 rounds
     num_bots = cfg["bots"]
     order_size = cfg["order_size"]
 
@@ -170,11 +181,11 @@ async def run_game(websocket, cfg, seed=None):
     total_orders_completed = 0
 
     print(f"Game: {w}x{h}, {num_bots} bots, {len(items)} items, {len(item_types)} types")
-    print(f"Drop-off: {drop_off}, Spawn: {spawn}")
+    print(f"Drop-off: {drop_off}, Zones: {drop_off_zones}, Spawn: {spawn}")
     print(f"Order 0 (active): {all_orders[0]['items_required']}")
     print(f"Order 1 (preview): {all_orders[1]['items_required']}")
 
-    for rnd in range(MAX_ROUNDS):
+    for rnd in range(max_rounds):
         # Build visible orders (active + first non-complete preview)
         visible_orders = []
         for o in all_orders:
@@ -183,8 +194,8 @@ async def run_game(websocket, cfg, seed=None):
                 if len(visible_orders) >= 2:
                     break
 
-        state = make_game_state(rnd, MAX_ROUNDS, w, h, walls, shelves, bots, items,
-                                all_orders, drop_off, score, active_idx, next_order_idx)
+        state = make_game_state(rnd, max_rounds, w, h, walls, shelves, bots, items,
+                                all_orders, drop_off, drop_off_zones, score, active_idx, next_order_idx)
 
         msg = json.dumps(state)
         await websocket.send(msg)
@@ -256,7 +267,8 @@ async def run_game(websocket, cfg, seed=None):
                             break
 
             elif action == "drop_off":
-                if bx == drop_off[0] and by == drop_off[1] and len(bot["inventory"]) > 0:
+                at_dropoff = any(bx == dz[0] and by == dz[1] for dz in drop_off_zones)
+                if at_dropoff and len(bot["inventory"]) > 0:
                     # Find active order
                     active_order = None
                     for o in all_orders:
@@ -314,7 +326,7 @@ async def run_game(websocket, cfg, seed=None):
                                     break
                             if new_active:
                                 for b2 in bots:
-                                    if b2["position"][0] == drop_off[0] and b2["position"][1] == drop_off[1]:
+                                    if any(b2["position"][0] == dz[0] and b2["position"][1] == dz[1] for dz in drop_off_zones):
                                         remaining = []
                                         for inv_item in b2["inventory"]:
                                             needed2 = list(new_active["items_required"])
@@ -355,7 +367,7 @@ async def run_game(websocket, cfg, seed=None):
     game_over = {
         "type": "game_over",
         "score": score,
-        "rounds_used": MAX_ROUNDS,
+        "rounds_used": max_rounds,
         "items_delivered": total_items_delivered,
         "orders_completed": total_orders_completed,
     }
@@ -365,7 +377,7 @@ async def run_game(websocket, cfg, seed=None):
     print(f"  Score: {score}")
     print(f"  Items delivered: {total_items_delivered}")
     print(f"  Orders completed: {total_orders_completed}")
-    print(f"  Rounds used: {MAX_ROUNDS}")
+    print(f"  Rounds used: {max_rounds}")
     print(f"{'='*50}")
 
 

@@ -152,7 +152,7 @@ def print_results(results, seeds, difficulty):
 
 def main():
     parser = argparse.ArgumentParser(description='Parameter sweep for GPU sequential solver')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seeds', default='7001-7003',
                         help='Seeds: "7001-7003", "42,7001", or count "3"')
     parser.add_argument('--device', default='cuda')

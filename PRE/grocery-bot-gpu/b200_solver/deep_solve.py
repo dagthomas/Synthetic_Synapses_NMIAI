@@ -249,7 +249,7 @@ def deep_refine(capture_data: dict, difficulty: str,
 def main():
     parser = argparse.ArgumentParser(
         description='Deep GPU solver: exhaustive orderings + 3-bot joint DP')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--max-hours', type=float, default=3.0,
                         help='Total time budget in hours (default: 3)')
     parser.add_argument('--states-1bot', type=int, default=200_000,

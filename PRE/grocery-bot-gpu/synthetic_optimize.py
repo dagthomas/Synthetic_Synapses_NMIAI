@@ -231,7 +231,7 @@ def run_seed(seed, difficulty, budgets, target, device, refine_iters,
 def main():
     parser = argparse.ArgumentParser(
         description='Batch GPU solver with progressive budgets and DB recording')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seeds', default='7001-7003',
                         help='Seeds: "7001-7003", "42,7001", or count "3"')
     parser.add_argument('--target', type=int, default=250,

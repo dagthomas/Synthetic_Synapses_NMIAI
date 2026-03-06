@@ -264,7 +264,7 @@ def replay_and_discover(ws_url: str, difficulty: str) -> tuple[int, int]:
 def main():
     parser = argparse.ArgumentParser(
         description='Competition day: unlimited offline training with stepladder order discovery')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--max-cycles', type=int, default=50,
                         help='Max discovery cycles (default: 50)')
     parser.add_argument('--deep-states', type=int, default=100000,

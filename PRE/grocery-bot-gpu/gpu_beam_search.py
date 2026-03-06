@@ -63,6 +63,9 @@ class GPUBeamSearcher:
         self.H = map_state.height
         self.drop_x = map_state.drop_off[0]
         self.drop_y = map_state.drop_off[1]
+        # Multi-dropoff zones (for nightmare etc.)
+        self.drop_off_zones = getattr(map_state, 'drop_off_zones', [map_state.drop_off])
+        self._multi_drop = len(self.drop_off_zones) > 1
         self.num_bots = num_bots
         self.pipeline_mode = pipeline_mode  # pre-fetches preview items proactively
         # pipeline_depth: which order ahead to target (1=order+1, 2=order+2, etc.)
@@ -123,6 +126,10 @@ class GPUBeamSearcher:
 
         # Actions per state: wait + 4 moves + dropoff + num_items pickups
         self.num_actions = 6 + self.num_items
+
+        # Pre-build dropoff zone tensors for multi-dropoff checks
+        self._drop_xs = [dz[0] for dz in self.drop_off_zones]
+        self._drop_ys = [dz[1] for dz in self.drop_off_zones]
 
         # Enable TF32 for any float32 matmuls (BFS precompute, etc.)
         # TF32 uses Tensor Cores with 10-bit mantissa — exact for integer-valued results
@@ -266,7 +273,7 @@ class GPUBeamSearcher:
         self._trip_n_cells = trips.n_cells
         self._trip_n_combos = trips.n_combos
         self._del_weights = torch.tensor(
-            [1, 2, 4, 8, 16, 32], dtype=torch.long, device=device)
+            [1 << i for i in range(MAX_ORDER_SIZE)], dtype=torch.long, device=device)
 
         # Precompute per (order_idx, delivery_bitmask):
         #   remaining_trip_combo: combo_idx for the next ≤3 items to pick
@@ -275,8 +282,9 @@ class GPUBeamSearcher:
         from itertools import combinations as _combs
         drop_ci = tables.pos_to_idx[
             (map_state.drop_off[0], map_state.drop_off[1])]
-        _rtc = np.full((self.num_orders, 64), -1, dtype=np.int32)
-        _rac = np.zeros((self.num_orders, 64), dtype=np.int16)
+        _bitmask_dim = 1 << MAX_ORDER_SIZE  # 128 for 7-item orders
+        _rtc = np.full((self.num_orders, _bitmask_dim), -1, dtype=np.int32)
+        _rac = np.zeros((self.num_orders, _bitmask_dim), dtype=np.int16)
         _ofc = np.zeros(self.num_orders, dtype=np.int16)
         for oi in range(self.num_orders):
             oreq = [int(x) for x in all_orders[oi].required]
@@ -473,6 +481,15 @@ class GPUBeamSearcher:
                 (1, self.num_locked), sy, dtype=torch.int16, device=d)
         return state
 
+    def _at_drop(self, x, y):
+        """Check if position (x, y) tensors are at any dropoff zone."""
+        if not self._multi_drop:
+            return (x == self.drop_x) & (y == self.drop_y)
+        result = (x == self._drop_xs[0]) & (y == self._drop_ys[0])
+        for i in range(1, len(self._drop_xs)):
+            result = result | ((x == self._drop_xs[i]) & (y == self._drop_ys[i]))
+        return result
+
     def _expand(self, state):
         """Expand beam: each state -> num_actions copies with action tensors.
 
@@ -566,7 +583,7 @@ class GPUBeamSearcher:
         inv_count = (inv >= 0).sum(dim=1)
         has_space = inv_count < INV_CAP
         has_items = inv_count > 0
-        at_drop = (bot_x == self.drop_x) & (bot_y == self.drop_y)
+        at_drop = self._at_drop(bot_x, bot_y)
 
         # Check for active items in inventory
         has_active_inv = torch.zeros(B, dtype=torch.bool, device=d)
@@ -946,7 +963,7 @@ class GPUBeamSearcher:
         # Auto-deliver ALL locked bots at dropoff (vectorized per bot)
         if locked_bx is not None:
             for b2 in range(self.num_locked):
-                b2_at_drop = (locked_bx[:, b2] == self.drop_x) & (locked_by[:, b2] == self.drop_y)
+                b2_at_drop = self._at_drop(locked_bx[:, b2], locked_by[:, b2])
                 b2_auto = valid_auto & b2_at_drop
                 if b2_auto.any():
                     linv_b2 = locked_inv[:, b2, :]  # [B, INV_CAP]
@@ -956,7 +973,7 @@ class GPUBeamSearcher:
                     score = score + score_add
 
         # Auto-deliver candidate bot at dropoff (vectorized)
-        cand_at_drop = (bot_x == self.drop_x) & (bot_y == self.drop_y)
+        cand_at_drop = self._at_drop(bot_x, bot_y)
         auto_cand = valid_auto & cand_at_drop
         if auto_cand.any():
             bot_inv, active_del, score_add = self._vectorized_deliver(
@@ -1030,7 +1047,7 @@ class GPUBeamSearcher:
 
         # --- Dropoff ---
         elif lb_act == ACT_DROPOFF:
-            lb_at_drop = (lbx == self.drop_x) & (lby == self.drop_y)
+            lb_at_drop = self._at_drop(lbx, lby)
             lb_can_drop = lb_at_drop & (active_idx < self.num_orders)
 
             aidx_l = active_idx.long().clamp(0, self.num_orders - 1)
@@ -1122,7 +1139,7 @@ class GPUBeamSearcher:
 
         # === DROPOFF (vectorized) ===
         is_dropoff = (actions == ACT_DROPOFF)
-        at_drop = (bot_x == self.drop_x) & (bot_y == self.drop_y)
+        at_drop = self._at_drop(bot_x, bot_y)
         has_items = (bot_inv >= 0).any(dim=1)
         can_dropoff = is_dropoff & at_drop & has_items & (active_idx < self.num_orders)
 
@@ -1199,7 +1216,7 @@ class GPUBeamSearcher:
 
         # === DROPOFF (vectorized) ===
         is_dropoff = (actions == ACT_DROPOFF)
-        at_drop = (bot_x == self.drop_x) & (bot_y == self.drop_y)
+        at_drop = self._at_drop(bot_x, bot_y)
         has_items = (bot_inv >= 0).any(dim=1)
         can_dropoff = is_dropoff & at_drop & has_items & (active_idx < self.num_orders)
 
@@ -1559,7 +1576,7 @@ class GPUBeamSearcher:
         ev = ev - cant_deliver.float() * 80000
 
         # Empty bot camping at dropoff: penalize blocking deliveries.
-        at_drop = (state['bot_x'].long() == self.drop_x) & (state['bot_y'].long() == self.drop_y)
+        at_drop = self._at_drop(state['bot_x'].long(), state['bot_y'].long())
         camping_penalty = at_drop & ~has_active_inv
         ev = ev - camping_penalty.float() * 12000
 
@@ -1594,18 +1611,34 @@ class GPUBeamSearcher:
             locked_by_state = state.get('locked_by')
             if locked_bx_state is not None:
                 # Count locked bots near dropoff (within 2 cells)
-                locked_near_drop = (
-                    (locked_bx_state - self.drop_x).abs() +
-                    (locked_by_state - self.drop_y).abs() <= 2
-                ).sum(dim=1).float()  # [B]
+                # Count locked bots near any dropoff (within 2 cells)
+                if not self._multi_drop:
+                    locked_near_drop = (
+                        (locked_bx_state - self.drop_x).abs() +
+                        (locked_by_state - self.drop_y).abs() <= 2
+                    ).sum(dim=1).float()  # [B]
+                else:
+                    # Multi-dropoff: check distance to each zone, take min
+                    near_any = None
+                    for dz in self.drop_off_zones:
+                        near_dz = (locked_bx_state - dz[0]).abs() + (locked_by_state - dz[1]).abs() <= 2
+                        near_any = near_dz if near_any is None else (near_any | near_dz)
+                    locked_near_drop = near_any.sum(dim=1).float()
         # === Coordination with locked bots ===
         if 'locked_bx' in state and self.num_locked > 0:
             locked_bx_state = state['locked_bx']  # [B, num_locked]
             locked_by_state = state['locked_by']
             # Congestion: penalize being near dropoff when many locked bots are too.
-            # Scale with num_locked — more bots = higher congestion cost.
-            locked_at_drop = ((locked_bx_state == self.drop_x) &
-                              (locked_by_state == self.drop_y)).sum(dim=1).float()
+            locked_at_drop_mask = self._at_drop(locked_bx_state[:, 0:1], locked_by_state[:, 0:1])
+            for lb_i in range(1, self.num_locked):
+                locked_at_drop_mask = locked_at_drop_mask | self._at_drop(
+                    locked_bx_state[:, lb_i:lb_i+1], locked_by_state[:, lb_i:lb_i+1])
+            # Count per batch: how many locked bots are at any dropoff
+            locked_at_drop_counts = torch.zeros(locked_bx_state.shape[0], device=locked_bx_state.device)
+            for lb_i in range(self.num_locked):
+                locked_at_drop_counts += self._at_drop(
+                    locked_bx_state[:, lb_i], locked_by_state[:, lb_i]).float()
+            locked_at_drop = locked_at_drop_counts
             near_drop = dist_drop < 3
             ev = ev - near_drop.float() * locked_at_drop * 500 * _ct_scale
 
@@ -2442,7 +2475,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
 
         # Score dropoff (index 5): high if carrying active items
         has_active = (inv.unsqueeze(2) == act_req.unsqueeze(1)).any(dim=2).any(dim=1)
-        at_drop = (bx == self.drop_x) & (by == self.drop_y)
+        at_drop = self._at_drop(bx, by)
         scores[:, 5] += (has_active & at_drop).float() * 120.0
         scores[:, 5] += (has_active & ~at_drop).float() * -10.0  # don't dropoff when not at dropoff
 
@@ -2654,7 +2687,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         candidate bots, then this candidate bot — all in real ID order.
         """
         is_dropoff = (acts == ACT_DROPOFF)
-        at_drop = (cand_x == self.drop_x) & (cand_y == self.drop_y)
+        at_drop = self._at_drop(cand_x, cand_y)
         has_items = (cand_inv >= 0).any(dim=1)
         can_dropoff = is_dropoff & at_drop & has_items & (active_idx < self.num_orders)
 
@@ -2688,8 +2721,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
             # Auto-deliver locked bots at dropoff
             if locked_bx is not None:
                 for lb in range(self.num_locked):
-                    lb_at_drop = ((locked_bx[:, lb] == self.drop_x) &
-                                  (locked_by[:, lb] == self.drop_y))
+                    lb_at_drop = self._at_drop(locked_bx[:, lb], locked_by[:, lb])
                     lb_auto = valid_auto & lb_at_drop
                     if lb_auto.any():
                         linv = locked_inv[:, lb, :]
@@ -2700,7 +2732,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
 
             # Auto-deliver other candidate bots at dropoff
             for ox, oy, oinv_ref in zip(other_cand_xs, other_cand_ys, other_cand_invs):
-                o_at_drop = (ox == self.drop_x) & (oy == self.drop_y)
+                o_at_drop = self._at_drop(ox, oy)
                 o_auto = valid_auto & o_at_drop
                 if o_auto.any():
                     oinv_ref[0], active_del, sa = self._vectorized_deliver(
@@ -2711,7 +2743,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
                     oinv_ref[0] = oinv_ref[0].gather(1, si.long())
 
             # Auto-deliver this candidate at dropoff
-            cand_at_drop = (cand_x == self.drop_x) & (cand_y == self.drop_y)
+            cand_at_drop = self._at_drop(cand_x, cand_y)
             auto_cand = valid_auto & cand_at_drop
             if auto_cand.any():
                 cand_inv, active_del, sa = self._vectorized_deliver(
@@ -2896,7 +2928,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
 
         # --- Dropoff ---
         elif lb_act == ACT_DROPOFF:
-            lb_at_drop = (lbx == self.drop_x) & (lby == self.drop_y)
+            lb_at_drop = self._at_drop(lbx, lby)
             lb_can_drop = lb_at_drop & (active_idx < self.num_orders)
 
             aidx_l = active_idx.long().clamp(0, self.num_orders - 1)
@@ -2932,8 +2964,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
 
                 # Auto-deliver all locked bots
                 for lb2 in range(self.num_locked):
-                    lb2_at = ((locked_bx[:, lb2] == self.drop_x) &
-                              (locked_by[:, lb2] == self.drop_y))
+                    lb2_at = self._at_drop(locked_bx[:, lb2], locked_by[:, lb2])
                     lb2_auto = valid_auto & lb2_at
                     if lb2_auto.any():
                         li = locked_inv[:, lb2, :]
@@ -2943,7 +2974,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
                         score = score + sa
 
                 # Auto-deliver bot1
-                b1_at = (bot1_x == self.drop_x) & (bot1_y == self.drop_y)
+                b1_at = self._at_drop(bot1_x, bot1_y)
                 b1_auto = valid_auto & b1_at
                 if b1_auto.any():
                     bot1_inv, active_del, sa = self._vectorized_deliver(
@@ -2954,7 +2985,7 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
                     bot1_inv = bot1_inv.gather(1, si.long())
 
                 # Auto-deliver bot2
-                b2_at = (bot2_x == self.drop_x) & (bot2_y == self.drop_y)
+                b2_at = self._at_drop(bot2_x, bot2_y)
                 b2_auto = valid_auto & b2_at
                 if b2_auto.any():
                     bot2_inv, active_del, sa = self._vectorized_deliver(
@@ -3132,8 +3163,8 @@ class GPUBeamSearcher2Bot(GPUBeamSearcher):
         ev = ev - has_trip.float() * total_remaining.clamp(0, 300) * 50
 
         # Penalize both bots camping at dropoff without active items
-        at_drop1 = (state['bot1_x'].long() == self.drop_x) & (state['bot1_y'].long() == self.drop_y)
-        at_drop2 = (state['bot2_x'].long() == self.drop_x) & (state['bot2_y'].long() == self.drop_y)
+        at_drop1 = self._at_drop(state['bot1_x'].long(), state['bot1_y'].long())
+        at_drop2 = self._at_drop(state['bot2_x'].long(), state['bot2_y'].long())
         camp1 = at_drop1 & ~has_active1
         camp2 = at_drop2 & ~has_active2
         ev = ev - camp1.float() * 12000
@@ -3504,7 +3535,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='GPU-accelerated search for grocery bot')
     parser.add_argument('difficulty', nargs='?', default='easy',
-                        choices=['easy', 'medium', 'hard', 'expert'])
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seed', type=int, default=7001)
     parser.add_argument('--beam', type=int, default=10000)
     parser.add_argument('--max-states', type=int, default=500000)

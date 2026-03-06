@@ -21,7 +21,7 @@ from gpu_beam_search import GPUBeamSearcher
 def main():
     parser = argparse.ArgumentParser(description='Profile GPU beam search')
     parser.add_argument('difficulty', nargs='?', default='easy',
-                        choices=['easy', 'medium', 'hard', 'expert'])
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--beam', type=int, default=50000)
     parser.add_argument('--trace', action='store_true',

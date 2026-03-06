@@ -325,16 +325,24 @@ class PrecomputedTables:
         self.dist_to_type = dist_to_type
         self.step_to_type = step_to_type
 
-        # Dropoff tables (vectorized)
-        drop_x, drop_y = map_state.drop_off
-        drop_idx = self.pos_to_idx.get((drop_x, drop_y))
-        if drop_idx is not None:
-            dist_to_dropoff = np.full((H, W), 9999, dtype=np.int16)
-            step_to_dropoff = np.zeros((H, W), dtype=np.int8)
-            dist_to_dropoff[src_ys, src_xs] = self.dist_matrix[:, drop_idx]
-            step_to_dropoff[src_ys, src_xs] = self.next_step_matrix[:, drop_idx]
-            self.dist_to_dropoff = dist_to_dropoff
-            self.step_to_dropoff = step_to_dropoff
+        # Dropoff tables (vectorized) — multi-source for multiple dropoff zones
+        drop_off_zones = getattr(map_state, 'drop_off_zones', [map_state.drop_off])
+        dist_to_dropoff = np.full((H, W), 9999, dtype=np.int16)
+        step_to_dropoff = np.zeros((H, W), dtype=np.int8)
+        for dz in drop_off_zones:
+            dz_idx = self.pos_to_idx.get((dz[0], dz[1]))
+            if dz_idx is not None:
+                dz_dist = np.full((H, W), 9999, dtype=np.int16)
+                dz_step = np.zeros((H, W), dtype=np.int8)
+                dz_dist[src_ys, src_xs] = self.dist_matrix[:, dz_idx]
+                dz_step[src_ys, src_xs] = self.next_step_matrix[:, dz_idx]
+                # Take minimum distance across all zones
+                better = dz_dist < dist_to_dropoff
+                dist_to_dropoff = np.where(better, dz_dist, dist_to_dropoff)
+                step_to_dropoff = np.where(better, dz_step, step_to_dropoff)
+        self.dist_to_dropoff = dist_to_dropoff
+        self.step_to_dropoff = step_to_dropoff
+        self.drop_off_zones = drop_off_zones  # store for TripTable
 
     def _save_to_cache(self):
         """Save tables to disk cache."""
@@ -621,8 +629,19 @@ class TripTable:
         num_types = map_state.num_types
         H, W = tables.grid_shape
         dist = tables.dist_matrix  # [N, N] int16
-        drop_x, drop_y = map_state.drop_off
-        drop_idx = tables.pos_to_idx[(drop_x, drop_y)]
+        # Support multiple dropoff zones — find nearest for each cell
+        drop_off_zones = getattr(map_state, 'drop_off_zones', [map_state.drop_off])
+        drop_indices = []
+        for dz in drop_off_zones:
+            di = tables.pos_to_idx.get((dz[0], dz[1]))
+            if di is not None:
+                drop_indices.append(di)
+        if not drop_indices:
+            drop_indices = [tables.pos_to_idx[(map_state.drop_off[0], map_state.drop_off[1])]]
+        # dist_to_nearest_drop[cell] = min distance to any dropoff
+        dist_to_nearest_drop = dist[:, drop_indices[0]].astype(np.int32)
+        for di in drop_indices[1:]:
+            dist_to_nearest_drop = np.minimum(dist_to_nearest_drop, dist[:, di].astype(np.int32))
 
         # Collect unique pickup cells per type
         type_adj_sets = [set() for _ in range(num_types)]
@@ -643,11 +662,11 @@ class TripTable:
             else:
                 d_start.append(np.empty((N, 0), dtype=np.int32))
 
-        # d_drop[t][i] = dist from adj[t][i] to dropoff
+        # d_drop[t][i] = dist from adj[t][i] to nearest dropoff
         d_drop = []
         for t in range(num_types):
             if len(adj[t]):
-                d_drop.append(dist[adj[t], drop_idx].astype(np.int32))
+                d_drop.append(dist_to_nearest_drop[adj[t]])
             else:
                 d_drop.append(np.empty(0, dtype=np.int32))
 
@@ -792,7 +811,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Precompute lookup tables')
     parser.add_argument('difficulty', nargs='?', default=None,
-                        choices=['easy', 'medium', 'hard', 'expert'])
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--info', action='store_true', help='Show cache stats')
     parser.add_argument('--trips', action='store_true',
                         help='Also compute and test trip tables')

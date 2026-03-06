@@ -364,7 +364,7 @@ def import_log_to_db(log_path: Optional[str], run_type: str = 'live') -> None:
 def main():
     parser = argparse.ArgumentParser(
         description='Fast-iterate pipeline: Zig bot → GPU optimize → replay → repeat')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--iterations', type=int, default=10,
                         help='Max optimize→replay cycles (default: 10)')
     parser.add_argument('--time-budget', type=int, default=275,

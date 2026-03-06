@@ -54,6 +54,47 @@ pub fn bfsDistMap(state: *const GameState, start: Pos, dm: *DistMap) void {
     }
 }
 
+// ── Multi-source BFS (distance to nearest of several sources) ─────────
+pub fn bfsMultiSourceDistMap(state: *const GameState, sources: []const Pos, dm: *DistMap) void {
+    const w = state.width;
+    const h = state.height;
+    for (0..h) |y| for (0..w) |x| {
+        dm[y][x] = UNREACHABLE;
+    };
+    var queue: [MAX_CELLS]struct { x: u16, y: u16 } = undefined;
+    var tail: u16 = 0;
+    for (sources) |src| {
+        if (src.x < 0 or src.y < 0 or src.x >= w or src.y >= h) continue;
+        const sx: u16 = @intCast(src.x);
+        const sy: u16 = @intCast(src.y);
+        if (dm[sy][sx] != UNREACHABLE) continue; // already seeded
+        dm[sy][sx] = 0;
+        queue[tail] = .{ .x = sx, .y = sy };
+        tail += 1;
+    }
+    var head: u16 = 0;
+    const ddx = [4]i16{ 0, 0, -1, 1 };
+    const ddy = [4]i16{ -1, 1, 0, 0 };
+    while (head < tail) {
+        const cur = queue[head];
+        head += 1;
+        const cd = dm[cur.y][cur.x];
+        for (0..4) |i| {
+            const nx_i = @as(i32, cur.x) + ddx[i];
+            const ny_i = @as(i32, cur.y) + ddy[i];
+            if (nx_i < 0 or ny_i < 0 or nx_i >= w or ny_i >= h) continue;
+            const nx: u16 = @intCast(nx_i);
+            const ny: u16 = @intCast(ny_i);
+            if (dm[ny][nx] != UNREACHABLE) continue;
+            const cell = state.grid[ny][nx];
+            if (cell == .wall or cell == .shelf) continue;
+            dm[ny][nx] = cd + 1;
+            queue[tail] = .{ .x = nx, .y = ny };
+            tail += 1;
+        }
+    }
+}
+
 // ── Distance lookup from a precomputed DistMap ────────────────────────
 pub fn distFromMap(dm: *const DistMap, pos: Pos) u16 {
     if (pos.x < 0 or pos.y < 0) return UNREACHABLE;

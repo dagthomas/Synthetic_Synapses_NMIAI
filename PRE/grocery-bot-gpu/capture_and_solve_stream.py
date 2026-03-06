@@ -405,7 +405,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Capture & solve pipeline')
     parser.add_argument('ws_url', help='WebSocket URL')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--solver', choices=['gpu', 'cpu'], default='gpu',
                         help='Solver backend (default: gpu)')
     parser.add_argument('--capture', choices=['zig', 'python'], default='zig',

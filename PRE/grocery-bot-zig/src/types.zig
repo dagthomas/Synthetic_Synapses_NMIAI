@@ -1,11 +1,12 @@
 const std = @import("std");
 
 // ── Constants ──────────────────────────────────────────────────────────
-pub const MAX_BOTS = 10;
+pub const MAX_BOTS = 24;
 pub const MAX_ITEMS = 512;
 pub const MAX_ORDERS = 2;
 pub const MAX_W = 32;
 pub const MAX_H = 20;
+pub const MAX_DROPOFFS = 3;
 pub const MAX_CELLS = MAX_W * MAX_H;
 pub const INV_CAP = 3;
 pub const UNREACHABLE: u16 = 9999;
@@ -77,8 +78,31 @@ pub const GameState = struct {
     orders: [MAX_ORDERS]Order,
     order_count: u8,
     dropoff: Pos,
+    dropoffs: [MAX_DROPOFFS]Pos,
+    dropoff_count: u8,
     score: i32,
     active_order_idx: i32,
+
+    pub fn isAtDropoff(state: *const GameState, pos: Pos) bool {
+        for (0..state.dropoff_count) |i| {
+            if (pos.eql(state.dropoffs[i])) return true;
+        }
+        return false;
+    }
+
+    pub fn nearestDropoff(state: *const GameState, pos: Pos) Pos {
+        if (state.dropoff_count <= 1) return state.dropoff;
+        var best = state.dropoffs[0];
+        var best_d: u16 = 65535;
+        for (0..state.dropoff_count) |i| {
+            const d = @abs(pos.x - state.dropoffs[i].x) + @abs(pos.y - state.dropoffs[i].y);
+            if (d < best_d) {
+                best_d = d;
+                best = state.dropoffs[i];
+            }
+        }
+        return best;
+    }
 };
 
 // ── MAPF Constants ────────────────────────────────────────────────────

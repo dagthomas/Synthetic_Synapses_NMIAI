@@ -441,7 +441,7 @@ def train_from_capture(difficulty, verbose=True):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Route table training')
-    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert'])
+    parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--info', action='store_true', help='Show route table info')
     args = parser.parse_args()
 

@@ -27,7 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description='Batch Grocery Bot Solver')
     parser.add_argument('--difficulty', '-d', nargs='+',
                         default=['easy', 'medium', 'hard', 'expert'],
-                        choices=['easy', 'medium', 'hard', 'expert'])
+                        choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seeds', type=str, default='7001-7040',
                         help='Seed range (e.g., 7001-7040 or 7001,7005)')
     parser.add_argument('--beam-width', type=int, default=100)
