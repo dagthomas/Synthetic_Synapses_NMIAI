@@ -41,7 +41,7 @@ from game_engine import (
     DX, DY,
 )
 from gpu_beam_search import GPUBeamSearcher, GPUBeamSearcher2Bot
-from configs import CONFIGS, DIFF_IDX as _DIFF_IDX
+from configs import CONFIGS, DIFF_IDX as _DIFF_IDX, DIFF_ROUNDS as _DIFF_ROUNDS
 
 _ZIG_AVAILABLE = False
 try:
@@ -59,7 +59,8 @@ DEFAULT_MAX_DP_BOTS = {'easy': 1, 'medium': 3, 'hard': 5, 'expert': 7, 'nightmar
 def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
                         bot_actions: dict[int, list[tuple[int, int]]],
                         locked_bot_ids: list[int],
-                        _zig_ctx: dict[str, Any] | None = None) -> dict[str, np.ndarray] | None:
+                        _zig_ctx: dict[str, Any] | None = None,
+                        num_rounds: int = MAX_ROUNDS) -> dict[str, np.ndarray] | None:
     """CPU simulation of locked bots to get their per-round positions.
 
     Args:
@@ -94,16 +95,16 @@ def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
     num_total_bots = len(gs.bot_positions)
     locked_id_set = set(locked_bot_ids)
 
-    locked_actions = np.zeros((num_locked, MAX_ROUNDS), dtype=np.int8)
-    locked_action_items = np.zeros((num_locked, MAX_ROUNDS), dtype=np.int16)
-    locked_pos_x = np.zeros((num_locked, MAX_ROUNDS), dtype=np.int16)
-    locked_pos_y = np.zeros((num_locked, MAX_ROUNDS), dtype=np.int16)
+    locked_actions = np.zeros((num_locked, num_rounds), dtype=np.int8)
+    locked_action_items = np.zeros((num_locked, num_rounds), dtype=np.int16)
+    locked_pos_x = np.zeros((num_locked, num_rounds), dtype=np.int16)
+    locked_pos_y = np.zeros((num_locked, num_rounds), dtype=np.int16)
 
     # Record actions for locked bots
     _wait_act = (ACT_WAIT, -1)
     for i, bid in enumerate(locked_bot_ids):
         acts = bot_actions[bid]
-        for r in range(MAX_ROUNDS):
+        for r in range(num_rounds):
             a, item = acts[r] if r < len(acts) else _wait_act
             locked_actions[i, r] = a
             locked_action_items[i, r] = item
@@ -112,7 +113,7 @@ def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
     # and order state. Bots without actions (including the candidate being
     # re-planned) wait. In refinement, the candidate bot's OLD actions are
     # included in bot_actions, giving correct order state for locked bots.
-    for r in range(MAX_ROUNDS):
+    for r in range(num_rounds):
         round_actions = []
         for bid in range(num_total_bots):
             if bid in bot_actions and r < len(bot_actions[bid]):
@@ -139,15 +140,17 @@ def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
 
 def cpu_verify(gs_template: GameState, all_orders: List[Order],
                combined_actions: List[List[Tuple[int, int]]], num_bots: int,
-               _zig_ctx: Optional[Dict[str, Any]] = None) -> int:
+               _zig_ctx: Optional[Dict[str, Any]] = None,
+               num_rounds: int = MAX_ROUNDS) -> int:
     """Verify final score by replaying all bots' combined actions on CPU.
 
     Args:
         gs_template: Initial GameState.
         all_orders: Full order list.
-        combined_actions: List of 300 round_actions, each is [(act, item)] * num_bots.
+        combined_actions: List of round_actions, each is [(act, item)] * num_bots.
         num_bots: Number of bots.
         _zig_ctx: Optional dict with 'diff_idx' and 'seed' for Zig FFI fast path.
+        num_rounds: Game length (300 or 500).
 
     Returns:
         Final score (int) from CPU simulation. Returns 0 on empty/trivial games.
@@ -162,7 +165,9 @@ def cpu_verify(gs_template: GameState, all_orders: List[Order],
             all_orders, combined_actions, num_bots)
 
     gs = gs_template.copy()
-    for r in range(MAX_ROUNDS):
+    for r in range(num_rounds):
+        if r >= len(combined_actions):
+            break
         gs.round = r
         cpu_step(gs, combined_actions[r], all_orders)
     return gs.score
@@ -170,20 +175,23 @@ def cpu_verify(gs_template: GameState, all_orders: List[Order],
 
 def cpu_verify_detailed(gs_template: GameState, all_orders: List[Order],
                         combined_actions: List[List[Tuple[int, int]]],
-                        num_bots: int) -> Tuple[int, int, int]:
+                        num_bots: int,
+                        num_rounds: int = MAX_ROUNDS) -> Tuple[int, int, int]:
     """Like cpu_verify but returns (score, orders_completed, items_delivered)."""
     gs = gs_template.copy()
-    for r in range(MAX_ROUNDS):
+    for r in range(num_rounds):
+        if r >= len(combined_actions):
+            break
         gs.round = r
         cpu_step(gs, combined_actions[r], all_orders)
     return gs.score, gs.orders_completed, gs.items_delivered
 
 
-def _make_combined(bot_actions, num_bots):
+def _make_combined(bot_actions, num_bots, num_rounds=MAX_ROUNDS):
     """Convert bot_actions dict to per-round combined format."""
     _wait = (ACT_WAIT, -1)
     combined = []
-    for r in range(MAX_ROUNDS):
+    for r in range(num_rounds):
         round_acts = []
         for bid in range(num_bots):
             if bid in bot_actions and r < len(bot_actions[bid]):
@@ -264,6 +272,7 @@ class SolveConfig:
     max_dp_bots: 'Optional[int]' = None  # DP-plan only top N bots; rest get CPU greedy
     use_2bot_dp: bool = False  # Plan bot pairs jointly (2-bot DP)
     use_order_assignment: bool = False  # LNS order assignment (round-robin)
+    num_rounds: 'Optional[int]' = None  # Game length (300 or 500); None=auto-detect from difficulty
 
 
 @dataclass
@@ -390,7 +399,8 @@ def greedy_plan_bots(gs_template: GameState, all_orders: list[Order],
                      ms: MapState, num_bots: int,
                      _zig_ctx: dict | None = None,
                      capture_data: CaptureData | None = None,
-                     no_filler: bool = False) -> dict[int, list]:
+                     no_filler: bool = False,
+                     num_rounds: int = MAX_ROUNDS) -> dict[int, list]:
     """Hybrid JIT + preview strategy for bots not covered by GPU DP.
 
     Strategy: fetch preview and high-frequency non-active types speculatively.
@@ -446,7 +456,7 @@ def greedy_plan_bots(gs_template: GameState, all_orders: list[Order],
     gs_sim = _fresh_gs(gs_template, capture_data, no_filler)
     greedy_actions = {bid: [] for bid in bot_ids}
 
-    for r in range(MAX_ROUNDS):
+    for r in range(num_rounds):
         gs_sim.round = r
 
         # Get active order's needed types with multiplicity
@@ -667,6 +677,11 @@ def solve_sequential(capture_data: CaptureData | None = None,
     else:
         raise ValueError("Need capture_data or (seed + difficulty)")
 
+    # Determine num_rounds from config, difficulty, or default
+    num_rounds = config.num_rounds
+    if num_rounds is None:
+        num_rounds = _DIFF_ROUNDS.get(diff, 300)
+
     # Override all_orders when seed is cracked (full foresight, no filler)
     if all_orders_override is not None:
         all_orders = all_orders_override
@@ -724,14 +739,15 @@ def solve_sequential(capture_data: CaptureData | None = None,
     if verbose:
         filler_str = f", no_filler ({len(capture_data['orders'])} orders)" if (capture_data and no_filler) else ""
         zig_str = " [ZIG FFI live]" if (_zig_ctx and _zig_ctx.get('mode') == 'live') else (" [ZIG FFI]" if _zig_ctx else "")
-        print(f"Sequential GPU DP: {diff}, {num_bots} bots, "
+        print(f"Sequential GPU DP: {diff}, {num_bots} bots, {num_rounds} rounds, "
               f"max_states={max_states}, refine_iters={max_refine_iters}{filler_str}{zig_str}",
               file=sys.stderr)
 
     # For single-bot, just run standard DP (no refinement needed)
     if num_bots == 1:
         searcher = GPUBeamSearcher(ms, all_orders, device=device, num_bots=num_bots,
-                                    no_compile=no_compile, speed_bonus=speed_bonus)
+                                    no_compile=no_compile, speed_bonus=speed_bonus,
+                                    num_rounds=num_rounds)
         if verbose:
             gs_v = gs.copy()
             ok = searcher.verify_against_cpu(gs_v, all_orders, num_rounds=100)
@@ -889,7 +905,7 @@ def solve_sequential(capture_data: CaptureData | None = None,
                 if locked_ids:
                     locked = pre_simulate_locked(
                         _fresh_gs(gs, capture_data, no_filler), all_orders,
-                        bot_actions, locked_ids, _zig_ctx=_zig_ctx)
+                        bot_actions, locked_ids, _zig_ctx=_zig_ctx, num_rounds=num_rounds)
 
                 searcher = GPUBeamSearcher2Bot(
                     ms, all_orders, device=device, num_bots=num_bots,
@@ -945,12 +961,12 @@ def solve_sequential(capture_data: CaptureData | None = None,
                 if locked_ids:
                     locked = pre_simulate_locked(
                         _fresh_gs(gs, capture_data, no_filler), all_orders,
-                        bot_actions, locked_ids, _zig_ctx=_zig_ctx)
+                        bot_actions, locked_ids, _zig_ctx=_zig_ctx, num_rounds=num_rounds)
 
                 searcher = GPUBeamSearcher(
                     ms, all_orders, device=device, num_bots=num_bots,
                     locked_trajectories=locked, no_compile=no_compile,
-                    speed_bonus=speed_bonus)
+                    speed_bonus=speed_bonus, num_rounds=num_rounds)
 
                 gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
                 dp_score, bot_acts = searcher.dp_search(
@@ -985,7 +1001,7 @@ def solve_sequential(capture_data: CaptureData | None = None,
                 if locked_ids:
                     locked = pre_simulate_locked(
                         _fresh_gs(gs, capture_data, no_filler), all_orders, bot_actions, locked_ids,
-                        _zig_ctx=_zig_ctx)
+                        _zig_ctx=_zig_ctx, num_rounds=num_rounds)
 
                 p_depth = pipeline_bot_ids.get(bot_id, 0)
                 is_pipeline = p_depth > 0
@@ -1002,7 +1018,8 @@ def solve_sequential(capture_data: CaptureData | None = None,
                     pipeline_depth=p_depth, preferred_types=pref_types,
                     no_compile=no_compile, order_cap=bot_order_cap,
                     speed_bonus=speed_bonus, preferred_zone=bot_zone,
-                    order_modulo=_om, order_slot=_os)
+                    order_modulo=_om, order_slot=_os,
+                    num_rounds=num_rounds)
 
                 # Verify on first bot of first ordering only
                 if p1_idx == 0 and bot_id == plan_order[0] and verbose:
@@ -1050,14 +1067,16 @@ def solve_sequential(capture_data: CaptureData | None = None,
         if _greedy_bot_ids:
             greedy_acts = greedy_plan_bots(
                 gs, all_orders, _greedy_bot_ids, bot_actions, ms, num_bots,
-                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler,
+                num_rounds=num_rounds)
             for bid, acts in greedy_acts.items():
                 bot_actions[bid] = acts
 
         # CPU verify after this Pass 1 ordering
-        combined = _make_combined(bot_actions, num_bots)
+        combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
         gs_v = _fresh_gs(gs, capture_data, no_filler)
-        p1_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx)
+        p1_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx,
+                              num_rounds=num_rounds)
 
         if on_phase:
             on_phase("pass1_done", p1_idx, p1_score)
@@ -1177,7 +1196,7 @@ def solve_sequential(capture_data: CaptureData | None = None,
                     locked_ids = sorted(b for b in range(num_bots) if b != bot_id)
                     locked = pre_simulate_locked(
                         _fresh_gs(gs, capture_data, no_filler), all_orders, bot_actions,
-                        locked_ids, _zig_ctx=_zig_ctx)
+                        locked_ids, _zig_ctx=_zig_ctx, num_rounds=num_rounds)
 
                 p_depth = pipeline_bot_ids.get(bot_id, 0)
                 is_pipeline = p_depth > 0
@@ -1192,7 +1211,8 @@ def solve_sequential(capture_data: CaptureData | None = None,
                     pipeline_depth=p_depth, preferred_types=pref_types,
                     no_compile=no_compile, speed_bonus=speed_bonus,
                     preferred_zone=bot_zone,
-                    order_modulo=_om_r, order_slot=_os_r)
+                    order_modulo=_om_r, order_slot=_os_r,
+                    num_rounds=num_rounds)
 
                 # Eval annealing disabled — testing showed it hurts more than helps.
                 # coord_temperature stays at 0.0 (full penalties).
@@ -1216,10 +1236,10 @@ def solve_sequential(capture_data: CaptureData | None = None,
 
                 # Apply tentative new plan and submit cpu_verify asynchronously
                 bot_actions[bot_id] = bot_acts
-                combined = _make_combined(bot_actions, num_bots)
+                combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
                 gs_v = _fresh_gs(gs, capture_data, no_filler)
                 _verify_future = _refine_pool.submit(
-                    cpu_verify, gs_v, all_orders, combined, num_bots, _zig_ctx)
+                    cpu_verify, gs_v, all_orders, combined, num_bots, _zig_ctx, num_rounds)
 
                 # Pre-fetch locked trajectories for next bot (CPU runs concurrently with verify)
                 if pass_i + 1 < len(pass_order):
@@ -1303,13 +1323,15 @@ def solve_sequential(capture_data: CaptureData | None = None,
                 if _j_locked_ids:
                     _j_locked = pre_simulate_locked(
                         _fresh_gs(gs, capture_data, no_filler), all_orders,
-                        bot_actions, _j_locked_ids, _zig_ctx=_zig_ctx)
+                        bot_actions, _j_locked_ids, _zig_ctx=_zig_ctx,
+                        num_rounds=num_rounds)
 
                 _j_searcher = GPUBeamSearcher2Bot(
                     ms, all_orders, device=device, num_bots=num_bots,
                     locked_trajectories=_j_locked,
                     candidate_bot_ids=_j_pair,
-                    no_compile=no_compile, speed_bonus=speed_bonus)
+                    no_compile=no_compile, speed_bonus=speed_bonus,
+                    num_rounds=num_rounds)
 
                 _j_states = max(max_states // 2, 25000)  # Half budget for pair
                 gs_for_j = _fresh_gs(gs, capture_data, no_filler)
@@ -1322,9 +1344,10 @@ def solve_sequential(capture_data: CaptureData | None = None,
                 _j_old_b = list(bot_actions[_j_pair[1]])
                 bot_actions[_j_pair[0]] = _j_acts_a
                 bot_actions[_j_pair[1]] = _j_acts_b
-                _j_combined = _make_combined(bot_actions, num_bots)
+                _j_combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
                 gs_jv = _fresh_gs(gs, capture_data, no_filler)
-                _j_new_score = cpu_verify(gs_jv, all_orders, _j_combined, num_bots, _zig_ctx)
+                _j_new_score = cpu_verify(gs_jv, all_orders, _j_combined, num_bots, _zig_ctx,
+                                          num_rounds=num_rounds)
                 if _j_new_score > best_score:
                     _j_delta = _j_new_score - best_score
                     best_score = _j_new_score
@@ -1352,13 +1375,15 @@ def solve_sequential(capture_data: CaptureData | None = None,
         if _greedy_bot_ids and iter_improved:
             greedy_acts = greedy_plan_bots(
                 gs, all_orders, _greedy_bot_ids, bot_actions, ms, num_bots,
-                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler,
+                num_rounds=num_rounds)
             for bid, acts in greedy_acts.items():
                 bot_actions[bid] = acts
             # Re-verify with updated greedy plans
-            combined = _make_combined(bot_actions, num_bots)
+            combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
             gs_v = _fresh_gs(gs, capture_data, no_filler)
-            new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx)
+            new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx,
+                                   num_rounds=num_rounds)
             if new_score > best_score:
                 best_score = new_score
                 best_actions = {k: list(v) for k, v in bot_actions.items()}
@@ -1414,7 +1439,7 @@ def solve_sequential(capture_data: CaptureData | None = None,
             no_improve_iters = 0
 
     # Final combined actions from best
-    combined = _make_combined(best_actions, num_bots)
+    combined = _make_combined(best_actions, num_bots, num_rounds=num_rounds)
 
     total_time = time.time() - t0
     if verbose:
@@ -1811,6 +1836,11 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
     else:
         raise ValueError("Need capture_data or (seed + difficulty)")
 
+    # Determine num_rounds from config, difficulty, or default
+    num_rounds = config.num_rounds
+    if num_rounds is None:
+        num_rounds = _DIFF_ROUNDS.get(diff, 300)
+
     # Override all_orders when seed is cracked (full foresight, no filler)
     if all_orders_override is not None:
         all_orders = all_orders_override
@@ -1853,7 +1883,7 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
     _wait_pad = (ACT_WAIT, -1)
     for bid in range(num_bots):
         acts = [(r_acts[bid][0], r_acts[bid][1]) for r_acts in combined_actions]
-        while len(acts) < MAX_ROUNDS:
+        while len(acts) < num_rounds:
             acts.append(_wait_pad)
         bot_actions[bid] = acts
 
@@ -1884,14 +1914,16 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
     if _greedy_bot_ids_r:
         greedy_acts = greedy_plan_bots(
             gs, all_orders, _greedy_bot_ids_r, bot_actions, ms, num_bots,
-            _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+            _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler,
+            num_rounds=num_rounds)
         for bid, acts in greedy_acts.items():
             bot_actions[bid] = acts
 
     # Verify starting score
     gs_v = _fresh_gs(gs, capture_data, no_filler)
-    best_score = cpu_verify(gs_v, all_orders, _make_combined(bot_actions, num_bots),
-                            num_bots, _zig_ctx=_zig_ctx)
+    best_score = cpu_verify(gs_v, all_orders,
+                            _make_combined(bot_actions, num_bots, num_rounds=num_rounds),
+                            num_bots, _zig_ctx=_zig_ctx, num_rounds=num_rounds)
     best_actions = {k: list(v) for k, v in bot_actions.items()}
 
     if verbose:
@@ -1952,7 +1984,7 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
                 locked_ids = sorted(b for b in range(num_bots) if b != bot_id)
                 locked = pre_simulate_locked(
                     _fresh_gs(gs, capture_data, no_filler), all_orders, bot_actions, locked_ids,
-                    _zig_ctx=_zig_ctx)
+                    _zig_ctx=_zig_ctx, num_rounds=num_rounds)
 
                 p_depth = pipeline_bot_ids.get(bot_id, 0)
                 is_pipeline = p_depth > 0
@@ -1969,7 +2001,8 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
                     pipeline_depth=p_depth, preferred_types=pref_types_r,
                     no_compile=no_compile, speed_bonus=speed_bonus,
                     preferred_zone=bot_zone_r,
-                    order_modulo=_om_rfn, order_slot=_os_rfn)
+                    order_modulo=_om_rfn, order_slot=_os_rfn,
+                    num_rounds=num_rounds)
 
                 def round_cb(rnd, score, unique, expanded, elapsed, _bid=bot_id):
                     if on_round:
@@ -1990,9 +2023,10 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
                 old_acts = bot_actions[bot_id]
                 bot_actions[bot_id] = bot_acts
 
-                combined = _make_combined(bot_actions, num_bots)
+                combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
                 gs_v = _fresh_gs(gs, capture_data, no_filler)
-                new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx)
+                new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx,
+                                       num_rounds=num_rounds)
 
                 if new_score > best_score:
                     delta = new_score - best_score
@@ -2024,12 +2058,14 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
         if _greedy_bot_ids_r and iter_improved:
             greedy_acts = greedy_plan_bots(
                 gs, all_orders, _greedy_bot_ids_r, bot_actions, ms, num_bots,
-                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler)
+                _zig_ctx=_zig_ctx, capture_data=capture_data, no_filler=no_filler,
+                num_rounds=num_rounds)
             for bid, acts in greedy_acts.items():
                 bot_actions[bid] = acts
-            combined = _make_combined(bot_actions, num_bots)
+            combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
             gs_v = _fresh_gs(gs, capture_data, no_filler)
-            new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx)
+            new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx,
+                                   num_rounds=num_rounds)
             if new_score > best_score:
                 best_score = new_score
                 best_actions = {k: list(v) for k, v in bot_actions.items()}
@@ -2057,7 +2093,7 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
         else:
             no_improve_iters = 0
 
-    combined = _make_combined(best_actions, num_bots)
+    combined = _make_combined(best_actions, num_bots, num_rounds=num_rounds)
     total_time = time.time() - t0
     if verbose:
         print(f"\nWarm-start refinement: final_score={best_score}, "
@@ -2114,6 +2150,7 @@ def duo_refine_from_solution(
 
     ms = gs.map_state
     num_bots = len(gs.bot_positions)
+    num_rounds = _DIFF_ROUNDS.get(diff, 300)
 
     if num_bots < 2:
         if verbose:
@@ -2134,14 +2171,15 @@ def duo_refine_from_solution(
     _wait_pad = (ACT_WAIT, -1)
     for bid in range(num_bots):
         acts = [(r_acts[bid][0], r_acts[bid][1]) for r_acts in combined_actions]
-        while len(acts) < MAX_ROUNDS:
+        while len(acts) < num_rounds:
             acts.append(_wait_pad)
         bot_actions[bid] = acts
 
     # Verify starting score
     gs_v = _fresh_gs(gs, capture_data, no_filler)
-    best_score = cpu_verify(gs_v, all_orders, _make_combined(bot_actions, num_bots),
-                            num_bots, _zig_ctx=_zig_ctx)
+    best_score = cpu_verify(gs_v, all_orders,
+                            _make_combined(bot_actions, num_bots, num_rounds=num_rounds),
+                            num_bots, _zig_ctx=_zig_ctx, num_rounds=num_rounds)
     best_actions = {k: list(v) for k, v in bot_actions.items()}
 
     # Compute marginal contributions
@@ -2199,13 +2237,14 @@ def duo_refine_from_solution(
         locked_ids = sorted(b for b in range(num_bots) if b != bot_a and b != bot_b)
         locked = pre_simulate_locked(
             _fresh_gs(gs, capture_data, no_filler), all_orders,
-            bot_actions, locked_ids, _zig_ctx=_zig_ctx)
+            bot_actions, locked_ids, _zig_ctx=_zig_ctx, num_rounds=num_rounds)
 
         searcher = GPUBeamSearcher2Bot(
             ms, all_orders, device=device, num_bots=num_bots,
             locked_trajectories=locked,
             candidate_bot_ids=(bot_a, bot_b),
-            no_compile=no_compile, speed_bonus=speed_bonus)
+            no_compile=no_compile, speed_bonus=speed_bonus,
+            num_rounds=num_rounds)
 
         gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
         dp_score, acts_a, acts_b = searcher.dp_search_2bot(
@@ -2224,9 +2263,10 @@ def duo_refine_from_solution(
         bot_actions[bot_a] = acts_a
         bot_actions[bot_b] = acts_b
 
-        combined = _make_combined(bot_actions, num_bots)
+        combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
         gs_v = _fresh_gs(gs, capture_data, no_filler)
-        new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx)
+        new_score = cpu_verify(gs_v, all_orders, combined, num_bots, _zig_ctx=_zig_ctx,
+                               num_rounds=num_rounds)
 
         if new_score > best_score:
             delta = new_score - best_score
@@ -2245,7 +2285,7 @@ def duo_refine_from_solution(
                       f"(no improvement, reverted), time={pair_time:.1f}s",
                       file=sys.stderr)
 
-    combined = _make_combined(best_actions, num_bots)
+    combined = _make_combined(best_actions, num_bots, num_rounds=num_rounds)
     total_time = time.time() - t0
     if verbose:
         print(f"\nDuo refinement: final_score={best_score}, "

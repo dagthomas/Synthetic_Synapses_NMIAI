@@ -22,7 +22,7 @@ from game_engine import (
     generate_all_orders, GameState, MapState, Order, CaptureData,
     MAX_ROUNDS, ACT_WAIT, CELL_WALL,
 )
-from configs import CONFIGS
+from configs import CONFIGS, DIFF_ROUNDS
 from gpu_sequential_solver import solve_sequential, refine_from_solution, SolveConfig
 
 
@@ -72,8 +72,9 @@ def simulate_solution(difficulty: str, seed: int,
     gs, _ = init_game(seed, difficulty)
     score = 0
     max_order_seen = 2
+    num_rounds = DIFF_ROUNDS.get(difficulty, 300)
 
-    for r in range(min(len(actions), MAX_ROUNDS)):
+    for r in range(min(len(actions), num_rounds)):
         round_actions = actions[r]
         delta = cpu_step(gs, round_actions, all_orders)
         score += delta

@@ -7,6 +7,7 @@
 		shelfSet,
 		itemMap,
 		dropOff,
+		dropOffZones = null,
 		spawn,
 		bots,
 		botPositions,
@@ -16,6 +17,17 @@
 		activeTypes = new Set(),
 		previewTypes = new Set(),
 	} = $props();
+
+	// Build set of all dropoff positions
+	let dropOffSet = $derived.by(() => {
+		const s = new Set();
+		if (dropOffZones && dropOffZones.length > 0) {
+			for (const z of dropOffZones) s.add(`${z[0]},${z[1]}`);
+		} else {
+			s.add(`${dropOff[0]},${dropOff[1]}`);
+		}
+		return s;
+	});
 
 	const ITEM_COLORS = {
 		milk: '#00FF41', bread: '#FF0055', eggs: '#FF0055', butter: '#0DF0E3',
@@ -27,7 +39,7 @@
 
 	function cellType(x, y) {
 		const key = `${x},${y}`;
-		if (x === dropOff[0] && y === dropOff[1]) return 'dropoff';
+		if (dropOffSet.has(key)) return 'dropoff';
 		if (x === spawn[0] && y === spawn[1]) return 'spawn';
 		if (wallSet.has(key)) return 'wall';
 		if (shelfSet.has(key)) return 'shelf';

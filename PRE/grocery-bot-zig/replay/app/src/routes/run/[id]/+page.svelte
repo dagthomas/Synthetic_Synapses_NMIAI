@@ -212,32 +212,24 @@
 		salt: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><style>@keyframes matrixRain{0%{transform:translateY(-3px);opacity:0}20%,80%{opacity:1}100%{transform:translateY(6px);opacity:0}}@keyframes shadowPulse{0%,100%{opacity:.15}50%{opacity:.25}}.shadow{animation:shadowPulse 3s infinite ease-in-out}.rain1{animation:matrixRain 1.5s infinite 0s linear}.rain2{animation:matrixRain 1.5s infinite .4s linear}.rain3{animation:matrixRain 1.5s infinite .8s linear}</style><rect width="28" height="28" fill="#0D1117" rx="4"/><ellipse cx="14" cy="23" rx="6" ry="1.5" fill="#00FF41" class="shadow"/><rect x="11" y="10" width="6" height="12" fill="#161B22" stroke="#00FF41" stroke-width="1.2"/><path d="M 11 10 C 11 7, 17 7, 17 10 Z" fill="#0D1117" stroke="#0DF0E3" stroke-width="1.2"/><rect x="13" y="7.5" width="1" height="1" fill="#FF0055"/><rect x="15" y="8.5" width="1" height="1" fill="#FF0055"/><rect x="12" y="8.5" width="1" height="1" fill="#FF0055"/><line x1="12.5" y1="12" x2="12.5" y2="14" stroke="#0DF0E3" stroke-width="1" class="rain1"/><line x1="14" y1="11" x2="14" y2="13" stroke="#FF0055" stroke-width="1" class="rain2"/><line x1="15.5" y1="13" x2="15.5" y2="15" stroke="#00FF41" stroke-width="1" class="rain3"/></svg>`,
 	};
 
-	// Preload cyberpunk SVGs as Image objects for canvas drawing (CRT shader applies to these)
-	let _itemImages = new Map();
-	let _itemImagesReady = $state(false);
-	if (typeof Image !== 'undefined') {
-		let loaded = 0;
-		const total = Object.keys(CYBER_SVGS).length;
-		for (const [type, svg] of Object.entries(CYBER_SVGS)) {
-			const img = new Image();
-			img.onload = () => {
-				loaded++;
-				if (loaded >= total) {
-					_itemImagesReady = true;
-					_drawGrid();
-				}
-			};
-			img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-			_itemImages.set(type, img);
-		}
-	}
-
 	const diffColors = {
 		easy: '#39d353',
 		medium: '#d29922',
 		hard: '#f85149',
 		expert: '#da3633',
+		nightmare: '#a855f7',
 	};
+
+	function exportRun() {
+		const payload = { run, rounds };
+		const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `run-${run.id}-${run.difficulty}-seed${run.seed}.json`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 
 	// Keyboard controls
 	function handleKeydown(e) {
@@ -248,365 +240,10 @@
 		else if (e.key === 'End') setRound(rounds.length - 1);
 	}
 
-	// ── WebGL CRT Shader (adapted from gingerbeardman/webgl-crt-shader) ──
-	let crtCanvas = $state(null);
 	let gridWrapper = $state(null);
 
-	const CRT = {
-		scanlineIntensity: 0.35,
-		scanlineCount: 240,
-		brightness: 1.25,
-		contrast: 1.1,
-		bloomIntensity: 0.35,
-		bloomThreshold: 0.25,
-		rgbShift: 1.0,
-		vignetteStrength: 0.55,
-		curvature: 0.1,
-		flickerStrength: 0.03,
-	};
 
-	const CRT_VERT = `#version 300 es
-precision highp float;
-const vec2 P[4]=vec2[4](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
-const vec2 U[4]=vec2[4](vec2(0,0),vec2(1,0),vec2(0,1),vec2(1,1));
-out vec2 vUv;
-void main(){vUv=U[gl_VertexID];gl_Position=vec4(P[gl_VertexID],0,1);}`;
 
-	const CRT_FRAG = `#version 300 es
-precision highp float;
-uniform sampler2D uTex;
-uniform float uTime,uScanI,uScanC,uBright,uContrast;
-uniform float uBloom,uBloomT,uRGB,uVig,uCurve,uFlick;
-in vec2 vUv;
-out vec4 fc;
-const float PI=3.14159265;
-const vec3 LU=vec3(.299,.587,.114);
-
-vec2 curve(vec2 uv,float c){
-  vec2 co=uv*2.-1.;
-  co*=1.+dot(co,co)*c*.25;
-  return co*.5+.5;
-}
-
-// pseudo-random from 2D seed
-float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-
-void main(){
-  vec2 uv=vUv;
-
-  // Occasional horizontal jitter — brief glitch every ~4s
-  float jitGate=step(.992,sin(uTime*1.57));
-  uv.x+=jitGate*sin(uv.y*90.+uTime*40.)*.003;
-
-  if(uCurve>.001){
-    uv=curve(uv,uCurve);
-    if(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.){fc=vec4(0,0,0,1);return;}
-  }
-  vec4 px=texture(uTex,uv);
-
-  // Bloom
-  if(uBloom>.001){
-    float l=dot(px.rgb,LU);
-    if(l>uBloomT*.5){
-      vec2 o=vec2(.005);
-      vec4 bl=px*.4+(texture(uTex,uv+vec2(o.x,0))+texture(uTex,uv-vec2(o.x,0))+
-        texture(uTex,uv+vec2(0,o.y))+texture(uTex,uv-vec2(0,o.y)))*.15;
-      bl.rgb*=uBright;
-      px.rgb+=bl.rgb*uBloom*max(0.,(dot(bl.rgb,LU)-uBloomT)*1.5);
-    }
-  }
-
-  // RGB chromatic shift
-  if(uRGB>.005){
-    float s=uRGB*.005;
-    px.r+=texture(uTex,vec2(uv.x+s,uv.y)).r*.08;
-    px.b+=texture(uTex,vec2(uv.x-s,uv.y)).b*.08;
-  }
-
-  // Brightness & contrast
-  px.rgb*=uBright;
-  px.rgb=(px.rgb-.5)*uContrast+.5;
-
-  float m=1.;
-
-  // Scrolling scanlines
-  if(uScanI>.001){
-    float scrollY=uv.y+uTime*.015; // slow upward scroll
-    m*=1.-abs(sin(scrollY*uScanC*PI))*uScanI;
-  }
-
-  // Rolling bright bar (moves down screen every ~8s)
-  float barY=fract(uTime*.12);
-  float barD=abs(uv.y-barY);
-  m+=smoothstep(.025,.0,barD)*.1;
-
-  // Flicker
-  if(uFlick>.001) m*=1.+sin(uTime*110.)*uFlick;
-
-  // Vignette
-  if(uVig>.001){vec2 vc=uv*2.-1.;float d=max(abs(vc.x),abs(vc.y));m*=1.-d*d*uVig;}
-
-  // Noise grain
-  float grain=hash(uv*500.+uTime)*.06-.03;
-  px.rgb+=grain;
-
-  px.rgb*=m;
-  fc=px;
-}`;
-
-	let _crt = null;
-	let _crtDirty = true;
-
-	function _crtCompile(gl, type, src) {
-		const s = gl.createShader(type);
-		gl.shaderSource(s, src);
-		gl.compileShader(s);
-		if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-			console.error('CRT shader:', gl.getShaderInfoLog(s));
-			return null;
-		}
-		return s;
-	}
-
-	$effect(() => {
-		if (!crtCanvas) return;
-		const gl = crtCanvas.getContext('webgl2', { alpha: false, premultipliedAlpha: false });
-		if (!gl) return;
-
-		const vs = _crtCompile(gl, gl.VERTEX_SHADER, CRT_VERT);
-		const fs = _crtCompile(gl, gl.FRAGMENT_SHADER, CRT_FRAG);
-		if (!vs || !fs) return;
-
-		const prog = gl.createProgram();
-		gl.attachShader(prog, vs);
-		gl.attachShader(prog, fs);
-		gl.linkProgram(prog);
-		if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return;
-
-		const vao = gl.createVertexArray();
-		gl.bindVertexArray(vao);
-
-		const tex = gl.createTexture();
-		gl.bindTexture(gl.TEXTURE_2D, tex);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-
-		const unis = {};
-		for (const n of ['uTex','uTime','uScanI','uScanC','uBright','uContrast','uBloom','uBloomT','uRGB','uVig','uCurve','uFlick'])
-			unis[n] = gl.getUniformLocation(prog, n);
-
-		const scene = document.createElement('canvas');
-		const w = run.grid_width * CELL;
-		const h = run.grid_height * CELL;
-		scene.width = w;
-		scene.height = h;
-		crtCanvas.width = w;
-		crtCanvas.height = h;
-		const ctx = scene.getContext('2d');
-
-		_crt = { gl, prog, vao, tex, unis, scene, ctx };
-		_crtDirty = true;
-		_drawGrid(); // initial capture
-
-		let animId;
-		function render(ts) {
-			if (!_crt) return;
-			if (_crtDirty && scene.width > 0) {
-				gl.bindTexture(gl.TEXTURE_2D, tex);
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, scene);
-				_crtDirty = false;
-			}
-			const t = ts * 0.001;
-			// Subtle organic drift — each on a different slow cycle
-			const bloom = CRT.bloomIntensity + Math.sin(t * 0.37) * 0.06 + Math.sin(t * 1.1) * 0.02;
-			const bright = CRT.brightness + Math.sin(t * 0.23) * 0.025;
-			const flick = CRT.flickerStrength + Math.max(0, Math.sin(t * 0.13) * 0.008);
-			const scanI = CRT.scanlineIntensity + Math.sin(t * 0.19) * 0.03;
-			const rgb = CRT.rgbShift + Math.sin(t * 0.29) * 0.1;
-
-			gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-			gl.useProgram(prog);
-			gl.bindVertexArray(vao);
-			gl.activeTexture(gl.TEXTURE0);
-			gl.bindTexture(gl.TEXTURE_2D, tex);
-			gl.uniform1i(unis.uTex, 0);
-			gl.uniform1f(unis.uTime, t);
-			gl.uniform1f(unis.uScanI, scanI);
-			gl.uniform1f(unis.uScanC, CRT.scanlineCount);
-			gl.uniform1f(unis.uBright, bright);
-			gl.uniform1f(unis.uContrast, CRT.contrast);
-			gl.uniform1f(unis.uBloom, bloom);
-			gl.uniform1f(unis.uBloomT, CRT.bloomThreshold);
-			gl.uniform1f(unis.uRGB, rgb);
-			gl.uniform1f(unis.uVig, CRT.vignetteStrength);
-			gl.uniform1f(unis.uCurve, CRT.curvature);
-			gl.uniform1f(unis.uFlick, flick);
-			gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-			animId = requestAnimationFrame(render);
-		}
-		animId = requestAnimationFrame(render);
-
-		return () => {
-			cancelAnimationFrame(animId);
-			gl.deleteTexture(tex);
-			gl.deleteProgram(prog);
-			_crt = null;
-		};
-	});
-
-	function _drawGrid() {
-		if (!_crt) return;
-		const { ctx: c, scene } = _crt;
-		const C = CELL, gw = run.grid_width, gh = run.grid_height;
-		c.clearRect(0, 0, scene.width, scene.height);
-
-		// Floor
-		c.fillStyle = '#010409';
-		c.fillRect(0, 0, gw * C, gh * C);
-
-		// Cells
-		for (let y = 0; y < gh; y++) {
-			for (let x = 0; x < gw; x++) {
-				const key = `${x},${y}`;
-				if (wallSet.has(key)) {
-					c.fillStyle = (x === 0 || y === 0 || x === gw - 1 || y === gh - 1) ? '#2d333b' : '#373e47';
-					c.fillRect(x * C, y * C, C, C);
-				} else if (shelfSet.has(key)) {
-					c.fillStyle = '#0d2818';
-					c.fillRect(x * C, y * C, C, C);
-					c.strokeStyle = '#1a4d2e';
-					c.lineWidth = 1;
-					c.strokeRect(x * C + 0.5, y * C + 0.5, C - 1, C - 1);
-				}
-			}
-		}
-
-		// Drop-off
-		const [dx, dy] = run.drop_off;
-		c.fillStyle = 'rgba(57,211,83,0.2)';
-		c.fillRect(dx * C, dy * C, C, C);
-		c.strokeStyle = '#39d353';
-		c.lineWidth = 2;
-		c.strokeRect(dx * C + 1, dy * C + 1, C - 2, C - 2);
-		c.fillStyle = '#39d353';
-		c.font = `bold ${Math.floor(C * 0.45)}px sans-serif`;
-		c.textAlign = 'center';
-		c.textBaseline = 'middle';
-		c.fillText('D', dx * C + C / 2, dy * C + C / 2);
-
-		// Spawn
-		const [sx, sy] = run.spawn;
-		c.fillStyle = 'rgba(88,166,255,0.2)';
-		c.fillRect(sx * C, sy * C, C, C);
-		c.strokeStyle = '#58a6ff';
-		c.lineWidth = 2;
-		c.strokeRect(sx * C + 1, sy * C + 1, C - 2, C - 2);
-		c.fillStyle = '#58a6ff';
-		c.fillText('S', sx * C + C / 2, sy * C + C / 2);
-
-		// Items on shelves (cyberpunk SVG icons) + active/preview highlights
-		for (const [key, items] of itemMap) {
-			const [ix, iy] = key.split(',').map(Number);
-			const t = items[0].type;
-			// Active/preview cell highlight
-			if (activeTypes.has(t)) {
-				c.fillStyle = 'rgba(57, 211, 83, 0.15)';
-				c.fillRect(ix * C + 1, iy * C + 1, C - 2, C - 2);
-				c.strokeStyle = 'rgba(57, 211, 83, 0.5)';
-				c.lineWidth = 1.5;
-				c.strokeRect(ix * C + 1.5, iy * C + 1.5, C - 3, C - 3);
-			} else if (previewTypes.has(t)) {
-				c.fillStyle = 'rgba(210, 153, 34, 0.12)';
-				c.fillRect(ix * C + 1, iy * C + 1, C - 2, C - 2);
-				c.strokeStyle = 'rgba(210, 153, 34, 0.4)';
-				c.lineWidth = 1.5;
-				c.strokeRect(ix * C + 1.5, iy * C + 1.5, C - 3, C - 3);
-			}
-			// Draw item icon (static, but CRT shader applies scanlines/bloom)
-			const img = _itemImages.get(t);
-			if (img && img.complete && img.naturalWidth > 0) {
-				c.drawImage(img, ix * C, iy * C, C, C);
-			} else {
-				// Fallback text
-				const ccx = ix * C + C / 2, ccy = iy * C + C / 2;
-				c.fillStyle = '#00FF41'; c.font = `bold ${Math.floor(C * 0.26)}px monospace`;
-				c.textAlign = 'center'; c.textBaseline = 'middle';
-				c.fillText(ITEM_ABBR[t] || t.slice(0, 2).toUpperCase(), ccx, ccy + 1);
-			}
-		}
-
-		// Bots (Cyber Drone style)
-		for (const bot of bots) {
-			const [bx, by] = bot.position;
-			const clr = BOT_COLORS[bot.id % BOT_COLORS.length];
-			const cx = bx * C, cy = by * C;
-			// Shadow
-			c.fillStyle = 'rgba(0,0,0,0.35)';
-			c.beginPath();
-			c.ellipse(cx + C / 2, cy + C - 2, C / 3, 2, 0, 0, Math.PI * 2);
-			c.fill();
-			// Angular chassis (no border)
-			c.fillStyle = '#161B22';
-			c.shadowColor = clr;
-			c.shadowBlur = 4;
-			// Top hull
-			c.beginPath();
-			c.moveTo(cx + C * 0.32, cy + C * 0.32);
-			c.lineTo(cx + C * 0.68, cy + C * 0.32);
-			c.lineTo(cx + C * 0.75, cy + C * 0.54);
-			c.lineTo(cx + C * 0.25, cy + C * 0.54);
-			c.closePath();
-			c.fill();
-			// Bottom hull
-			c.beginPath();
-			c.moveTo(cx + C * 0.25, cy + C * 0.54);
-			c.lineTo(cx + C * 0.39, cy + C * 0.68);
-			c.lineTo(cx + C * 0.61, cy + C * 0.68);
-			c.lineTo(cx + C * 0.75, cy + C * 0.54);
-			c.fill();
-			c.shadowBlur = 0;
-			// Visor
-			c.fillStyle = '#0D1117';
-			c.fillRect(cx + C * 0.36, cy + C * 0.41, C * 0.28, C * 0.11);
-			c.strokeStyle = clr;
-			c.lineWidth = 0.8;
-			c.strokeRect(cx + C * 0.36, cy + C * 0.41, C * 0.28, C * 0.11);
-			// Scanner dot
-			c.fillStyle = '#FF0055';
-			c.fillRect(cx + C * 0.46, cy + C * 0.43, C * 0.08, C * 0.07);
-			// ID
-			c.fillStyle = clr;
-			c.font = `bold ${Math.floor(C * 0.22)}px monospace`;
-			c.textAlign = 'center';
-			c.textBaseline = 'middle';
-			c.fillText(String(bot.id), cx + C / 2, cy + C * 0.62);
-			// Inventory dots below
-			bot.inventory.forEach((item, i) => {
-				c.fillStyle = ITEM_CLR[item] || '#aaa';
-				c.beginPath();
-				c.arc(
-					bx * C + C / 2 - (bot.inventory.length - 1) * 3 + i * 6,
-					by * C + C + 3, 2.5, 0, Math.PI * 2
-				);
-				c.fill();
-			});
-		}
-
-		_crtDirty = true;
-	}
-
-	// Re-draw when round changes (track all reactive deps used in _drawGrid)
-	$effect(() => {
-		const _ = currentRound;
-		const _b = bots; // track bot positions
-		const _at = activeTypes; // track active order types
-		const _pt = previewTypes; // track preview order types
-		if (!_crt) return;
-		_drawGrid();
-	});
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -627,13 +264,13 @@ void main(){
 			<span class="score-value">{rounds[currentRound]?.score ?? '?'}</span>
 			<span class="score-final">/{run.final_score}</span>
 		</div>
+		<button class="export-btn" onclick={exportRun}>Export JSON</button>
 	</div>
 
 	<div class="main-area">
 		<div class="grid-section">
-			<div class="crt-monitor">
-				<div class="crt-bezel">
-					<div class="crt-screen" bind:this={gridWrapper}>
+			<div class="grid-container">
+				<div class="grid-screen" bind:this={gridWrapper}>
 						<Grid
 							width={run.grid_width}
 							height={run.grid_height}
@@ -642,6 +279,7 @@ void main(){
 							{shelfSet}
 							{itemMap}
 							dropOff={run.drop_off}
+							dropOffZones={run.drop_off_zones}
 							spawn={run.spawn}
 							{bots}
 							{botPositions}
@@ -665,9 +303,7 @@ void main(){
 								></div>
 							{/if}
 						{/each}
-					</div>
-					<canvas bind:this={crtCanvas} class="crt-overlay"></canvas>
-					</div>
+				</div>
 				</div>
 			</div>
 
@@ -685,7 +321,7 @@ void main(){
 
 				<div class="round-slider">
 					<span class="round-label">R:{String(currentRound).padStart(3, '0')}</span>
-					<input type="range" min="0" max={rounds.length - 1} bind:value={currentRound} oninput={pause} />
+					<input type="range" min="0" max={rounds.length - 1} value={currentRound} oninput={(e) => { currentRound = +e.target.value; pause(); }} />
 					<span class="round-label">{rounds.length - 1}</span>
 				</div>
 
@@ -851,6 +487,20 @@ void main(){
 		text-shadow: 0 0 12px rgba(57, 211, 83, 0.3);
 	}
 	.score-final { font-size: 0.8rem; color: var(--text-muted); }
+	.export-btn {
+		padding: 0.3rem 0.75rem;
+		background: transparent;
+		border: 1px solid var(--accent);
+		color: var(--accent);
+		border-radius: var(--radius);
+		font-size: 0.8rem;
+		font-weight: 500;
+		letter-spacing: 0.02em;
+		cursor: pointer;
+		transition: all 0.2s ease;
+		margin-left: auto;
+	}
+	.export-btn:hover { background: var(--accent); color: #0d1117; }
 
 	.main-area {
 		display: grid;
@@ -859,26 +509,17 @@ void main(){
 		align-items: start;
 	}
 
-	/* ── Grid + CRT Monitor ── */
+	/* ── Grid ── */
 	.grid-section { display: flex; flex-direction: column; gap: 1rem; }
 
-	.crt-monitor {
+	.grid-container {
 		position: relative;
-		background: #050505;
-		border: 3px solid #111;
-		border-radius: 6px;
-		padding: 8px;
-		box-shadow: 0 0 20px rgba(0,0,0,0.8), inset 0 0 30px rgba(0,0,0,0.5);
-	}
-	.crt-bezel {
-		position: relative;
-		border: 2px solid #1a1a1a;
-		border-radius: 4px;
 		background: #010409;
+		border: 1px solid var(--border);
+		border-radius: 4px;
 		overflow: hidden;
-		box-shadow: inset 0 0 40px rgba(57, 211, 83, 0.03);
 	}
-	.crt-screen {
+	.grid-screen {
 		position: relative;
 		padding: 0.5rem;
 	}
@@ -916,15 +557,6 @@ void main(){
 		width: 100% !important;
 		height: 100% !important;
 	}
-	.crt-overlay {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		pointer-events: none;
-		z-index: 2;
-	}
-
 	/* ── Controls — hacker terminal ── */
 	.controls {
 		display: flex;

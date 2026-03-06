@@ -39,7 +39,13 @@
 		medium: '#d29922',
 		hard: '#f85149',
 		expert: '#da3633',
+		nightmare: '#a855f7',
 	};
+
+	const DIFF_ORDER = ['easy', 'medium', 'hard', 'expert', 'nightmare'];
+	let sortedStats = $derived(
+		[...data.stats].sort((a, b) => DIFF_ORDER.indexOf(a.difficulty) - DIFF_ORDER.indexOf(b.difficulty))
+	);
 
 	let filterDiff = $state('all');
 	let filterType = $state('all');
@@ -51,8 +57,8 @@
 		)
 	);
 
-	let totalMaxSum = $derived(data.stats.reduce((sum, s) => sum + (s.max_score || 0), 0));
-	let totalAvgSum = $derived(data.stats.reduce((sum, s) => sum + (s.avg_score || 0), 0).toFixed(1));
+	let totalMaxSum = $derived(sortedStats.reduce((sum, s) => sum + (s.max_score || 0), 0));
+	let totalAvgSum = $derived(sortedStats.reduce((sum, s) => sum + (s.avg_score || 0), 0).toFixed(1));
 
 	let typeBreakdown = $derived(() => {
 		const map = {};
@@ -63,7 +69,7 @@
 		return map;
 	});
 
-	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310 };
+	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310, nightmare: 350 };
 
 	// Chart constants
 	const chartW = 700;
@@ -144,7 +150,7 @@
 	<h1>Game Runs <span class="run-count">{data.totalRuns}</span></h1>
 	<div class="filters">
 		<button class="chip" class:active={filterDiff === 'all'} onclick={() => filterDiff = 'all'}>All</button>
-		{#each ['easy', 'medium', 'hard', 'expert'] as diff}
+		{#each DIFF_ORDER as diff}
 			<button
 				class="chip"
 				class:active={filterDiff === diff}
@@ -164,16 +170,16 @@
 	</div>
 </div>
 
-{#if panels.stats && data.stats.length > 0}
+{#if panels.stats && sortedStats.length > 0}
 <div class="stats-row" use:scrambleIn>
-	{#each data.stats as s}
+	{#each sortedStats as s}
 		<div class="stat-card card">
 			<div class="stat-label" style="color: {diffColors[s.difficulty]}">{s.difficulty}</div>
 			<div class="stat-main">{s.max_score}</div>
 			<div class="stat-sub">max / {s.avg_score} avg / {s.count} runs</div>
 		</div>
 	{/each}
-	{#if data.stats.length > 1}
+	{#if sortedStats.length > 1}
 		<div class="stat-card card total-card">
 			<div class="stat-label" style="color: var(--accent-light)">Total</div>
 			<div class="stat-main">{totalMaxSum}</div>
@@ -198,7 +204,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each ['easy', 'medium', 'hard', 'expert'] as diff}
+			{#each DIFF_ORDER as diff}
 				{@const tb = typeBreakdown()[diff] || {}}
 				{@const best = Math.max(tb.live?.max_score || 0, tb.replay?.max_score || 0, tb.synthetic?.max_score || 0)}
 				{@const target = TARGETS[diff] || 250}
@@ -291,7 +297,10 @@
 					<td>{run.orders_completed}</td>
 					<td>{run.items_delivered}</td>
 					<td class="muted">{new Date(run.created_at).toLocaleString()}</td>
-					<td><a href="/run/{run.id}" class="view-btn">View</a></td>
+					<td>
+						<a href="/run/{run.id}" class="view-btn">View</a>
+						<a href="/api/run/{run.id}/export" class="view-btn export-btn" download>Export</a>
+					</td>
 				</tr>
 			{/each}
 		</tbody>
@@ -409,6 +418,8 @@
 		transition: all 0.2s ease;
 	}
 	.view-btn:hover { background: var(--accent); color: #0d1117; text-decoration: none; }
+	.export-btn { margin-left: 0.35rem; border-color: #8b949e; color: #8b949e; }
+	.export-btn:hover { background: #8b949e; color: #0d1117; }
 	.empty { padding: 3rem; text-align: center; color: var(--text-muted); }
 	code { background: #010409; border: 1px solid rgba(48, 54, 61, 0.5); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.85em; }
 	.filter-sep { color: var(--border); padding: 0 0.25rem; align-self: center; }

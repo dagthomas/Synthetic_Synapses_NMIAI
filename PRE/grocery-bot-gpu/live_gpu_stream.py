@@ -45,7 +45,7 @@ from game_engine import (
     MapState, CaptureData, Order,
 )
 from replay_solution import predict_full_sim, extract_goals, bfs_next_action, build_walkable
-from configs import detect_difficulty
+from configs import detect_difficulty, DIFF_ROUNDS
 from live_solver import ws_to_capture
 from gpu_sequential_solver import solve_sequential, refine_from_solution, solve_multi_restart
 from solution_store import save_solution, merge_capture, save_capture as store_capture, load_meta
@@ -136,6 +136,7 @@ class AnytimeGPUStream:
         # ── bookkeeping ───────────────────────────────────────────────────────
         self._difficulty = None
         self._num_bots = 0
+        self._num_rounds = 300  # updated from WS data in _init_round0
         self._solve_gen = 0        # bumped when new orders arrive
         self._seen_order_ids = set()
         self._data_ready = threading.Event()  # set after round 0
@@ -691,6 +692,7 @@ class AnytimeGPUStream:
         capture = ws_to_capture(data)
         self._difficulty = capture['difficulty']
         self._num_bots = capture['num_bots']
+        self._num_rounds = data.get('max_rounds', DIFF_ROUNDS.get(self._difficulty, 300))
 
         # Decode and store JWT payload (map_id, map_seed, etc.)
         jwt_payload = decode_jwt_from_url(self.ws_url)
@@ -1032,7 +1034,7 @@ class AnytimeGPUStream:
 
             searcher = GPUBeamSearcher(
                 ms, all_orders, device=dev, num_bots=self._num_bots,
-                no_compile=True)
+                no_compile=True, num_rounds=self._num_rounds)
 
             with self._pr_lock:
                 self._pr_searcher = searcher
@@ -1374,7 +1376,8 @@ class AnytimeGPUStream:
                                 ms, all_orders, device=dev,
                                 num_bots=num_bots,
                                 locked_trajectories=locked_trajs,
-                                no_compile=True)
+                                no_compile=True,
+                                num_rounds=self._num_rounds)
                         else:
                             cur_searcher = searcher  # first bot: reuse base searcher
 
