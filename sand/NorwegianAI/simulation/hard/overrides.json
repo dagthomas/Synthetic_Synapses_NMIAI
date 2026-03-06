@@ -1,0 +1,14 @@
+{
+  "params": {
+    "spec_threshold": 28,
+    "marginal_cost": 3,
+    "max_detour": 14,
+    "max_delivering": 3,
+    "home_aisle_penalty": 4
+  },
+  "score": 135,
+  "overrides": {
+    "165,3": "move_right",
+    "191,1": "move_left"
+  }
+}
