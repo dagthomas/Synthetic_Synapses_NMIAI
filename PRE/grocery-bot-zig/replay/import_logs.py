@@ -20,7 +20,7 @@ import sys
 import psycopg2
 from psycopg2.extras import execute_values
 
-DEFAULT_DB = os.environ.get("GROCERY_DB_URL", "postgres://grocery@localhost:5433/grocery_bot")
+DEFAULT_DB = os.environ.get("GROCERY_DB_URL", "postgres://grocery:grocery123@localhost:5433/grocery_bot")
 
 # Difficulty detection by grid size and bot count
 DIFFICULTY_MAP = {

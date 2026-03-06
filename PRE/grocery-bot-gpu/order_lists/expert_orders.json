@@ -1,7 +1,7 @@
 {
   "difficulty": "expert",
   "date": "2026-03-06",
-  "total_orders": 11,
+  "total_orders": 14,
   "orders": [
     {
       "index": 0,
@@ -119,6 +119,38 @@
         "bread",
         "onions",
         "rice"
+      ]
+    },
+    {
+      "index": 11,
+      "items_required": [
+        "pasta",
+        "bread",
+        "milk",
+        "eggs",
+        "tomatoes",
+        "cream"
+      ]
+    },
+    {
+      "index": 12,
+      "items_required": [
+        "rice",
+        "cream",
+        "flour",
+        "tomatoes",
+        "bread",
+        "butter"
+      ]
+    },
+    {
+      "index": 13,
+      "items_required": [
+        "pasta",
+        "cereal",
+        "rice",
+        "eggs",
+        "cheese"
       ]
     }
   ]
