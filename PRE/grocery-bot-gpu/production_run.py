@@ -36,7 +36,7 @@ ZIG_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, '..', 'grocery-bot-zig'))
 REPLAY_SCRIPT = os.path.join(SCRIPT_DIR, 'replay_solution.py')
 CAPTURE_SCRIPT = os.path.join(SCRIPT_DIR, 'capture_from_game_log.py')
 IMPORT_SCRIPT = os.path.normpath(os.path.join(
-    SCRIPT_DIR, '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
+    SCRIPT_DIR, '..', 'replay', 'import_logs.py',
 ))
 
 

@@ -10,7 +10,14 @@
       "mcp__ide__getDiagnostics",
       "Bash(PGPASSWORD=grocery123 psql:*)",
       "Bash(docker exec:*)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(cp:*)",
+      "Bash(node:*)",
+      "Bash(npx svelte-kit:*)",
+      "Bash(npm install:*)",
+      "Bash(npx vite:*)"
     ]
   }
 }

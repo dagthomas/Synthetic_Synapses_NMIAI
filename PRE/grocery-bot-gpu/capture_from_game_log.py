@@ -251,7 +251,7 @@ def main():
         import subprocess as _subprocess  # nosec B404
         _import_script = os.path.normpath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
+            '..', 'replay', 'import_logs.py',
         ))
         if os.path.exists(_import_script):
             _subprocess.Popen(  # nosec B603 B607

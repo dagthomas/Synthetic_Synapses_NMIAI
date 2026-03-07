@@ -139,7 +139,7 @@ if __name__ == '__main__':
     try:
         import subprocess  # nosec B404
         import_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                     '..', 'grocery-bot-zig', 'replay', 'import_logs.py')
+                                     '..', 'replay', 'import_logs.py')
         result = subprocess.run(  # nosec B603 B607
             [sys.executable, import_script, '--run-type', 'live', log_path],
             capture_output=True, text=True, timeout=30)
