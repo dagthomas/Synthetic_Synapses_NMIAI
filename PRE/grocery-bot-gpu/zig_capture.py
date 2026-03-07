@@ -6,12 +6,13 @@ Usage:
 import json
 import os
 import sys
+import time
 
 ZIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'grocery-bot-zig')
 
 
 def run_zig_bot(ws_url, difficulty):
-    """Run Zig bot, return path to game log."""
+    """Run Zig bot, return stdout lines (game log JSONL)."""
     exe = os.path.join(ZIG_DIR, 'zig-out', 'bin', f'grocery-bot-{difficulty}.exe')
     if not os.path.exists(exe):
         exe = os.path.join(ZIG_DIR, 'zig-out', 'bin', 'grocery-bot.exe')
@@ -24,15 +25,15 @@ def run_zig_bot(ws_url, difficulty):
 
     from subprocess_helpers import run_bot_game
 
-    return_code, stderr_output, log_path = run_bot_game(exe, ws_url, cwd=ZIG_DIR, timeout=180)
+    return_code, stderr_output, stdout_output = run_bot_game(exe, ws_url, cwd=ZIG_DIR, timeout=180)
 
     print(stderr_output, file=sys.stderr)
 
-    return log_path
+    return stdout_output
 
 
-def parse_game_log(log_path):
-    """Parse Zig bot game log into capture format."""
+def parse_game_log_lines(lines):
+    """Parse Zig bot game log lines (strings) into capture format."""
     grid = None
     items = None
     drop_off = None
@@ -41,42 +42,40 @@ def parse_game_log(log_path):
     seen_order_ids = set()
     final_score = 0
 
-    with open(log_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # JSONL log may contain non-JSON lines (stderr, partial writes)
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
 
-            if data.get('type') == 'game_over':
-                final_score = data.get('score', 0)
-                continue
+        if data.get('type') == 'game_over':
+            final_score = data.get('score', 0)
+            continue
 
-            if data.get('type') != 'game_state':
-                continue
+        if data.get('type') != 'game_state':
+            continue
 
-            rnd = data.get('round', -1)
+        rnd = data.get('round', -1)
 
-            if rnd == 0:
-                grid = data.get('grid')
-                items = data.get('items')
-                drop_off = data.get('drop_off')
-                num_bots = len(data.get('bots', []))
+        if rnd == 0:
+            grid = data.get('grid')
+            items = data.get('items')
+            drop_off = data.get('drop_off')
+            num_bots = len(data.get('bots', []))
 
-            # Capture orders
-            for order in data.get('orders', []):
-                oid = order.get('id', '')
-                if oid and oid not in seen_order_ids:
-                    seen_order_ids.add(oid)
-                    orders.append({
-                        'id': oid,
-                        'items_required': list(order['items_required']),
-                        'items_delivered': [],
-                        'status': 'future',
-                    })
+        for order in data.get('orders', []):
+            oid = order.get('id', '')
+            if oid and oid not in seen_order_ids:
+                seen_order_ids.add(oid)
+                orders.append({
+                    'id': oid,
+                    'items_required': list(order['items_required']),
+                    'items_delivered': [],
+                    'status': 'future',
+                })
 
     if orders:
         orders[0]['status'] = 'active'
@@ -84,7 +83,7 @@ def parse_game_log(log_path):
             orders[1]['status'] = 'preview'
 
     capture = {
-        'difficulty': None,  # Set by caller
+        'difficulty': None,
         'grid': grid,
         'items': items,
         'drop_off': drop_off,
@@ -103,19 +102,20 @@ if __name__ == '__main__':
     ws_url = sys.argv[1]
     difficulty = sys.argv[2]
 
-    log_path = run_zig_bot(ws_url, difficulty)
-    if not log_path:
+    stdout_output = run_zig_bot(ws_url, difficulty)
+    if not stdout_output:
         print("ERROR: No game log produced", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Parsing game log: {log_path}", file=sys.stderr)
-    capture = parse_game_log(log_path)
+    log_lines = stdout_output.splitlines()
+    print(f"Parsing game log: {len(log_lines)} lines from stdout", file=sys.stderr)
+    capture = parse_game_log_lines(log_lines)
     capture['difficulty'] = difficulty
 
     print(f"Score: {capture['probe_score']}", file=sys.stderr)
     print(f"Orders captured: {len(capture['orders'])}", file=sys.stderr)
 
-    # Merge with existing capture (don't lose previously captured orders)
+    # Merge with existing capture
     from solution_store import save_capture, load_capture
     existing = load_capture(difficulty)
     if existing:
@@ -126,7 +126,6 @@ if __name__ == '__main__':
                 existing['orders'].append(o)
                 existing_ids.add(o['id'])
                 new_count += 1
-        # Keep existing grid/items/drop_off (first capture is authoritative)
         existing['probe_score'] = max(existing.get('probe_score', 0), capture['probe_score'])
         save_capture(difficulty, existing)
         print(f"Merged: +{new_count} new orders ({len(existing['orders'])} total)",
@@ -135,17 +134,18 @@ if __name__ == '__main__':
         save_capture(difficulty, capture)
         print(f"Capture saved to DB ({difficulty})", file=sys.stderr)
 
-    # Auto-import to PostgreSQL as a 'live' run
+    # Import directly to PostgreSQL
     try:
-        import subprocess  # nosec B404
-        import_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                     '..', 'replay', 'import_logs.py')
-        result = subprocess.run(  # nosec B603 B607
-            [sys.executable, import_script, '--run-type', 'live', log_path],
-            capture_output=True, text=True, timeout=30)
-        if result.returncode == 0:
-            print(f"  DB import: {result.stdout.strip()}", file=sys.stderr)
-        else:
-            print(f"  DB import failed: {result.stderr.strip()}", file=sys.stderr)
+        _replay_dir = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'replay'))
+        sys.path.insert(0, _replay_dir)
+        from import_logs import parse_log_lines, save_to_db
+        record = parse_log_lines(log_lines, pseudo_seed=int(time.time()))
+        if record:
+            run_id = save_to_db(
+                os.environ.get("GROCERY_DB_URL",
+                               "postgres://grocery:grocery123@localhost:5433/grocery_bot"),
+                record, run_type='live')
+            print(f"  [db] Saved to PostgreSQL run_id={run_id}", file=sys.stderr)
     except Exception as e:
-        print(f"  DB import error: {e}", file=sys.stderr)
+        print(f"  [db] Direct DB import failed: {e}", file=sys.stderr)

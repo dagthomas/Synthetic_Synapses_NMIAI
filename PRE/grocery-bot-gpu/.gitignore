@@ -1,5 +1,2 @@
-game_log_*.jsonl
-logs/
-__pycache__/
-*.pyc
-.pytest_cache/
+cache/
+solutions/

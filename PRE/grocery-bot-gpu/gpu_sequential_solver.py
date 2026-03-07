@@ -53,7 +53,7 @@ except (ImportError, OSError):
 # Difficulty-aware defaults: more refinement for harder difficulties with more bots
 DEFAULT_REFINE_ITERS = {'easy': 0, 'medium': 3, 'hard': 10, 'expert': 10, 'nightmare': 5}
 DEFAULT_PASS1_ORDERINGS = {'easy': 1, 'medium': 1, 'hard': 3, 'expert': 3, 'nightmare': 3}
-DEFAULT_MAX_DP_BOTS = {'easy': 1, 'medium': 3, 'hard': 5, 'expert': 7, 'nightmare': 10}
+DEFAULT_MAX_DP_BOTS = {'easy': 1, 'medium': 3, 'hard': 5, 'expert': 7, 'nightmare': 20}
 
 
 def pre_simulate_locked(gs_template: GameState, all_orders: list[Order],
@@ -419,6 +419,9 @@ def greedy_plan_bots(gs_template: GameState, all_orders: list[Order],
     dist_to_dropoff = tables.dist_to_dropoff  # [H, W] int16
 
     drop_x, drop_y = int(ms.drop_off[0]), int(ms.drop_off[1])
+    drop_off_set = set()
+    for dz in ms.drop_off_zones:
+        drop_off_set.add((int(dz[0]), int(dz[1])))
     greedy_set = set(bot_ids)
 
     # Build type frequency across ALL orders
@@ -517,7 +520,7 @@ def greedy_plan_bots(gs_template: GameState, all_orders: list[Order],
             has_active_items = active_match_count > 0
 
             # ── 1. At dropoff → deliver
-            if bx == drop_x and by == drop_y and has_items:
+            if (bx, by) in drop_off_set and has_items:
                 bot_decisions[bid] = (ACT_DROPOFF, -1)
                 continue
 
@@ -728,8 +731,11 @@ def solve_sequential(capture_data: CaptureData | None = None,
 
     # Build Zig FFI context.
     # Priority: explicit seed > capture seed > live capture (no seed).
+    # Disable FFI for nightmare (Zig FFI has array size issues with 20 bots / 500 rounds)
     _zig_seed = seed if seed else (capture_data.get('seed') if capture_data else None)
-    if _ZIG_AVAILABLE and _zig_seed:
+    if diff == 'nightmare':
+        _zig_ctx = None
+    elif _ZIG_AVAILABLE and _zig_seed:
         _zig_ctx = {'diff_idx': _DIFF_IDX.get(diff, 0), 'seed': _zig_seed, 'mode': 'seed'}
     elif _ZIG_AVAILABLE and capture_data is not None:
         _zig_ctx = {'capture_data': capture_data, 'mode': 'live'}
@@ -1864,8 +1870,11 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
     _greedy_bot_ids_r = list(range(max_dp_bots_r, num_bots))
 
     # Build Zig FFI context (seed or live capture)
+    # Disable FFI for nightmare (Zig FFI has array size issues with 20 bots / 500 rounds)
     _zig_seed = seed if seed else (capture_data.get('seed') if capture_data else None)
-    if _ZIG_AVAILABLE and _zig_seed:
+    if diff == 'nightmare':
+        _zig_ctx = None
+    elif _ZIG_AVAILABLE and _zig_seed:
         _zig_ctx = {'diff_idx': _DIFF_IDX.get(diff, 0), 'seed': _zig_seed, 'mode': 'seed'}
     elif _ZIG_AVAILABLE and capture_data is not None:
         _zig_ctx = {'capture_data': capture_data, 'mode': 'live'}
@@ -2292,6 +2301,273 @@ def duo_refine_from_solution(
               f"total_time={total_time:.1f}s", file=sys.stderr)
 
     return best_score, combined
+
+
+def solve_nightmare_zones(capture_data: CaptureData | None = None,
+                          seed: int | None = None, difficulty: str = 'nightmare',
+                          device: str = 'cuda',
+                          config: SolveConfig | None = None,
+                          callbacks: SolveCallbacks | None = None,
+                          verbose: bool = True,
+                          all_orders_override: list[Order] | None = None,
+                          max_states: int = 50_000,
+                          max_refine_iters: int = 3,
+                          no_filler: bool = True,
+                          speed_bonus: float = 100.0,
+                          ) -> tuple[int, list[list[tuple[int, int]]]]:
+    """Zone-partitioned sequential DP for nightmare mode (20 bots, 3 dropoffs).
+
+    Splits bots into 3 groups by nearest dropoff zone. Solves each group
+    sequentially (like Expert with 7 bots), with other groups' bots locked.
+    Then runs cross-zone refinement.
+
+    Returns:
+        (final_score, combined_actions) tuple.
+    """
+    import math
+
+    t0 = time.time()
+    diff = 'nightmare'
+    num_rounds = 500
+
+    # Initialize game
+    if capture_data:
+        num_orders = len(capture_data['orders']) if no_filler else 100
+        gs, all_orders = init_game_from_capture(capture_data, num_orders=num_orders)
+    elif seed:
+        gs, all_orders = init_game(seed, difficulty)
+    else:
+        raise ValueError("Need capture_data or seed")
+
+    if all_orders_override is not None:
+        all_orders = all_orders_override
+        gs.orders = [all_orders[0].copy(), all_orders[1].copy()]
+        gs.orders[0].status = 'active'
+        gs.orders[1].status = 'preview'
+        gs.next_order_idx = 2
+
+    ms = gs.map_state
+    num_bots = len(gs.bot_positions)
+    drop_zones = list(getattr(ms, 'drop_off_zones', [ms.drop_off]))
+
+    # No FFI for nightmare
+    _zig_ctx = None
+
+    if verbose:
+        print(f"Zone-partitioned nightmare DP: {num_bots} bots, {num_rounds} rounds, "
+              f"{len(drop_zones)} zones, max_states={max_states}, "
+              f"orders={len(all_orders)}", file=sys.stderr)
+
+    # === Zone assignment: assign bots to zones by bot ID ===
+    # For nightmare, all bots start at spawn. Assign by bot ID for determinism.
+    # Zone sizes: 7+7+6 distributed across the 3 dropoffs.
+    # Shelf columns: LEFT x<10 (cols 3,5,7,9), MID 10<=x<=18 (cols 11,13,15,17),
+    # RIGHT x>=19 (cols 19,21,23,25)
+    n_zones = len(drop_zones)
+    zone_sizes = _balanced_zone_sizes(num_bots, n_zones)
+    # Assign bot IDs to zones: distribute evenly
+    zone_bots: list[list[int]] = [[] for _ in range(n_zones)]
+    bid = 0
+    for z in range(n_zones):
+        for _ in range(zone_sizes[z]):
+            zone_bots[z].append(bid)
+            bid += 1
+
+    if verbose:
+        for z in range(n_zones):
+            dz = drop_zones[z]
+            print(f"  Zone {z} (dropoff {dz}): bots {zone_bots[z]}", file=sys.stderr)
+
+    # === Pass 1: Sequential DP per zone ===
+    bot_actions: dict[int, list[tuple[int, int]]] = {}
+    _wait_acts = [(ACT_WAIT, -1)] * num_rounds
+
+    # Initialize all bots with wait actions
+    for bid in range(num_bots):
+        bot_actions[bid] = list(_wait_acts)
+
+    # Interleaved planning: plan one bot per zone at a time (round-robin).
+    # This distributes locked bots evenly across zones instead of
+    # zone-sequential (which causes zone 2 to face 14 locked bots).
+    max_zone_size = max(zone_sizes)
+    plan_order = []
+    for slot in range(max_zone_size):
+        for z in range(n_zones):
+            if slot < len(zone_bots[z]):
+                plan_order.append((z, zone_bots[z][slot]))
+
+    if verbose:
+        order_str = ', '.join(f'z{z}:b{b}' for z, b in plan_order)
+        print(f"  Interleaved plan order: {order_str}", file=sys.stderr)
+
+    for plan_idx, (zone_id, bot_id) in enumerate(plan_order):
+        t_bot = time.time()
+        if verbose:
+            print(f"\n=== Step {plan_idx+1}/{len(plan_order)}, "
+                  f"Zone {zone_id} Bot {bot_id} ===", file=sys.stderr)
+
+        # Lock all previously-planned bots
+        locked_ids = sorted(b for b in range(num_bots)
+                            if b != bot_id and bot_actions[b] != _wait_acts)
+        locked = None
+        if locked_ids:
+            locked = pre_simulate_locked(
+                _fresh_gs(gs, capture_data, no_filler), all_orders,
+                bot_actions, locked_ids, _zig_ctx=None,
+                num_rounds=num_rounds)
+
+        # State budget: more for early bots, less for later
+        t_frac = plan_idx / max(len(plan_order) - 1, 1)
+        pos_scale = 1.5 - 0.5 * t_frac  # 1.5x first → 1.0x last
+        effective_states = max(10000, int(max_states * pos_scale))
+
+        searcher = GPUBeamSearcher(
+            ms, all_orders, device=device, num_bots=num_bots,
+            locked_trajectories=locked, no_compile=True,
+            speed_bonus=speed_bonus, num_rounds=num_rounds)
+
+        gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
+        dp_score, bot_acts = searcher.dp_search(
+            gs_for_dp, max_states=effective_states, verbose=verbose,
+            bot_id=bot_id)
+
+        bot_actions[bot_id] = bot_acts
+
+        bot_time = time.time() - t_bot
+        if verbose:
+            print(f"  Bot {bot_id} (zone {zone_id}): DP={dp_score}, "
+                  f"states={effective_states}, time={bot_time:.1f}s",
+                  file=sys.stderr)
+
+        del searcher
+        if device == 'cuda':
+            torch.cuda.empty_cache()
+
+        # Periodic CPU verify (every 5 bots)
+        if (plan_idx + 1) % 5 == 0 or plan_idx == len(plan_order) - 1:
+            combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
+            gs_v = _fresh_gs(gs, capture_data, no_filler)
+            partial_score = cpu_verify(gs_v, all_orders, combined, num_bots,
+                                       _zig_ctx=None, num_rounds=num_rounds)
+            if verbose:
+                print(f"\n  [{plan_idx+1}/{len(plan_order)} bots planned] "
+                      f"CPU score: {partial_score}", file=sys.stderr)
+
+    # === CPU verify full solution ===
+    combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
+    gs_v = _fresh_gs(gs, capture_data, no_filler)
+    best_score = cpu_verify(gs_v, all_orders, combined, num_bots,
+                            _zig_ctx=None, num_rounds=num_rounds)
+    best_actions = {k: list(v) for k, v in bot_actions.items()}
+
+    if verbose:
+        print(f"\n{'='*60}", file=sys.stderr)
+        print(f"All zones complete. Score before refinement: {best_score}",
+              file=sys.stderr)
+
+    # === Pass 2: Cross-zone refinement ===
+    import random as _random
+    _rng = _random.Random(42)
+
+    for iteration in range(max_refine_iters):
+        if verbose:
+            print(f"\n--- Refinement iteration {iteration+1}/{max_refine_iters} ---",
+                  file=sys.stderr)
+
+        # Weakest-first ordering
+        try:
+            contribs = compute_bot_contributions(
+                _fresh_gs(gs, capture_data, no_filler), all_orders,
+                bot_actions, num_bots, list(range(num_bots)),
+                _zig_ctx=None, capture_data=capture_data,
+                no_filler=no_filler)
+            refine_order = sorted(range(num_bots), key=lambda b: contribs.get(b, 0))
+            if verbose:
+                contrib_str = ', '.join(f'b{b}:{contribs.get(b,0)}' for b in refine_order[:5])
+                print(f"  Top-5 weakest: {contrib_str}", file=sys.stderr)
+        except Exception:
+            refine_order = list(range(num_bots))
+            _rng.shuffle(refine_order)
+
+        iter_improved = False
+        consecutive_fails = 0
+
+        for bot_id in refine_order:
+            t_bot = time.time()
+
+            locked_ids = sorted(b for b in range(num_bots) if b != bot_id)
+            locked = pre_simulate_locked(
+                _fresh_gs(gs, capture_data, no_filler), all_orders,
+                bot_actions, locked_ids, _zig_ctx=None,
+                num_rounds=num_rounds)
+
+            searcher = GPUBeamSearcher(
+                ms, all_orders, device=device, num_bots=num_bots,
+                locked_trajectories=locked, no_compile=True,
+                speed_bonus=speed_bonus, num_rounds=num_rounds)
+
+            old_acts = list(bot_actions[bot_id])
+            gs_for_dp = _fresh_gs(gs, capture_data, no_filler)
+            dp_score, bot_acts = searcher.dp_search(
+                gs_for_dp, max_states=max_states, verbose=verbose,
+                bot_id=bot_id)
+
+            del searcher
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+
+            # Verify
+            bot_actions[bot_id] = bot_acts
+            combined = _make_combined(bot_actions, num_bots, num_rounds=num_rounds)
+            gs_v = _fresh_gs(gs, capture_data, no_filler)
+            new_score = cpu_verify(gs_v, all_orders, combined, num_bots,
+                                   _zig_ctx=None, num_rounds=num_rounds)
+
+            bot_time = time.time() - t_bot
+            if new_score > best_score:
+                delta = new_score - best_score
+                best_score = new_score
+                best_actions = {k: list(v) for k, v in bot_actions.items()}
+                iter_improved = True
+                consecutive_fails = 0
+                if verbose:
+                    print(f"  Bot {bot_id}: DP={dp_score}, CPU={new_score} "
+                          f"(+{delta}! best={best_score}), time={bot_time:.1f}s",
+                          file=sys.stderr)
+            else:
+                bot_actions[bot_id] = old_acts
+                consecutive_fails += 1
+                if verbose:
+                    print(f"  Bot {bot_id}: DP={dp_score}, CPU={new_score} "
+                          f"(no improvement, reverted), time={bot_time:.1f}s",
+                          file=sys.stderr)
+                if consecutive_fails >= 10:
+                    if verbose:
+                        print(f"  Early stop: {consecutive_fails} consecutive fails",
+                              file=sys.stderr)
+                    break
+
+        if not iter_improved:
+            if verbose:
+                print(f"  No improvement in iteration {iteration+1}, stopping",
+                      file=sys.stderr)
+            break
+
+    combined = _make_combined(best_actions, num_bots, num_rounds=num_rounds)
+    total_time = time.time() - t0
+    if verbose:
+        print(f"\nZone-partitioned nightmare: final_score={best_score}, "
+              f"total_time={total_time:.1f}s", file=sys.stderr)
+
+    return best_score, combined
+
+
+def _balanced_zone_sizes(num_bots: int, n_zones: int) -> list[int]:
+    """Split num_bots into n_zones groups as evenly as possible."""
+    base = num_bots // n_zones
+    remainder = num_bots % n_zones
+    sizes = [base + (1 if i < remainder else 0) for i in range(n_zones)]
+    return sizes
 
 
 if __name__ == '__main__':

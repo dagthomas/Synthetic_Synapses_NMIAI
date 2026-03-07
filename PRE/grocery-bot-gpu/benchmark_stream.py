@@ -109,24 +109,24 @@ def run_seed(difficulty, seed, device='cuda', max_states=None, no_refine=False,
 
     elapsed = time.time() - t0
 
-    # Write JSONL and import to DB
+    # Import directly to PostgreSQL
     if record and log_lines:
-        import tempfile
         log_lines.append(_json.dumps({'type': 'game_over', 'score': state.score}))
-        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                f'game_log_syn_{difficulty}_{seed}_{int(t0)}.jsonl')
-        with open(log_path, 'w') as f:
-            f.write('\n'.join(log_lines) + '\n')
-        _import_script = os.path.normpath(os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            '..', 'replay', 'import_logs.py',
-        ))
-        if os.path.exists(_import_script):
-            _subprocess.Popen(  # nosec B603 B607
-                ['python', _import_script, log_path, '--run-type', 'synthetic'],
-                stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
-            )
-            print(f"  [db] Importing synthetic log to PostgreSQL (seed={seed})", file=sys.stderr)
+        try:
+            _replay_dir = os.path.normpath(os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), '..', 'replay'))
+            sys.path.insert(0, _replay_dir)
+            from import_logs import parse_log_lines, save_to_db
+            _record = parse_log_lines(log_lines, pseudo_seed=seed)
+            if _record:
+                run_id = save_to_db(
+                    os.environ.get("GROCERY_DB_URL",
+                                   "postgres://grocery:grocery123@localhost:5433/grocery_bot"),
+                    _record, run_type='synthetic')
+                print(f"  [db] Saved synthetic to PostgreSQL run_id={run_id} (seed={seed})",
+                      file=sys.stderr)
+        except Exception as _e:
+            print(f"  [db] Direct DB import failed: {_e}", file=sys.stderr)
 
     return state.score, elapsed
 

@@ -1,10 +1,8 @@
-"""Tests for subprocess_helpers.py -- game score parsing and log file discovery."""
-import os
-import time
+"""Tests for subprocess_helpers.py -- game score parsing."""
 import pytest
 
 from subprocess_helpers import (
-    parse_game_score, parse_round_progress, find_latest_game_log,
+    parse_game_score, parse_round_progress,
     GAME_OVER_RE, ROUND_RE,
 )
 
@@ -27,7 +25,7 @@ class TestParseGameScore:
             "R0/300 Score:0\n"
             "R100/300 Score:50\n"
             "GAME_OVER Score:166\n"
-            "Log saved: game_log.jsonl\n"
+            "Game log: 601 entries in memory\n"
         )
         assert parse_game_score(stderr) == 166
 
@@ -54,11 +52,7 @@ class TestParseGameScore:
 
     def test_with_spaces_around(self):
         stderr = "GAME_OVER  Score:  42\n"
-        # The regex uses \s+ between GAME_OVER and Score, so double space works.
-        # But Score: has no flexibility for extra space before the number --
-        # check what the regex actually matches.
         result = parse_game_score(stderr)
-        # GAME_OVER_RE = r'GAME_OVER\s+Score[:\s]+(\d+)' -- [:\s]+ matches ": " or ":  "
         assert result == 42
 
 
@@ -114,67 +108,6 @@ class TestRegexPatterns:
         assert m.group(1) == "50"
         assert m.group(2) == "300"
         assert m.group(3) == "42"
-
-
-# ---------------------------------------------------------------------------
-# find_latest_game_log
-# ---------------------------------------------------------------------------
-
-class TestFindLatestGameLog:
-    def test_empty_directory_returns_none(self, tmp_path):
-        result = find_latest_game_log(str(tmp_path))
-        assert result is None
-
-    def test_single_log_file(self, tmp_path):
-        log = tmp_path / "game_log_12345.jsonl"
-        log.write_text("{}\n")
-        result = find_latest_game_log(str(tmp_path))
-        assert result is not None
-        assert os.path.basename(result) == "game_log_12345.jsonl"
-
-    def test_returns_newest_by_mtime(self, tmp_path):
-        log1 = tmp_path / "game_log_10000.jsonl"
-        log1.write_text("{}\n")
-        # Ensure different mtimes
-        time.sleep(0.05)
-        log2 = tmp_path / "game_log_20000.jsonl"
-        log2.write_text("{}\n")
-        result = find_latest_game_log(str(tmp_path))
-        assert os.path.basename(result) == "game_log_20000.jsonl"
-
-    def test_excludes_existing_logs(self, tmp_path):
-        log1 = tmp_path / "game_log_10000.jsonl"
-        log1.write_text("{}\n")
-        existing = {str(log1)}
-        time.sleep(0.05)
-        log2 = tmp_path / "game_log_20000.jsonl"
-        log2.write_text("{}\n")
-        result = find_latest_game_log(str(tmp_path), existing_logs=existing)
-        assert os.path.basename(result) == "game_log_20000.jsonl"
-
-    def test_all_excluded_falls_back_to_newest(self, tmp_path):
-        log1 = tmp_path / "game_log_10000.jsonl"
-        log1.write_text("{}\n")
-        time.sleep(0.05)
-        log2 = tmp_path / "game_log_20000.jsonl"
-        log2.write_text("{}\n")
-        existing = {str(log1), str(log2)}
-        result = find_latest_game_log(str(tmp_path), existing_logs=existing)
-        # Falls back to newest overall
-        assert os.path.basename(result) == "game_log_20000.jsonl"
-
-    def test_non_matching_files_ignored(self, tmp_path):
-        (tmp_path / "other.txt").write_text("hello")
-        (tmp_path / "game_log_99999.jsonl").write_text("{}\n")
-        result = find_latest_game_log(str(tmp_path))
-        assert os.path.basename(result) == "game_log_99999.jsonl"
-
-    def test_returns_full_path(self, tmp_path):
-        log = tmp_path / "game_log_55555.jsonl"
-        log.write_text("{}\n")
-        result = find_latest_game_log(str(tmp_path))
-        assert os.path.isabs(result)
-        assert os.path.exists(result)
 
 
 if __name__ == '__main__':

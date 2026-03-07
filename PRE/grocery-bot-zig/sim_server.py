@@ -60,7 +60,7 @@ def build_map(cfg):
     # Drop-off zone(s)
     num_dropoffs = cfg.get("dropoffs", 1)
     if num_dropoffs >= 3:
-        drop_off_zones = [(1, h - 2), (w // 2, h - 2), (w - 2, 1)]
+        drop_off_zones = [(1, h - 2), (w // 2, h - 2), (w - 2, h - 2)]
     elif num_dropoffs == 2:
         drop_off_zones = [(1, h - 2), (w - 2, h - 2)]
     else:

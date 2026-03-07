@@ -3,10 +3,9 @@
 Extracts common patterns from production_run.py, capture_and_solve_stream.py,
 and zig_capture.py:
   - Running bot/solver subprocesses with timeout and stderr capture
-  - Finding the latest game log file
+  - Capturing game log from stdout (Zig bot writes JSONL to stdout)
   - Parsing GAME_OVER score from stderr output
 """
-import glob
 import os
 import re
 import subprocess  # nosec B404
@@ -17,7 +16,7 @@ ROUND_RE = re.compile(r'R(\d+)/(\d+)\s+Score:(\d+)')
 
 
 def run_bot_game(exe_path, ws_url, cwd=None, timeout=180):
-    """Start a bot process, capture stderr, wait with timeout, kill on timeout.
+    """Start a bot process, capture stdout (game log) and stderr, wait with timeout.
 
     Args:
         exe_path: Path to the bot executable.
@@ -26,17 +25,13 @@ def run_bot_game(exe_path, ws_url, cwd=None, timeout=180):
         timeout: Max seconds to wait before killing the process.
 
     Returns:
-        (return_code, stderr_output, game_log_path)
+        (return_code, stderr_output, stdout_output)
         - return_code: Process exit code, or -1 if killed on timeout.
         - stderr_output: Full stderr as a string.
-        - game_log_path: Path to the newest game_log_*.jsonl created during
-          the run (in cwd), or None if no new log was found.
+        - stdout_output: Full stdout as a string (game log JSONL lines).
     """
     if cwd is None:
         cwd = os.path.dirname(exe_path) or '.'
-
-    # Snapshot existing logs so we can detect new ones
-    existing_logs = set(glob.glob(os.path.join(cwd, 'game_log_*.jsonl')))
 
     try:
         result = subprocess.run(  # nosec B603 B607
@@ -48,40 +43,13 @@ def run_bot_game(exe_path, ws_url, cwd=None, timeout=180):
         )
         return_code = result.returncode
         stderr_output = result.stderr
+        stdout_output = result.stdout
     except subprocess.TimeoutExpired as e:
         return_code = -1
         stderr_output = (e.stderr or '') if isinstance(e.stderr, str) else ''
+        stdout_output = (e.stdout or '') if isinstance(e.stdout, str) else ''
 
-    # Find new game log
-    log_path = find_latest_game_log(cwd, existing_logs=existing_logs)
-
-    return return_code, stderr_output, log_path
-
-
-def find_latest_game_log(directory, existing_logs=None):
-    """Find the newest game_log_*.jsonl file in directory.
-
-    Args:
-        directory: Directory to search in.
-        existing_logs: Optional set of paths to exclude (e.g. logs that
-            existed before a subprocess was started). If provided, only
-            logs NOT in this set are considered. Falls back to the newest
-            log overall if no new logs are found.
-
-    Returns:
-        Path to the newest game log, or None if no logs exist.
-    """
-    all_logs = glob.glob(os.path.join(directory, 'game_log_*.jsonl'))
-    if not all_logs:
-        return None
-
-    if existing_logs is not None:
-        new_logs = [p for p in all_logs if p not in existing_logs]
-        if new_logs:
-            return max(new_logs, key=os.path.getmtime)
-        # No new logs created — do NOT fall back to old logs (wrong difficulty/seed)
-        return None
-    return max(all_logs, key=os.path.getmtime)
+    return return_code, stderr_output, stdout_output
 
 
 def parse_game_score(stderr_output):

@@ -35,24 +35,36 @@ def detect_difficulty(width, height, bot_count):
     return DIFFICULTY_MAP.get((width, height, bot_count), "unknown")
 
 
-def parse_log_file(path):
-    """Parse a game_log JSONL file into a structured record for DB insertion."""
-    with open(path) as f:
-        lines = [l.strip() for l in f if l.strip()]
+def parse_log_lines(raw_lines, pseudo_seed=0):
+    """Parse a list of raw JSON strings into a structured record for DB insertion.
 
-    if not lines:
-        return None
+    Args:
+        raw_lines: list of JSON strings (game_state, action, game_over messages)
+        pseudo_seed: seed to store (default 0)
 
-    # Separate game_state lines, action lines, and game_over
+    Returns:
+        Parsed record dict, or None if no valid game data.
+    """
+    return _parse_log_impl(raw_lines, pseudo_seed)
+
+
+def _parse_log_impl(raw_lines, seed=0):
+    """Core parser: takes list of JSON strings, returns structured record or None."""
     game_states = []
     action_lines = []
     game_over = None
 
-    for line in lines:
-        try:
-            d = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for line in raw_lines:
+        if isinstance(line, str):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        else:
+            d = line  # already parsed dict
 
         if d.get("type") == "game_state":
             game_states.append(d)
@@ -64,7 +76,6 @@ def parse_log_file(path):
     if not game_states:
         return None
 
-    # Extract map info from round 0
     r0 = game_states[0]
     grid = r0["grid"]
     width = grid["width"]
@@ -73,29 +84,23 @@ def parse_log_file(path):
     bot_count = len(r0["bots"])
     items = r0["items"]
     drop_off = r0["drop_off"]
-    spawn = [width - 2, height - 2]  # Standard spawn position
+    spawn = [width - 2, height - 2]
 
-    # Derive shelves from item positions (items sit adjacent to shelves)
-    # The actual shelf positions are not in the game log — we store item positions instead
-    # Shelves = unique positions of all items
     shelf_set = set()
     for item in items:
         pos = item["position"]
         shelf_set.add((pos[0], pos[1]))
     shelves = sorted([list(p) for p in shelf_set])
 
-    # Item types
     item_type_set = set(it["type"] for it in items)
     item_types_count = len(item_type_set)
 
-    # Detect order size from orders in round 0
     order_sizes = [len(o["items_required"]) for o in r0["orders"]]
     order_size_min = min(order_sizes) if order_sizes else 3
     order_size_max = max(order_sizes) if order_sizes else 5
 
     difficulty = detect_difficulty(width, height, bot_count)
 
-    # Extract final score from game_over or last game_state
     if game_over:
         final_score = game_over["score"]
         items_delivered = game_over.get("items_delivered", 0)
@@ -106,19 +111,12 @@ def parse_log_file(path):
         items_delivered = 0
         orders_completed = 0
 
-    # Build round records by pairing game_states with actions
-    # Use dict to deduplicate rounds (keep last occurrence in case of desync)
     round_map = {}
     for i, gs in enumerate(game_states):
         rnd = gs["round"]
-        # Actions for this round come right after this game_state
         actions = action_lines[i]["actions"] if i < len(action_lines) else []
-
-        # Build bot state
         bots = [{"id": b["id"], "position": b["position"], "inventory": b.get("inventory", [])}
                 for b in gs["bots"]]
-
-        # Orders
         orders = []
         for o in gs["orders"]:
             orders.append({
@@ -127,37 +125,16 @@ def parse_log_file(path):
                 "items_delivered": o.get("items_delivered", []),
                 "status": o.get("status", "active"),
             })
-
         round_map[rnd] = {
-            "round": rnd,
-            "bots": bots,
-            "orders": orders,
-            "actions": actions,
-            "score": gs["score"],
-            "events": [],  # Events not captured in game_log format
+            "round": rnd, "bots": bots, "orders": orders,
+            "actions": actions, "score": gs["score"], "events": [],
         }
 
     round_records = [round_map[k] for k in sorted(round_map.keys())]
 
-    # Try to extract seed from filename (e.g. game_log_1772318764.jsonl -> use as pseudo-seed)
-    basename = os.path.basename(path)
-    seed = 0
-    if "_" in basename:
-        parts = basename.replace(".jsonl", "").split("_")
-        for p in reversed(parts):
-            try:
-                seed = int(p)
-                break
-            except ValueError:
-                continue
-
-    # Items in DB format — position must be [x, y] array (Grid.svelte reads item.position[0/1])
     items_db = [{"id": it["id"], "type": it["type"], "position": it["position"]}
                 for it in items]
 
-    # Remove shelf cells from walls so they render as shelves (not walls) in the frontend.
-    # The game log puts all non-walkable cells in grid.walls, including shelf cells.
-    # The frontend checks: dropoff → spawn → wall → shelf, so shelf cells must NOT be in walls.
     shelf_coords = {(p[0], p[1]) for p in shelves}
     walls = [w for w in walls if tuple(w) not in shelf_coords]
 
@@ -180,6 +157,29 @@ def parse_log_file(path):
         "orders_completed": orders_completed,
         "rounds": round_records,
     }
+
+
+def parse_log_file(path):
+    """Parse a game_log JSONL file into a structured record for DB insertion."""
+    with open(path) as f:
+        lines = [l.strip() for l in f if l.strip()]
+
+    if not lines:
+        return None
+
+    # Extract seed from filename
+    basename = os.path.basename(path)
+    seed = 0
+    if "_" in basename:
+        parts = basename.replace(".jsonl", "").split("_")
+        for p in reversed(parts):
+            try:
+                seed = int(p)
+                break
+            except ValueError:
+                continue
+
+    return _parse_log_impl(lines, seed)
 
 
 def save_to_db(db_url, record, run_type='live'):

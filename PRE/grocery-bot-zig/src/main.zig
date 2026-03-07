@@ -154,16 +154,8 @@ fn runLive(url: []const u8) !void {
     var last_responded_round: i32 = -1;
     var desync_counter: u8 = 0;
 
-    // Create timestamped log file for each game
-    var log_name_buf: [64]u8 = undefined;
-    const epoch = std.time.timestamp();
-    const log_name = std.fmt.bufPrint(&log_name_buf, "game_log_{d}.jsonl", .{epoch}) catch "game_log.jsonl";
-    const log_file = std.fs.cwd().createFile(log_name, .{}) catch |err| {
-        std.debug.print("Warning: Could not create {s}: {any}\n", .{ log_name, err });
-        return;
-    };
-    defer log_file.close();
-    std.debug.print("Logging to: {s}\n", .{log_name});
+    // Write game log to stdout (captured by Python caller for postgres)
+    const stdout = std.fs.File.stdout();
 
     while (true) {
         const data = client.recvMessage() catch |err| {
@@ -171,8 +163,8 @@ fn runLive(url: []const u8) !void {
             break;
         };
 
-        log_file.writeAll(data) catch {};
-        log_file.writeAll("\n") catch {};
+        stdout.writeAll(data) catch {};
+        stdout.writeAll("\n") catch {};
 
         const is_running = parser.parseGameState(data, &state) catch |err| {
             std.debug.print("Parse error: {any} (len={d})\n", .{ err, data.len });
@@ -258,8 +250,8 @@ fn runLive(url: []const u8) !void {
             };
         }
 
-        log_file.writeAll(response) catch {};
-        log_file.writeAll("\n") catch {};
+        stdout.writeAll(response) catch {};
+        stdout.writeAll("\n") catch {};
 
         // Small delay before sending to prevent 1-round action offset desync.
         // Without this, the server may not have finished processing the previous

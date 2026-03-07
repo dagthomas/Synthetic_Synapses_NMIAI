@@ -6,7 +6,7 @@ CONFIGS = {
     "medium": {"w": 16, "h": 12, "bots": 3, "aisles": 3, "types": 8, "order_size": (3, 5)},
     "hard":   {"w": 22, "h": 14, "bots": 5, "aisles": 4, "types": 12, "order_size": (3, 5)},
     "expert": {"w": 28, "h": 18, "bots": 10, "aisles": 5, "types": 16, "order_size": (4, 6)},
-    "nightmare": {"w": 30, "h": 18, "bots": 20, "aisles": 6, "types": 21, "order_size": (4, 7)},
+    "nightmare": {"w": 30, "h": 18, "bots": 20, "aisles": 6, "types": 21, "order_size": (4, 7), "dropoffs": 3},
 }
 
 ALL_TYPES = [

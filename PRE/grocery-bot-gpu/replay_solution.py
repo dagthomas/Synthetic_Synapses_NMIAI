@@ -468,12 +468,7 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
     """Replay saved best solution with adaptive desync correction."""
     import websockets
 
-    if log_dir is None:
-        log_dir = os.path.dirname(os.path.abspath(__file__))
-
-    timestamp = int(time.time())
-    log_path = os.path.join(log_dir, f'game_log_{timestamp}.jsonl')
-    log_file = open(log_path, 'w')  # Write incrementally so pipeline can poll
+    log_buffer = []  # in-memory log buffer (replaces file)
 
     # ── Pre-compute BEFORE connecting (avoids server timeout at R0) ────
     # For expert (10 bots), predict_full_sim takes ~10s inside the WS loop,
@@ -587,8 +582,7 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
             last_recv = time.time()
             data = json.loads(message)
 
-            log_file.write(message + '\n')
-            log_file.flush()
+            log_buffer.append(data)
 
             if data["type"] == "game_over":
                 final_score = data.get('score', 0)
@@ -933,8 +927,7 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
                 print(f"R{rnd}/{max_rounds} Score:{score} [{mode}] dp_rnd={dp_rnd} "
                       f"(synced:{synced_rounds} desynced:{desync_rounds}){gi_str}", file=sys.stderr)
 
-            log_file.write(response_str + '\n')
-            log_file.flush()
+            log_buffer.append(json.loads(response_str))
 
             # Send immediately — no delay, response is pre-built
             try:
@@ -959,25 +952,26 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
     ws_elapsed = time.time() - ws_start
     print(f"WebSocket session: {ws_elapsed:.1f}s, {recv_count} messages received", file=sys.stderr)
 
-    log_file.close()
-    print(f"Log saved: {log_path}", file=sys.stderr)
+    print(f"Game log: {len(log_buffer)} entries in memory", file=sys.stderr)
     print(f"Stats: synced_rounds={synced_rounds} desync_rounds={desync_rounds} "
           f"total_desyncs={desync_count}", file=sys.stderr)
 
-    # Auto-import to PostgreSQL
+    # Import directly to PostgreSQL
     try:
-        import subprocess  # nosec B404
-        import_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                     '..', 'replay', 'import_logs.py')
-        result = subprocess.run(  # nosec B603 B607
-            [sys.executable, import_script, '--run-type', 'replay', log_path],
-            capture_output=True, text=True, timeout=30)
-        if result.returncode == 0:
-            print(f"  DB import: {result.stdout.strip()}", file=sys.stderr)
-        else:
-            print(f"  DB import failed: {result.stderr.strip()}", file=sys.stderr)
+        _replay_dir = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'replay'))
+        sys.path.insert(0, _replay_dir)
+        from import_logs import parse_log_lines, save_to_db
+        timestamp = int(time.time())
+        record = parse_log_lines(log_buffer, pseudo_seed=timestamp)
+        if record:
+            run_id = save_to_db(
+                os.environ.get("GROCERY_DB_URL",
+                               "postgres://grocery:grocery123@localhost:5433/grocery_bot"),
+                record, run_type='replay')
+            print(f"  [db] Saved to PostgreSQL run_id={run_id}", file=sys.stderr)
     except Exception as e:
-        print(f"  DB import error: {e}", file=sys.stderr)
+        print(f"  [db] Direct DB import failed: {e}", file=sys.stderr)
 
     # Update capture with newly seen orders (merge, never lose existing orders)
     if all_orders_captured and difficulty:

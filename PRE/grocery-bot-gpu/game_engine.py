@@ -292,7 +292,13 @@ def build_map(difficulty: str) -> MapState:
     ms.height = h
     ms.grid = grid
     ms.drop_off = drop_off
-    ms.drop_off_zones = [drop_off]
+    # Nightmare: 3 dropoff zones
+    if cfg.get('dropoffs', 1) == 3:
+        ms.drop_off_zones = [(1, h - 2), (w // 2, h - 2), (w - 3, h - 2)]
+        for dz in ms.drop_off_zones:
+            grid[dz[1], dz[0]] = CELL_DROPOFF
+    else:
+        ms.drop_off_zones = [drop_off]
     ms.spawn = spawn
     ms.items = items
     ms.item_positions = item_positions
@@ -458,7 +464,8 @@ def step(state: GameState, actions: list[tuple[int, int]], all_orders: list[Orde
                         state.score += delivered
                         state.items_delivered += delivered
 
-                        if active.is_complete():
+                        # Chain reaction loop: complete order → auto-deliver → possibly complete again
+                        while active and active.is_complete():
                             active.complete = True
                             score_delta += 5
                             state.score += 5
@@ -478,13 +485,13 @@ def step(state: GameState, actions: list[tuple[int, int]], all_orders: list[Orde
                                 state.next_order_idx += 1
 
                             # Auto-delivery: all bots at dropoff deliver to new active
-                            new_active = state.get_active_order()
-                            if new_active:
+                            active = state.get_active_order()
+                            if active:
                                 for b2 in range(num_bots):
                                     bx2 = int(state.bot_positions[b2, 0])
                                     by2 = int(state.bot_positions[b2, 1])
                                     if any(bx2 == dz[0] and by2 == dz[1] for dz in ms.drop_off_zones):
-                                        d = state.bot_inv_remove_matching(b2, new_active)
+                                        d = state.bot_inv_remove_matching(b2, active)
                                         score_delta += d
                                         state.score += d
                                         state.items_delivered += d

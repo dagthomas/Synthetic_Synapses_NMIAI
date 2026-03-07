@@ -141,10 +141,7 @@ async def reactive_replay(ws_url, difficulty, verbose=True):
             print(f"  Re-solve #{re_solve_count} started (PID {solve_proc.pid})",
                   file=sys.stderr)
 
-    # Game log
-    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            f'game_log_{int(time.time())}.jsonl')
-    log_file = open(log_path, 'w')
+    log_buffer = []  # in-memory log buffer
     final_score = 0
 
     if verbose:
@@ -154,8 +151,7 @@ async def reactive_replay(ws_url, difficulty, verbose=True):
         for round_num in range(MAX_ROUNDS + 1):
             msg = await ws.recv()
             data = json.loads(msg)
-            log_file.write(json.dumps(data) + '\n')
-            log_file.flush()
+            log_buffer.append(data)
 
             if data.get("type") == "game_over":
                 final_score = data.get("score", 0)
@@ -207,8 +203,7 @@ async def reactive_replay(ws_url, difficulty, verbose=True):
                               for b in data['bots']]
 
             response = {"actions": ws_actions}
-            log_file.write(json.dumps(response) + '\n')
-            log_file.flush()
+            log_buffer.append(response)
             await ws.send(json.dumps(response))
 
             if verbose and (rnd < 10 or rnd % 25 == 0 or rnd >= 295):
@@ -216,14 +211,30 @@ async def reactive_replay(ws_url, difficulty, verbose=True):
                 print(f"  R{rnd:3d}: score={score:3d} "
                       f"[{'re-solving' if solving else 'plan'}]", file=sys.stderr)
 
-    log_file.close()
-
     # Cleanup
     if solve_proc is not None and solve_proc.poll() is None:
         solve_proc.kill()
 
+    # Import directly to PostgreSQL
+    try:
+        _replay_dir = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'replay'))
+        sys.path.insert(0, _replay_dir)
+        from import_logs import parse_log_lines, save_to_db
+        record = parse_log_lines(log_buffer, pseudo_seed=int(time.time()))
+        if record:
+            run_id = save_to_db(
+                os.environ.get("GROCERY_DB_URL",
+                               "postgres://grocery:grocery123@localhost:5433/grocery_bot"),
+                record, run_type='replay')
+            if verbose:
+                print(f"  [db] Saved to PostgreSQL run_id={run_id}", file=sys.stderr)
+    except Exception as _e:
+        if verbose:
+            print(f"  [db] Direct DB import failed: {_e}", file=sys.stderr)
+
     if verbose:
-        print(f"Log: {log_path}", file=sys.stderr)
+        print(f"Game log: {len(log_buffer)} entries in memory", file=sys.stderr)
     if final_score > expected_score:
         print(f"NEW BEST: {final_score} (was {expected_score})", file=sys.stderr)
 

@@ -3,7 +3,7 @@
 Usage: python sweep.py [difficulty] [--seeds N] [--port PORT]
        python sweep.py expert --seeds 40 --no-record   # skip DB recording
 """
-import subprocess, sys, os, re, time, statistics, argparse, threading, glob  # nosec B404
+import subprocess, sys, os, re, time, statistics, argparse, threading  # nosec B404
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_EXE = os.path.join(SCRIPT_DIR, "zig-out", "bin", "grocery-bot.exe")
@@ -186,22 +186,5 @@ def main():
     print(f"{'='*50}")
 
 
-def cleanup_game_logs(max_keep=15):
-    """Remove old game_log_*.jsonl files, keeping only the most recent max_keep."""
-    logs = glob.glob(os.path.join(SCRIPT_DIR, "game_log_*.jsonl"))
-    if len(logs) <= max_keep:
-        return
-    logs.sort(key=os.path.getmtime, reverse=True)
-    for old in logs[max_keep:]:
-        try:
-            os.remove(old)
-        except OSError:
-            pass  # File already deleted or locked by another process; skip silently
-    removed = len(logs) - max_keep
-    if removed > 0:
-        print(f"Cleaned up {removed} old game log files (keeping {max_keep})")
-
-
 if __name__ == "__main__":
     main()
-    cleanup_game_logs()

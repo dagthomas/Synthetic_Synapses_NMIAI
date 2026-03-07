@@ -39,67 +39,65 @@ def find_latest_game_log(search_dirs=None):
     return best
 
 
-def extract_capture(game_log_path, difficulty=None):
-    """Parse a game_log JSONL and extract capture data.
+def _extract_capture_impl(data_iter, difficulty=None, source_label='data'):
+    """Core capture extraction from an iterable of parsed dicts or JSON strings.
 
     Returns (capture_dict, final_score, difficulty) or raises on error.
     """
     grid = None
     items = None
     drop_off = None
+    drop_off_zones = None
     num_bots = 0
     width = height = 0
     seen_order_ids = set()
     orders_in_order = []
     final_score = 0
 
-    with open(game_log_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
+    for entry in data_iter:
+        if isinstance(entry, str):
+            entry = entry.strip()
+            if not entry:
                 continue
-
             try:
-                data = json.loads(line)
+                data = json.loads(entry)
             except json.JSONDecodeError:
-                continue  # JSONL log may contain non-JSON lines (stderr, partial writes)
-
-            # Skip action lines
-            if 'actions' in data and 'type' not in data:
                 continue
+        else:
+            data = entry
 
-            if data.get('type') == 'game_over':
-                final_score = data.get('score', final_score)
-                continue
+        if 'actions' in data and 'type' not in data:
+            continue
 
-            if data.get('type') != 'game_state':
-                continue
-
-            # Round 0: extract static map data
-            if data['round'] == 0:
-                grid = data['grid']
-                items = data['items']
-                drop_off = data['drop_off']
-                drop_off_zones = data.get('drop_off_zones')
-                num_bots = len(data['bots'])
-                width = grid['width']
-                height = grid['height']
-
+        if data.get('type') == 'game_over':
             final_score = data.get('score', final_score)
+            continue
 
-            # Accumulate unique orders across all rounds
-            for order in data.get('orders', []):
-                oid = order['id']
-                if oid not in seen_order_ids:
-                    seen_order_ids.add(oid)
-                    orders_in_order.append({
-                        'items_required': list(order['items_required']),
-                    })
+        if data.get('type') != 'game_state':
+            continue
+
+        if data['round'] == 0:
+            grid = data['grid']
+            items = data['items']
+            drop_off = data['drop_off']
+            drop_off_zones = data.get('drop_off_zones')
+            num_bots = len(data['bots'])
+            width = grid['width']
+            height = grid['height']
+
+        final_score = data.get('score', final_score)
+
+        for order in data.get('orders', []):
+            oid = order['id']
+            if oid not in seen_order_ids:
+                seen_order_ids.add(oid)
+                orders_in_order.append({
+                    'items_required': list(order['items_required']),
+                })
 
     if grid is None:
-        raise ValueError(f"No valid game_state found in {game_log_path}")
+        raise ValueError(f"No valid game_state found in {source_label}")
 
-    # Auto-detect difficulty if not provided
     if difficulty is None:
         difficulty = detect_difficulty(num_bots, width=width, height=height)
         if difficulty is None:
@@ -118,6 +116,24 @@ def extract_capture(game_log_path, difficulty=None):
         capture['drop_off_zones'] = drop_off_zones
 
     return capture, final_score, difficulty
+
+
+def extract_capture_from_lines(lines, difficulty=None):
+    """Extract capture from a list of parsed dicts or JSON strings (in-memory).
+
+    Returns (capture_dict, final_score, difficulty) or raises on error.
+    """
+    return _extract_capture_impl(lines, difficulty, source_label='in-memory data')
+
+
+def extract_capture(game_log_path, difficulty=None):
+    """Parse a game_log JSONL and extract capture data.
+
+    Returns (capture_dict, final_score, difficulty) or raises on error.
+    """
+    with open(game_log_path, 'r') as f:
+        lines = [l.strip() for l in f if l.strip()]
+    return _extract_capture_impl(lines, difficulty, source_label=game_log_path)
 
 
 WS_ACTION_TO_ACT = {

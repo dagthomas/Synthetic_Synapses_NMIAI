@@ -30,12 +30,7 @@ async def live_gpu_dp(ws_url, difficulty=None, log_dir=None):
     """Connect, capture, GPU DP solve, and replay in one connection."""
     import websockets
 
-    if log_dir is None:
-        log_dir = os.path.dirname(os.path.abspath(__file__))
-
-    timestamp = int(time.time())
-    log_path = os.path.join(log_dir, f'game_log_{timestamp}.jsonl')
-    log_file = open(log_path, 'w')
+    log_buffer = []  # in-memory log buffer
 
     # Shared state between main loop and solver thread
     dp_result = [None]  # (score, actions) when done
@@ -54,8 +49,7 @@ async def live_gpu_dp(ws_url, difficulty=None, log_dir=None):
 
         async for message in ws:
             data = json.loads(message)
-            log_file.write(json.dumps(data) + '\n')
-            log_file.flush()
+            log_buffer.append(data)
 
             if data["type"] == "game_over":
                 final_score = data.get('score', 0)
@@ -107,8 +101,7 @@ async def live_gpu_dp(ws_url, difficulty=None, log_dir=None):
                     {"bot": b['id'], "action": "wait"} for b in data['bots']
                 ]}
                 rounds_waited += 1
-                log_file.write(json.dumps(response) + '\n')
-                log_file.flush()
+                log_buffer.append(response)
                 await ws.send(json.dumps(response))
 
                 print(f"  R{rnd:3d}: wait (DP computing...)", file=sys.stderr)
@@ -154,8 +147,24 @@ async def live_gpu_dp(ws_url, difficulty=None, log_dir=None):
         if solver_thread and solver_thread.is_alive():
             solver_thread.join(timeout=5)
 
-    log_file.close()
-    print(f"\nLog saved: {log_path}", file=sys.stderr)
+    print(f"\nGame log: {len(log_buffer)} entries in memory", file=sys.stderr)
+
+    # Import directly to PostgreSQL
+    try:
+        _replay_dir = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'replay'))
+        sys.path.insert(0, _replay_dir)
+        from import_logs import parse_log_lines, save_to_db
+        timestamp = int(time.time())
+        record = parse_log_lines(log_buffer, pseudo_seed=timestamp)
+        if record:
+            run_id = save_to_db(
+                os.environ.get("GROCERY_DB_URL",
+                               "postgres://grocery:grocery123@localhost:5433/grocery_bot"),
+                record, run_type='live')
+            print(f"  [db] Saved to PostgreSQL run_id={run_id}", file=sys.stderr)
+    except Exception as _e:
+        print(f"  [db] Direct DB import failed: {_e}", file=sys.stderr)
     if dp_score:
         print(f"DP optimal: {dp_score}, Live: {final_score}, "
               f"Lost rounds: {rounds_waited}", file=sys.stderr)

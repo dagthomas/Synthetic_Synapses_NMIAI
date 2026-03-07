@@ -10,9 +10,10 @@ Error contract (script entry point):
   - Prints machine-readable JSON {"type": "pipeline_complete", ...} on stdout.
   - Helper functions use sentinel returns for missing data:
     - gpu_optimize returns (0, 0.0) if no capture data exists.
-    - find_latest_log returns None if no logs found.
-    - replay_solution_ws returns (0, None, 0.0) on failure.
-    - capture_from_log returns 0 on failure.
+    - replay_solution_ws returns (0, 0.0) on failure.
+
+Game logs go directly to PostgreSQL (no JSONL files). Zig bot creates temp files
+that are auto-deleted after import + order extraction.
 
 Usage:
     python production_run.py hard --ws-url "wss://..."     # full iterative pipeline
@@ -21,10 +22,8 @@ Usage:
     python production_run.py expert --ws-url "wss://..." --max-states 2000000
 """
 import argparse
-import glob
 import json
 import os
-import shutil
 import subprocess  # nosec B404
 import sys
 import time
@@ -34,12 +33,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ZIG_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, '..', 'grocery-bot-zig'))
 
 REPLAY_SCRIPT = os.path.join(SCRIPT_DIR, 'replay_solution.py')
-CAPTURE_SCRIPT = os.path.join(SCRIPT_DIR, 'capture_from_game_log.py')
-IMPORT_SCRIPT = os.path.normpath(os.path.join(
-    SCRIPT_DIR, '..', 'replay', 'import_logs.py',
-))
-
-
 
 
 def load_meta_score(difficulty: str) -> int:
@@ -49,30 +42,22 @@ def load_meta_score(difficulty: str) -> int:
     return meta.get('score', 0) if meta else 0
 
 
-def find_latest_log() -> Optional[str]:
-    """Find most recently created game_log_*.jsonl in SCRIPT_DIR. Returns path or None."""
-    logs = glob.glob(os.path.join(SCRIPT_DIR, 'game_log_*.jsonl'))
-    if not logs:
-        return None
-    return max(logs, key=os.path.getmtime)
-
-
-def run_zig_bot(ws_url: str, difficulty: str) -> Tuple[int, Optional[str], float]:
-    """Run Zig bot executable. Returns (score, log_path_in_gpu_dir, elapsed).
+def run_zig_bot(ws_url: str, difficulty: str, do_record: bool = True) -> Tuple[int, float]:
+    """Run Zig bot executable. Returns (score, elapsed).
 
     Spawns grocery-bot-{difficulty}.exe with the WS URL, parses GAME_OVER score
-    from stderr, and copies the game log to SCRIPT_DIR for capture.
+    from stderr. Game log comes from stdout (Zig writes JSONL to stdout).
+    Imports directly to PostgreSQL and extracts orders from memory.
     """
     from subprocess_helpers import run_bot_game, parse_game_score
 
     exe_name = f'grocery-bot-{difficulty}.exe'
     exe_path = os.path.join(ZIG_DIR, 'zig-out', 'bin', exe_name)
     if not os.path.exists(exe_path):
-        # Fallback to generic executable
         exe_path = os.path.join(ZIG_DIR, 'zig-out', 'bin', 'grocery-bot.exe')
 
     t0 = time.time()
-    return_code, stderr_output, zig_log_path = run_bot_game(
+    return_code, stderr_output, stdout_output = run_bot_game(
         exe_path, ws_url, cwd=ZIG_DIR, timeout=180)
     elapsed = time.time() - t0
 
@@ -80,27 +65,53 @@ def run_zig_bot(ws_url: str, difficulty: str) -> Tuple[int, Optional[str], float
     print(f"    Zig bot: score={score}, exit={return_code}, time={elapsed:.0f}s",
           file=sys.stderr)
 
-    # Copy game log to GPU dir for capture
-    gpu_log_path = None
-    if zig_log_path and os.path.exists(zig_log_path):
-        gpu_log_path = os.path.join(SCRIPT_DIR, os.path.basename(zig_log_path))
-        shutil.copy2(zig_log_path, gpu_log_path)
+    # Process game log from stdout (in-memory)
+    log_lines = [l for l in stdout_output.splitlines() if l.strip()]
+    if log_lines:
+        # Import to PostgreSQL
+        if do_record:
+            try:
+                sys.path.insert(0, os.path.normpath(os.path.join(SCRIPT_DIR, '..', 'replay')))
+                from import_logs import parse_log_lines, save_to_db
+                record = parse_log_lines(log_lines, pseudo_seed=int(time.time()))
+                if record:
+                    run_id = save_to_db(
+                        os.environ.get("GROCERY_DB_URL",
+                                       "postgres://grocery:grocery123@localhost:5433/grocery_bot"),
+                        record, run_type='zig')
+                    print(f"    [db] Saved to PostgreSQL run_id={run_id}", file=sys.stderr)
+            except Exception as e:
+                print(f"    [db] DB import failed: {e}", file=sys.stderr)
 
-    return score, gpu_log_path, elapsed
+        # Extract orders from in-memory log
+        try:
+            from capture_from_game_log import extract_capture_from_lines
+            from solution_store import merge_capture
+            capture, cap_score, cap_diff = extract_capture_from_lines(log_lines, difficulty)
+            merged, num_new, total = merge_capture(cap_diff, capture)
+            if num_new > 0:
+                print(f"    Captured {total} orders ({num_new} new)", file=sys.stderr)
+            else:
+                print(f"    Captured {total} orders (no new)", file=sys.stderr)
+        except Exception as e:
+            print(f"    Capture error: {e}", file=sys.stderr)
+
+    return score, elapsed
 
 
-def run_live_gpu(ws_url: str, difficulty: str, max_states: int = 5000) -> Tuple[int, Optional[str], float]:
+def run_live_gpu(ws_url: str, difficulty: str, max_states: int = 5000) -> Tuple[int, float]:
     """Run live GPU stream solver as Phase 1. Higher score + more order discovery than Zig.
 
-    Returns (score, log_path, elapsed). Returns (0, None, 0.0) on failure.
+    Returns (score, elapsed). Returns (0, 0.0) on failure.
+    Game log is saved directly to PostgreSQL by live_gpu_stream.py (no file).
+    Orders are captured via --save flag (merge_capture in-process).
     """
     live_script = os.path.join(SCRIPT_DIR, 'live_gpu_stream.py')
     t0 = time.time()
     cmd = [sys.executable, live_script, ws_url,
            '--max-states', str(max_states), '--no-refine', '--save',
-           '--preload-capture']
+           '--preload-capture', '--record']
     score = 0
-    log_path = None
 
     try:
         proc = subprocess.Popen(  # nosec B603 B607
@@ -129,26 +140,12 @@ def run_live_gpu(ws_url: str, difficulty: str, max_states: int = 5000) -> Tuple[
         if parsed_score > 0:
             score = parsed_score
 
-        # Find the game log it produced
-        for line in stderr_lines:
-            if 'Log saved:' in line or 'game_log_' in line:
-                # Try to extract path
-                for part in line.split():
-                    if 'game_log_' in part and part.endswith('.jsonl'):
-                        if os.path.exists(part):
-                            log_path = part
-                            break
-
-        # Fallback: find latest log
-        if not log_path:
-            log_path = find_latest_log()
-
     except Exception as e:
         print(f"      Live GPU error: {e}", file=sys.stderr)
 
     elapsed = time.time() - t0
     print(f"    Live GPU: score={score}, time={elapsed:.0f}s", file=sys.stderr)
-    return score, log_path, elapsed
+    return score, elapsed
 
 
 def gpu_optimize(difficulty: str, max_states: Optional[int] = None,
@@ -255,11 +252,13 @@ def gpu_optimize(difficulty: str, max_states: Optional[int] = None,
     return score, elapsed
 
 
-def replay_solution_ws(ws_url: str, difficulty: str) -> Tuple[int, Optional[str], float]:
+def replay_solution_ws(ws_url: str, difficulty: str) -> Tuple[int, float]:
     """Replay existing best solution via WS.
 
     Returns:
-        (score, log_path, elapsed) tuple. Returns (0, None, 0.0) if no solution exists.
+        (score, elapsed) tuple. Returns (0, 0.0) if no solution exists.
+    Game log is saved directly to PostgreSQL by replay_solution.py (no file).
+    Orders are captured in-process by replay_solution.py.
     """
     from solution_store import load_solution, load_meta
 
@@ -267,14 +266,13 @@ def replay_solution_ws(ws_url: str, difficulty: str) -> Tuple[int, Optional[str]
     meta = load_meta(difficulty)
     if not actions or not meta:
         print(f"    No solution to replay for {difficulty}", file=sys.stderr)
-        return 0, None, 0
+        return 0, 0
 
     print(f"    Replaying solution (score={meta.get('score', '?')})...", file=sys.stderr)
 
     cmd = [sys.executable, REPLAY_SCRIPT, ws_url, '--difficulty', difficulty]
     t0 = time.time()
     score = 0
-    log_path = None
 
     try:
         proc = subprocess.Popen(  # nosec B603 B607
@@ -288,7 +286,7 @@ def replay_solution_ws(ws_url: str, difficulty: str) -> Tuple[int, Optional[str]
             for line in proc.stderr:
                 line = line.rstrip()
                 stderr_lines.append(line)
-                if any(k in line for k in ['Final', 'score', 'Score', 'ERROR', 'Log:', 'desync']):
+                if any(k in line for k in ['Final', 'score', 'Score', 'ERROR', 'desync']):
                     print(f"      {line}", file=sys.stderr)
 
         t = threading.Thread(target=read_stderr, daemon=True)
@@ -297,68 +295,19 @@ def replay_solution_ws(ws_url: str, difficulty: str) -> Tuple[int, Optional[str]
         proc.wait(timeout=180)
         t.join(timeout=5)
 
-        # Extract score from stderr
         from subprocess_helpers import parse_game_score
         stderr_text = '\n'.join(stderr_lines)
         parsed_score = parse_game_score(stderr_text)
         if parsed_score > 0:
             score = parsed_score
-        for line in stderr_lines:
-            if line.startswith('Log: '):
-                log_path = line[5:].strip()
 
     except Exception as e:
         print(f"      Replay error: {e}", file=sys.stderr)
 
     elapsed = time.time() - t0
     print(f"    Replay score: {score} in {elapsed:.0f}s", file=sys.stderr)
-    return score, log_path, elapsed
+    return score, elapsed
 
-
-def capture_from_log(log_path: Optional[str], difficulty: str) -> int:
-    """Extract orders from game log and merge with existing capture.
-
-    Returns:
-        Number of orders captured, or 0 on failure / missing log.
-    """
-    if not log_path or not os.path.exists(log_path):
-        return 0
-
-    cmd = [sys.executable, CAPTURE_SCRIPT, log_path, difficulty]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)  # nosec B603 B607
-        # Parse output for order count
-        for line in result.stdout.splitlines():
-            try:
-                data = json.loads(line)
-                if data.get('type') == 'capture_done':
-                    n_orders = data.get('orders', 0)
-                    print(f"    Captured {n_orders} orders from log", file=sys.stderr)
-                    return n_orders
-            except json.JSONDecodeError:
-                pass  # Non-JSON lines in subprocess output are expected; skip them
-        # Fallback: check stderr
-        for line in result.stderr.splitlines():
-            if 'orders' in line.lower():
-                print(f"    {line}", file=sys.stderr)
-    except Exception as e:
-        print(f"    Capture error: {e}", file=sys.stderr)
-
-    return 0
-
-
-def import_log_to_db(log_path: Optional[str], run_type: str = 'live') -> None:
-    """Import game log to PostgreSQL. Best-effort; silently skips on any failure."""
-    if not log_path or not os.path.exists(log_path):
-        return
-    if not os.path.exists(IMPORT_SCRIPT):
-        return
-    try:
-        subprocess.Popen(  # nosec B603 B607
-            [sys.executable, IMPORT_SCRIPT, log_path, '--run-type', run_type],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass  # Best-effort background import; failure does not affect results
 
 
 def main():
@@ -426,22 +375,15 @@ def main():
     if not args.skip_live:
         if args.live_gpu:
             print(f"\n--- Phase 1: Live GPU solver ---", file=sys.stderr)
-            score, log_path, elapsed = run_live_gpu(ws_url, diff)
+            score, elapsed = run_live_gpu(ws_url, diff)
             phase_name = 'live_gpu'
-            run_type = 'live_gpu'
         else:
             print(f"\n--- Phase 1: Zig bot ---", file=sys.stderr)
-            score, log_path, elapsed = run_zig_bot(ws_url, diff)
+            score, elapsed = run_zig_bot(ws_url, diff, do_record=not args.no_record)
             phase_name = 'zig_bot'
-            run_type = 'zig'
 
         best_score = score
         iteration_scores.append((phase_name, score, elapsed))
-
-        if log_path:
-            if not args.no_record:
-                import_log_to_db(log_path, run_type=run_type)
-            capture_from_log(log_path, diff)
     else:
         print(f"\n--- Skipping Zig bot (using existing capture) ---", file=sys.stderr)
         from solution_store import load_meta
@@ -528,7 +470,7 @@ def main():
             # Still capture orders from Zig bot log if available
             continue
 
-        replay_score, replay_log, replay_elapsed = replay_solution_ws(ws_url, diff)
+        replay_score, replay_elapsed = replay_solution_ws(ws_url, diff)
 
         # Retry once if desync caused a bad score (< 50% of expected)
         if expected > 0 and replay_score < expected * 0.3:
@@ -536,25 +478,16 @@ def main():
             if retry_remaining > 25:
                 print(f"  Replay score {replay_score} << expected {expected}, retrying...",
                       file=sys.stderr)
-                retry_score, retry_log, retry_elapsed = replay_solution_ws(ws_url, diff)
-                replay_elapsed += retry_elapsed
+                retry_score, retry_elapsed2 = replay_solution_ws(ws_url, diff)
+                replay_elapsed += retry_elapsed2
                 if retry_score > replay_score:
                     replay_score = retry_score
-                    replay_log = retry_log
                     print(f"  Retry improved: {replay_score}", file=sys.stderr)
 
         iteration_scores.append(('replay', replay_score, opt_elapsed + replay_elapsed))
 
         if replay_score > best_score:
             best_score = replay_score
-
-        # Import replay log and capture new orders
-        if replay_log:
-            if not args.no_record:
-                import_log_to_db(replay_log, run_type='replay')
-            n_new = capture_from_log(replay_log, diff)
-            if n_new == 0:
-                print(f"  No new orders discovered, capture converged", file=sys.stderr)
 
     # ── Phase 3: Perturbation search (post-processing) ──
     elapsed_total = time.time() - t_start

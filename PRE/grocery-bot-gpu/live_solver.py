@@ -39,6 +39,9 @@ def ws_to_capture(data):
         'difficulty': detect_difficulty(len(data['bots'])),
         'orders': [],
     }
+    # Capture multiple dropoff zones (nightmare has 3)
+    if 'drop_off_zones' in data:
+        capture['drop_off_zones'] = data['drop_off_zones']
 
     for order in data.get('orders', []):
         capture['orders'].append({
@@ -1001,7 +1004,7 @@ class LiveMultiSolver:
 
 
 async def play_live(ws_url, log_dir=None, save_capture=False, fast_mode=False):
-    """Play a game using multi-strategy solver, write game_log.jsonl.
+    """Play a game using multi-strategy solver with in-memory logging.
 
     Modes:
     - default: Precomputed planner + background optimizer
@@ -1009,9 +1012,6 @@ async def play_live(ws_url, log_dir=None, save_capture=False, fast_mode=False):
     - --fast: Route-table solver, uses precomputed optimal routes for all orders
     """
     import websockets
-
-    if log_dir is None:
-        log_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Route table for fast mode (loaded at round 0 when difficulty is known)
     route_table = None
@@ -1033,9 +1033,7 @@ async def play_live(ws_url, log_dir=None, save_capture=False, fast_mode=False):
         except Exception:
             pass  # Will load at round 0 from bot count
 
-    timestamp = int(time.time())
-    log_path = os.path.join(log_dir, f'game_log_{timestamp}.jsonl')
-    log_file = open(log_path, 'w')
+    log_buffer = []  # in-memory log buffer (replaces file)
 
     print(f"Connecting to server...", file=sys.stderr)
 
@@ -1050,8 +1048,7 @@ async def play_live(ws_url, log_dir=None, save_capture=False, fast_mode=False):
         async for message in ws:
             data = json.loads(message)
 
-            log_file.write(json.dumps(data) + '\n')
-            log_file.flush()
+            log_buffer.append(data)
 
             if data["type"] == "game_over":
                 score = data.get('score', 0)
@@ -1135,13 +1132,28 @@ async def play_live(ws_url, log_dir=None, save_capture=False, fast_mode=False):
 
             response = {"actions": ws_actions}
 
-            log_file.write(json.dumps(response) + '\n')
-            log_file.flush()
+            log_buffer.append(response)
 
             await ws.send(json.dumps(response))
 
-    log_file.close()
-    print(f"Log saved: {log_path}", file=sys.stderr)
+    print(f"Game log: {len(log_buffer)} entries in memory", file=sys.stderr)
+
+    # Import directly to PostgreSQL
+    try:
+        _replay_dir = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'replay'))
+        sys.path.insert(0, _replay_dir)
+        from import_logs import parse_log_lines, save_to_db
+        timestamp = int(time.time())
+        record = parse_log_lines(log_buffer, pseudo_seed=timestamp)
+        if record:
+            run_id = save_to_db(
+                os.environ.get("GROCERY_DB_URL",
+                               "postgres://grocery:grocery123@localhost:5433/grocery_bot"),
+                record, run_type='live')
+            print(f"  [db] Saved to PostgreSQL run_id={run_id}", file=sys.stderr)
+    except Exception as _e:
+        print(f"  [db] Direct DB import failed: {_e}", file=sys.stderr)
 
     # Save capture/solution
     active_solver = route_solver or reactive or solver

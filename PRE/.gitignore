@@ -1,11 +1,42 @@
-/grocery-bot-zig/.zig-cache
-/grocery-bot-zig/replay/node_modules
-/grocery-bot-zig/replay/app/node_modules
-/grocery-bot-zig/replay/app/build
-/grocery-bot-zig/replay/app/.svelte-kit
-/grocery-bot-gpu/_pycache
-/grocery-bot-gpu/__pycache__
-./grocery-bot-gpu/.playwright_profile
-/replay/app/node_modules
-/replay/app/build
-/replay/app/.svelte-kit
+# Playwright
+.playwright_profile/
+
+# Node
+node_modules/
+
+# SvelteKit
+.svelte-kit/
+build/
+
+# Zig
+.zig-cache/
+zig-cache/
+zig-out/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# CUDA / GPU
+*.ptx
+*.cubin
+
+# Logs
+game_log_*.jsonl
+logs/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
