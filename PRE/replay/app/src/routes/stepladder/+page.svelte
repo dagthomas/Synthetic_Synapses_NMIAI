@@ -22,6 +22,32 @@
 	let deepBudget    = $state(300);     // seconds for deep training per iteration
 	let maxStates     = $state('');       // empty = auto
 
+	// ── Remote GPU ───────────────────────────────────────────────────────
+	let gpuConnected  = $state(false);
+	let gpuInfo       = $state(null);
+	let gpuChecking   = $state(false);
+
+	async function checkGpu() {
+		gpuChecking = true;
+		try {
+			const res = await fetch('/api/gpu-remote');
+			gpuInfo = await res.json();
+			gpuConnected = gpuInfo.connected;
+			if (gpuConnected) {
+				addLog(`GPU connected: ${gpuInfo.name} (${gpuInfo.vram_gb} GB)`);
+			} else {
+				addLog(`GPU not reachable: ${gpuInfo.error || 'connection refused'}`);
+			}
+		} catch (e) {
+			gpuConnected = false;
+			addLog(`GPU check failed: ${e.message}`);
+		}
+		gpuChecking = false;
+	}
+
+	// Check GPU on load
+	$effect(() => { checkGpu(); });
+
 	// ── Runtime State ────────────────────────────────────────────────────
 	let running       = $state(false);
 	let currentPhase  = $state(null);
@@ -82,6 +108,8 @@
 	}
 
 	// ── Run one iteration ────────────────────────────────────────────────
+	// Step 1: Local capture/replay (uses token, Zig bot)
+	// Step 2: Remote GPU optimize (via gpu_server.py on RunPod)
 	async function runIteration() {
 		if (!wsUrl.trim()) return;
 		running = true;
@@ -98,23 +126,29 @@
 		abortCtrl = ctrl;
 
 		try {
-			const res = await fetch('/api/stepladder/run', {
+			// Step 1: Local capture via pipeline (Zig bot + order extraction)
+			currentPhase = 'capture';
+			addLog('Phase: Local capture (Zig bot)...');
+
+			const captureRes = await fetch('/api/stepladder/run', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					url: wsUrl.trim(),
 					difficulty,
 					iteration: iterNum,
-					gpu,
-					deepBudget,
+					gpu: 'local',  // only capture locally, no deep training
+					deepBudget: 0, // skip deep training on local
 					maxStates: maxStates ? parseInt(maxStates) : null,
 				}),
 				signal: ctrl.signal,
 			});
 
-			const reader = res.body.getReader();
+			const reader = captureRes.body.getReader();
 			const decoder = new TextDecoder();
 			let buf = '';
+			let captureData = null;
+			let gameScore = 0;
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -129,8 +163,82 @@
 					try {
 						const evt = JSON.parse(line.slice(6));
 						handleEvent(evt);
+						if (evt.type === 'iter_done') {
+							gameScore = evt.game_score || 0;
+						}
+						if (evt.type === 'capture_data') {
+							captureData = evt.data;
+						}
 					} catch {}
 				}
+			}
+
+			// Step 2: Remote GPU optimize (if connected)
+			if (gpuConnected && captureData) {
+				currentPhase = 'optimize';
+				addLog(`Phase: Remote GPU optimize (${fmtTime(deepBudget)} budget)...`);
+
+				const gpuRes = await fetch('/api/gpu-remote', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						deep: deepBudget > 120,
+						capture: captureData,
+						params: {
+							difficulty,
+							gpu,
+							max_states: maxStates ? parseInt(maxStates) : 200000,
+							max_time: Math.min(120, deepBudget),
+							budget: deepBudget,
+							refine_iters: 20,
+							orderings: 3,
+							speed_bonus: 50,
+						},
+					}),
+					signal: ctrl.signal,
+				});
+
+				const result = await gpuRes.json();
+				if (result.error) {
+					addLog(`GPU error: ${result.error}`);
+				} else {
+					addLog(`GPU done: score=${result.score} in ${result.elapsed}s`);
+					for (const evt of (result.events || [])) {
+						handleEvent(evt);
+					}
+
+					// Save solution back to local DB
+					if (result.score > 0 && result.actions) {
+						try {
+							await fetch('/api/optimize/solutions', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({
+									difficulty,
+									score: result.score,
+									actions: result.actions,
+								}),
+							});
+							addLog(`Solution saved: score=${result.score}`);
+						} catch (e) {
+							addLog(`Failed to save solution: ${e.message}`);
+						}
+					}
+
+					if (result.score > bestScore) bestScore = result.score;
+					iterations = [...iterations, {
+						num: iterNum + 1,
+						gameScore,
+						optScore: result.score,
+						deepScore: result.score,
+						bestScore: Math.max(gameScore, result.score),
+						orders: totalOrders,
+						newOrders: 0,
+						elapsed: elapsed,
+					}];
+				}
+			} else if (!gpuConnected) {
+				addLog('GPU not connected — skipping remote optimize. Start SSH tunnel + gpu_server.py');
 			}
 		} catch (e) {
 			if (e.name !== 'AbortError') {
@@ -262,6 +370,19 @@
 			<p><strong>Typisk workflow:</strong> Kjor 5-10 iterasjoner over flere timer. Hver iterasjon bruker ett token (~5 min live-spill) + lang offline deep training.</p>
 		</div>
 	</details>
+
+	<!-- GPU Status -->
+	<div class="gpu-status" class:connected={gpuConnected} class:disconnected={!gpuConnected}>
+		<span class="gpu-dot"></span>
+		{#if gpuChecking}
+			<span>Checking GPU...</span>
+		{:else if gpuConnected}
+			<span>GPU: {gpuInfo?.name} ({gpuInfo?.vram_gb} GB)</span>
+		{:else}
+			<span>GPU not connected</span>
+		{/if}
+		<button class="btn-small" onclick={checkGpu} disabled={gpuChecking}>Refresh</button>
+	</div>
 
 	<!-- Controls -->
 	<div class="controls">
@@ -431,6 +552,46 @@
 
 <style>
 	.page { max-width: 900px; margin: 0 auto; }
+
+	/* GPU Status */
+	.gpu-status {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.8rem;
+		border-radius: 6px;
+		font-size: 0.8rem;
+		margin-bottom: 0.75rem;
+		border: 1px solid var(--border);
+	}
+	.gpu-status.connected {
+		background: rgba(57, 211, 83, 0.08);
+		border-color: rgba(57, 211, 83, 0.3);
+		color: var(--accent);
+	}
+	.gpu-status.disconnected {
+		background: rgba(248, 81, 73, 0.08);
+		border-color: rgba(248, 81, 73, 0.3);
+		color: #f85149;
+	}
+	.gpu-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.connected .gpu-dot { background: var(--accent); }
+	.disconnected .gpu-dot { background: #f85149; }
+	.btn-small {
+		padding: 0.15rem 0.5rem;
+		font-size: 0.7rem;
+		background: rgba(255,255,255,0.05);
+		border: 1px solid var(--border);
+		border-radius: 3px;
+		color: var(--text-muted);
+		cursor: pointer;
+		margin-left: auto;
+	}
 
 	.header h1 {
 		font-family: var(--font-display);
