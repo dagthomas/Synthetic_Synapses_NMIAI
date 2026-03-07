@@ -2,14 +2,23 @@ import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
-import { ZIG_BOT_DIR, GPU_DIR, REPLAY_DIR } from '$lib/paths.server.js';
+import { ZIG_BOT_DIR, GPU_DIR, REPLAY_DIR, PYTHON } from '$lib/paths.server.js';
 
 const BOT_DIR = ZIG_BOT_DIR;
 
 function getBotCommand(difficulty, solver) {
+	if (solver === 'replay') {
+		return {
+			cmd: PYTHON,
+			args: ['replay_solution.py'],  // ws_url added by caller, then --difficulty
+			cwd: GPU_DIR,
+			logDir: GPU_DIR,
+			extraArgs: ['--difficulty', difficulty],
+		};
+	}
 	if (solver === 'gpu') {
 		return {
-			cmd: 'python',
+			cmd: PYTHON,
 			args: ['capture_and_solve_stream.py'],  // ws_url added by caller, then difficulty
 			cwd: GPU_DIR,
 			logDir: GPU_DIR,
@@ -19,7 +28,7 @@ function getBotCommand(difficulty, solver) {
 	}
 	if (solver === 'python') {
 		return {
-			cmd: 'python',
+			cmd: PYTHON,
 			args: ['live_solver.py'],  // ws_url added by caller
 			cwd: GPU_DIR,
 			logDir: GPU_DIR,
@@ -179,6 +188,7 @@ export async function POST({ request }) {
 									shelves,
 									items: state.items || [],
 									drop_off: state.drop_off,
+									drop_off_zones: state.drop_off_zones || null,
 									spawn: spawnPos,
 									bot_count: botCount,
 									max_rounds: state.max_rounds || 300,
@@ -219,13 +229,23 @@ export async function POST({ request }) {
 				} catch (e) { /* log file may not be readable yet */ }
 			}
 
-			const solverLabels = { zig: 'Zig', python: 'Python', gpu: 'GPU' };
+			const solverLabels = { zig: 'Zig', python: 'Python', gpu: 'GPU', replay: 'Replay' };
 			const solverLabel = solverLabels[solver || 'zig'] || 'Zig';
 			sendEvent('status', { message: `Starting ${solverLabel} bot: ${botInfo.cmd}` });
 			sendEvent('status', { message: `CWD: ${botInfo.cwd}` });
 
 			// Verify bot executable/script exists before spawning
-			if (solver === 'gpu') {
+			if (solver === 'replay') {
+				const scriptPath = resolve(botInfo.cwd, 'replay_solution.py');
+				try {
+					statSync(scriptPath);
+				} catch {
+					sendEvent('error', { message: `Replay solver not found: ${scriptPath}` });
+					sendEvent('done', { code: -1, message: 'replay_solution.py not found in grocery-bot-gpu/' });
+					cleanup();
+					return;
+				}
+			} else if (solver === 'gpu') {
 				const scriptPath = resolve(botInfo.cwd, 'capture_and_solve_stream.py');
 				try {
 					statSync(scriptPath);
@@ -342,7 +362,7 @@ export async function POST({ request }) {
 				// Import game log to PostgreSQL in background (non-blocking)
 				const importScript = resolve(REPLAY_DIR, 'import_logs.py');
 				if (logFile) {
-					const importer = spawn('python', [importScript, logFile, '--run-type', 'live'], {
+					const importer = spawn(PYTHON, [importScript, logFile, '--run-type', 'live'], {
 						stdio: 'ignore',
 					});
 					importer.on('error', () => {});

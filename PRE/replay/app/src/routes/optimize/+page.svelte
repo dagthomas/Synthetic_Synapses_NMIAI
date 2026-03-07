@@ -11,6 +11,7 @@
 		medium: '#d29922',
 		hard: '#f85149',
 		expert: '#da3633',
+		nightmare: '#a855f7',
 	};
 
 	// Input state
@@ -21,7 +22,7 @@
 	let finished = $state(false);
 
 	// Solution status
-	let solutions = $state({ easy: null, medium: null, hard: null, expert: null });
+	let solutions = $state({ easy: null, medium: null, hard: null, expert: null, nightmare: null });
 
 	// Game state (for play/replay visualization)
 	let gameInit = $state(null);
@@ -288,7 +289,7 @@
 
 	<!-- Solution Status Cards -->
 	<div class="cards">
-		{#each ['easy', 'medium', 'hard', 'expert'] as diff}
+		{#each ['easy', 'medium', 'hard', 'expert', 'nightmare'] as diff}
 			{@const sol = solutions[diff]}
 			<div class="card" class:has-solution={sol}>
 				<div class="card-header">

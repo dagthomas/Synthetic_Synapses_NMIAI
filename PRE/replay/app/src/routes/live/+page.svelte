@@ -5,12 +5,15 @@
 	const BOT_COLORS = [
 		'#f85149', '#58a6ff', '#39d353', '#d29922', '#bc8cff',
 		'#3fb950', '#db6d28', '#8b949e', '#f778ba', '#79c0ff',
+		'#ff6e6e', '#00d4aa', '#ffd700', '#ff69b4', '#00bfff',
+		'#98fb98', '#dda0dd', '#f0e68c', '#87ceeb', '#ffa07a',
 	];
 	const diffColors = {
 		easy: '#39d353',
 		medium: '#d29922',
 		hard: '#f85149',
 		expert: '#da3633',
+		nightmare: '#a855f7',
 	};
 
 	// Input state
@@ -19,6 +22,31 @@
 	let solver = $state('zig');
 	let running = $state(false);
 	let finished = $state(false);
+
+	// Solution info for replay mode
+	let solutionInfo = $state(null);
+	let solutionLoading = $state(false);
+
+	async function loadSolutionInfo(diff) {
+		solutionLoading = true;
+		try {
+			const today = new Date().toISOString().slice(0, 10);
+			const res = await fetch(`/api/solutions?date=${today}`);
+			const data = await res.json();
+			const solutions = data.byDifficulty?.[diff];
+			solutionInfo = solutions?.[0] || null;
+		} catch {
+			solutionInfo = null;
+		}
+		solutionLoading = false;
+	}
+
+	// Load solution info when difficulty changes or solver is replay
+	$effect(() => {
+		if (solver === 'replay') {
+			loadSolutionInfo(difficulty);
+		}
+	});
 
 	// Game state
 	let gameInit = $state(null);
@@ -32,6 +60,25 @@
 	let logs = $state([]);
 	let events = $state([]);
 	let dbRunId = $state(null);
+
+	// GPU status
+	let gpuConnected = $state(false);
+	let gpuInfo = $state(null);
+	let gpuChecking = $state(true);
+
+	async function checkGpu() {
+		gpuChecking = true;
+		try {
+			const res = await fetch('/api/gpu-remote');
+			gpuInfo = await res.json();
+			gpuConnected = gpuInfo.connected;
+		} catch {
+			gpuConnected = false;
+		}
+		gpuChecking = false;
+	}
+
+	$effect(() => { checkGpu(); });
 
 	// Order tracking
 	let ordersCompleted = $state(0);
@@ -358,11 +405,15 @@
 				class="url-input"
 				disabled={running}
 				/>
-			<select bind:value={solver} class="solver-select" disabled={running}>
-				<option value="zig">Zig</option>
-				<option value="python">Python</option>
-				<option value="gpu">GPU</option>
-			</select>
+			<label class="select-label">
+				<span class="label-text">Bot</span>
+				<select bind:value={solver} class="solver-select" disabled={running}>
+					<option value="replay">Replay</option>
+					<option value="zig">Zig</option>
+					<option value="python">Python</option>
+					<option value="gpu">GPU</option>
+				</select>
+			</label>
 			{#if tokenInfo}
 				<span class="token-info" style="color: {diffColors[tokenInfo.difficulty] || 'var(--text)'}">
 					{tokenInfo.difficulty?.toUpperCase() || '?'}
@@ -376,6 +427,7 @@
 					<option value="medium">Medium</option>
 					<option value="hard">Hard</option>
 					<option value="expert">Expert</option>
+					<option value="nightmare">Nightmare</option>
 				</select>
 			{/if}
 			{#if running}
@@ -390,6 +442,42 @@
 				</button>
 			{/if}
 		</div>
+
+		<!-- GPU status -->
+		<div class="gpu-status" class:connected={gpuConnected} class:disconnected={!gpuConnected && !gpuChecking}>
+			<span class="gpu-dot"></span>
+			{#if gpuChecking}
+				<span class="gpu-label">Checking GPU...</span>
+			{:else if gpuConnected}
+				<span class="gpu-label">{gpuInfo?.name}</span>
+				<span class="gpu-vram">{gpuInfo?.vram_gb} GB</span>
+				{#if gpuInfo?.source}
+					<span class="gpu-source">{gpuInfo.source}</span>
+				{/if}
+			{:else}
+				<span class="gpu-label">No GPU</span>
+			{/if}
+		</div>
+
+		<!-- Solution info for replay mode -->
+		{#if solver === 'replay' && !running}
+			<div class="solution-info">
+				{#if solutionLoading}
+					<span class="sol-loading">Loading solution...</span>
+				{:else if solutionInfo}
+					<div class="sol-badge ready">
+						<span class="sol-label">Solution ready:</span>
+						<span class="sol-score" style="color: {diffColors[difficulty] || '#39d353'}">{solutionInfo.score} pts</span>
+						<span class="sol-meta">{solutionInfo.num_bots} bots, {solutionInfo.num_rounds} rounds, {solutionInfo.optimizations_run} opt</span>
+					</div>
+				{:else}
+					<div class="sol-badge empty">
+						<span class="sol-label">No solution for {difficulty} today.</span>
+						<span class="sol-hint">Run GPU optimization first (Stepladder or GPU page)</span>
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		<!-- Progress bar -->
 		{#if running || finished}
@@ -604,7 +692,7 @@
 			<div class="launch-text">
 				<h2 class="launch-title">INITIALIZING</h2>
 				<div class="launch-subtitle">
-					<span class="launch-solver">{solver === 'gpu' ? 'GPU' : solver === 'python' ? 'PYTHON' : 'ZIG'}</span>
+					<span class="launch-solver">{solver.toUpperCase()}</span>
 					{#if tokenInfo}
 						<span class="launch-diff" style="color: {diffColors[tokenInfo.difficulty] || '#fff'}">{tokenInfo.difficulty?.toUpperCase()}</span>
 						{#if tokenInfo.map_seed}
@@ -658,6 +746,61 @@
 	.url-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(57, 211, 83, 0.1); }
 	.url-input:disabled { opacity: 0.5; }
 
+	.gpu-status {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.3rem 0.6rem;
+		border-radius: 4px;
+		font-size: 0.7rem;
+		font-family: var(--font-mono);
+		border: 1px solid var(--border);
+		color: var(--text-muted);
+	}
+	.gpu-status.connected {
+		background: rgba(57, 211, 83, 0.06);
+		border-color: rgba(57, 211, 83, 0.25);
+	}
+	.gpu-status.disconnected {
+		background: rgba(248, 81, 73, 0.06);
+		border-color: rgba(248, 81, 73, 0.25);
+	}
+	.gpu-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		flex-shrink: 0;
+		background: var(--text-muted);
+	}
+	.connected .gpu-dot { background: var(--accent); }
+	.disconnected .gpu-dot { background: #f85149; }
+	.gpu-label { color: inherit; }
+	.connected .gpu-label { color: var(--accent); }
+	.disconnected .gpu-label { color: #f85149; }
+	.gpu-vram { color: var(--text-muted); }
+	.gpu-source {
+		padding: 0.05rem 0.3rem;
+		border-radius: 3px;
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		background: rgba(255,255,255,0.06);
+		border: 1px solid rgba(255,255,255,0.1);
+		color: var(--text-muted);
+	}
+
+	.select-label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+	.label-text {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--text-muted);
+		font-weight: 600;
+	}
 	.diff-select, .solver-select {
 		padding: 0.6rem 0.75rem;
 		background: var(--bg);
@@ -670,6 +813,31 @@
 	}
 	.diff-select:disabled, .solver-select:disabled { opacity: 0.5; }
 	.solver-select { border-color: var(--accent); }
+
+	.solution-info {
+		padding: 0.5rem 0 0;
+	}
+	.sol-badge {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.5rem 0.75rem;
+		border-radius: var(--radius-sm);
+		font-size: 0.8rem;
+	}
+	.sol-badge.ready {
+		background: rgba(57, 211, 83, 0.08);
+		border: 1px solid rgba(57, 211, 83, 0.2);
+	}
+	.sol-badge.empty {
+		background: rgba(248, 81, 73, 0.08);
+		border: 1px solid rgba(248, 81, 73, 0.2);
+	}
+	.sol-label { color: var(--text-muted); font-size: 0.75rem; }
+	.sol-score { font-weight: 800; font-size: 1rem; }
+	.sol-meta { color: var(--text-muted); font-size: 0.7rem; font-family: var(--font-mono); }
+	.sol-hint { color: var(--text-muted); font-size: 0.7rem; font-style: italic; }
+	.sol-loading { color: var(--text-muted); font-size: 0.75rem; }
 	.token-info {
 		font-weight: 700;
 		font-size: 0.85rem;

@@ -101,8 +101,10 @@
 			<a href="/gpu" class="gpu-link">gpu</a>
 			<a href="/pipeline" class="pipeline-link">pipeline</a>
 			<a href="/stepladder" class="stepladder-link">stepladder</a>
-			<a href="/lars-training" class="lars-link">lars-training</a>
+			<a href="/captures" class="captures-link">captures</a>
+			<a href="/solutions" class="solutions-link">solutions</a>
 			<a href="/tokens">tokens</a>
+			<a href="/remote-howto" class="remote-link">remote</a>
 		</div>
 	</div>
 </nav>
@@ -215,13 +217,29 @@
 		background: rgba(188, 140, 255, 0.1) !important;
 		color: #d2a8ff !important;
 	}
-	:global(.lars-link) {
+	:global(.captures-link) {
 		color: var(--orange) !important;
 		font-weight: 600;
 	}
-	:global(.lars-link:hover) {
+	:global(.captures-link:hover) {
 		background: rgba(210, 153, 34, 0.1) !important;
 		color: var(--orange) !important;
+	}
+	:global(.solutions-link) {
+		color: #f97316 !important;
+		font-weight: 600;
+	}
+	:global(.solutions-link:hover) {
+		background: rgba(249, 115, 22, 0.1) !important;
+		color: #fb923c !important;
+	}
+	:global(.remote-link) {
+		color: #58a6ff !important;
+		font-weight: 600;
+	}
+	:global(.remote-link:hover) {
+		background: rgba(88, 166, 255, 0.1) !important;
+		color: #79b8ff !important;
 	}
 	main {
 		position: relative;

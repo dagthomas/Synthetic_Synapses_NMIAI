@@ -9,3 +9,11 @@
 /replay/app/node_modules
 /replay/app/build
 /replay/app/.svelte-kit
+/replay/app/.env
+
+# Precomputed cache (large binary files)
+/grocery-bot-gpu/cache/
+
+# Temp debug output
+/grocery-bot-gpu/solver_stderr.txt
+/grocery-bot-gpu/solver_stdout.txt

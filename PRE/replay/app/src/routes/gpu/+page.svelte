@@ -27,7 +27,7 @@
 	let prevBest = $state(0);
 
 	// Solutions metadata
-	let solutions = $state({easy: null, medium: null, hard: null, expert: null});
+	let solutions = $state({easy: null, medium: null, hard: null, expert: null, nightmare: null});
 
 	// Terminal lines
 	let terminalLines = $state([]);
@@ -731,7 +731,7 @@
 
 	<!-- Solution cards -->
 	<div class="solutions-row">
-		{#each ['easy', 'medium', 'hard', 'expert'] as diff}
+		{#each ['easy', 'medium', 'hard', 'expert', 'nightmare'] as diff}
 			{@const sol = solutions[diff]}
 			{@const isStale = sol?.date && sol.date !== new Date().toISOString().slice(0, 10)}
 			<button

@@ -40,6 +40,10 @@ def ws_to_capture(data):
         'orders': [],
     }
 
+    # Nightmare has multiple drop-off zones
+    if 'drop_off_zones' in data:
+        capture['drop_off_zones'] = data['drop_off_zones']
+
     for order in data.get('orders', []):
         capture['orders'].append({
             'items_required': order['items_required'],
@@ -88,6 +92,7 @@ class ReactiveSolver:
             })
 
         self.drop_off = ms.drop_off
+        self.drop_off_zones = getattr(ms, 'drop_off_zones', [ms.drop_off])
 
         # Item ID -> index mapping (for recording internal actions)
         self._id_to_idx = {item['id']: idx for idx, item in enumerate(ms.items)}
@@ -98,7 +103,8 @@ class ReactiveSolver:
         self.extra_walls = set()    # cells discovered to be walls at runtime
         self.wall_fail_count = {}   # (x,y) -> consecutive fail count
         self.visited_cells = set()  # cells the bot has actually visited (never mark as wall)
-        self.visited_cells.add(ms.drop_off)  # dropoff is always safe
+        for dz in self.drop_off_zones:
+            self.visited_cells.add(dz)  # dropoffs are always safe
 
         # Anti-oscillation state
         self.bot_history = {}       # bid -> deque(maxlen=12) of positions
@@ -107,7 +113,12 @@ class ReactiveSolver:
         self.bot_goals = {}         # bid -> {'item_id': str, 'type': str, 'adj': (x,y)} or None
 
         print(f"  Reactive solver: {self.difficulty} {self.num_bots}bots "
-              f"walkable={len(self.walkable)} items={len(ms.items)}", file=sys.stderr)
+              f"walkable={len(self.walkable)} items={len(ms.items)} "
+              f"dropoffs={len(self.drop_off_zones)}", file=sys.stderr)
+
+    def _nearest_drop(self, bx, by):
+        """Return the nearest drop-off zone to (bx, by)."""
+        return min(self.drop_off_zones, key=lambda d: abs(bx - d[0]) + abs(by - d[1]))
 
     def _detect_failed_moves(self, bots):
         """Detect moves that failed (bot didn't move) and mark target cells as walls.
@@ -134,7 +145,7 @@ class ReactiveSolver:
                     # Never mark visited cells, dropoff, or spawn as walls
                     if failed in self.visited_cells:
                         continue
-                    if failed == self.drop_off:
+                    if failed in [tuple(dz) for dz in self.drop_off_zones]:
                         continue
                     # Only mark as wall if no other bot was blocking
                     if failed not in bot_pos_set and failed in self.walkable:
@@ -285,7 +296,8 @@ class ReactiveSolver:
             bid = bot['id']
 
             # 1. At dropoff → drop off or evacuate (never idle-block the dropoff)
-            if (bx, by) == self.drop_off:
+            at_dropoff = any((bx, by) == tuple(dz) for dz in self.drop_off_zones)
+            if at_dropoff:
                 if inv:
                     has_match = any(t in needed_lower for t in inv)
                     if has_match:
@@ -351,8 +363,9 @@ class ReactiveSolver:
                 should_deliver = True  # Single bot: go deliver even if not all match
 
             if should_deliver:
+                nearest = self._nearest_drop(bx, by)
                 occupied = bot_positions - {(bx, by)}
-                act = self._bfs_next_step((bx, by), self.drop_off, occupied)
+                act = self._bfs_next_step((bx, by), nearest, occupied)
                 actions.append({'bot': bid, 'action': action_names[act]})
                 continue
 
@@ -417,19 +430,20 @@ class ReactiveSolver:
 
             # 5. Have items → go to dropoff (for single bot or if items might match)
             if inv:
+                nearest = self._nearest_drop(bx, by)
                 if self.num_bots == 1 or has_active_items:
                     occupied = bot_positions - {(bx, by)}
-                    act = self._bfs_next_step((bx, by), self.drop_off, occupied)
+                    act = self._bfs_next_step((bx, by), nearest, occupied)
                     actions.append({'bot': bid, 'action': action_names[act]})
                     continue
                 else:
                     # Multi-bot with dead inventory: wait near dropoff (don't camp ON it)
-                    drop_dist = self._bfs_dist((bx, by), self.drop_off)
+                    drop_dist = self._bfs_dist((bx, by), nearest)
                     if drop_dist <= 2:
                         actions.append({'bot': bid, 'action': 'wait'})
                     else:
                         occupied = bot_positions - {(bx, by)}
-                        act = self._bfs_next_step((bx, by), self.drop_off, occupied)
+                        act = self._bfs_next_step((bx, by), nearest, occupied)
                         actions.append({'bot': bid, 'action': action_names[act]})
                     continue
 
@@ -462,6 +476,7 @@ class RouteSolver:
                     self.walkable.add((x, y))
 
         self.drop_off = tuple(self.ms.drop_off)
+        self.drop_off_zones = [tuple(dz) for dz in getattr(self.ms, 'drop_off_zones', [self.drop_off])]
         self.drop_off_idx = self.rt.pos_to_idx.get(self.drop_off)
 
         # Build item lookup: type -> list of {id, pos, adj_cells}
@@ -486,7 +501,8 @@ class RouteSolver:
         self.last_sent_actions = {}
         self.wall_fail_count = {}
         self.visited_cells = set()
-        self.visited_cells.add(self.drop_off)
+        for dz in self.drop_off_zones:
+            self.visited_cells.add(dz)
 
         # Anti-oscillation
         self.bot_history = {}
@@ -499,7 +515,12 @@ class RouteSolver:
         self._id_to_idx = {item['id']: i for i, item in enumerate(self.ms.items)}
 
         print(f"  Route solver: {self.difficulty} {self.num_bots}bots "
-              f"routes={len(route_table.routes)} cells={len(self.walkable)}", file=sys.stderr)
+              f"routes={len(route_table.routes)} cells={len(self.walkable)} "
+              f"dropoffs={len(self.drop_off_zones)}", file=sys.stderr)
+
+    def _nearest_drop(self, bx, by):
+        """Return the nearest drop-off zone to (bx, by)."""
+        return min(self.drop_off_zones, key=lambda d: abs(bx - d[0]) + abs(by - d[1]))
 
     def _dist_raw(self, a, b):
         """O(1) distance, handles missing positions."""
@@ -623,7 +644,7 @@ class RouteSolver:
                     dx, dy = move_deltas[act_name]
                     failed = (bx + dx, by + dy)
                     # Never mark visited cells, dropoff, or spawn as walls
-                    if failed in self.visited_cells or failed == self.drop_off:
+                    if failed in self.visited_cells or failed in [tuple(dz) for dz in self.drop_off_zones]:
                         continue
                     if failed not in bot_pos_set and failed in self.walkable:
                         self.wall_fail_count[failed] = self.wall_fail_count.get(failed, 0) + 1
@@ -720,7 +741,8 @@ class RouteSolver:
             bid = bot['id']
 
             # 1. At dropoff with matching items → drop off
-            if (bx, by) == self.drop_off and inv:
+            at_dropoff = any((bx, by) == tuple(dz) for dz in self.drop_off_zones)
+            if at_dropoff and inv:
                 if any(t in needed_lower for t in inv):
                     actions.append({'bot': bid, 'action': 'drop_off'})
                     for t in inv:
@@ -767,8 +789,9 @@ class RouteSolver:
                 should_deliver = True
 
             if should_deliver:
+                nearest = self._nearest_drop(bx, by)
                 occupied = bot_positions - {(bx, by)}
-                act = self._next_step((bx, by), self.drop_off, occupied)
+                act = self._next_step((bx, by), nearest, occupied)
                 actions.append({'bot': bid, 'action': act})
                 continue
 
@@ -830,8 +853,9 @@ class RouteSolver:
 
             # 5. Have items → deliver
             if inv:
+                nearest = self._nearest_drop(bx, by)
                 occupied = bot_positions - {(bx, by)}
-                act = self._next_step((bx, by), self.drop_off, occupied)
+                act = self._next_step((bx, by), nearest, occupied)
                 actions.append({'bot': bid, 'action': act})
                 continue
 

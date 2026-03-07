@@ -1,12 +1,12 @@
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
-import { GPU_DIR } from '$lib/paths.server.js';
+import { GPU_DIR, PYTHON } from '$lib/paths.server.js';
 
 export async function POST({ request }) {
 	const { difficulty, time = 120, workers = 12 } = await request.json();
 
-	if (!difficulty || !['easy', 'medium', 'hard', 'expert'].includes(difficulty)) {
+	if (!difficulty || !['easy', 'medium', 'hard', 'expert', 'nightmare'].includes(difficulty)) {
 		return new Response(JSON.stringify({ error: 'Invalid difficulty' }), { status: 400 });
 	}
 
@@ -26,7 +26,7 @@ export async function POST({ request }) {
 
 			sendEvent('status', { message: `Starting optimizer: ${difficulty}, ${time}s, ${workers} workers` });
 
-			ctx.process = spawn('python', [
+			ctx.process = spawn(PYTHON, [
 				'learn_from_capture.py', difficulty,
 				'--time', String(time),
 				'--workers', String(workers),

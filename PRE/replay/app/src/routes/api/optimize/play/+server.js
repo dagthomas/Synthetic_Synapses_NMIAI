@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
-import { GPU_DIR } from '$lib/paths.server.js';
+import { GPU_DIR, PYTHON } from '$lib/paths.server.js';
 
 export async function POST({ request }) {
 	const { url, difficulty } = await request.json();
@@ -37,7 +37,7 @@ export async function POST({ request }) {
 
 			sendEvent('status', { message: `Zig capture → GPU solve pipeline (${diff})` });
 
-			ctx.process = spawn('python', ['-u', 'capture_and_solve_stream.py', url, diff, '--capture', 'zig', '--time', '300'], {
+			ctx.process = spawn(PYTHON, ['-u', 'capture_and_solve_stream.py', url, diff, '--capture', 'zig', '--time', '300'], {
 				cwd: GPU_DIR,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});

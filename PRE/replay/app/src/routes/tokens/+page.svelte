@@ -12,6 +12,7 @@
 		medium: '#d29922',
 		hard: '#f85149',
 		expert: '#da3633',
+		nightmare: '#a855f7',
 	};
 
 	const ALL_TYPES = [
@@ -104,7 +105,7 @@
 	}
 
 	let counts = $derived.by(() => {
-		const c = { all: tokens.length, easy: 0, medium: 0, hard: 0, expert: 0, unknown: 0 };
+		const c = { all: tokens.length, easy: 0, medium: 0, hard: 0, expert: 0, nightmare: 0, unknown: 0 };
 		for (const t of tokens) {
 			if (t.difficulty && c[t.difficulty] !== undefined) c[t.difficulty]++;
 			else c.unknown++;
@@ -615,7 +616,7 @@
 	{#if !inspecting && wsStatus === 'idle'}
 		<div class="filter-bar">
 			<div class="filter-tabs">
-				{#each ['all', 'easy', 'medium', 'hard', 'expert'] as d}
+				{#each ['all', 'easy', 'medium', 'hard', 'expert', 'nightmare'] as d}
 					<button
 						class="filter-tab"
 						class:active={filter === d}

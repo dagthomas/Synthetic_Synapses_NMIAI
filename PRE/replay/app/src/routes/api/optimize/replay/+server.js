@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { query } from '$lib/db.server.js';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
-import { GPU_DIR } from '$lib/paths.server.js';
+import { GPU_DIR, PYTHON } from '$lib/paths.server.js';
 
 export async function POST({ request }) {
 	const { url, difficulty } = await request.json();
@@ -153,7 +153,7 @@ export async function POST({ request }) {
 				args.push('--difficulty', difficulty);
 			}
 
-			ctx.process = spawn('python', args, {
+			ctx.process = spawn(PYTHON, args, {
 				cwd: GPU_DIR,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});

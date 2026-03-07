@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'child_process';
 import { resolve } from 'path';
 import { existsSync, readFileSync, copyFileSync, readdirSync, statSync } from 'fs';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
-import { ZIG_BOT_DIR, GPU_DIR, B200_DIR } from '$lib/paths.server.js';
+import { ZIG_BOT_DIR, GPU_DIR, B200_DIR, PYTHON } from '$lib/paths.server.js';
 
 /**
  * Stepladder single-iteration endpoint.
@@ -16,18 +16,21 @@ import { ZIG_BOT_DIR, GPU_DIR, B200_DIR } from '$lib/paths.server.js';
  */
 export async function POST({ request }) {
 	const {
-		url,                          // WSS url with token
-		difficulty,                   // easy|medium|hard|expert
+		url,                          // WSS url with token (or 'offline')
+		difficulty,                   // easy|medium|hard|expert|nightmare
 		iteration = 0,                // current iteration number
 		phase = 'auto',               // auto|capture|replay|optimize|deep
 		gpu = 'auto',                 // auto|b200|5090
 		deepBudget = 300,             // seconds for deep training
 		maxStates = null,             // override max states
+		offlineCapture = null,        // pre-loaded capture data (offline mode)
 	} = await request.json();
 
-	if (!url || !difficulty) {
-		return new Response(JSON.stringify({ error: 'Missing url or difficulty' }), { status: 400 });
+	if ((!url && !offlineCapture) || !difficulty) {
+		return new Response(JSON.stringify({ error: 'Missing url/capture or difficulty' }), { status: 400 });
 	}
+
+	const isOffline = url === 'offline' && offlineCapture;
 
 	const encoder = new TextEncoder();
 	const ctx = { closed: false, safetyTimeout: null, heartbeatInterval: null, process: null };
@@ -56,21 +59,21 @@ export async function POST({ request }) {
 
 			function getOrderCount() {
 				try {
-					const r = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-u', 'db_query.py', 'order_count', difficulty], { cwd: GPU_DIR, timeout: 5000 });
+					const r = spawnSync(PYTHON, ['-u', 'db_query.py', 'order_count', difficulty], { cwd: GPU_DIR, timeout: 5000 });
 					return JSON.parse(r.stdout.toString()).count || 0;
 				} catch { return 0; }
 			}
 
 			function solutionExists() {
 				try {
-					const r = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-u', 'db_query.py', 'solution_exists', difficulty], { cwd: GPU_DIR, timeout: 5000 });
+					const r = spawnSync(PYTHON, ['-u', 'db_query.py', 'solution_exists', difficulty], { cwd: GPU_DIR, timeout: 5000 });
 					return JSON.parse(r.stdout.toString()).exists || false;
 				} catch { return false; }
 			}
 
 			function getSolutionScore() {
 				try {
-					const r = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-u', 'db_query.py', 'solution_score', difficulty], { cwd: GPU_DIR, timeout: 5000 });
+					const r = spawnSync(PYTHON, ['-u', 'db_query.py', 'solution_score', difficulty], { cwd: GPU_DIR, timeout: 5000 });
 					return JSON.parse(r.stdout.toString()).score || 0;
 				} catch { return 0; }
 			}
@@ -91,9 +94,10 @@ export async function POST({ request }) {
 				return new Promise((res) => {
 					sendEvent('phase_start', { phase: 'capture', elapsed: elapsed() });
 
-					// Try Zig bot first (Windows), fall back to Python (Linux/RunPod)
+					// Try Zig bot first (Windows), fall back to Python
+					// Zig bot doesn't support nightmare (20 bots)
 					const zigExe = resolve(ZIG_BOT_DIR, 'zig-out', 'bin', 'grocery-bot.exe');
-					const useZig = existsSync(zigExe);
+					const useZig = existsSync(zigExe) && difficulty !== 'nightmare';
 
 					if (useZig) {
 						sendEvent('log', { text: '[capture] Using Zig bot' });
@@ -134,15 +138,15 @@ export async function POST({ request }) {
 							res({ score: 0 });
 						});
 					} else {
-						// Python fallback — live_gpu_stream.py (works on Linux/RunPod)
-						sendEvent('log', { text: '[capture] Using Python live_gpu_stream (Linux mode)' });
+						// Python fallback — live_gpu_stream.py --cpu (nightmare or Linux)
+						sendEvent('log', { text: `[capture] Using live_gpu_stream.py --cpu (${difficulty})` });
+						const spawnMs = Date.now();
 						const args = [
 							'-u', 'live_gpu_stream.py', url,
-							'--save', '--json-stream', '--record',
-							'--pipeline-mode',
-							'--post-optimize-time', '60',
+							'--cpu', '--save', '--json-stream', '--record',
+							'--pipeline-mode', '--preload-capture',
 						];
-						ctx.process = spawn('python3', args, {
+						ctx.process = spawn(PYTHON, args, {
 							cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 						});
 
@@ -160,7 +164,6 @@ export async function POST({ request }) {
 									if (type === 'game_over') score = evt.score || 0;
 									if (type === 'pipeline_done') score = evt.final_score || evt.plan_score || score;
 									if (type === 'round') {
-										liveRound = evt.round;
 										if (evt.round % 20 === 0) {
 											sendEvent('round', { round: evt.round, score: evt.score || 0 });
 										}
@@ -170,7 +173,7 @@ export async function POST({ request }) {
 							}
 						});
 						ctx.process.stderr.on('data', (data) => {
-							for (const line of data.toString().trim().split('\n')) {
+							for (const line of data.toString().split('\n')) {
 								if (line.trim()) sendEvent('log', { text: `[live] ${line.trim()}` });
 							}
 						});
@@ -192,12 +195,12 @@ export async function POST({ request }) {
 					sendEvent('phase_start', { phase: 'replay', elapsed: elapsed() });
 
 					// Export dp_plan for Zig replay
-					spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-u', 'db_query.py', 'export_dp_plan', difficulty,
+					spawnSync(PYTHON, ['-u', 'db_query.py', 'export_dp_plan', difficulty,
 						resolve(GPU_DIR, '.tmp', `dp_plan_${difficulty}.json`)], { cwd: GPU_DIR, timeout: 10000 });
 
 					const exe = resolve(ZIG_BOT_DIR, 'zig-out', 'bin', 'grocery-bot.exe');
 					const dpPlan = resolve(GPU_DIR, '.tmp', `dp_plan_${difficulty}.json`);
-					const useDp = existsSync(exe) && existsSync(dpPlan);
+					const useDp = existsSync(exe) && existsSync(dpPlan) && difficulty !== 'nightmare';
 
 					if (useDp) {
 						const spawnMs = Date.now();
@@ -234,7 +237,7 @@ export async function POST({ request }) {
 						ctx.process.on('error', () => res({ score: 0 }));
 					} else {
 						// Python replay fallback
-						ctx.process = spawn(process.platform === 'win32' ? 'python' : 'python3', [
+						ctx.process = spawn(PYTHON, [
 							'replay_solution.py', url, '--difficulty', difficulty
 						], { cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -264,7 +267,7 @@ export async function POST({ request }) {
 					if (!logPath) { res(0); return; }
 					sendEvent('phase_start', { phase: 'capture_orders', elapsed: elapsed() });
 
-					const proc = spawn(process.platform === 'win32' ? 'python' : 'python3', ['capture_from_game_log.py', logPath, difficulty], {
+					const proc = spawn(PYTHON, ['capture_from_game_log.py', logPath, difficulty], {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 					let captured = 0;
@@ -292,7 +295,7 @@ export async function POST({ request }) {
 					const args = ['-u', 'optimize_and_save.py', difficulty, '--max-time', String(Math.floor(maxTime))];
 					if (maxStates) args.push('--max-states', String(maxStates));
 
-					ctx.process = spawn('python', args, {
+					ctx.process = spawn(PYTHON, args, {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
@@ -336,7 +339,7 @@ export async function POST({ request }) {
 					if (maxStates) args.push('--max-states', String(maxStates));
 					args.push('--gpu', gpu);
 
-					ctx.process = spawn('python', args, {
+					ctx.process = spawn(PYTHON, args, {
 						cwd: B200_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
@@ -375,7 +378,7 @@ export async function POST({ request }) {
 			// ── Load capture data from DB (for remote GPU) ────────────
 			function loadCaptureData() {
 				try {
-					const r = spawnSync(process.platform === 'win32' ? 'python' : 'python3',
+					const r = spawnSync(PYTHON,
 						['-u', 'db_query.py', 'export_capture_json', difficulty],
 						{ cwd: GPU_DIR, timeout: 10000 });
 					return JSON.parse(r.stdout.toString());
@@ -384,6 +387,58 @@ export async function POST({ request }) {
 
 			// ── Main iteration ─────────────────────────────────────────
 			(async () => {
+				if (isOffline) {
+					// ── Offline mode: save capture, then optimize ────
+					const offDiff = offlineCapture.difficulty || difficulty;
+					sendEvent('iter_start', {
+						iteration, difficulty: offDiff, gpu,
+						orders: offlineCapture.orders?.length || 0,
+						has_solution: false, prev_score: 0,
+						deep_budget: deepBudget, offline: true,
+					});
+
+					// Save capture to file for optimize_and_save.py
+					const { writeFileSync, mkdirSync } = await import('fs');
+					const capturePath = resolve(GPU_DIR, 'captures', `offline_${offDiff}_temp.json`);
+					try { mkdirSync(resolve(GPU_DIR, 'captures'), { recursive: true }); } catch {}
+					writeFileSync(capturePath, JSON.stringify(offlineCapture));
+					sendEvent('log', { text: `Saved capture to ${capturePath}` });
+
+					// Save capture to DB via solution_store
+					const saveResult = spawnSync(PYTHON, [
+						'-u', '-c',
+						`import json, sys; sys.path.insert(0, '.'); from solution_store import save_capture; d=json.load(open(r'${capturePath.replace(/\\/g, '/')}')); save_capture('${offDiff}', d); print('OK')`
+					], { cwd: GPU_DIR, timeout: 10000 });
+					if (saveResult.stdout?.toString().includes('OK')) {
+						sendEvent('log', { text: 'Capture saved to DB' });
+					} else {
+						sendEvent('log', { text: `DB save: ${saveResult.stderr?.toString().trim() || 'unknown'}` });
+					}
+
+					if (ctx.closed) { cleanup(); return; }
+
+					// Run GPU optimize
+					let optScore = 0, deepScore = 0;
+					const optResult = await runGpuOptimize(Math.min(120, deepBudget));
+					optScore = optResult.score;
+
+					if (!ctx.closed && deepBudget > 120) {
+						const dr = await runDeepTraining(deepBudget);
+						deepScore = dr.score;
+					}
+
+					sendEvent('iter_done', {
+						iteration, game_score: 0,
+						opt_score: optScore, deep_score: deepScore,
+						best_score: Math.max(optScore, deepScore),
+						orders: offlineCapture.orders?.length || 0,
+						new_orders: 0, elapsed: elapsed(),
+					});
+					cleanup();
+					return;
+				}
+
+				// ── Live mode ─────────────────────────────────────────
 				const ordersBefore = getOrderCount();
 				const hasSolution = solutionExists();
 				const prevScore = getSolutionScore();

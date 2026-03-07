@@ -1,12 +1,12 @@
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { createCleanup } from '$lib/sse.server.js';
-import { GPU_DIR } from '$lib/paths.server.js';
+import { GPU_DIR, PYTHON } from '$lib/paths.server.js';
 
 export async function POST({ request }) {
 	const { difficulty, seed } = await request.json();
 
-	if (!difficulty || !['easy', 'medium', 'hard', 'expert'].includes(difficulty)) {
+	if (!difficulty || !['easy', 'medium', 'hard', 'expert', 'nightmare'].includes(difficulty)) {
 		return new Response(JSON.stringify({ error: 'Invalid difficulty' }), { status: 400 });
 	}
 
@@ -33,7 +33,7 @@ export async function POST({ request }) {
 			const args = ['gpu_multi_solve_stream.py', difficulty];
 			if (seed) args.push('--seed', String(seed));
 
-			ctx.process = spawn('python', args, {
+			ctx.process = spawn(PYTHON, args, {
 				cwd: GPU_DIR,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});

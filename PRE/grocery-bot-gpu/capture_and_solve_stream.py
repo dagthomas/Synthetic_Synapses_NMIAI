@@ -84,7 +84,7 @@ def capture_phase_zig(ws_url, difficulty):
 async def capture_phase(ws_url, difficulty):
     """Phase 1: Play a probe game to capture all orders."""
     import websockets
-    from capture_game import decide_action
+    from capture_game import CaptureController
 
     captured = {
         'difficulty': difficulty,
@@ -98,6 +98,7 @@ async def capture_phase(ws_url, difficulty):
     seen_order_ids = set()
     walls_set = None
     width = height = 0
+    controller = CaptureController()
 
     emit({"type": "phase", "phase": "capture"})
     emit({"type": "status", "message": f"Phase 1: Python probe game ({difficulty})"})
@@ -133,6 +134,8 @@ async def capture_phase(ws_url, difficulty):
                     captured['grid'] = data['grid']
                     captured['items'] = data['items']
                     captured['drop_off'] = data['drop_off']
+                    if 'drop_off_zones' in data:
+                        captured['drop_off_zones'] = data['drop_off_zones']
                     captured['num_bots'] = len(data['bots'])
 
                     walls_set = set()
@@ -153,20 +156,17 @@ async def capture_phase(ws_url, difficulty):
                         })
 
                 # Progress
-                if rnd % 10 == 0 or rnd <= 2 or rnd >= 295:
+                max_rounds = data.get("max_rounds", 300)
+                if rnd % 10 == 0 or rnd <= 2 or rnd >= max_rounds - 5:
                     emit({
                         "type": "progress",
                         "round": rnd,
-                        "max_rounds": data.get("max_rounds", 300),
+                        "max_rounds": max_rounds,
                         "score": data.get("score", 0),
                     })
 
-                # Play greedy actions
-                actions = []
-                for bot in data["bots"]:
-                    action = decide_action(bot, data, walls_set, width, height)
-                    actions.append(action)
-
+                # Play using CaptureController
+                actions = controller.decide(data, walls_set, width, height)
                 await ws.send(json.dumps({"actions": actions}))
 
     except Exception as e:
@@ -371,7 +371,10 @@ async def run_pipeline(ws_url, difficulty, solver='gpu', time_limit=240.0, num_w
 
     emit({"type": "status", "message": f"Starting pipeline: {difficulty} (capture={capture}, solver={solver})"})
 
-    # Phase 1: Capture
+    # Phase 1: Capture (Zig disabled for nightmare — auto-fallback to Python)
+    if capture == 'zig' and difficulty == 'nightmare':
+        emit({"type": "status", "message": "Zig disabled for nightmare, using Python capture"})
+        capture = 'python'
     if capture == 'zig':
         captured = capture_phase_zig(ws_url, difficulty)
     else:

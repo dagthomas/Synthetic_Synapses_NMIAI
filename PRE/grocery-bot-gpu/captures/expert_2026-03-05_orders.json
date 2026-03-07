@@ -1,0 +1,668 @@
+{
+  "date": "2026-03-05",
+  "difficulty": "expert",
+  "seed": 7004,
+  "rng_skip": 509,
+  "num_orders": 60,
+  "orders": [
+    {
+      "index": 0,
+      "items": [
+        "milk",
+        "bananas",
+        "bread",
+        "milk",
+        "oats",
+        "cereal"
+      ],
+      "size": 6
+    },
+    {
+      "index": 1,
+      "items": [
+        "flour",
+        "onions",
+        "yogurt",
+        "eggs"
+      ],
+      "size": 4
+    },
+    {
+      "index": 2,
+      "items": [
+        "butter",
+        "bread",
+        "milk",
+        "cream",
+        "cream",
+        "bananas"
+      ],
+      "size": 6
+    },
+    {
+      "index": 3,
+      "items": [
+        "milk",
+        "cereal",
+        "cream",
+        "cereal",
+        "bread",
+        "tomatoes"
+      ],
+      "size": 6
+    },
+    {
+      "index": 4,
+      "items": [
+        "cereal",
+        "bread",
+        "eggs",
+        "pasta"
+      ],
+      "size": 4
+    },
+    {
+      "index": 5,
+      "items": [
+        "flour",
+        "butter",
+        "pasta",
+        "bananas"
+      ],
+      "size": 4
+    },
+    {
+      "index": 6,
+      "items": [
+        "bananas",
+        "butter",
+        "rice",
+        "cereal"
+      ],
+      "size": 4
+    },
+    {
+      "index": 7,
+      "items": [
+        "oats",
+        "eggs",
+        "rice",
+        "onions",
+        "eggs"
+      ],
+      "size": 5
+    },
+    {
+      "index": 8,
+      "items": [
+        "butter",
+        "oats",
+        "apples",
+        "flour"
+      ],
+      "size": 4
+    },
+    {
+      "index": 9,
+      "items": [
+        "milk",
+        "tomatoes",
+        "cereal",
+        "cereal",
+        "butter",
+        "rice"
+      ],
+      "size": 6
+    },
+    {
+      "index": 10,
+      "items": [
+        "yogurt",
+        "cream",
+        "cream",
+        "apples",
+        "yogurt",
+        "cream"
+      ],
+      "size": 6
+    },
+    {
+      "index": 11,
+      "items": [
+        "cream",
+        "butter",
+        "rice",
+        "cheese"
+      ],
+      "size": 4
+    },
+    {
+      "index": 12,
+      "items": [
+        "cheese",
+        "onions",
+        "rice",
+        "cheese",
+        "yogurt"
+      ],
+      "size": 5
+    },
+    {
+      "index": 13,
+      "items": [
+        "flour",
+        "milk",
+        "apples",
+        "bread",
+        "oats"
+      ],
+      "size": 5
+    },
+    {
+      "index": 14,
+      "items": [
+        "tomatoes",
+        "bread",
+        "eggs",
+        "pasta",
+        "yogurt"
+      ],
+      "size": 5
+    },
+    {
+      "index": 15,
+      "items": [
+        "milk",
+        "rice",
+        "oats",
+        "cream"
+      ],
+      "size": 4
+    },
+    {
+      "index": 16,
+      "items": [
+        "flour",
+        "cereal",
+        "eggs",
+        "bread"
+      ],
+      "size": 4
+    },
+    {
+      "index": 17,
+      "items": [
+        "onions",
+        "rice",
+        "oats",
+        "milk",
+        "cheese"
+      ],
+      "size": 5
+    },
+    {
+      "index": 18,
+      "items": [
+        "cheese",
+        "milk",
+        "cereal",
+        "pasta",
+        "apples"
+      ],
+      "size": 5
+    },
+    {
+      "index": 19,
+      "items": [
+        "tomatoes",
+        "bananas",
+        "bananas",
+        "yogurt",
+        "bread",
+        "pasta"
+      ],
+      "size": 6
+    },
+    {
+      "index": 20,
+      "items": [
+        "flour",
+        "eggs",
+        "rice",
+        "oats",
+        "bread",
+        "milk"
+      ],
+      "size": 6
+    },
+    {
+      "index": 21,
+      "items": [
+        "bread",
+        "flour",
+        "eggs",
+        "yogurt",
+        "milk",
+        "onions"
+      ],
+      "size": 6
+    },
+    {
+      "index": 22,
+      "items": [
+        "apples",
+        "eggs",
+        "tomatoes",
+        "cream",
+        "milk"
+      ],
+      "size": 5
+    },
+    {
+      "index": 23,
+      "items": [
+        "bananas",
+        "pasta",
+        "rice",
+        "flour"
+      ],
+      "size": 4
+    },
+    {
+      "index": 24,
+      "items": [
+        "cereal",
+        "apples",
+        "bread",
+        "butter",
+        "apples",
+        "flour"
+      ],
+      "size": 6
+    },
+    {
+      "index": 25,
+      "items": [
+        "cream",
+        "tomatoes",
+        "bananas",
+        "oats"
+      ],
+      "size": 4
+    },
+    {
+      "index": 26,
+      "items": [
+        "apples",
+        "onions",
+        "cream",
+        "flour",
+        "oats"
+      ],
+      "size": 5
+    },
+    {
+      "index": 27,
+      "items": [
+        "cheese",
+        "pasta",
+        "tomatoes",
+        "bananas"
+      ],
+      "size": 4
+    },
+    {
+      "index": 28,
+      "items": [
+        "oats",
+        "cream",
+        "onions",
+        "butter",
+        "rice",
+        "cream"
+      ],
+      "size": 6
+    },
+    {
+      "index": 29,
+      "items": [
+        "eggs",
+        "milk",
+        "cheese",
+        "bread",
+        "rice",
+        "yogurt"
+      ],
+      "size": 6
+    },
+    {
+      "index": 30,
+      "items": [
+        "pasta",
+        "yogurt",
+        "eggs",
+        "rice",
+        "bananas"
+      ],
+      "size": 5
+    },
+    {
+      "index": 31,
+      "items": [
+        "rice",
+        "yogurt",
+        "oats",
+        "oats"
+      ],
+      "size": 4
+    },
+    {
+      "index": 32,
+      "items": [
+        "cereal",
+        "milk",
+        "pasta",
+        "rice"
+      ],
+      "size": 4
+    },
+    {
+      "index": 33,
+      "items": [
+        "tomatoes",
+        "butter",
+        "yogurt",
+        "pasta",
+        "cream"
+      ],
+      "size": 5
+    },
+    {
+      "index": 34,
+      "items": [
+        "bread",
+        "bread",
+        "onions",
+        "cereal",
+        "onions"
+      ],
+      "size": 5
+    },
+    {
+      "index": 35,
+      "items": [
+        "yogurt",
+        "tomatoes",
+        "cereal",
+        "flour",
+        "cereal"
+      ],
+      "size": 5
+    },
+    {
+      "index": 36,
+      "items": [
+        "cereal",
+        "cereal",
+        "tomatoes",
+        "onions"
+      ],
+      "size": 4
+    },
+    {
+      "index": 37,
+      "items": [
+        "tomatoes",
+        "oats",
+        "eggs",
+        "bananas",
+        "rice"
+      ],
+      "size": 5
+    },
+    {
+      "index": 38,
+      "items": [
+        "pasta",
+        "butter",
+        "cheese",
+        "cheese",
+        "eggs",
+        "bananas"
+      ],
+      "size": 6
+    },
+    {
+      "index": 39,
+      "items": [
+        "eggs",
+        "eggs",
+        "bread",
+        "cream",
+        "onions"
+      ],
+      "size": 5
+    },
+    {
+      "index": 40,
+      "items": [
+        "butter",
+        "flour",
+        "eggs",
+        "rice",
+        "cheese"
+      ],
+      "size": 5
+    },
+    {
+      "index": 41,
+      "items": [
+        "yogurt",
+        "cheese",
+        "pasta",
+        "butter",
+        "eggs",
+        "milk"
+      ],
+      "size": 6
+    },
+    {
+      "index": 42,
+      "items": [
+        "butter",
+        "bananas",
+        "cereal",
+        "flour"
+      ],
+      "size": 4
+    },
+    {
+      "index": 43,
+      "items": [
+        "rice",
+        "bananas",
+        "yogurt",
+        "tomatoes"
+      ],
+      "size": 4
+    },
+    {
+      "index": 44,
+      "items": [
+        "yogurt",
+        "oats",
+        "pasta",
+        "milk",
+        "onions"
+      ],
+      "size": 5
+    },
+    {
+      "index": 45,
+      "items": [
+        "pasta",
+        "rice",
+        "milk",
+        "cream",
+        "cereal",
+        "cereal"
+      ],
+      "size": 6
+    },
+    {
+      "index": 46,
+      "items": [
+        "oats",
+        "apples",
+        "rice",
+        "tomatoes"
+      ],
+      "size": 4
+    },
+    {
+      "index": 47,
+      "items": [
+        "milk",
+        "bread",
+        "onions",
+        "butter",
+        "tomatoes",
+        "cheese"
+      ],
+      "size": 6
+    },
+    {
+      "index": 48,
+      "items": [
+        "yogurt",
+        "apples",
+        "tomatoes",
+        "oats"
+      ],
+      "size": 4
+    },
+    {
+      "index": 49,
+      "items": [
+        "bananas",
+        "yogurt",
+        "bread",
+        "butter",
+        "milk",
+        "rice"
+      ],
+      "size": 6
+    },
+    {
+      "index": 50,
+      "items": [
+        "onions",
+        "bananas",
+        "pasta",
+        "apples"
+      ],
+      "size": 4
+    },
+    {
+      "index": 51,
+      "items": [
+        "cereal",
+        "butter",
+        "tomatoes",
+        "bread",
+        "bread"
+      ],
+      "size": 5
+    },
+    {
+      "index": 52,
+      "items": [
+        "butter",
+        "cream",
+        "pasta",
+        "eggs",
+        "tomatoes",
+        "oats"
+      ],
+      "size": 6
+    },
+    {
+      "index": 53,
+      "items": [
+        "butter",
+        "cream",
+        "milk",
+        "bananas",
+        "butter"
+      ],
+      "size": 5
+    },
+    {
+      "index": 54,
+      "items": [
+        "milk",
+        "milk",
+        "rice",
+        "oats"
+      ],
+      "size": 4
+    },
+    {
+      "index": 55,
+      "items": [
+        "yogurt",
+        "flour",
+        "cheese",
+        "milk",
+        "cheese"
+      ],
+      "size": 5
+    },
+    {
+      "index": 56,
+      "items": [
+        "tomatoes",
+        "apples",
+        "milk",
+        "cheese",
+        "bananas"
+      ],
+      "size": 5
+    },
+    {
+      "index": 57,
+      "items": [
+        "milk",
+        "cheese",
+        "flour",
+        "butter",
+        "tomatoes",
+        "bread"
+      ],
+      "size": 6
+    },
+    {
+      "index": 58,
+      "items": [
+        "rice",
+        "bananas",
+        "tomatoes",
+        "oats",
+        "bread"
+      ],
+      "size": 5
+    },
+    {
+      "index": 59,
+      "items": [
+        "bread",
+        "cheese",
+        "yogurt",
+        "tomatoes",
+        "cream",
+        "cereal"
+      ],
+      "size": 6
+    }
+  ]
+}

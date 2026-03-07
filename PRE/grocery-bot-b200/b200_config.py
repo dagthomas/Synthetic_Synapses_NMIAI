@@ -89,6 +89,13 @@ _PARAMS = {
             pass1_orderings=200, refine_iters=100, lns_rounds=40,
             max_dp_bots=10, parallel_orderings=4, explore_states=50_000,
         ),
+        'nightmare': B200Params(
+            max_states=100_000, chunk_size=100_000,
+            joint_squad_size=3, joint_states=1_000_000,
+            pass1_orderings=100, refine_iters=50, lns_rounds=20,
+            max_dp_bots=20, parallel_orderings=4, explore_states=30_000,
+            speed_bonus=150.0,
+        ),
     },
     '5090': {
         'easy': B200Params(
@@ -114,6 +121,12 @@ _PARAMS = {
             joint_squad_size=2, joint_states=50_000,
             pass1_orderings=3, refine_iters=10, lns_rounds=5,
             max_dp_bots=7, explore_states=25_000,
+        ),
+        'nightmare': B200Params(
+            max_states=30_000, chunk_size=30_000,
+            joint_squad_size=2, joint_states=30_000,
+            pass1_orderings=3, refine_iters=5, lns_rounds=3,
+            max_dp_bots=10, explore_states=15_000,
         ),
     },
 }
@@ -141,7 +154,7 @@ def print_gpu_info():
 
 if __name__ == '__main__':
     gpu = print_gpu_info()
-    for diff in ['easy', 'medium', 'hard', 'expert']:
+    for diff in ['easy', 'medium', 'hard', 'expert', 'nightmare']:
         p = get_params(diff, gpu)
         print(f"  {diff}: max_states={p.max_states:,}, joint_squad={p.joint_squad_size}, "
               f"joint_states={p.joint_states:,}, orderings={p.pass1_orderings}, "

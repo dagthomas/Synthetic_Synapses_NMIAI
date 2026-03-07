@@ -20,7 +20,7 @@
 		gpu_refine: '#39d353',
 		none:   '#484f58',
 	};
-	const TARGETS = { easy: 142, medium: 200, hard: 250, expert: 305 };
+	const TARGETS = { easy: 142, medium: 200, hard: 250, expert: 305, nightmare: 350 };
 	function sourceColor(s) {
 		return SOURCE_COLORS[s] || '#74b9ff';
 	}
@@ -639,7 +639,7 @@
 	}
 
 	let diffColors = {
-		easy: '#39d353', medium: '#d29922', hard: '#f85149', expert: '#da3633',
+		easy: '#39d353', medium: '#d29922', hard: '#f85149', expert: '#da3633', nightmare: '#a855f7',
 	};
 </script>
 

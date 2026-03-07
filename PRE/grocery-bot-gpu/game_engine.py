@@ -254,6 +254,14 @@ def build_map(difficulty: str) -> MapState:
     spawn = (w - 2, h - 2)
     grid[drop_off[1], drop_off[0]] = CELL_DROPOFF
 
+    # Nightmare: 3 drop-off zones spread across bottom
+    if difficulty == 'nightmare':
+        drop_off_zones = [(1, h - 2), (w // 2, h - 2), (w - 3, h - 2)]
+        for dz in drop_off_zones:
+            grid[dz[1], dz[0]] = CELL_DROPOFF
+    else:
+        drop_off_zones = [drop_off]
+
     # Items on shelves
     item_type_names = ALL_TYPES[:cfg['types']]
     type_name_to_id = {name: i for i, name in enumerate(item_type_names)}
@@ -292,7 +300,7 @@ def build_map(difficulty: str) -> MapState:
     ms.height = h
     ms.grid = grid
     ms.drop_off = drop_off
-    ms.drop_off_zones = [drop_off]
+    ms.drop_off_zones = drop_off_zones
     ms.spawn = spawn
     ms.items = items
     ms.item_positions = item_positions
@@ -582,7 +590,7 @@ def state_to_ws_format(state: GameState, all_orders: list[Order]) -> dict[str, A
         'items': item_list,
         'orders': order_list,
         'drop_off': list(ms.drop_off),
-        'drop_off_zones': [list(z) for z in ms.drop_off_zones] if len(ms.drop_off_zones) > 1 else None,
+        'drop_off_zones': [list(z) for z in ms.drop_off_zones] if len(ms.drop_off_zones) > 1 else [],
         'score': state.score,
     }
 

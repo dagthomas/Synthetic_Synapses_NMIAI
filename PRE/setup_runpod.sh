@@ -16,7 +16,7 @@ import torch
 print(f'CUDA available: {torch.cuda.is_available()}')
 if torch.cuda.is_available():
     props = torch.cuda.get_device_properties(0)
-    vram_gb = props.total_mem / (1024**3)
+    vram_gb = props.total_memory / (1024**3)
     print(f'GPU: {props.name}')
     print(f'VRAM: {vram_gb:.0f} GB')
 "

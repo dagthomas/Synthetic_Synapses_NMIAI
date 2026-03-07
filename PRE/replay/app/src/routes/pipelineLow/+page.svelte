@@ -1,5 +1,5 @@
 <script>
-	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310 };
+	const TARGETS = { easy: 150, medium: 225, hard: 260, expert: 310, nightmare: 350 };
 
 	// ── Input State ──────────────────────────────────────────────────────────────
 	let wsUrl          = $state('');
@@ -295,7 +295,7 @@
 	}
 
 	let diffColors = {
-		easy: '#39d353', medium: '#d29922', hard: '#f85149', expert: '#da3633',
+		easy: '#39d353', medium: '#d29922', hard: '#f85149', expert: '#da3633', nightmare: '#a855f7',
 	};
 
 	let logBox = $state(null);

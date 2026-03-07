@@ -16,11 +16,70 @@
 	};
 
 	// ── Input State ──────────────────────────────────────────────────────
+	let mode          = $state('offline'); // 'live' or 'offline'
 	let wsUrl         = $state('');
-	let difficulty    = $state('expert');
+	let difficulty    = $state('nightmare');
+	let captureBot    = $state('auto');   // 'auto', 'zig', 'python'
 	let gpu           = $state('auto');
 	let deepBudget    = $state(300);     // seconds for deep training per iteration
 	let maxStates     = $state('');       // empty = auto
+
+	// auto: Zig for easy-expert, Python for nightmare
+	let activeCaptureBot = $derived(
+		captureBot !== 'auto' ? captureBot
+			: difficulty === 'nightmare' ? 'python' : 'zig'
+	);
+
+	// ── Offline Capture ─────────────────────────────────────────────────
+	let offlineCapture = $state(null);   // loaded capture JSON data
+	let offlineFileName = $state('');
+	let captureLoading = $state(false);
+
+	function handleCaptureFile(e) {
+		const file = e.target.files?.[0];
+		if (!file) return;
+		offlineFileName = file.name;
+		const reader = new FileReader();
+		reader.onload = (ev) => {
+			try {
+				offlineCapture = JSON.parse(ev.target.result);
+				difficulty = offlineCapture.difficulty || difficulty;
+				addLog(`Loaded capture: ${file.name} (${offlineCapture.orders?.length || 0} orders, ${offlineCapture.num_bots} bots, ${offlineCapture.difficulty})`);
+			} catch (err) {
+				addLog(`Failed to parse capture: ${err.message}`);
+				offlineCapture = null;
+			}
+		};
+		reader.readAsText(file);
+	}
+
+	async function autoLoadCapture(diff) {
+		captureLoading = true;
+		try {
+			const today = new Date().toISOString().slice(0, 10);
+			const res = await fetch(`/api/captures?difficulty=${diff}&date=${today}`);
+			const data = await res.json();
+			if (data.found) {
+				offlineCapture = data.capture;
+				offlineFileName = data.filename;
+				addLog(`Auto-loaded: ${data.filename} (${data.orders} orders, ${data.num_bots} bots)`);
+			} else {
+				offlineCapture = null;
+				offlineFileName = '';
+				addLog(`Ingen capture funnet for ${diff} i dag (${today})`);
+			}
+		} catch (e) {
+			addLog(`Auto-load feilet: ${e.message}`);
+		}
+		captureLoading = false;
+	}
+
+	// Auto-load capture when difficulty changes in offline mode
+	$effect(() => {
+		if (mode === 'offline') {
+			autoLoadCapture(difficulty);
+		}
+	});
 
 	// ── Remote GPU ───────────────────────────────────────────────────────
 	let gpuConnected  = $state(false);
@@ -252,6 +311,131 @@
 		addLog(`--- Iteration ${iterNum + 1} complete ---`);
 	}
 
+	// ── Run offline optimize (no token needed) ─────────────────────────
+	async function runOfflineOptimize() {
+		if (!offlineCapture) return;
+		running = true;
+		currentPhase = 'optimize';
+		liveScore = 0;
+		liveRound = 0;
+		liveMaxRound = 0;
+		startTimer();
+
+		const iterNum = iterations.length;
+		addLog(`--- Offline Optimize ${iterNum + 1} (${offlineFileName}) ---`);
+		addLog(`Capture: ${offlineCapture.difficulty}, ${offlineCapture.num_bots} bots, ${offlineCapture.orders?.length} orders`);
+
+		const ctrl = new AbortController();
+		abortCtrl = ctrl;
+
+		try {
+			if (gpuConnected) {
+				// Remote GPU optimize
+				addLog(`Sending to remote GPU (${fmtTime(deepBudget)} budget)...`);
+
+				const gpuRes = await fetch('/api/gpu-remote', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						deep: deepBudget > 120,
+						capture: offlineCapture,
+						params: {
+							difficulty: offlineCapture.difficulty || difficulty,
+							gpu,
+							max_states: maxStates ? parseInt(maxStates) : undefined,
+							max_time: Math.min(120, deepBudget),
+							budget: deepBudget,
+							refine_iters: 20,
+							speed_bonus: 50,
+						},
+					}),
+					signal: ctrl.signal,
+				});
+
+				const result = await gpuRes.json();
+				if (result.error) {
+					addLog(`GPU error: ${result.error}`);
+				} else {
+					addLog(`GPU done: score=${result.score} in ${result.elapsed}s`);
+					for (const evt of (result.events || [])) {
+						handleEvent(evt);
+					}
+
+					if (result.score > bestScore) bestScore = result.score;
+					iterations = [...iterations, {
+						num: iterNum + 1,
+						gameScore: 0,
+						optScore: result.score,
+						deepScore: result.score,
+						bestScore: result.score,
+						orders: offlineCapture.orders?.length || 0,
+						newOrders: 0,
+						elapsed: elapsed,
+					}];
+				}
+			} else {
+				// Local GPU optimize via server endpoint
+				addLog('Sending to local GPU optimize...');
+
+				const localRes = await fetch('/api/stepladder/run', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						url: 'offline',
+						difficulty: offlineCapture.difficulty || difficulty,
+						iteration: iterNum,
+						gpu,
+						deepBudget,
+						maxStates: maxStates ? parseInt(maxStates) : null,
+						offlineCapture,
+					}),
+					signal: ctrl.signal,
+				});
+
+				const reader = localRes.body.getReader();
+				const decoder = new TextDecoder();
+				let buf = '';
+				let optScore = 0;
+
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					buf += decoder.decode(value, { stream: true });
+					const lines = buf.split('\n');
+					buf = lines.pop() || '';
+					for (const line of lines) {
+						if (!line.startsWith('data: ')) continue;
+						try {
+							const evt = JSON.parse(line.slice(6));
+							handleEvent(evt);
+							if (evt.type === 'optimize_done') optScore = evt.score || 0;
+						} catch {}
+					}
+				}
+
+				if (optScore > bestScore) bestScore = optScore;
+				iterations = [...iterations, {
+					num: iterNum + 1,
+					gameScore: 0,
+					optScore,
+					deepScore: optScore,
+					bestScore: optScore,
+					orders: offlineCapture.orders?.length || 0,
+					newOrders: 0,
+					elapsed: elapsed,
+				}];
+			}
+		} catch (e) {
+			if (e.name !== 'AbortError') {
+				addLog(`Error: ${e.message}`);
+			}
+		}
+
+		running = false;
+		stopTimer();
+		addLog(`--- Offline Optimize ${iterNum + 1} complete ---`);
+	}
+
 	function stopIteration() {
 		if (abortCtrl) abortCtrl.abort();
 		running = false;
@@ -386,26 +570,68 @@
 
 	<!-- Controls -->
 	<div class="controls">
-		<div class="input-row">
-			<label>
-				<span class="label">WSS Token URL</span>
-				<input type="text" bind:value={wsUrl} placeholder="wss://game.ainm.no/ws?token=..."
-					disabled={running} class="url-input" />
-			</label>
+		<!-- Mode toggle -->
+		<div class="mode-toggle">
+			<button class="mode-btn" class:active={mode === 'live'} onclick={() => mode = 'live'} disabled={running}>
+				Live (Token)
+			</button>
+			<button class="mode-btn" class:active={mode === 'offline'} onclick={() => mode = 'offline'} disabled={running}>
+				Offline (Capture)
+			</button>
 		</div>
 
+		{#if mode === 'live'}
+			<div class="input-row">
+				<label>
+					<span class="label">WSS Token URL</span>
+					<input type="text" bind:value={wsUrl} placeholder="wss://game.ainm.no/ws?token=..."
+						disabled={running} class="url-input" />
+				</label>
+			</div>
+		{:else}
+			<!-- Capture info box -->
+			<div class="capture-info" class:has-capture={offlineCapture} class:loading={captureLoading}>
+				{#if captureLoading}
+					<span class="capture-status">Laster capture...</span>
+				{:else if offlineCapture}
+					<span class="capture-dot"></span>
+					<span class="capture-file">{offlineFileName}</span>
+					<span class="capture-meta">{offlineCapture.difficulty} | {offlineCapture.num_bots} bots | {offlineCapture.orders?.length} orders</span>
+					<button class="btn-small" onclick={() => autoLoadCapture(difficulty)}>Refresh</button>
+				{:else}
+					<span class="capture-status none">Ingen capture for {difficulty} i dag</span>
+				{/if}
+			</div>
+			<div class="input-row">
+				<label>
+					<span class="label">Eller last manuelt</span>
+					<input type="file" accept=".json" onchange={handleCaptureFile} disabled={running} class="file-input" />
+				</label>
+			</div>
+		{/if}
+
 		<div class="input-row compact">
-			<label>
+			<label title="Vanskelighetsgrad. Bestemmer kart-storrelse, antall bots og orders.">
 				<span class="label">Difficulty</span>
 				<select bind:value={difficulty} disabled={running}>
-					<option value="easy">Easy</option>
-					<option value="medium">Medium</option>
-					<option value="hard">Hard</option>
-					<option value="expert">Expert</option>
+					<option value="easy">Easy (1 bot)</option>
+					<option value="medium">Medium (3 bots)</option>
+					<option value="hard">Hard (5 bots)</option>
+					<option value="expert">Expert (10 bots)</option>
+					<option value="nightmare">Nightmare (20 bots)</option>
 				</select>
 			</label>
 
-			<label>
+			<label title="Bot brukt for capture (live-modus). Zig: rask C-bot (stotter ikke nightmare). Python: live_gpu_stream.py (stotter alle). Auto: Zig for easy-expert, Python for nightmare.">
+				<span class="label">Capture Bot</span>
+				<select bind:value={captureBot} disabled={running}>
+					<option value="auto">Auto ({activeCaptureBot})</option>
+					<option value="zig">Zig</option>
+					<option value="python">Python</option>
+				</select>
+			</label>
+
+			<label title="Hvilken GPU-profil som brukes. Bestemmer default max_states, orderings, refine-iterasjoner. B200 har 192GB VRAM og kan kjore mye storre sokerom enn 5090 (32GB).">
 				<span class="label">GPU</span>
 				<select bind:value={gpu} disabled={running}>
 					<option value="auto">Auto-detect</option>
@@ -414,7 +640,7 @@
 				</select>
 			</label>
 
-			<label>
+			<label title="Total tidsbudsjett for deep training. Fordeles over 3 faser: Exploration (30%), Intensification (50%), LNS (20%). Lengre = bedre score, men avtagende utbytte etter ~30 min.">
 				<span class="label">Deep Budget</span>
 				<select bind:value={deepBudget} disabled={running}>
 					{#each DEEP_PRESETS as p}
@@ -423,11 +649,47 @@
 				</select>
 			</label>
 
-			<label>
+			<label title="Maks antall DP-tilstander per bot. Hoyre = bedre planlegging men bruker mer VRAM og tid. Tomme = auto (velges fra GPU-profil). Typisk: 30K (5090 nightmare), 100K (B200 nightmare), 200K (B200 expert).">
 				<span class="label">Max States</span>
 				<input type="text" bind:value={maxStates} placeholder="auto" disabled={running} class="states-input" />
 			</label>
 		</div>
+
+		<!-- Config forklaring -->
+		<details class="config-help">
+			<summary>Hva betyr innstillingene?</summary>
+			<div class="config-grid">
+				<div class="config-item">
+					<strong>Max States</strong>
+					<p>Antall tilstander i DP-soket per bot. Hver tilstand er en unik (posisjon, inventar, order-status)-kombinasjon.
+					Hoyre verdi = dypere sok = bedre ruter, men bruker mer GPU-minne (VRAM).
+					<em>5090 (32GB):</em> 30K nightmare, 50K expert.
+					<em>B200 (192GB):</em> 100K nightmare, 200K expert.</p>
+				</div>
+				<div class="config-item">
+					<strong>Deep Budget</strong>
+					<p>Total tid for deep training, fordelt over 3 faser:</p>
+					<ul>
+						<li><em>Exploration (30%)</em> — Tester mange bot-orderings med lave states. Finner gode kandidat-rekkefölger.</li>
+						<li><em>Intensification (50%)</em> — Dyp refinement med höye states + joint multi-bot DP. Forbedrer beste löning.</li>
+						<li><em>LNS (20%)</em> — Large Neighborhood Search: ödelegger deler av löningen og reparerer. Unslipper lokale optima.</li>
+					</ul>
+					<p>5 min gir rask feedback. 30+ min gir vesentlig bedre score. Avtagende utbytte etter ~1 time.</p>
+				</div>
+				<div class="config-item">
+					<strong>GPU-profil</strong>
+					<p>Bestemmer default-verdier for max_states, orderings, refine-iterasjoner og squad-storrelse.
+					<em>B200</em> har 6x mer VRAM enn 5090, og kan kjore 4-bot joint DP (vs 2-bot pa 5090) og 200 orderings (vs 3).</p>
+				</div>
+				<div class="config-item">
+					<strong>Difficulty</strong>
+					<p>
+						<em>Expert:</em> 28x18 kart, 10 bots, 16 varetyper, 4-6 items/order, 300 runder.<br/>
+						<em>Nightmare:</em> 30x18 kart, 20 bots, 21 varetyper, 4-7 items/order, 500 runder, 3 drop-off soner.
+					</p>
+				</div>
+			</div>
+		</details>
 
 		<div class="action-row">
 			{#if running}
@@ -443,9 +705,13 @@
 					{/if}
 					<span class="timer">{fmtTime(elapsed)}</span>
 				</div>
-			{:else}
+			{:else if mode === 'live'}
 				<button class="btn btn-run" onclick={runIteration} disabled={!wsUrl.trim()}>
 					Run Iteration {iterations.length + 1}
+				</button>
+			{:else}
+				<button class="btn btn-run" onclick={runOfflineOptimize} disabled={!offlineCapture}>
+					Optimize Capture
 				</button>
 			{/if}
 		</div>
@@ -454,12 +720,12 @@
 	<!-- Stats bar -->
 	<div class="stats-bar">
 		<div class="stat">
-			<span class="stat-label">Iterations</span>
-			<span class="stat-value">{iterations.length}</span>
+			<span class="stat-label">Mode</span>
+			<span class="stat-value">{mode === 'offline' ? 'Offline' : activeCaptureBot.toUpperCase()}</span>
 		</div>
 		<div class="stat">
-			<span class="stat-label">Orders</span>
-			<span class="stat-value accent">{totalOrders}</span>
+			<span class="stat-label">Capture</span>
+			<span class="stat-value accent">{offlineCapture ? `${offlineCapture.orders?.length || 0} ord` : totalOrders ? `${totalOrders} ord` : '-'}</span>
 		</div>
 		<div class="stat">
 			<span class="stat-label">Best Score</span>
@@ -515,19 +781,21 @@
 		<div class="section">
 			<h2>Score Progress</h2>
 			<div class="chart">
-				{@const maxScore = Math.max(...iterations.map(i => i.bestScore), 1)}
-				{@const barW = Math.min(60, Math.floor(600 / iterations.length))}
-				<svg width={iterations.length * (barW + 4) + 40} height="140" viewBox="0 0 {iterations.length * (barW + 4) + 40} 140">
-					{#each iterations as iter, idx}
-						{@const h = (iter.bestScore / maxScore) * 110}
-						<rect x={idx * (barW + 4) + 30} y={120 - h} width={barW} height={h}
-							fill="#39d353" opacity="0.8" rx="2" />
-						<text x={idx * (barW + 4) + 30 + barW/2} y={115 - h} fill="#e6edf3" font-size="10"
-							text-anchor="middle">{iter.bestScore}</text>
-						<text x={idx * (barW + 4) + 30 + barW/2} y={135} fill="#8b949e" font-size="9"
-							text-anchor="middle">#{iter.num}</text>
-					{/each}
-				</svg>
+				{#if true}
+					{@const maxScore = Math.max(...iterations.map(i => i.bestScore), 1)}
+					{@const barW = Math.min(60, Math.floor(600 / iterations.length))}
+					<svg width={iterations.length * (barW + 4) + 40} height="140" viewBox="0 0 {iterations.length * (barW + 4) + 40} 140">
+						{#each iterations as iter, idx}
+							{@const h = (iter.bestScore / maxScore) * 110}
+							<rect x={idx * (barW + 4) + 30} y={120 - h} width={barW} height={h}
+								fill="#39d353" opacity="0.8" rx="2" />
+							<text x={idx * (barW + 4) + 30 + barW/2} y={115 - h} fill="#e6edf3" font-size="10"
+								text-anchor="middle">{iter.bestScore}</text>
+							<text x={idx * (barW + 4) + 30 + barW/2} y={135} fill="#8b949e" font-size="9"
+								text-anchor="middle">#{iter.num}</text>
+						{/each}
+					</svg>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -631,6 +899,124 @@
 	.explanation li { margin-bottom: 0.3rem; }
 	.explanation strong { color: var(--text); }
 	.explanation em { color: var(--accent); font-style: normal; }
+
+	/* Mode toggle */
+	.mode-toggle {
+		display: flex;
+		gap: 0;
+		margin-bottom: 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+	.mode-btn {
+		flex: 1;
+		padding: 0.4rem 0.8rem;
+		background: rgba(13, 17, 23, 0.5);
+		border: none;
+		color: var(--text-muted);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+	.mode-btn:first-child { border-right: 1px solid var(--border); }
+	.mode-btn.active {
+		background: rgba(57, 211, 83, 0.15);
+		color: var(--accent);
+	}
+	.mode-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	/* Capture info */
+	.capture-info {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.8rem;
+		border-radius: 4px;
+		font-size: 0.8rem;
+		margin-bottom: 0.5rem;
+		border: 1px solid var(--border);
+		background: rgba(13, 17, 23, 0.5);
+	}
+	.capture-info.has-capture {
+		background: rgba(57, 211, 83, 0.06);
+		border-color: rgba(57, 211, 83, 0.2);
+	}
+	.capture-info.loading {
+		opacity: 0.6;
+	}
+	.capture-dot {
+		width: 8px; height: 8px;
+		border-radius: 50%;
+		background: var(--accent);
+		flex-shrink: 0;
+	}
+	.capture-file {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--accent);
+		font-weight: 600;
+	}
+	.capture-meta {
+		font-size: 0.72rem;
+		color: var(--text-muted);
+		font-family: var(--font-mono);
+	}
+	.capture-status {
+		color: var(--text-muted);
+	}
+	.capture-status.none {
+		color: #f85149;
+	}
+
+	/* File input */
+	.file-input {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	/* Config help */
+	.config-help {
+		margin-top: 0.5rem;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		background: rgba(13, 17, 23, 0.4);
+	}
+	.config-help summary {
+		padding: 0.4rem 0.8rem;
+		cursor: pointer;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+	}
+	.config-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.75rem;
+		padding: 0 0.8rem 0.8rem;
+	}
+	.config-item strong {
+		display: block;
+		font-size: 0.78rem;
+		color: var(--accent);
+		margin-bottom: 0.2rem;
+	}
+	.config-item p, .config-item ul {
+		font-size: 0.72rem;
+		color: var(--text-muted);
+		line-height: 1.5;
+		margin: 0;
+	}
+	.config-item ul {
+		padding-left: 1rem;
+		margin-top: 0.2rem;
+	}
+	.config-item li { margin-bottom: 0.15rem; }
+	.config-item em {
+		color: var(--text);
+		font-style: normal;
+		font-weight: 600;
+	}
 
 	/* Controls */
 	.controls {

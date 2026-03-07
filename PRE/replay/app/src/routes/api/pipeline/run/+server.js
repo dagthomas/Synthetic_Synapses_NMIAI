@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { readdirSync, statSync } from 'fs';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
-import { GPU_DIR } from '$lib/paths.server.js';
+import { GPU_DIR, PYTHON } from '$lib/paths.server.js';
 
 export async function POST({ request }) {
 	const { url, postOptimizeTime = 1800 } = await request.json();
@@ -41,7 +41,7 @@ export async function POST({ request }) {
 				'--post-optimize-time', String(postOptimizeTime),
 			];
 
-			ctx.process = spawn('python', args, {
+			ctx.process = spawn(PYTHON, args, {
 				cwd: GPU_DIR,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});
@@ -87,7 +87,7 @@ export async function POST({ request }) {
 						.sort((a, b) => b.mtime - a.mtime);
 					if (files.length > 0) {
 						const logFile = resolve(GPU_DIR, files[0].name);
-						const importer = spawn('python', [importScript, logFile, '--run-type', 'live'], {
+						const importer = spawn(PYTHON, [importScript, logFile, '--run-type', 'live'], {
 							stdio: 'ignore',
 						});
 						importer.on('error', () => {});

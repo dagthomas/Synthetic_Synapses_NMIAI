@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'child_process';
 import { resolve } from 'path';
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, copyFileSync, rmSync } from 'fs';
 import { createCleanup, createSendEvent } from '$lib/sse.server.js';
-import { ZIG_BOT_DIR, GPU_DIR, REPLAY_DIR } from '$lib/paths.server.js';
+import { ZIG_BOT_DIR, GPU_DIR, REPLAY_DIR, PYTHON } from '$lib/paths.server.js';
 
 const BOT_DIR = ZIG_BOT_DIR;
 
@@ -65,7 +65,7 @@ export async function POST({ request }) {
 
 					sendEvent('log', { text: `[capture] Extracting orders from ${logPath.split(/[\\/]/).pop()}...`, _iter: iter });
 
-					const proc = spawn('python', [
+					const proc = spawn(PYTHON, [
 						'capture_from_game_log.py', logPath, difficulty,
 					], { cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -137,7 +137,7 @@ export async function POST({ request }) {
 			function getOrderCount(diff) {
 				if (!diff) return 0;
 				try {
-					const result = spawnSync('python', ['-u', 'db_query.py', 'order_count', diff], { cwd: GPU_DIR, timeout: 5000 });
+					const result = spawnSync(PYTHON, ['-u', 'db_query.py', 'order_count', diff], { cwd: GPU_DIR, timeout: 5000 });
 					const data = JSON.parse(result.stdout.toString());
 					return data.count || 0;
 				} catch (e) { return 0; }
@@ -147,7 +147,7 @@ export async function POST({ request }) {
 			function solutionExists(diff) {
 				if (!diff) return false;
 				try {
-					const result = spawnSync('python', ['-u', 'db_query.py', 'solution_exists', diff], { cwd: GPU_DIR, timeout: 5000 });
+					const result = spawnSync(PYTHON, ['-u', 'db_query.py', 'solution_exists', diff], { cwd: GPU_DIR, timeout: 5000 });
 					const data = JSON.parse(result.stdout.toString());
 					return data.exists || false;
 				} catch (e) { return false; }
@@ -283,7 +283,7 @@ export async function POST({ request }) {
 					];
 					if (opts.preloadCapture) args.push('--preload-capture');
 
-					ctx.process = spawn('python', args, {
+					ctx.process = spawn(PYTHON, args, {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
@@ -350,7 +350,7 @@ export async function POST({ request }) {
 					if (opts.maxStates) args.push('--max-states', String(opts.maxStates));
 					if (opts.speedBonus) args.push('--speed-bonus', String(opts.speedBonus));
 
-					ctx.process = spawn('python', args, {
+					ctx.process = spawn(PYTHON, args, {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
@@ -404,7 +404,7 @@ export async function POST({ request }) {
 					const replayArgs = ['replay_solution.py', url, '--difficulty', difficulty];
 
 					const replayStartMs = Date.now();
-					ctx.process = spawn('python', replayArgs, {
+					ctx.process = spawn(PYTHON, replayArgs, {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
 					});
 
@@ -522,7 +522,7 @@ export async function POST({ request }) {
 			// ── Phase: Export DP plan for Zig replay ─────────────────────
 			function exportDpPlan(difficulty) {
 				return new Promise((res) => {
-					const proc = spawn('python', [
+					const proc = spawn(PYTHON, [
 						'-u', 'export_plan_for_zig.py', difficulty,
 					], { cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -558,7 +558,7 @@ export async function POST({ request }) {
 					const dpPlan = resolve(tmpDir, `dp_plan_${difficulty}.json`);
 					const captureJson = resolve(tmpDir, `capture_${difficulty}.json`);
 
-					const dpResult = spawnSync('python', ['-u', 'db_query.py', 'export_dp_plan', difficulty, dpPlan], { cwd: GPU_DIR, timeout: 10000 });
+					const dpResult = spawnSync(PYTHON, ['-u', 'db_query.py', 'export_dp_plan', difficulty, dpPlan], { cwd: GPU_DIR, timeout: 10000 });
 					let hasDpPlan = false;
 					try { hasDpPlan = JSON.parse(dpResult.stdout.toString()).ok; } catch (e) {}
 
@@ -568,7 +568,7 @@ export async function POST({ request }) {
 						return;
 					}
 
-					const capResult = spawnSync('python', ['-u', 'db_query.py', 'export_capture', difficulty, captureJson], { cwd: GPU_DIR, timeout: 10000 });
+					const capResult = spawnSync(PYTHON, ['-u', 'db_query.py', 'export_capture', difficulty, captureJson], { cwd: GPU_DIR, timeout: 10000 });
 					let hasCapture = false;
 					try { hasCapture = JSON.parse(capResult.stdout.toString()).ok; } catch (e) {}
 
@@ -657,7 +657,7 @@ export async function POST({ request }) {
 				if (!logPath) return;
 				const importScript = resolve(BOT_DIR, 'replay', 'import_logs.py');
 				try {
-					spawn('python', [importScript, logPath, '--run-type', runType], { stdio: 'ignore' })
+					spawn(PYTHON, [importScript, logPath, '--run-type', runType], { stdio: 'ignore' })
 						.on('error', () => {});
 					sendEvent('log', { text: `[db] Importing as ${runType}`, _iter: iter });
 				} catch (e) { /* best-effort */ }
@@ -803,7 +803,7 @@ export async function POST({ request }) {
 				// Crack all future orders using seed 7004 (expert only, best-effort)
 				if (difficulty === 'expert') {
 					sendEvent('log', { text: '[pipeline] Cracking orders with seed 7004...', _iter: 0 });
-					const crackResult = spawnSync('python', ['-u', 'crack_orders.py', difficulty], {
+					const crackResult = spawnSync(PYTHON, ['-u', 'crack_orders.py', difficulty], {
 						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000,
 					});
 					if (crackResult.stderr) {

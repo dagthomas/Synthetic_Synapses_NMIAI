@@ -4,7 +4,7 @@ import { GPU_DIR } from '$lib/paths.server.js';
 
 const SOLUTIONS_DIR = resolve(GPU_DIR, 'solutions');
 
-const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'];
+const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert', 'nightmare'];
 
 function loadMeta(difficulty) {
 	try {

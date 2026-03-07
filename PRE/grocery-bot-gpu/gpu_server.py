@@ -42,38 +42,31 @@ def gpu_info():
 def run_optimize(capture_data: dict, params: dict) -> dict:
     """Run GPU optimization on capture data. Returns solution dict."""
     from gpu_sequential_solver import solve_sequential, refine_from_solution
-    from game_engine import CaptureData
 
     difficulty = params.get("difficulty", "expert")
     max_states = params.get("max_states", 200000)
     max_time = params.get("max_time", 120)
     refine_iters = params.get("refine_iters", 20)
-    orderings = params.get("orderings", 3)
     speed_bonus = params.get("speed_bonus", 50.0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     t0 = time.time()
     events = []
 
-    def on_bot(bot_id, num_bots, score, bot_time):
-        events.append({"type": "gpu_bot_done", "bot": bot_id,
-                       "num_bots": num_bots, "score": score,
-                       "elapsed": round(bot_time, 1)})
-
     def on_phase(phase_name, iteration, cpu_score):
         events.append({"type": "gpu_phase", "phase": phase_name,
                        "iteration": iteration, "score": cpu_score})
+        print(f"  [opt] {phase_name} iter={iteration} score={cpu_score}", flush=True)
 
     # Pass 1: sequential solve
     score, actions = solve_sequential(
-        capture_data,
+        capture_data=capture_data,
+        difficulty=difficulty,
         device=device,
         max_states=max_states,
-        on_bot_done=on_bot,
-        on_phase_done=on_phase,
-        max_time=max_time,
-        speed_bonus=speed_bonus,
-        orderings=orderings,
+        max_refine_iters=refine_iters,
+        on_phase=on_phase,
+        verbose=True,
     )
 
     # Pass 2+: refine
@@ -81,14 +74,14 @@ def run_optimize(capture_data: dict, params: dict) -> dict:
     remaining = max_time - elapsed
     if remaining > 10 and score > 0:
         ref_score, ref_actions = refine_from_solution(
-            capture_data, actions,
+            actions,
+            capture_data=capture_data,
+            difficulty=difficulty,
             device=device,
             max_states=max_states,
-            max_iters=refine_iters,
-            max_time=remaining,
-            on_bot_done=on_bot,
-            on_phase_done=on_phase,
-            speed_bonus=speed_bonus * 0.5,
+            max_refine_iters=refine_iters,
+            on_phase=on_phase,
+            verbose=True,
         )
         if ref_score > score:
             score, actions = ref_score, ref_actions
