@@ -14,7 +14,7 @@ def detect_gpu() -> str:
             return 'generic'
         props = torch.cuda.get_device_properties(0)
         name = props.name.lower()
-        vram_gb = props.total_mem / (1024 ** 3)
+        vram_gb = props.total_memory / (1024 ** 3)
 
         if 'b200' in name or vram_gb > 150:
             return 'b200'
@@ -31,7 +31,7 @@ def get_vram_gb() -> float:
     try:
         import torch
         if torch.cuda.is_available():
-            return torch.cuda.get_device_properties(0).total_mem / (1024 ** 3)
+            return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
     except Exception:
         pass
     return 0.0

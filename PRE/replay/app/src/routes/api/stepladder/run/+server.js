@@ -372,6 +372,16 @@ export async function POST({ request }) {
 				});
 			}
 
+			// ── Load capture data from DB (for remote GPU) ────────────
+			function loadCaptureData() {
+				try {
+					const r = spawnSync(process.platform === 'win32' ? 'python' : 'python3',
+						['-u', 'db_query.py', 'export_capture_json', difficulty],
+						{ cwd: GPU_DIR, timeout: 10000 });
+					return JSON.parse(r.stdout.toString());
+				} catch { return null; }
+			}
+
 			// ── Main iteration ─────────────────────────────────────────
 			(async () => {
 				const ordersBefore = getOrderCount();
@@ -407,27 +417,33 @@ export async function POST({ request }) {
 					before: ordersBefore, after: ordersAfter, new_orders: newOrders,
 				});
 
-				if (ctx.closed) { cleanup(); return; }
-
-				// Step 3: GPU optimize (quick, within token window remainder)
-				const optResult = await runGpuOptimize(Math.min(60, 240 - elapsed()));
-
-				if (ctx.closed) { cleanup(); return; }
-
-				// Step 4: Deep training (offline, uses full budget)
-				let deepScore = 0;
-				if (deepBudget > 30) {
-					const dr = await runDeepTraining(deepBudget);
-					deepScore = dr.score;
+				// Emit capture data for remote GPU mode
+				const captureJson = loadCaptureData();
+				if (captureJson) {
+					sendEvent('capture_data', { data: captureJson });
 				}
 
-				const bestScore = Math.max(gameScore, optResult.score, deepScore, prevScore);
+				if (ctx.closed) { cleanup(); return; }
+
+				// Step 3+4: Local GPU optimize + deep (skip if deepBudget=0, i.e. remote mode)
+				let optScore = 0, deepScore = 0;
+				if (deepBudget > 0) {
+					const optResult = await runGpuOptimize(Math.min(60, 240 - elapsed()));
+					optScore = optResult.score;
+
+					if (!ctx.closed && deepBudget > 30) {
+						const dr = await runDeepTraining(deepBudget);
+						deepScore = dr.score;
+					}
+				}
+
+				const bestScore = Math.max(gameScore, optScore, deepScore, prevScore);
 				const finalOrders = getOrderCount();
 
 				sendEvent('iter_done', {
 					iteration,
 					game_score: gameScore,
-					opt_score: optResult.score,
+					opt_score: optScore,
 					deep_score: deepScore,
 					best_score: bestScore,
 					orders: finalOrders,

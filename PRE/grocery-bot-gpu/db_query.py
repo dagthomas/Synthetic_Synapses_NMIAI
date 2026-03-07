@@ -57,6 +57,19 @@ def main():
         else:
             print(json.dumps({'ok': False, 'error': 'no capture'}))
 
+    elif cmd == 'export_capture_json':
+        diff = sys.argv[2]
+        cap = load_capture(diff)
+        if cap:
+            print(json.dumps(cap))
+        else:
+            print(json.dumps(None))
+
+    elif cmd == 'solution_score':
+        diff = sys.argv[2] if len(sys.argv) > 2 else None
+        meta = load_meta(diff) if diff else None
+        print(json.dumps({'score': meta['score'] if meta else 0}))
+
     elif cmd == 'summary':
         date = sys.argv[2] if len(sys.argv) > 2 else None
         result = {'date': date or _today(), 'solutions': {}}
