@@ -802,11 +802,6 @@ class AnytimeGPUStream:
         gen = self._solve_gen
         self._start_mapf(gen)
 
-        # Try to crack the seed for full order foresight (multi-bot only).
-        # Runs in daemon thread; upgrades GPU plan when seed found.
-        if self._num_bots > 1:
-            self._crack_seed_async(data)
-
         # Single-bot: full sequential GPU DP (completes in ~3s, optimal).
         # Multi-bot: GPU warm-start refinement from MAPF plan (much faster than full DP).
         # Pipeline mode: skip offline GPU passes — they block the GIL for 3-4s per pass,
@@ -2608,7 +2603,7 @@ def main() -> None:
                              'Events: init, round, plan_upgrade, gpu_pass_done, '
                              'game_over, post_optimize_*, pipeline_done.')
     parser.add_argument('--preload-capture', action='store_true',
-                        help='Pre-load existing solutions/<diff>/capture.json at round 0. '
+                        help='Pre-load existing capture from DB at round 0. '
                              'Injects all known orders so GPU starts optimizing with the '
                              'full order list immediately (prevents gen restarts per order).')
     parser.add_argument('--record', action='store_true',

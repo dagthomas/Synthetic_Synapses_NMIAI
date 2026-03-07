@@ -136,20 +136,24 @@ export async function POST({ request }) {
 				} catch (e) { return null; }
 			}
 
-			// ── Count orders in capture.json ────────────────────────────
+			// ── Count orders from DB ────────────────────────────────────
 			function getOrderCount(diff) {
 				if (!diff) return 0;
-				const captureFile = resolve(GPU_DIR, 'solutions', diff, 'capture.json');
 				try {
-					const data = JSON.parse(readFileSync(captureFile, 'utf-8'));
-					return (data.orders || []).length;
+					const result = spawnSync('python', ['-u', 'db_query.py', 'order_count', diff], { cwd: GPU_DIR, timeout: 5000 });
+					const data = JSON.parse(result.stdout.toString());
+					return data.count || 0;
 				} catch (e) { return 0; }
 			}
 
-			// ── Check if a GPU solution exists ──────────────────────────
+			// ── Check if a GPU solution exists in DB ────────────────────
 			function solutionExists(diff) {
 				if (!diff) return false;
-				return existsSync(resolve(GPU_DIR, 'solutions', diff, 'best.json'));
+				try {
+					const result = spawnSync('python', ['-u', 'db_query.py', 'solution_exists', diff], { cwd: GPU_DIR, timeout: 5000 });
+					const data = JSON.parse(result.stdout.toString());
+					return data.exists || false;
+				} catch (e) { return false; }
 			}
 
 			// ── Phase: Zig bot play (fallback for iter 0) ───────────────
@@ -544,18 +548,35 @@ export async function POST({ request }) {
 						_elapsed: elapsedSecs(), _remaining: remaining(),
 					});
 
-					const dpPlan = resolve(GPU_DIR, 'solutions', difficulty, 'dp_plan.json');
-					const captureJson = resolve(GPU_DIR, 'solutions', difficulty, 'capture.json');
 					const exe = resolve(ZIG_BOT_DIR, 'zig-out', 'bin', 'grocery-bot.exe');
-
-					if (!existsSync(exe) || !existsSync(dpPlan)) {
-						sendEvent('log', { text: `[zig-replay] Missing exe or dp_plan, falling back to Python replay`, _iter: iter });
+					if (!existsSync(exe)) {
+						sendEvent('log', { text: `[zig-replay] Missing exe, falling back to Python replay`, _iter: iter });
 						resolvePhase({ score: 0, logPath: null, fallback: true });
 						return;
 					}
 
+					// Export dp_plan and capture from DB to temp files
+					const tmpDir = resolve(GPU_DIR, '.tmp');
+					try { if (!existsSync(tmpDir)) { const { mkdirSync } = require('fs'); mkdirSync(tmpDir, { recursive: true }); } } catch (e) {}
+					const dpPlan = resolve(tmpDir, `dp_plan_${difficulty}.json`);
+					const captureJson = resolve(tmpDir, `capture_${difficulty}.json`);
+
+					const dpResult = spawnSync('python', ['-u', 'db_query.py', 'export_dp_plan', difficulty, dpPlan], { cwd: GPU_DIR, timeout: 10000 });
+					let hasDpPlan = false;
+					try { hasDpPlan = JSON.parse(dpResult.stdout.toString()).ok; } catch (e) {}
+
+					if (!hasDpPlan) {
+						sendEvent('log', { text: `[zig-replay] No dp_plan in DB, falling back to Python replay`, _iter: iter });
+						resolvePhase({ score: 0, logPath: null, fallback: true });
+						return;
+					}
+
+					const capResult = spawnSync('python', ['-u', 'db_query.py', 'export_capture', difficulty, captureJson], { cwd: GPU_DIR, timeout: 10000 });
+					let hasCapture = false;
+					try { hasCapture = JSON.parse(capResult.stdout.toString()).ok; } catch (e) {}
+
 					const args = [exe, url, '--dp-plan', dpPlan];
-					if (existsSync(captureJson)) {
+					if (hasCapture) {
 						args.push('--precomputed', captureJson);
 					}
 
@@ -657,28 +678,7 @@ export async function POST({ request }) {
 				// Solutions persist across keys (same day = same seed).
 				const solDir = resolve(GPU_DIR, "solutions");
 
-				// Seed capture from order_lists if available (persistent known orders)
-				const orderListsDir = resolve(GPU_DIR, "order_lists");
-				for (const diff2 of ["easy", "medium", "hard", "expert"]) {
-					const orderFile = resolve(orderListsDir, diff2 + "_orders.json");
-					const captureFile = resolve(solDir, diff2, "capture.json");
-					if (existsSync(orderFile)) {
-						try {
-							const orderData = JSON.parse(readFileSync(orderFile, "utf-8"));
-							const knownOrders = (orderData.orders || []).map(o => ({
-								items_required: o.items_required,
-							}));
-							if (existsSync(captureFile)) {
-								const capture = JSON.parse(readFileSync(captureFile, "utf-8"));
-								const existingCount = (capture.orders || []).length;
-								if (knownOrders.length > existingCount) {
-									capture.orders = knownOrders;
-									writeFileSync(captureFile, JSON.stringify(capture, null, 2));
-								}
-							}
-						} catch (e) { /* order seed failed */ }
-					}
-				}
+				// Orders are stored in PostgreSQL (date-keyed), no flat file seeding needed.
 
 				let bestScore = 0;
 				let difficulty = parseDifficultyFromUrl(url);

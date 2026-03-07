@@ -224,7 +224,6 @@ def main():
     capture, score, difficulty = extract_capture(log_path, args.difficulty)
 
     merged, num_new, total = merge_capture(difficulty, capture)
-    save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'solutions', difficulty, 'capture.json')
 
     if num_new > 0:
         print(f"Merged {num_new} new orders (total: {total}, was: {total - num_new})", file=sys.stderr)
@@ -272,7 +271,7 @@ def main():
         'num_bots': merged['num_bots'],
         'grid': f"{merged['grid']['width']}x{merged['grid']['height']}",
         'probe_score': score,
-        'path': save_path,
+        'storage': 'postgres',
     }
     print(json.dumps(result), flush=True)
 

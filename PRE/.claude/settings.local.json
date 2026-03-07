@@ -9,7 +9,8 @@
       "mcp__nmiai__list_docs",
       "mcp__ide__getDiagnostics",
       "Bash(PGPASSWORD=grocery123 psql:*)",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(head:*)"
     ]
   }
 }

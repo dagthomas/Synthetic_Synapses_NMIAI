@@ -133,7 +133,7 @@ if __name__ == '__main__':
               file=sys.stderr)
     else:
         save_capture(difficulty, capture)
-        print(f"Capture saved to solutions/{difficulty}/capture.json", file=sys.stderr)
+        print(f"Capture saved to DB ({difficulty})", file=sys.stderr)
 
     # Auto-import to PostgreSQL as a 'live' run
     try:

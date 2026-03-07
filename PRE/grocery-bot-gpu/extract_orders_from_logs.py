@@ -135,8 +135,7 @@ def main():
             idx = int(oid.split('_')[1])
             print(f"    {idx:3d}: {items}")
 
-        # Save to capture file
-        capture_file = os.path.join(os.path.dirname(__file__), f'captured_orders_{diff}.json')
+        # Save to DB via merge_capture
         capture_data = {
             'difficulty': diff,
             'total_orders_discovered': len(sorted_orders),
@@ -152,9 +151,12 @@ def main():
             if sample['items']:
                 capture_data['items'] = sample['items']
 
-        with open(capture_file, 'w') as f:
-            json.dump(capture_data, f, indent=2)
-        print(f"\n  Saved to {os.path.basename(capture_file)}")
+        try:
+            from solution_store import merge_capture
+            merged, num_new, total = merge_capture(diff, capture_data)
+            print(f"\n  Saved to DB ({total} orders, +{num_new} new)")
+        except Exception as e:
+            print(f"\n  DB save error: {e}")
         print()
 
     # Handle unknown difficulties

@@ -914,7 +914,7 @@ class LiveMultiSolver:
         if save_capture:
             from solution_store import save_capture as store_capture
             store_capture(self.difficulty, self.capture)
-            print(f"  Capture saved: solutions/{self.difficulty}/capture.json", file=sys.stderr)
+            print(f"  Capture saved to DB ({self.difficulty})", file=sys.stderr)
 
         # Build map_state for action format conversion
         self.ms = build_map_from_capture(self.capture)

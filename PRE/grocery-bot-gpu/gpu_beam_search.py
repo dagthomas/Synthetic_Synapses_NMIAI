@@ -3596,4 +3596,4 @@ if __name__ == '__main__':
     actions_to_save = [[(act, item)] for (act, item) in actions]
     saved = save_solution(args.difficulty, score, actions_to_save, seed=args.seed or 0, force=True)
     if saved:
-        print(f"Solution saved: solutions/{args.difficulty}/best.json (score={score})")
+        print(f"Solution saved to DB ({args.difficulty}, score={score})")

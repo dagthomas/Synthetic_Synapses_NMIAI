@@ -21,14 +21,12 @@ from game_engine import build_map, generate_order_from_rng
 
 
 def load_captured_orders(difficulty: str) -> list[list[str]]:
-    """Load captured orders from solution store."""
-    capture_path = os.path.join(
-        os.path.dirname(__file__), 'solutions', difficulty, 'capture.json')
-    if not os.path.exists(capture_path):
-        print(f"No capture file at {capture_path}", file=sys.stderr)
+    """Load captured orders from DB."""
+    from solution_store import load_capture
+    data = load_capture(difficulty)
+    if data is None:
+        print(f"No capture found in DB for {difficulty}", file=sys.stderr)
         sys.exit(1)
-    with open(capture_path) as f:
-        data = json.load(f)
     return [o['items_required'] for o in data['orders']]
 
 
