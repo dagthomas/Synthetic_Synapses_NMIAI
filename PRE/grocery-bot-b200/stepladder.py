@@ -104,6 +104,20 @@ def _gpu_optimize_quick(difficulty: str, max_states: int,
         return 0, 0.0
 
 
+def _nightmare_optimize_quick(max_time_s: float = 60) -> int:
+    """Quick nightmare training within token window."""
+    try:
+        from nightmare_offline import train_from_capture
+        capture = load_capture('nightmare')
+        if not capture:
+            return 0
+        score, _ = train_from_capture(capture, max_time=max_time_s, verbose=False)
+        return score
+    except Exception as e:
+        print(f"  Nightmare optimize failed: {e}", file=sys.stderr)
+        return 0
+
+
 def run_stepladder(difficulty: str, hours: float = 6.0,
                    max_states: int | None = None,
                    gpu: str = 'auto',
@@ -194,16 +208,25 @@ def run_stepladder(difficulty: str, hours: float = 6.0,
 
         _save_state(difficulty, state)
 
-        # --- 3. Iterate within token window (fast GPU passes) ---
+        # --- 3. Iterate within token window ---
         token_remaining = token_deadline - time.time()
         if token_remaining > 30:
-            print(f"  GPU optimize ({token_remaining:.0f}s budget)...", file=sys.stderr)
-            gpu_score, gpu_time = _gpu_optimize_quick(
-                difficulty, params.max_states, max_time_s=token_remaining - 10)
+            if difficulty == 'nightmare':
+                # Nightmare: use NightmareTrainer instead of GPU DP
+                print(f"  Nightmare training ({token_remaining:.0f}s budget)...",
+                      file=sys.stderr)
+                nm_score = _nightmare_optimize_quick(max_time_s=token_remaining - 10)
+                if nm_score > state['best_score']:
+                    state['best_score'] = nm_score
+                    print(f"  Nightmare train: {nm_score}", file=sys.stderr)
+            else:
+                print(f"  GPU optimize ({token_remaining:.0f}s budget)...", file=sys.stderr)
+                gpu_score, gpu_time = _gpu_optimize_quick(
+                    difficulty, params.max_states, max_time_s=token_remaining - 10)
 
-            if gpu_score > state['best_score']:
-                state['best_score'] = gpu_score
-                print(f"  GPU optimize: {gpu_score}", file=sys.stderr)
+                if gpu_score > state['best_score']:
+                    state['best_score'] = gpu_score
+                    print(f"  GPU optimize: {gpu_score}", file=sys.stderr)
 
             # Quick replay if time permits
             token_remaining = token_deadline - time.time()

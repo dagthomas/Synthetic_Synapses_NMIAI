@@ -4,7 +4,8 @@ B200 schedule (sequential, max GPU utilization):
   07:00-07:05   Easy: single-bot DP (trivially optimal)
   07:05-08:30   Medium: stepladder 1h25m
   08:30-13:00   Hard: stepladder 4.5h
-  13:00-20:00   Expert: stepladder 7h
+  13:00-18:00   Expert: stepladder 5h
+  18:00-20:00   Nightmare: V3 + perturbation search 2h
   20:00-20:30   Final replays all difficulties
 
 Usage:
@@ -33,16 +34,18 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Default schedule (hours allocated per difficulty)
 DEFAULT_SCHEDULE = {
     'b200': {
-        'easy': 0.1,      # 6 min — trivially optimal
+        'easy': 0.1,       # 6 min — trivially optimal
         'medium': 1.4,     # 1h24m
         'hard': 4.5,       # 4h30m
-        'expert': 7.0,     # 7h
+        'expert': 5.0,     # 5h
+        'nightmare': 2.0,  # 2h — V3 + perturbation search (no GPU DP)
     },
     '5090': {
         'easy': 0.1,
         'medium': 1.0,
         'hard': 3.0,
         'expert': 4.0,
+        'nightmare': 2.0,  # V3 + perturbation search
     },
 }
 
@@ -66,7 +69,7 @@ def run_competition_day(gpu: str = 'auto',
         _do_final_replays()
         return
 
-    difficulties = ['easy', 'medium', 'hard', 'expert']
+    difficulties = ['easy', 'medium', 'hard', 'expert', 'nightmare']
     if difficulty:
         difficulties = [difficulty]
 
@@ -105,7 +108,7 @@ def run_competition_day(gpu: str = 'auto',
 
 def _do_final_replays():
     """Replay best solutions for all difficulties."""
-    for diff in ['easy', 'medium', 'hard', 'expert']:
+    for diff in ['easy', 'medium', 'hard', 'expert', 'nightmare']:
         if not load_solution(diff):
             print(f"  {diff}: no solution", file=sys.stderr)
             continue
@@ -131,7 +134,7 @@ def _print_summary():
     print(f"{'='*60}", file=sys.stderr)
 
     total = 0
-    for diff in ['easy', 'medium', 'hard', 'expert']:
+    for diff in ['easy', 'medium', 'hard', 'expert', 'nightmare']:
         meta = load_meta(diff)
         score = meta.get('score', 0) if meta else 0
         total += score

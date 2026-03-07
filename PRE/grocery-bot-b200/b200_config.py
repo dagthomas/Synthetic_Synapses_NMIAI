@@ -89,6 +89,14 @@ _PARAMS = {
             pass1_orderings=200, refine_iters=100, lns_rounds=40,
             max_dp_bots=10, parallel_orderings=4, explore_states=50_000,
         ),
+        'nightmare': B200Params(
+            # Nightmare uses NightmareTrainer (V3 + perturbation search),
+            # not GPU DP. These params control the trainer behavior.
+            max_states=0, chunk_size=0,  # unused (no GPU DP)
+            joint_squad_size=0, joint_states=0,
+            pass1_orderings=0, refine_iters=0, lns_rounds=0,
+            max_dp_bots=0, parallel_orderings=1, explore_states=0,
+        ),
     },
     '5090': {
         'easy': B200Params(
@@ -114,6 +122,13 @@ _PARAMS = {
             joint_squad_size=2, joint_states=50_000,
             pass1_orderings=3, refine_iters=10, lns_rounds=5,
             max_dp_bots=7, explore_states=25_000,
+        ),
+        'nightmare': B200Params(
+            # Nightmare uses NightmareTrainer, not GPU DP
+            max_states=0, chunk_size=0,
+            joint_squad_size=0, joint_states=0,
+            pass1_orderings=0, refine_iters=0, lns_rounds=0,
+            max_dp_bots=0, explore_states=0,
         ),
     },
 }
@@ -141,9 +156,13 @@ def print_gpu_info():
 
 if __name__ == '__main__':
     gpu = print_gpu_info()
-    for diff in ['easy', 'medium', 'hard', 'expert']:
+    for diff in ['easy', 'medium', 'hard', 'expert', 'nightmare']:
         p = get_params(diff, gpu)
-        print(f"  {diff}: max_states={p.max_states:,}, joint_squad={p.joint_squad_size}, "
-              f"joint_states={p.joint_states:,}, orderings={p.pass1_orderings}, "
-              f"refine={p.refine_iters}, lns={p.lns_rounds}, dp_bots={p.max_dp_bots}",
-              file=sys.stderr)
+        if diff == 'nightmare':
+            print(f"  {diff}: NightmareTrainer (V3 + perturbation search)",
+                  file=sys.stderr)
+        else:
+            print(f"  {diff}: max_states={p.max_states:,}, joint_squad={p.joint_squad_size}, "
+                  f"joint_states={p.joint_states:,}, orderings={p.pass1_orderings}, "
+                  f"refine={p.refine_iters}, lns={p.lns_rounds}, dp_bots={p.max_dp_bots}",
+                  file=sys.stderr)

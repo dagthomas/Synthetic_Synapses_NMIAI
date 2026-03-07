@@ -64,6 +64,11 @@ def deep_optimize(difficulty: str, budget_s: float = 7200,
         gpu: GPU profile ('auto', 'b200', '5090').
         resume: Resume from checkpoint.
     """
+    # Nightmare: uses NightmareTrainer (V3 + perturbation search), not GPU DP
+    if difficulty == 'nightmare':
+        _deep_optimize_nightmare(budget_s)
+        return
+
     capture = load_capture(difficulty)
     if not capture:
         print(f"No capture data for {difficulty}. Run a game first.", file=sys.stderr)
@@ -215,6 +220,65 @@ def deep_optimize(difficulty: str, budget_s: float = 7200,
 
     total_time = time.time() - t0
     print(f"\nDeep Optimize complete: {difficulty}", file=sys.stderr)
+    print(f"  Final score: {best_score} (started at {existing_score})", file=sys.stderr)
+    print(f"  Total time: {total_time:.0f}s ({total_time/3600:.1f}h)", file=sys.stderr)
+
+
+def _deep_optimize_nightmare(budget_s: float):
+    """Deep offline optimization for nightmare using NightmareTrainer.
+
+    GPU DP doesn't work for 20-bot nightmare (sequential DP scores 1-3).
+    Instead: V3 multi-restart + checkpoint perturbation search.
+    """
+    from nightmare_offline import NightmareTrainer, train_from_capture
+
+    capture = load_capture('nightmare')
+    if not capture:
+        print(f"No capture data for nightmare. Run a game first.", file=sys.stderr)
+        return
+
+    existing_meta = load_meta('nightmare')
+    existing_score = existing_meta.get('score', 0) if existing_meta else 0
+    num_orders = len(capture.get('orders', []))
+
+    print(f"\nDeep Optimize: nightmare (NightmareTrainer)", file=sys.stderr)
+    print(f"  Budget: {budget_s:.0f}s ({budget_s/3600:.1f}h)", file=sys.stderr)
+    print(f"  Orders: {num_orders}", file=sys.stderr)
+    print(f"  Existing score: {existing_score}", file=sys.stderr)
+
+    t0 = time.time()
+    best_score = existing_score
+
+    # Run multiple training sessions within budget
+    # Each session is independent (different random seeds)
+    session = 0
+    while time.time() - t0 < budget_s * 0.95:
+        remaining = budget_s - (time.time() - t0)
+        session_budget = min(remaining * 0.9, 300)  # max 5 min per session
+        if session_budget < 30:
+            break
+
+        print(f"\n  Session {session + 1} ({session_budget:.0f}s budget, "
+              f"{remaining:.0f}s remaining)...", file=sys.stderr)
+
+        try:
+            score, action_log = train_from_capture(
+                capture, max_time=session_budget, verbose=True)
+
+            if score > best_score:
+                best_score = score
+                print(f"  Session {session + 1}: NEW BEST {score}", file=sys.stderr)
+            else:
+                print(f"  Session {session + 1}: {score} (best={best_score})",
+                      file=sys.stderr)
+        except Exception as e:
+            print(f"  Session {session + 1} error: {e}", file=sys.stderr)
+
+        session += 1
+
+    total_time = time.time() - t0
+    print(f"\nDeep Optimize complete: nightmare", file=sys.stderr)
+    print(f"  Sessions: {session}", file=sys.stderr)
     print(f"  Final score: {best_score} (started at {existing_score})", file=sys.stderr)
     print(f"  Total time: {total_time:.0f}s ({total_time/3600:.1f}h)", file=sys.stderr)
 
