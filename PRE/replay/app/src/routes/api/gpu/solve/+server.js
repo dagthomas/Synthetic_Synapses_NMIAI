@@ -20,7 +20,7 @@ export async function POST({ request }) {
 			ctx.safetyTimeout = setTimeout(() => {
 				sendEvent({ type: 'error', msg: 'Timeout: GPU solve took too long' });
 				cleanup();
-			}, 300_000); // 5 min for multi-bot sequential DP
+			}, 3600_000); // 60 min for expert 10-bot sequential DP
 
 			// Custom sendEvent: this endpoint passes pre-formed objects (not type+data)
 			function sendEvent(data) {

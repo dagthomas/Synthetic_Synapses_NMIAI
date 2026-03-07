@@ -16,10 +16,22 @@ function loadMeta(difficulty) {
 	}
 }
 
+function countOrders(difficulty) {
+	try {
+		const path = resolve(SOLUTIONS_DIR, difficulty, 'capture.json');
+		const data = JSON.parse(readFileSync(path, 'utf-8'));
+		return (data.orders || []).length;
+	} catch {
+		return 0;
+	}
+}
+
 export async function GET() {
 	const solutions = {};
 	for (const d of DIFFICULTIES) {
-		solutions[d] = loadMeta(d);
+		const meta = loadMeta(d);
+		const orders = countOrders(d);
+		solutions[d] = meta ? { ...meta, orders } : (orders > 0 ? { orders } : null);
 	}
 
 	return new Response(JSON.stringify(solutions), {

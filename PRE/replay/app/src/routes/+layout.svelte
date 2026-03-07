@@ -100,6 +100,8 @@
 			<a href="/optimize">optimize</a>
 			<a href="/gpu" class="gpu-link">gpu</a>
 			<a href="/pipeline" class="pipeline-link">pipeline</a>
+			<a href="/stepladder" class="stepladder-link">stepladder</a>
+			<a href="/lars-training" class="lars-link">lars-training</a>
 			<a href="/tokens">tokens</a>
 		</div>
 	</div>
@@ -204,6 +206,22 @@
 	:global(.pipeline-link:hover) {
 		background: rgba(57, 211, 83, 0.1) !important;
 		color: var(--accent-light) !important;
+	}
+	:global(.stepladder-link) {
+		color: #bc8cff !important;
+		font-weight: 600;
+	}
+	:global(.stepladder-link:hover) {
+		background: rgba(188, 140, 255, 0.1) !important;
+		color: #d2a8ff !important;
+	}
+	:global(.lars-link) {
+		color: var(--orange) !important;
+		font-weight: 600;
+	}
+	:global(.lars-link:hover) {
+		background: rgba(210, 153, 34, 0.1) !important;
+		color: var(--orange) !important;
 	}
 	main {
 		position: relative;

@@ -800,6 +800,20 @@ export async function POST({ request }) {
 					iterCount = 1;
 				}
 
+				// Crack all future orders using seed 7004 (expert only, best-effort)
+				if (difficulty === 'expert') {
+					sendEvent('log', { text: '[pipeline] Cracking orders with seed 7004...', _iter: 0 });
+					const crackResult = spawnSync('python', ['-u', 'crack_orders.py', difficulty], {
+						cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000,
+					});
+					if (crackResult.stderr) {
+						for (const line of crackResult.stderr.toString().trim().split('\n')) {
+							if (line.trim()) sendEvent('log', { text: `[crack] ${line.trim()}`, _iter: 0 });
+						}
+					}
+					orderCount = getOrderCount(difficulty); // refresh after crack
+				}
+
 				// ── ITERATIONS 1+: Optimize -> Replay -> Capture ────────
 				// Each cycle discovers orders. When discovery stalls for 2+
 				// iterations, switch to deep mode (more states/orderings).
