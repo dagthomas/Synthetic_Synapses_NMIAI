@@ -21,8 +21,12 @@ def emit(data):
     print(json.dumps(data), flush=True)
 
 
-def solve(difficulty, seed=None, max_states=500000):
+def solve(difficulty, seed=None, max_states=100000):
     """Run sequential per-bot GPU DP with streaming progress output."""
+    # Disable Zig FFI - causes illegal instruction crash on this machine
+    import gpu_sequential_solver
+    gpu_sequential_solver._ZIG_AVAILABLE = False
+
     from solution_store import load_capture, load_meta, save_solution
     from game_engine import init_game, init_game_from_capture
     from gpu_sequential_solver import solve_sequential
@@ -160,7 +164,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Sequential GPU DP solver (streaming JSON)')
     parser.add_argument('difficulty', choices=['easy', 'medium', 'hard', 'expert', 'nightmare'])
     parser.add_argument('--seed', type=int, default=None)
-    parser.add_argument('--max-states', type=int, default=500000)
+    parser.add_argument('--max-states', type=int, default=100000)
     args = parser.parse_args()
 
     solve(args.difficulty, seed=args.seed, max_states=args.max_states)
