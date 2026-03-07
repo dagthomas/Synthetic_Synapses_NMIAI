@@ -990,31 +990,6 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
                 print(f"  Capture updated: +{num_new} new orders ({total} total)",
                       file=sys.stderr)
 
-            # Persist to order_lists for cross-session reuse
-            order_lists_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'order_lists')
-            os.makedirs(order_lists_dir, exist_ok=True)
-            order_file = os.path.join(order_lists_dir, f'{difficulty}_orders.json')
-            order_data = {
-                'difficulty': difficulty,
-                'date': time.strftime('%Y-%m-%d'),
-                'total_orders': total,
-                'orders': [{'index': i, 'items_required': o['items_required']}
-                           for i, o in enumerate(merged['orders'])],
-            }
-            # Only update if we have more orders
-            try:
-                if os.path.exists(order_file):
-                    existing = json.loads(open(order_file).read())
-                    if len(existing.get('orders', [])) >= total:
-                        order_data = None  # Don't overwrite
-                if order_data:
-                    with open(order_file, 'w') as f:
-                        json.dump(order_data, f, indent=2)
-                    print(f"  Order list saved: {order_file} ({total} orders)",
-                          file=sys.stderr)
-            except Exception as e:
-                print(f"  Order list save error: {e}", file=sys.stderr)
-
     return final_score
 
 

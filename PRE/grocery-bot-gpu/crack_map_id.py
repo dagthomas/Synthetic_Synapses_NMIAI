@@ -40,10 +40,11 @@ ORDER_SIZE = {
 
 
 def load_captured_orders(difficulty: str) -> list[list[str]]:
-    capture_path = os.path.join(
-        os.path.dirname(__file__), 'solutions', difficulty, 'capture.json')
-    with open(capture_path) as f:
-        data = json.load(f)
+    from solution_store import load_capture
+    data = load_capture(difficulty)
+    if data is None:
+        print(f"No capture found in DB for {difficulty}", file=sys.stderr)
+        sys.exit(1)
     return [o['items_required'] for o in data['orders']]
 
 

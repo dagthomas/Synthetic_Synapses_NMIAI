@@ -10,12 +10,11 @@ import os
 import glob
 import time
 import json
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ZIG_DIR = os.path.join(os.path.dirname(HERE), 'grocery-bot-zig')
 ZIG_EXE = os.path.join(ZIG_DIR, 'zig-out', 'bin', 'grocery-bot.exe')
-SOLUTIONS_DIR = os.path.join(HERE, 'solutions')
-ORDER_LISTS_DIR = os.path.join(HERE, 'order_lists')
 
 
 def find_newest_log(directory, after_ts=0):
@@ -33,24 +32,45 @@ def main():
 
     ws_url = sys.argv[1]
     difficulty = sys.argv[2]
-    dp_plan = os.path.join(SOLUTIONS_DIR, difficulty, 'dp_plan.json')
-    capture_json = os.path.join(SOLUTIONS_DIR, difficulty, 'capture.json')
 
-    if not os.path.exists(dp_plan):
-        print(f"No DP plan found at {dp_plan}", file=sys.stderr)
+    from solution_store import load_dp_plan, load_capture
+
+    dp_plan = load_dp_plan(difficulty)
+    if dp_plan is None:
+        print(f"No DP plan found in DB for {difficulty}", file=sys.stderr)
         print(f"Run: python export_plan_for_zig.py {difficulty}", file=sys.stderr)
         sys.exit(1)
 
+    # Write temp files for Zig bot (it reads from disk)
+    dp_plan_file = tempfile.NamedTemporaryFile(
+        mode='w', suffix='.json', prefix=f'dp_plan_{difficulty}_', delete=False)
+    json.dump(dp_plan, dp_plan_file)
+    dp_plan_file.close()
+
+    capture = load_capture(difficulty)
+    capture_file = None
+    if capture:
+        capture_file = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.json', prefix=f'capture_{difficulty}_', delete=False)
+        json.dump(capture, capture_file)
+        capture_file.close()
+
     # Build args
-    args = [ZIG_EXE, ws_url, '--dp-plan', dp_plan]
-    if os.path.exists(capture_json):
-        args += ['--precomputed', capture_json]
+    args = [ZIG_EXE, ws_url, '--dp-plan', dp_plan_file.name]
+    if capture_file:
+        args += ['--precomputed', capture_file.name]
 
     print(f"Running Zig bot with DP replay ({difficulty})...", file=sys.stderr)
     before_ts = time.time()
 
-    # Run Zig bot
-    result = subprocess.run(args, cwd=ZIG_DIR)
+    try:
+        # Run Zig bot
+        result = subprocess.run(args, cwd=ZIG_DIR)
+    finally:
+        # Clean up temp files
+        os.unlink(dp_plan_file.name)
+        if capture_file:
+            os.unlink(capture_file.name)
 
     # Find the game log created by this run
     log_path = find_newest_log(ZIG_DIR, before_ts)
@@ -76,40 +96,6 @@ def main():
     if cap_result.stderr:
         for line in cap_result.stderr.strip().split('\n'):
             print(f"  {line}", file=sys.stderr)
-
-    # Update order_lists from capture
-    if os.path.exists(capture_json):
-        try:
-            capture = json.load(open(capture_json))
-            orders = capture.get('orders', [])
-            total = len(orders)
-
-            os.makedirs(ORDER_LISTS_DIR, exist_ok=True)
-            order_file = os.path.join(ORDER_LISTS_DIR, f'{difficulty}_orders.json')
-
-            order_data = {
-                'difficulty': difficulty,
-                'date': time.strftime('%Y-%m-%d'),
-                'total_orders': total,
-                'orders': [{'index': i, 'items_required': o['items_required']}
-                           for i, o in enumerate(orders)],
-            }
-
-            # Only update if more orders
-            should_write = True
-            if os.path.exists(order_file):
-                existing = json.load(open(order_file))
-                if len(existing.get('orders', [])) >= total:
-                    should_write = False
-
-            if should_write:
-                with open(order_file, 'w') as f:
-                    json.dump(order_data, f, indent=2)
-                print(f"  Order list updated: {order_file} ({total} orders)", file=sys.stderr)
-            else:
-                print(f"  Order list unchanged ({total} orders)", file=sys.stderr)
-        except Exception as e:
-            print(f"  Order list update error: {e}", file=sys.stderr)
 
 
 if __name__ == '__main__':

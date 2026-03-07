@@ -1878,7 +1878,7 @@ def refine_from_solution(combined_actions: list[list[tuple[int, int]]],
     if solution_bots != num_bots:
         raise ValueError(
             f"Solution has {solution_bots} bots but game needs {num_bots}. "
-            f"Clear stale solution: rm solutions/{diff}/best.json")
+            f"Clear stale solution via clear_solutions('{diff}')")
     bot_actions = {}
     _wait_pad = (ACT_WAIT, -1)
     for bid in range(num_bots):

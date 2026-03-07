@@ -1,24 +1,30 @@
-"""Export GPU DP solution (best.json) to a format the Zig bot can replay.
+"""Export GPU DP solution to a format the Zig bot can replay.
 
-Output: dp_plan.json with pre-built action strings per round.
-The Zig bot loads this and sends the cached response when synced.
+Saves dp_plan to PostgreSQL (dp_plans table). Also writes to disk
+for Zig bot consumption if --output is specified.
 
 Usage:
     python export_plan_for_zig.py <difficulty> [--output dp_plan.json]
 """
 import json
 import sys
-import os
 
-from solution_store import load_solution, load_capture
+from solution_store import load_solution, load_capture, save_dp_plan
 from game_engine import build_map_from_capture, init_game_from_capture, step, ACT_PICKUP
+from configs import DIFF_ROUNDS
 
 ACTION_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
 
 
 def main():
     difficulty = sys.argv[1] if len(sys.argv) > 1 else 'medium'
-    output = sys.argv[2] if len(sys.argv) > 2 else None
+    output = None
+    if len(sys.argv) > 2 and sys.argv[2] != '--output':
+        output = sys.argv[2]
+    elif '--output' in sys.argv:
+        idx = sys.argv.index('--output')
+        if idx + 1 < len(sys.argv):
+            output = sys.argv[idx + 1]
 
     actions = load_solution(difficulty)
     capture = load_capture(difficulty)
@@ -32,7 +38,7 @@ def main():
 
     map_state = build_map_from_capture(capture)
     num_bots = len(actions[0])
-    num_rounds = len(actions)
+    num_rounds = min(len(actions), DIFF_ROUNDS.get(difficulty, 300))
 
     # Simulate to get expected positions per round
     gs, all_orders = init_game_from_capture(capture)
@@ -69,16 +75,18 @@ def main():
         'rounds': rounds,
     }
 
-    if output is None:
-        output = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              'solutions', difficulty, 'dp_plan.json')
+    # Save to DB
+    save_dp_plan(difficulty, plan)
+    print(f"Saved DP plan to DB: {difficulty}, {num_rounds} rounds, {num_bots} bots", file=sys.stderr)
 
-    with open(output, 'w') as f:
-        json.dump(plan, f)
+    # Optionally write to disk
+    if output:
+        with open(output, 'w') as f:
+            json.dump(plan, f)
+        import os
+        print(f"Also written to {output} ({os.path.getsize(output) / 1024:.1f} KB)", file=sys.stderr)
 
-    print(f"Exported {num_rounds} rounds for {num_bots} bots to {output}", file=sys.stderr)
     print(f"Expected score: {gs.score}", file=sys.stderr)
-    print(f"File size: {os.path.getsize(output) / 1024:.1f} KB", file=sys.stderr)
 
 
 if __name__ == '__main__':

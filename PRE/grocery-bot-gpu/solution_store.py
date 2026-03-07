@@ -1,14 +1,15 @@
 """Solution storage helpers — PostgreSQL backend.
 
-Stores per-difficulty data in PostgreSQL (localhost:5433/grocery_bot):
-  - captures: Map data + accumulated orders for GPU solver
-  - gpu_solutions: Best action sequences per difficulty
+Stores per-difficulty, per-day data in PostgreSQL (localhost:5433/grocery_bot):
+  - captures: Map data + accumulated orders (keyed by difficulty + date)
+  - gpu_solutions: Best action sequences (keyed by difficulty + date)
   - order_sequences: Order lists per difficulty/seed
 
 Error contract:
   - All load_* functions return Optional values (None when not found).
   - save_* functions raise on DB errors (let caller handle).
   - Never overwrites a better score unless force=True.
+  - New day = fresh start (old data preserved but not loaded).
 """
 from __future__ import annotations
 
@@ -29,15 +30,72 @@ DB_URL = os.environ.get(
     "postgres://grocery:grocery123@localhost:5433/grocery_bot",
 )
 
-# Legacy file paths (for migration only)
-SOLUTIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'solutions')
-ORDER_LISTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'order_lists')
-DIFFICULTIES = ['easy', 'medium', 'hard', 'expert']
+DIFFICULTIES = ['easy', 'medium', 'hard', 'expert', 'nightmare']
+
+_schema_ensured = False
 
 
 def _conn():
     """Get a DB connection."""
     return psycopg2.connect(DB_URL)
+
+
+def _today() -> str:
+    """Current UTC date as YYYY-MM-DD string."""
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+
+def ensure_schema():
+    """Migrate DB schema to (difficulty, date) composite keys if needed.
+
+    Safe to call multiple times — checks before altering.
+    """
+    global _schema_ensured
+    if _schema_ensured:
+        return
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                # --- captures ---
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'captures' AND column_name = 'date'
+                """)
+                if not cur.fetchone():
+                    today = _today()
+                    cur.execute(f"ALTER TABLE captures ADD COLUMN date TEXT NOT NULL DEFAULT '{today}'")
+                    cur.execute("ALTER TABLE captures DROP CONSTRAINT captures_pkey")
+                    cur.execute("ALTER TABLE captures ADD PRIMARY KEY (difficulty, date)")
+                    print(f"  [schema] Migrated captures to (difficulty, date) PK", file=sys.stderr)
+
+                # --- dp_plans ---
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS dp_plans (
+                        difficulty TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        plan_data JSONB NOT NULL,
+                        updated_at TIMESTAMPTZ,
+                        PRIMARY KEY (difficulty, date)
+                    )
+                """)
+
+                # --- gpu_solutions ---
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'gpu_solutions' AND column_name = 'date'
+                """)
+                if not cur.fetchone():
+                    today = _today()
+                    cur.execute(f"ALTER TABLE gpu_solutions ADD COLUMN date TEXT NOT NULL DEFAULT '{today}'")
+                    cur.execute("ALTER TABLE gpu_solutions DROP CONSTRAINT gpu_solutions_pkey")
+                    cur.execute("ALTER TABLE gpu_solutions ADD PRIMARY KEY (difficulty, date)")
+                    print(f"  [schema] Migrated gpu_solutions to (difficulty, date) PK", file=sys.stderr)
+
+            conn.commit()
+        _schema_ensured = True
+    except Exception as e:
+        print(f"  [schema] Migration error: {e}", file=sys.stderr)
+        _schema_ensured = True  # Don't retry on error
 
 
 def _capture_hash_from_data(capture_data: dict) -> str:
@@ -48,8 +106,10 @@ def _capture_hash_from_data(capture_data: dict) -> str:
 
 # ── Capture operations ──
 
-def save_capture(difficulty: str, capture_data: CaptureData) -> str:
+def save_capture(difficulty: str, capture_data: CaptureData, date: str | None = None) -> str:
     """Save capture data for re-optimization. Returns capture hash."""
+    ensure_schema()
+    date = date or _today()
     num_orders = len(capture_data.get('orders', []))
     cap_hash = _capture_hash_from_data(capture_data)
     now = datetime.now(timezone.utc)
@@ -57,13 +117,13 @@ def save_capture(difficulty: str, capture_data: CaptureData) -> str:
     with _conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO captures (difficulty, capture_data, num_orders, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (difficulty) DO UPDATE SET
+                INSERT INTO captures (difficulty, date, capture_data, num_orders, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (difficulty, date) DO UPDATE SET
                     capture_data = EXCLUDED.capture_data,
                     num_orders = EXCLUDED.num_orders,
                     updated_at = EXCLUDED.updated_at
-            """, (difficulty, Json(capture_data), num_orders, now, now))
+            """, (difficulty, date, Json(capture_data), num_orders, now, now))
         conn.commit()
 
     # Also save order list
@@ -71,14 +131,16 @@ def save_capture(difficulty: str, capture_data: CaptureData) -> str:
     return cap_hash
 
 
-def load_capture(difficulty: str) -> CaptureData | None:
-    """Load capture data. Returns None if not found."""
+def load_capture(difficulty: str, date: str | None = None) -> CaptureData | None:
+    """Load capture data for today (or specified date). Returns None if not found."""
+    ensure_schema()
+    date = date or _today()
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT capture_data FROM captures WHERE difficulty = %s",
-                    (difficulty,))
+                    "SELECT capture_data FROM captures WHERE difficulty = %s AND date = %s",
+                    (difficulty, date))
                 row = cur.fetchone()
                 if row:
                     return row[0]
@@ -87,9 +149,9 @@ def load_capture(difficulty: str) -> CaptureData | None:
     return None
 
 
-def _capture_hash(difficulty: str) -> Optional[str]:
+def _capture_hash(difficulty: str, date: str | None = None) -> Optional[str]:
     """Get hash of current capture data."""
-    cap = load_capture(difficulty)
+    cap = load_capture(difficulty, date=date)
     if cap is None:
         return None
     return _capture_hash_from_data(cap)
@@ -102,19 +164,19 @@ def _save_order_list(difficulty: str, orders: list) -> None:
 
     # Try to get map_seed from capture
     map_seed = 0
+    today = _today()
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT map_seed FROM captures WHERE difficulty = %s",
-                    (difficulty,))
+                    "SELECT map_seed FROM captures WHERE difficulty = %s AND date = %s",
+                    (difficulty, today))
                 row = cur.fetchone()
                 if row and row[0]:
                     map_seed = row[0]
     except Exception:
         pass
 
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     order_data = [
         {'index': i, 'items_required': o.get('items_required', [])}
         for i, o in enumerate(orders)
@@ -139,8 +201,9 @@ def _save_order_list(difficulty: str, orders: list) -> None:
         print(f"  DB save_order_list error: {e}", file=sys.stderr)
 
 
-def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureData, int, int]:
-    """Merge new capture with existing one, keeping ALL orders by position.
+def merge_capture(difficulty: str, new_capture: CaptureData,
+                  date: str | None = None) -> tuple[CaptureData, int, int]:
+    """Merge new capture with existing one for today, keeping ALL orders by position.
 
     Orders are sequential and deterministic per seed -- the longer list is
     always the more complete one. Map data is always taken from new capture.
@@ -148,9 +211,10 @@ def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureDat
     Returns:
         (merged_capture, num_new_orders, total_orders) tuple.
     """
-    existing = load_capture(difficulty)
+    date = date or _today()
+    existing = load_capture(difficulty, date=date)
     if existing is None:
-        save_capture(difficulty, new_capture)
+        save_capture(difficulty, new_capture, date=date)
         n = len(new_capture.get('orders', []))
         return new_capture, n, n
 
@@ -171,8 +235,8 @@ def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureDat
     if stale:
         print(f"  WARNING: Existing capture has stale item types (map changed), discarding old data",
               file=sys.stderr)
-        _clear_solution(difficulty)
-        save_capture(difficulty, new_capture)
+        _clear_solution(difficulty, date=date)
+        save_capture(difficulty, new_capture, date=date)
         n = len(new_capture.get('orders', []))
         return new_capture, n, n
 
@@ -183,8 +247,8 @@ def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureDat
             and existing_orders[0].get('items_required') != new_orders[0].get('items_required')):
         print(f"  WARNING: First order mismatch (seed changed), discarding old data",
               file=sys.stderr)
-        _clear_solution(difficulty)
-        save_capture(difficulty, new_capture)
+        _clear_solution(difficulty, date=date)
+        save_capture(difficulty, new_capture, date=date)
         n = len(new_orders)
         return new_capture, n, n
 
@@ -200,34 +264,39 @@ def merge_capture(difficulty: str, new_capture: CaptureData) -> tuple[CaptureDat
     merged = dict(new_capture)
     merged['orders'] = merged_orders
 
-    save_capture(difficulty, merged)
+    save_capture(difficulty, merged, date=date)
     return merged, num_new, len(merged_orders)
 
 
 # ── Solution operations ──
 
-def _clear_solution(difficulty: str) -> None:
-    """Clear solution for a difficulty (when capture becomes stale)."""
+def _clear_solution(difficulty: str, date: str | None = None) -> None:
+    """Clear solution for a difficulty+date (when capture becomes stale)."""
+    ensure_schema()
+    date = date or _today()
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM gpu_solutions WHERE difficulty = %s", (difficulty,))
+                cur.execute("DELETE FROM gpu_solutions WHERE difficulty = %s AND date = %s",
+                            (difficulty, date))
             conn.commit()
     except Exception as e:
         print(f"  DB _clear_solution error: {e}", file=sys.stderr)
 
 
 def save_solution(difficulty: str, score: int, actions: List[List[Tuple[int, int]]],
-                   seed: int = 0, force: bool = False) -> bool:
-    """Save solution if it beats existing best.
+                   seed: int = 0, force: bool = False,
+                   date: str | None = None) -> bool:
+    """Save solution if it beats existing best for today.
 
     Returns True if saved (new best), False if existing is better.
     """
-    cap_hash = _capture_hash(difficulty)
+    ensure_schema()
+    date = date or _today()
+    cap_hash = _capture_hash(difficulty, date=date)
     now = datetime.now(timezone.utc)
-    today = now.strftime('%Y-%m-%d')
 
-    existing_meta = load_meta(difficulty)
+    existing_meta = load_meta(difficulty, date=date)
 
     if not force:
         if existing_meta and existing_meta.get('score', 0) >= score:
@@ -239,8 +308,7 @@ def save_solution(difficulty: str, score: int, actions: List[List[Tuple[int, int
 
     # Preserve created_at and optimization count if same capture
     same_capture = (existing_meta
-                    and existing_meta.get('capture_hash') == cap_hash
-                    and existing_meta.get('date') == today)
+                    and existing_meta.get('capture_hash') == cap_hash)
     created_at = (existing_meta.get('created_at', now.isoformat())
                   if same_capture and existing_meta else now.isoformat())
     opt_count = (existing_meta.get('optimizations_run', 0)
@@ -251,10 +319,10 @@ def save_solution(difficulty: str, score: int, actions: List[List[Tuple[int, int
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO gpu_solutions
-                        (difficulty, map_seed, score, actions, num_bots, num_rounds,
+                        (difficulty, date, map_seed, score, actions, num_bots, num_rounds,
                          capture_hash, optimizations_run, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (difficulty) DO UPDATE SET
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (difficulty, date) DO UPDATE SET
                         map_seed = EXCLUDED.map_seed,
                         score = EXCLUDED.score,
                         actions = EXCLUDED.actions,
@@ -264,7 +332,7 @@ def save_solution(difficulty: str, score: int, actions: List[List[Tuple[int, int
                         optimizations_run = EXCLUDED.optimizations_run,
                         created_at = EXCLUDED.created_at,
                         updated_at = EXCLUDED.updated_at
-                """, (difficulty, seed, score, Json(serializable), num_bots,
+                """, (difficulty, date, seed, score, Json(serializable), num_bots,
                       len(actions), cap_hash, opt_count, created_at, now))
             conn.commit()
     except Exception as e:
@@ -274,14 +342,16 @@ def save_solution(difficulty: str, score: int, actions: List[List[Tuple[int, int
     return True
 
 
-def load_solution(difficulty: str) -> Optional[List[List[Tuple[int, int]]]]:
-    """Load best action sequence. Returns None if not found."""
+def load_solution(difficulty: str, date: str | None = None) -> Optional[List[List[Tuple[int, int]]]]:
+    """Load best action sequence for today. Returns None if not found."""
+    ensure_schema()
+    date = date or _today()
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT actions FROM gpu_solutions WHERE difficulty = %s",
-                    (difficulty,))
+                    "SELECT actions FROM gpu_solutions WHERE difficulty = %s AND date = %s",
+                    (difficulty, date))
                 row = cur.fetchone()
                 if row:
                     return [[(a, i) for a, i in round_actions] for round_actions in row[0]]
@@ -290,28 +360,29 @@ def load_solution(difficulty: str) -> Optional[List[List[Tuple[int, int]]]]:
     return None
 
 
-def load_meta(difficulty: str) -> Optional[Dict[str, Any]]:
-    """Load solution metadata. Returns None if not found."""
+def load_meta(difficulty: str, date: str | None = None) -> Optional[Dict[str, Any]]:
+    """Load solution metadata for today. Returns None if not found."""
+    ensure_schema()
+    date = date or _today()
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT score, map_seed, num_bots, num_rounds, capture_hash,
                            optimizations_run, created_at, updated_at
-                    FROM gpu_solutions WHERE difficulty = %s
-                """, (difficulty,))
+                    FROM gpu_solutions WHERE difficulty = %s AND date = %s
+                """, (difficulty, date))
                 row = cur.fetchone()
                 if row:
-                    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                     return {
                         'score': row[0],
                         'seed': row[1] or 0,
                         'difficulty': difficulty,
+                        'date': date,
                         'num_bots': row[2],
                         'num_rounds': row[3],
                         'capture_hash': row[4],
                         'optimizations_run': row[5] or 0,
-                        'date': row[6].strftime('%Y-%m-%d') if row[6] else today,
                         'created_at': row[6].isoformat() if row[6] else None,
                         'updated_at': row[7].isoformat() if row[7] else None,
                     }
@@ -320,8 +391,10 @@ def load_meta(difficulty: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def increment_optimizations(difficulty: str) -> None:
+def increment_optimizations(difficulty: str, date: str | None = None) -> None:
     """Increment the optimization counter. No-op if no solution exists."""
+    ensure_schema()
+    date = date or _today()
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
@@ -329,77 +402,83 @@ def increment_optimizations(difficulty: str) -> None:
                     UPDATE gpu_solutions
                     SET optimizations_run = optimizations_run + 1,
                         updated_at = NOW()
-                    WHERE difficulty = %s
-                """, (difficulty,))
+                    WHERE difficulty = %s AND date = %s
+                """, (difficulty, date))
             conn.commit()
     except Exception as e:
         print(f"  DB increment_optimizations error: {e}", file=sys.stderr)
 
 
-def clear_solutions(difficulty: Optional[str] = None) -> None:
-    """Clear solutions and captures for a difficulty or all."""
+def clear_solutions(difficulty: Optional[str] = None, date: str | None = None) -> None:
+    """Clear solutions and captures for a difficulty (today only) or all."""
+    ensure_schema()
+    date = date or _today()
     diffs = [difficulty] if difficulty else DIFFICULTIES
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
                 for d in diffs:
-                    cur.execute("DELETE FROM gpu_solutions WHERE difficulty = %s", (d,))
-                    cur.execute("DELETE FROM captures WHERE difficulty = %s", (d,))
+                    cur.execute("DELETE FROM gpu_solutions WHERE difficulty = %s AND date = %s",
+                                (d, date))
+                    cur.execute("DELETE FROM captures WHERE difficulty = %s AND date = %s",
+                                (d, date))
             conn.commit()
     except Exception as e:
         print(f"  DB clear_solutions error: {e}", file=sys.stderr)
 
 
-def get_all_solutions() -> Dict[str, Optional[Dict[str, Any]]]:
-    """Get meta for all difficulties."""
-    return {d: load_meta(d) for d in DIFFICULTIES}
+def get_all_solutions(date: str | None = None) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Get meta for all difficulties for today."""
+    date = date or _today()
+    return {d: load_meta(d, date=date) for d in DIFFICULTIES}
+
+
+# ── DP Plan operations ──
+
+def save_dp_plan(difficulty: str, plan_data: dict, date: str | None = None) -> None:
+    """Save exported DP plan (Zig-format) to DB."""
+    ensure_schema()
+    date = date or _today()
+    now = datetime.now(timezone.utc)
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO dp_plans (difficulty, date, plan_data, updated_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (difficulty, date) DO UPDATE SET
+                        plan_data = EXCLUDED.plan_data,
+                        updated_at = EXCLUDED.updated_at
+                """, (difficulty, date, Json(plan_data), now))
+            conn.commit()
+    except Exception as e:
+        print(f"  DB save_dp_plan error: {e}", file=sys.stderr)
+
+
+def load_dp_plan(difficulty: str, date: str | None = None) -> Optional[dict]:
+    """Load DP plan for today. Returns None if not found."""
+    ensure_schema()
+    date = date or _today()
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT plan_data FROM dp_plans WHERE difficulty = %s AND date = %s",
+                    (difficulty, date))
+                row = cur.fetchone()
+                if row:
+                    return row[0]
+    except Exception as e:
+        print(f"  DB load_dp_plan error: {e}", file=sys.stderr)
+    return None
 
 
 # ── Migration helper ──
 
-def migrate_files_to_db() -> None:
-    """One-time migration: import existing file-based data into PostgreSQL."""
-    for diff in DIFFICULTIES:
-        # Migrate capture
-        cap_path = os.path.join(SOLUTIONS_DIR, diff, 'capture.json')
-        if os.path.exists(cap_path):
-            with open(cap_path) as f:
-                cap = json.load(f)
-            save_capture(diff, cap)
-            print(f"  Migrated {diff} capture ({len(cap.get('orders', []))} orders)")
-
-        # Migrate solution
-        best_path = os.path.join(SOLUTIONS_DIR, diff, 'best.json')
-        meta_path = os.path.join(SOLUTIONS_DIR, diff, 'meta.json')
-        if os.path.exists(best_path) and os.path.exists(meta_path):
-            with open(best_path) as f:
-                actions_raw = json.load(f)
-            with open(meta_path) as f:
-                meta = json.load(f)
-            actions = [[(a, i) for a, i in round_actions] for round_actions in actions_raw]
-            save_solution(diff, meta.get('score', 0), actions,
-                          seed=meta.get('seed', 0), force=True)
-            print(f"  Migrated {diff} solution (score={meta.get('score', 0)})")
-
-        # Migrate order list
-        ol_path = os.path.join(ORDER_LISTS_DIR, f'{diff}_orders.json')
-        if os.path.exists(ol_path):
-            with open(ol_path) as f:
-                ol = json.load(f)
-            orders = ol.get('orders', [])
-            if orders:
-                # Convert to capture-style format
-                cap_orders = [{'items_required': o['items_required']} for o in orders]
-                _save_order_list(diff, cap_orders)
-                print(f"  Migrated {diff} order list ({len(orders)} orders)")
-
-
 if __name__ == '__main__':
-    print("Migrating file-based data to PostgreSQL...")
-    migrate_files_to_db()
-    print("\nCurrent state:")
+    print("Current state:")
     for d, meta in get_all_solutions().items():
         if meta:
-            print(f"  {d}: score={meta['score']}, orders=?")
+            print(f"  {d}: score={meta['score']}, date={meta['date']}")
         else:
             print(f"  {d}: no solution")
