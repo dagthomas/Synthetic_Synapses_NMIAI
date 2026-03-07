@@ -37,8 +37,28 @@ class NightmareTaskAlloc:
 
         self.corridor_ys = [1, ms.height // 2, ms.height - 3]
 
+        # Zone assignments: bots 0-6=LEFT, 7-13=MID, 14-19=RIGHT
+        self.bot_zone: dict[int, int] = {}
+        self.zone_dropoff: dict[int, tuple[int, int]] = {}
+        # Sort dropoffs by x coordinate for LEFT/MID/RIGHT
+        sorted_drops = sorted(drop_zones, key=lambda d: d[0])
+        for i, dz in enumerate(sorted_drops):
+            self.zone_dropoff[i] = dz
+        for bid in range(20):
+            if bid < 7:
+                self.bot_zone[bid] = 0  # LEFT
+            elif bid < 14:
+                self.bot_zone[bid] = 1  # MID
+            else:
+                self.bot_zone[bid] = 2  # RIGHT
+
         self._preview_bot_types: dict[int, int] = {}
         self._last_preview_id: int = -1
+
+        # Goal persistence: keep pickup assignments across rounds
+        # {bid: (item_idx, adj_pos, goal_type, type_id)}
+        self._persistent_goals: dict[int, tuple[int, tuple[int, int], str, int]] = {}
+        self._last_active_oid: int = -1
 
         # Pre-compute near-dropoff parking spots (2-3 cells from each dropoff)
         self._near_drop_cells: list[tuple[int, int]] = []
@@ -101,7 +121,8 @@ class NightmareTaskAlloc:
                  round_num: int,
                  num_rounds: int = 500,
                  future_orders: list[Order] | None = None,
-                 chain_plan: ChainPlan | None = None):
+                 chain_plan: ChainPlan | None = None,
+                 allow_preview_pickup: bool = True):
         goals: dict[int, tuple[int, int]] = {}
         goal_types: dict[int, str] = {}
         pickup_targets: dict[int, int] = {}
@@ -111,6 +132,8 @@ class NightmareTaskAlloc:
         if active_order:
             for t in active_order.needs():
                 active_needs[t] = active_needs.get(t, 0) + 1
+
+        # (persistent goal tracking disabled — greedy replanning is better)
 
         # Preview order analysis
         preview_needs: dict[int, int] = {}
@@ -211,6 +234,7 @@ class NightmareTaskAlloc:
             pos = bot_positions[bid]
             inv = bot_inventories[bid]
             bot_types = set(inv)
+            assigned_fill = False
             filtered_short = {t: s for t, s in active_short.items()
                               if t not in bot_types or s > 1}
             if filtered_short:
@@ -223,21 +247,72 @@ class NightmareTaskAlloc:
                     tid = int(self.ms.item_types[item_idx])
                     type_assigned[tid] = type_assigned.get(tid, 0) + 1
                     claimed_items.add(item_idx)
-                    continue
-            dz = self._balanced_dropoff(pos, dropoff_loads)
-            dropoff_loads[dz] += 1
-            goals[bid] = dz
-            goal_types[bid] = 'deliver'
+                    assigned_fill = True
 
-        # === PREVIEW CARRIERS: flee to corridors ===
-        # Near-dropoff parking causes congestion — corridor parking is better.
+            # No active fill → try preview items only if ON THE WAY to dropoff
+            if not assigned_fill and preview_short:
+                dz = self._nearest_drop(pos)
+                drop_dist = self.tables.get_distance(pos, dz)
+                preview_filtered = {t: s for t, s in preview_short.items()
+                                    if t not in bot_types}
+                if preview_filtered:
+                    item_idx, adj_pos = self._assign_item(
+                        bid, pos, preview_filtered, preview_type_assigned,
+                        claimed_items, strict=True)
+                    if item_idx is not None:
+                        d_to_item = self.tables.get_distance(pos, adj_pos)
+                        d_item_to_drop = self._drop_dist(adj_pos)
+                        detour = d_to_item + d_item_to_drop - drop_dist
+                        if detour <= 6:
+                            goals[bid] = adj_pos
+                            goal_types[bid] = 'pickup'
+                            pickup_targets[bid] = item_idx
+                            tid = int(self.ms.item_types[item_idx])
+                            preview_type_assigned[tid] = preview_type_assigned.get(tid, 0) + 1
+                            claimed_items.add(item_idx)
+                            assigned_fill = True
+
+            if not assigned_fill:
+                dz = self._balanced_dropoff(pos, dropoff_loads)
+                dropoff_loads[dz] += 1
+                goals[bid] = dz
+                goal_types[bid] = 'deliver'
+
+        # === PREVIEW CARRIERS: stage at non-deliver dropoff zones ===
+        deliver_zones: set[tuple[int, int]] = set()
+        for bid_d in goals:
+            if goal_types.get(bid_d) == 'deliver' and goals[bid_d] in self.drop_set:
+                deliver_zones.add(goals[bid_d])
+
+        staging_counts: dict[tuple[int, int], int] = {dz: 0 for dz in self.drop_zones}
+        max_staging_per_zone = 1
+
         occupied_goals = set(goals.values())
         for bid in preview_carriers:
             pos = bot_positions[bid]
-            park = self._corridor_parking(pos, occupied_goals)
-            occupied_goals.add(park)
-            goals[bid] = park
-            goal_types[bid] = 'flee'
+
+            # Stage at non-deliver zone
+            best_zone = None
+            best_d = 9999
+            for dz in self.drop_zones:
+                if dz in deliver_zones:
+                    continue
+                if staging_counts[dz] >= max_staging_per_zone:
+                    continue
+                d = self.tables.get_distance(pos, dz)
+                if d < best_d:
+                    best_d = d
+                    best_zone = dz
+
+            if best_zone is not None and best_d < 20:
+                staging_counts[best_zone] += 1
+                goals[bid] = best_zone
+                goal_types[bid] = 'stage'
+            else:
+                park = self._corridor_parking(pos, occupied_goals)
+                occupied_goals.add(park)
+                goals[bid] = park
+                goal_types[bid] = 'flee'
 
         # === DEAD BOTS: flee to corridors ===
         for bid in dead_bots:
@@ -251,7 +326,7 @@ class NightmareTaskAlloc:
         empty_by_proximity = sorted(empty_bots, key=lambda bid: self._min_dist_to_types(
             bot_positions[bid], active_short.keys() if active_short else preview_needs.keys()))
 
-        max_preview_pickers = min(4, len(empty_by_proximity))
+        max_preview_pickers = min(4, len(empty_by_proximity)) if allow_preview_pickup else 0
         preview_assigned = 0
 
         for bid in empty_by_proximity:
@@ -300,7 +375,8 @@ class NightmareTaskAlloc:
                      needed: dict[int, int],
                      assigned_counts: dict[int, int],
                      claimed: set[int],
-                     strict: bool = False) -> tuple[int | None, tuple[int, int] | None]:
+                     strict: bool = False,
+                     zone_filter: int = -1) -> tuple[int | None, tuple[int, int] | None]:
         best_idx = None
         best_adj = None
         best_cost = 9999
@@ -314,9 +390,16 @@ class NightmareTaskAlloc:
             for item_idx, adj_cells, item_zone in self.type_items.get(tid, []):
                 if item_idx in claimed:
                     continue
+                if zone_filter >= 0 and item_zone != zone_filter:
+                    continue
                 for adj in adj_cells:
                     d = self.tables.get_distance(bot_pos, adj)
-                    drop_d = self._drop_dist(adj)
+                    if zone_filter >= 0:
+                        # Use bot's zone dropoff for cost
+                        drop_d = self.tables.get_distance(
+                            adj, self.zone_dropoff[zone_filter])
+                    else:
+                        drop_d = self._drop_dist(adj)
                     cost = d + drop_d * 0.4
                     if cost < best_cost:
                         best_cost = cost

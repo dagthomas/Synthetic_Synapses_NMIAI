@@ -90,6 +90,28 @@ class NightmarePathfinder:
                         planned_dest[bid] = dest
                         assigned = True
                         break
+                else:
+                    # Cell claimed — try to push waiting idle/park blocker
+                    blocker = claims[dest]
+                    blocker_gt = gt.get(blocker, 'park')
+                    if (blocker in actions and actions[blocker] == ACT_WAIT
+                            and bot_positions.get(blocker) == dest
+                            and dest != self.spawn
+                            and blocker_gt in ('park', 'flee', 'stage')):
+                        blocker_goal = goals.get(blocker, self.spawn)
+                        alt_moves = self._rank_moves(blocker, dest, blocker_goal)
+                        for alt_act, alt_dest in alt_moves:
+                            if alt_dest not in claims and alt_dest != pos:
+                                claims[alt_dest] = blocker
+                                actions[blocker] = alt_act
+                                planned_dest[blocker] = alt_dest
+                                claims[dest] = bid
+                                actions[bid] = act
+                                planned_dest[bid] = dest
+                                assigned = True
+                                break
+                        if assigned:
+                            break
 
             if not assigned:
                 if pos not in claims or pos == self.spawn:

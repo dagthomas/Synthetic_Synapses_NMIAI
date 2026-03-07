@@ -60,6 +60,20 @@ def _fetch_token(difficulty: str) -> str | None:
         return None
 
 
+def _run_nightmare_ws(ws_url: str, replay: bool = False) -> tuple[int, int]:
+    """Run nightmare game via in-process V3 WS client. Returns (score, num_orders)."""
+    try:
+        from nightmare_ws import run_live
+        score, capture = run_live(ws_url, replay=replay, verbose=True)
+        n_orders = len(capture.get('orders', [])) if capture else 0
+        return score, n_orders
+    except Exception as e:
+        print(f"  Nightmare WS failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return 0, 0
+
+
 def _run_zig_capture(ws_url: str, difficulty: str) -> tuple[int, int]:
     """Run Zig bot for initial capture. Returns (score, num_orders_discovered)."""
     try:
@@ -77,6 +91,8 @@ def _run_zig_capture(ws_url: str, difficulty: str) -> tuple[int, int]:
 
 def _replay_and_discover(ws_url: str, difficulty: str) -> tuple[int, int]:
     """Replay current best solution, discover new orders. Returns (score, new_orders)."""
+    if difficulty == 'nightmare':
+        return _run_nightmare_ws(ws_url, replay=True)
     try:
         sys.path.insert(0, GPU_DIR)
         from production_run import replay_solution_ws, capture_from_log
@@ -187,7 +203,17 @@ def run_stepladder(difficulty: str, hours: float = 6.0,
         has_capture = load_capture(difficulty) is not None
         has_solution = load_solution(difficulty) is not None
 
-        if state['iteration'] == 0 and not has_capture:
+        if difficulty == 'nightmare':
+            # Nightmare: always use in-process V3 WS client
+            has_replay = has_solution and state['iteration'] > 0
+            mode = "replay" if has_replay else "V3 live"
+            print(f"  Nightmare {mode}...", file=sys.stderr)
+            score, n_orders = _run_nightmare_ws(ws_url, replay=has_replay)
+            state['scores'].append(score)
+            state['orders_discovered'].append(n_orders)
+            if score > state['best_score']:
+                state['best_score'] = score
+        elif state['iteration'] == 0 and not has_capture:
             print(f"  Initial capture via Zig bot...", file=sys.stderr)
             score, n_orders = _run_zig_capture(ws_url, difficulty)
             state['scores'].append(score)

@@ -249,8 +249,13 @@ class NightmareSolverV3:
             if tid in active_short and active_short[tid] > 0:
                 if tid in bot_types and active_short[tid] <= 1:
                     continue
+            elif total_short == 0 and preview_order and preview_order.needs_type(tid):
+                # Pick preview when ALL active items are covered (any bot type)
+                # Chain reaction: at dropoff, preview items auto-deliver
+                if tid in bot_types:
+                    continue  # already carrying this type
             elif goal_type == 'preview' and preview_order and preview_order.needs_type(tid):
-                pass  # allow preview pickup for preview bots
+                pass  # preview bots always pick preview items
             else:
                 continue
 
@@ -318,20 +323,8 @@ class NightmareSolverV3:
                 self.stall_counts[bid] = 0
             self.prev_positions[bid] = pos
 
-        # Future orders from pre-loaded capture data
-        future: list[Order] = []
-        if preview_order:
-            future.append(preview_order)
-        if self.future_orders:
-            # Rough estimate of which orders are upcoming
-            completed_est = data.get('orders_completed', 0)
-            start_idx = completed_est + 2
-            for i in range(start_idx, min(start_idx + 8, len(self.future_orders))):
-                future.append(self.future_orders[i])
-
-        # Chain planning
-        chain_plan = self.chain_planner.plan_chain(
-            active_order, future, bot_pos_dict, bot_inv_dict)
+        # Live mode: only active + preview visible, no chain planning
+        chain_plan = None
 
         # Compute active shortfall
         active_needs: dict[int, int] = {}
@@ -349,12 +342,13 @@ class NightmareSolverV3:
             if s > 0:
                 active_short[t] = s
 
-        # Task allocation with chain awareness
+        # Task allocation: active items only, no preview pickups
         num_rounds = data.get('max_rounds', 500)
         goals, goal_types, pickup_targets = self.allocator.allocate(
             bot_pos_dict, bot_inv_dict,
             active_order, preview_order, rnd, num_rounds,
-            future_orders=future, chain_plan=chain_plan)
+            future_orders=None, chain_plan=None,
+            allow_preview_pickup=False)
 
         # Urgency order (V2-identical)
         priority_map = {'deliver': 0, 'pickup': 1, 'stage': 2, 'preview': 3, 'flee': 4, 'park': 5}
@@ -391,8 +385,8 @@ class NightmareSolverV3:
                 ws_actions.append({'bot': bid, 'action': 'drop_off'})
                 continue
 
-            # At pickup target
-            if gt in ('pickup', 'preview') and bid in pickup_targets:
+            # At pickup target (active items only)
+            if gt == 'pickup' and bid in pickup_targets:
                 item_idx = pickup_targets[bid]
                 if pos == goal and item_idx < len(ms.items):
                     ws_actions.append({
@@ -402,11 +396,11 @@ class NightmareSolverV3:
                     })
                     continue
 
-            # Opportunistic adjacent pickup
-            if len(inv_names) < INV_CAP and gt in ('pickup', 'preview', 'deliver'):
-                opp_pickup = self._ws_check_adjacent(bid, pos, ms, orders_data, chain_plan)
-                if opp_pickup is not None:
-                    ws_actions.append(opp_pickup)
+            # Opportunistic: only pick items still needed by active order
+            if len(inv_names) < INV_CAP and gt in ('pickup', 'deliver') and active_short:
+                opp = self._ws_active_adjacent(bid, pos, ms, active_short)
+                if opp is not None:
+                    ws_actions.append(opp)
                     continue
 
             # Use pathfinder action
@@ -414,6 +408,22 @@ class NightmareSolverV3:
             ws_actions.append({'bot': bid, 'action': ACTION_NAMES[act]})
 
         return ws_actions
+
+    def _ws_active_adjacent(self, bid: int, pos: tuple[int, int],
+                            ms: MapState, active_short: dict[int, int]) -> dict | None:
+        """Pick up adjacent item only if type is still needed by active order."""
+        for item_idx in range(ms.num_items):
+            tid = int(ms.item_types[item_idx])
+            if tid not in active_short:
+                continue
+            for adj in ms.item_adjacencies.get(item_idx, []):
+                if adj == pos:
+                    return {
+                        'bot': bid,
+                        'action': 'pick_up',
+                        'item_id': ms.items[item_idx]['id'],
+                    }
+        return None
 
     def _ws_check_adjacent(self, bid: int, pos: tuple[int, int],
                             ms: MapState, orders_data: list,
