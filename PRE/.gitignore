@@ -6,3 +6,6 @@
 /grocery-bot-gpu/_pycache
 /grocery-bot-gpu/__pycache__
 ./grocery-bot-gpu/.playwright_profile
+/replay/app/node_modules
+/replay/app/build
+/replay/app/.svelte-kit

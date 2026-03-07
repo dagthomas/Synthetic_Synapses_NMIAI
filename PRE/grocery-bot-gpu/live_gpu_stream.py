@@ -148,9 +148,6 @@ class AnytimeGPUStream:
         self._bot_pos_history = {}       # bot_id → list of last 6 positions
         self._bot_stall_count = {}       # bot_id → rounds stuck at same position
 
-        # ── seed cracking ─────────────────────────────────────────────────────
-        self._cracked_seed: Optional[int] = None
-        self._all_orders_from_seed: Optional[list] = None  # 100 orders from cracked seed
 
     # ── JSON streaming (for SvelteKit SSE dashboard) ─────────────────────────
 
@@ -439,21 +436,10 @@ class AnytimeGPUStream:
             'hard':   [50_000, 200_000, 1_000_000, 5_000_000],
             'expert': [20_000, 100_000,   500_000, 2_000_000],
         }
-        # Larger budgets when seed is cracked (full order foresight = better gradient)
-        _budgets_with_seed = {
-            'medium': [50_000, 200_000, 1_000_000, 5_000_000],
-            'hard':   [50_000, 200_000, 1_000_000, 5_000_000],
-            'expert': [20_000, 100_000,   500_000, 2_000_000],
-        }
         _extended_budget = {
             'medium': 5_000_000,
             'hard': 5_000_000,
             'expert': 2_000_000,
-        }
-        _extended_budget_with_seed = {
-            'medium': 10_000_000,
-            'hard': 10_000_000,
-            'expert':  5_000_000,
         }
 
         while True:
@@ -468,13 +454,8 @@ class AnytimeGPUStream:
 
             with self._lock:
                 current_gen = self._solve_gen
-                _cracked = self._cracked_seed
-                _all_ord = self._all_orders_from_seed
 
-            if _cracked is not None:
-                budgets = _budgets_with_seed.get(diff, _budgets.get(diff, [8_000, 20_000, 60_000]))
-            else:
-                budgets = _budgets.get(diff, [8_000, 20_000, 60_000])
+            budgets = _budgets.get(diff, [8_000, 20_000, 60_000])
 
             # When preloaded solution exists, skip small budgets (can't improve 180+ plans)
             # and start at higher budgets for more effective warm refinement.
@@ -487,8 +468,7 @@ class AnytimeGPUStream:
                       f"skipping small budgets", file=sys.stderr)
 
             print(f"  [gpu_seq] Starting: diff={diff}, orders={len(capture['orders'])}, "
-                  f"gen={current_gen}, budgets={budgets}, "
-                  f"seed={'cracked' if _cracked else 'unknown'}", file=sys.stderr)
+                  f"gen={current_gen}, budgets={budgets}", file=sys.stderr)
             t_refine_start = time.time()
 
             best_score = 0
@@ -522,11 +502,6 @@ class AnytimeGPUStream:
                     # Pass 0 (cold): 2 refine, Pass 1: 3, Pass 2: 4, Pass 3+: 6
                     pass_refine_iters = min(pass_idx + 2, 6)
 
-                    # Pull latest cracked seed info
-                    with self._lock:
-                        _cracked = self._cracked_seed
-                        _all_ord = self._all_orders_from_seed
-
                     if best_actions is None:
                         # Cold start: multi-restart sequential DP.
                         # For multi-bot difficulties, screen 50 orderings (cheap GPU
@@ -549,7 +524,7 @@ class AnytimeGPUStream:
                             n_screen_steps=20,
                             no_filler=True,
                             verbose=True,
-                            all_orders_override=_all_ord,
+                            all_orders_override=None,
                             no_compile=True,
                         )
                     else:
@@ -575,7 +550,7 @@ class AnytimeGPUStream:
                             max_refine_iters=pass_refine_iters,
                             no_filler=True,
                             verbose=True,
-                            all_orders_override=_all_ord,
+                            all_orders_override=None,
                             no_compile=True,
                         )
 
@@ -622,19 +597,13 @@ class AnytimeGPUStream:
             # Extended refinement while waiting for new orders.
             # Keep polishing the plan with the largest budget until new orders arrive.
             final_gen = self._solve_gen
-            with self._lock:
-                _cracked_ext = self._cracked_seed
-                _all_ord_ext = self._all_orders_from_seed
-            ext_budget = (_extended_budget_with_seed if _cracked_ext else _extended_budget).get(
-                diff, 2_000_000)
+            ext_budget = _extended_budget.get(diff, 2_000_000)
             print(f"  [gpu_seq] Budget cycle done gen={final_gen} best={best_score}, "
-                  f"entering extended refinement loop (budget={ext_budget:,}, "
-                  f"seed={'cracked' if _cracked_ext else 'unknown'})", file=sys.stderr)
+                  f"entering extended refinement loop (budget={ext_budget:,})", file=sys.stderr)
             while self._solve_gen == final_gen and best_actions is not None:
                 # Check if external plan improved
                 with self._lock:
                     ext = self._plan
-                    _all_ord_ext = self._all_orders_from_seed
                 if (ext and ext.actions and ext.score > best_score
                         and ext.source not in ('none', 'greedy')):
                     best_score = ext.score
@@ -652,7 +621,7 @@ class AnytimeGPUStream:
                         max_refine_iters=3,
                         no_filler=True,
                         verbose=True,
-                        all_orders_override=_all_ord_ext,
+                        all_orders_override=None,
                         no_compile=True,
                     )
                 except Exception as e:
@@ -819,148 +788,6 @@ class AnytimeGPUStream:
                 gpu_r.start()
         pr_t = threading.Thread(target=self._per_round_gpu_worker, daemon=True)
         pr_t.start()
-
-    # ── seed cracking ─────────────────────────────────────────────────────────
-
-    def _crack_seed_async(self, ws_data: dict) -> None:
-        """Start seed cracking in a daemon thread from round-0 WS data."""
-        orders = ws_data.get('orders', [])
-        if len(orders) < 2:
-            print("  [seed_crack] Not enough orders to crack seed", file=sys.stderr)
-            return
-
-        order0_types = orders[0].get('items_required', [])
-        order1_types = orders[1].get('items_required', [])
-        diff = self._difficulty
-        ms = self._map_state
-
-        def _worker():
-            try:
-                from seed_crack import crack_seed_fast, save_cracked_seed, load_cracked_seed
-                from game_engine import generate_all_orders
-
-                # Check cache first
-                seed = load_cracked_seed(diff, order0_types)
-                if seed is None:
-                    seed = crack_seed_fast(order0_types, order1_types, ms, diff)
-                    if seed is not None:
-                        save_cracked_seed(diff, seed, order0_types)
-
-                if seed is not None:
-                    self._on_seed_cracked(seed)
-                else:
-                    print(f"  [seed_crack] Failed — continuing without seed",
-                          file=sys.stderr)
-            except Exception as e:
-                print(f"  [seed_crack] Error: {e}", file=sys.stderr)
-                import traceback
-                traceback.print_exc(file=sys.stderr)
-
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-
-    def _on_seed_cracked(self, seed: int) -> None:
-        """Called when seed is successfully cracked. Generates all 100 orders."""
-        from game_engine import generate_all_orders
-
-        ms = self._map_state
-        diff = self._difficulty
-        all_orders = generate_all_orders(seed, ms, diff, count=100)
-
-        with self._lock:
-            self._cracked_seed = seed
-            self._all_orders_from_seed = all_orders
-
-            # Replace capture orders with exact orders from seed
-            if self._capture is not None:
-                exact_orders = []
-                for i, order in enumerate(all_orders):
-                    status = 'active' if i == 0 else ('preview' if i == 1 else 'future')
-                    exact_orders.append({
-                        'id': f'order_{i}',
-                        'items_required': list(order._required_names),
-                        'items_delivered': [],
-                        'status': status,
-                    })
-                self._capture['orders'] = exact_orders
-                self._capture['seed'] = seed
-
-            self._solve_gen += 1
-            gen = self._solve_gen
-
-        print(f"  [seed_crack] Seed cracked! seed={seed}, gen→{gen}, "
-              f"orders={len(all_orders)}", file=sys.stderr)
-        self._emit({"type": "seed_cracked", "seed": seed})
-
-        # Start trip scheduler for warm start
-        threading.Thread(target=self._start_trip_scheduler, args=(gen,),
-                         daemon=True).start()
-
-    def _start_trip_scheduler(self, gen):
-        """Run TripScheduler and publish warm-start plan."""
-        try:
-            from trip_scheduler import TripScheduler
-            from gpu_sequential_solver import cpu_verify
-            from game_engine import init_game_from_capture
-
-            with self._lock:
-                if self._cracked_seed is None or self._all_orders_from_seed is None:
-                    return
-                seed = self._cracked_seed
-                all_orders = self._all_orders_from_seed
-                cap = copy.deepcopy(self._capture)
-                ms = self._map_state
-
-            tables = self._tables
-            if tables is None:
-                print("  [trip_sched] No tables available", file=sys.stderr)
-                return
-
-            diff = self._difficulty
-            num_bots = self._num_bots
-
-            from configs import CONFIGS
-            cfg = CONFIGS[diff]
-
-            t0 = time.time()
-            scheduler = TripScheduler(ms, all_orders, tables, num_bots, diff)
-            schedules = scheduler.run(time_budget_s=3.0)
-            combined_actions = scheduler.to_init_actions(schedules)
-
-            # CPU verify the warm start
-            gs, _ = init_game_from_capture(cap, num_orders=len(cap['orders']))
-            # Override orders with cracked seed orders
-            from game_engine import Order
-            gs.orders = [all_orders[0].copy(), all_orders[1].copy()]
-            gs.orders[0].status = 'active'
-            gs.orders[1].status = 'preview'
-            gs.next_order_idx = 2
-
-            from gpu_sequential_solver import cpu_verify
-            score = cpu_verify(gs, all_orders, combined_actions, num_bots)
-            elapsed = time.time() - t0
-
-            print(f"  [trip_sched] Warm start score={score} ({elapsed:.1f}s)", file=sys.stderr)
-            self._emit({"type": "trip_sched_done", "score": score, "elapsed": round(elapsed, 1)})
-
-            if score > 0:
-                ms_r = self._map_ref()
-                cap_r = self._capture_snapshot()
-                try:
-                    from replay_solution import predict_full_sim, extract_goals
-                    exp_pos = predict_full_sim(combined_actions, cap_r, ms_r)
-                    goals = extract_goals(combined_actions, ms_r, exp_pos)
-                except Exception as e:
-                    # Prediction sim failed; plan still usable without expected positions
-                    exp_pos = None
-                    goals = None
-                self._update_plan(score, combined_actions, exp_pos, goals,
-                                  'trip_sched', gen)
-
-        except Exception as e:
-            print(f"  [trip_sched] Error: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc(file=sys.stderr)
 
     # ── order tracking ────────────────────────────────────────────────────────
 
@@ -2502,7 +2329,7 @@ class AnytimeGPUStream:
                 import subprocess as _subprocess  # nosec B404
                 _import_script = os.path.normpath(os.path.join(
                     os.path.dirname(os.path.abspath(__file__)),
-                    '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
+                    '..', 'replay', 'import_logs.py',
                 ))
                 if os.path.exists(_import_script):
                     _subprocess.Popen(  # nosec B603 B607

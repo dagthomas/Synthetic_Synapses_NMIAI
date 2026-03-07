@@ -968,7 +968,7 @@ async def replay_best(ws_url: str, difficulty: str | None = None,
     try:
         import subprocess  # nosec B404
         import_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                     '..', 'grocery-bot-zig', 'replay', 'import_logs.py')
+                                     '..', 'replay', 'import_logs.py')
         result = subprocess.run(  # nosec B603 B607
             [sys.executable, import_script, '--run-type', 'replay', log_path],
             capture_output=True, text=True, timeout=30)

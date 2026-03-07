@@ -119,7 +119,7 @@ def run_seed(difficulty, seed, device='cuda', max_states=None, no_refine=False,
             f.write('\n'.join(log_lines) + '\n')
         _import_script = os.path.normpath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            '..', 'grocery-bot-zig', 'replay', 'import_logs.py',
+            '..', 'replay', 'import_logs.py',
         ))
         if os.path.exists(_import_script):
             _subprocess.Popen(  # nosec B603 B607
