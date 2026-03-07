@@ -113,8 +113,8 @@ def main() -> None:
                 on_bot_progress=on_bot_progress, on_phase=on_phase,
                 speed_bonus=args.speed_bonus)
         except Exception as e:
-            emit({"type": "optimize_done", "score": 0, "error": str(e),
-                  "elapsed": round(time.time() - t0, 1)})
+            emit({"type": "optimize_done", "score": 0, "prev_score": prev_score,
+                  "error": str(e), "elapsed": round(time.time() - t0, 1)})
             sys.exit(1)
     elif args.warm_only:
         # Warm-only requested but no existing solution — fall back to cold-start
@@ -124,16 +124,16 @@ def main() -> None:
         try:
             score, actions = solve_sequential(**kwargs)
         except Exception as e:
-            emit({"type": "optimize_done", "score": 0, "error": str(e),
-                  "elapsed": round(time.time() - t0, 1)})
+            emit({"type": "optimize_done", "score": 0, "prev_score": prev_score,
+                  "error": str(e), "elapsed": round(time.time() - t0, 1)})
             sys.exit(1)
     else:
         # Normal mode: cold-start + optional warm-start refinement
         try:
             score, actions = solve_sequential(**kwargs)
         except Exception as e:
-            emit({"type": "optimize_done", "score": 0, "error": str(e),
-                  "elapsed": round(time.time() - t0, 1)})
+            emit({"type": "optimize_done", "score": 0, "prev_score": prev_score,
+                  "error": str(e), "elapsed": round(time.time() - t0, 1)})
             sys.exit(1)
 
         # Warm-start: if existing solution is better, try refining it
