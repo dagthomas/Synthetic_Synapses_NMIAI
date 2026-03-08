@@ -1,0 +1,31 @@
+Test server starting on ws://localhost:8767/ws
+Difficulty: nightmare, from data/live_init.json
+Connect with: python nightmare_live.py "ws://localhost:8767/ws?token=test"
+Client connected from ('::1', 52800, 0, 0)
+Game started: nightmare seed=7005 bots=20 rounds=500 items=144 types=21
+Dropoffs: [(1, 16), (15, 16), (27, 16)]
+Spawn: (28, 16)
+  SRV R0: parsed=[('up', -1), ('lt', -1), ('wait', -1), ('wait', -1), ('wait', -1)] inv=[]
+R  0/500 Score:  0 Ord:0 Delta:+0
+  SRV R1: parsed=[('lt', -1), ('lt', -1), ('up', -1), ('lt', -1), ('wait', -1)] inv=[]
+R  1/500 Score:  0 Ord:0 Delta:+0
+  SRV R2: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1)] inv=[]
+R  2/500 Score:  0 Ord:0 Delta:+0
+  SRV R3: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1), ('up', -1)] inv=[]
+R  3/500 Score:  0 Ord:0 Delta:+0
+  SRV R4: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1), ('up', -1)] inv=[]
+R  4/500 Score:  0 Ord:0 Delta:+0
+  SRV R5: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1), ('up', -1)] inv=[]
+  SRV R6: parsed=[('PU', 131), ('up', -1), ('up', -1), ('rt', -1), ('dn', -1)] inv=[]
+    PU: b0@(23,15)->item131@(23,14) d=1 inv=0
+  SRV R7: parsed=[('rt', -1), ('lt', -1), ('up', -1), ('lt', -1), ('up', -1)] inv=['b0:[11]']
+  SRV R8: parsed=[('up', -1), ('rt', -1), ('PU', 130), ('up', -1), ('dn', -1)] inv=['b0:[11]']
+    PU: b2@(24,13)->item130@(23,13) d=1 inv=0
+  SRV R9: parsed=[('up', -1), ('dn', -1), ('up', -1), ('rt', -1), ('up', -1)] inv=['b0:[11]', 'b2:[20]']
+R 32/500 Score:  1 Ord:0 Delta:+1
+R 35/500 Score:  2 Ord:0 Delta:+1
+R 36/500 Score:  5 Ord:0 Delta:+3
+R 44/500 Score: 14 Ord:1 Delta:+9
+R 48/500 Score: 15 Ord:1 Delta:+1
+R 50/500 Score: 15 Ord:1 Delta:+0
+Client disconnected

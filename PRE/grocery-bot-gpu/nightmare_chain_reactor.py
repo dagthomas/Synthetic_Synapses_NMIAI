@@ -1,16 +1,12 @@
-"""Wave Pipeline Solver for Nightmare mode.
+"""Chain Reactor: V4 + more preview pickers only.
 
-Combines two targeted changes from V4:
-1. More preview pickers (8 instead of 4) for better type coverage
-2. Precise trigger hold: when delivery would complete active AND stagers
-   with preview items are within 3 steps of dropoff, hold for max 3 rounds
+Tests whether more preview pickers (10 instead of 4) enables chain reactions
+by getting preview items to dropoffs before the trigger fires.
 
-The key insight: V4 with pp=10 gets within 1 item of chain (5/6 auto-delivered
-at R76) but too much congestion. pp=8 + trigger hold should bridge the gap.
+Key insight: V4's preview pickers start after active is covered (same round),
+but only 4 of them. With 10, more preview items reach dropoffs in time.
 
-Usage:
-    python nightmare_wave_solver.py --seeds 7005 -v
-    python nightmare_wave_solver.py --seeds 7001-7010 -v --compare
+NO other changes from V4: no staging ACT_DROPOFF, no trigger hold.
 """
 from __future__ import annotations
 
@@ -28,102 +24,8 @@ from nightmare_lmapf_solver import LMAPFSolver
 MOVES = [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]
 
 
-class WavePipelineSolver(LMAPFSolver):
-    """V4 + more preview pickers + precise trigger hold."""
-
-    def __init__(self, ms, tables=None, future_orders=None, max_pp=8):
-        super().__init__(ms, tables, future_orders)
-        self._hold_count = 0
-        self._hold_order_id = -1
-        self._max_pp = max_pp
-
-    def _should_hold_trigger(self, bid, bot_positions, bot_inventories,
-                             active, preview, rnd, num_rounds):
-        """Precise trigger hold: wait if stagers with preview items are close."""
-        if not active or not preview:
-            return False
-        if num_rounds - rnd < 30:
-            return False
-        if self._hold_count >= 3:
-            return False
-
-        # Would this delivery complete the active order?
-        inv = bot_inventories.get(bid, [])
-        remaining: dict[int, int] = {}
-        for t in active.needs():
-            remaining[t] = remaining.get(t, 0) + 1
-        for t in inv:
-            if remaining.get(t, 0) > 0:
-                remaining[t] -= 1
-        for b2, inv2 in bot_inventories.items():
-            if b2 == bid:
-                continue
-            pos2 = bot_positions.get(b2)
-            if pos2 not in self.drop_set:
-                continue
-            for t in inv2:
-                if remaining.get(t, 0) > 0:
-                    remaining[t] -= 1
-        if sum(max(0, v) for v in remaining.values()) > 0:
-            return False  # delivery won't complete active
-
-        # Delivery WOULD complete active. Check preview staging.
-        preview_needs: dict[int, int] = {}
-        for t in preview.needs():
-            preview_needs[t] = preview_needs.get(t, 0) + 1
-        total_needed = sum(preview_needs.values())
-        if total_needed == 0:
-            return False
-
-        # Count preview-matching items at dropoffs
-        staged: dict[int, int] = {}
-        # Trigger bot leftovers (items not matching active)
-        active_copy = list(active.needs())
-        for t in inv:
-            if t in active_copy:
-                active_copy.remove(t)
-            else:
-                if t in preview_needs:
-                    staged[t] = staged.get(t, 0) + 1
-
-        for b2 in bot_inventories:
-            if b2 == bid:
-                continue
-            pos2 = bot_positions.get(b2)
-            if pos2 not in self.drop_set:
-                continue
-            for t in bot_inventories[b2]:
-                if t in preview_needs:
-                    staged[t] = staged.get(t, 0) + 1
-
-        matched = 0
-        for t, need in preview_needs.items():
-            matched += min(need, staged.get(t, 0))
-        gap = total_needed - matched
-
-        if gap == 0:
-            return False  # chain ready, FIRE!
-
-        # Check en-route stagers within 3 steps
-        en_route_items = 0
-        for b2 in bot_inventories:
-            pos2 = bot_positions.get(b2)
-            if pos2 is None or pos2 in self.drop_set:
-                continue
-            inv2 = bot_inventories[b2]
-            preview_in_inv = [t for t in inv2 if t in preview_needs]
-            if not preview_in_inv:
-                continue
-            d = min(self.tables.get_distance(pos2, dz)
-                    for dz in self.drop_zones)
-            if d <= 3:
-                en_route_items += len(preview_in_inv)
-
-        if gap <= en_route_items:
-            self._hold_count += 1
-            return True
-
-        return False
+class ChainReactorSolver(LMAPFSolver):
+    """V4 with max_preview_pickers=10 (from 4)."""
 
     def action(self, state: GameState, all_orders: list[Order],
                rnd: int) -> list[tuple[int, int]]:
@@ -131,6 +33,7 @@ class WavePipelineSolver(LMAPFSolver):
         num_bots = len(state.bot_positions)
         num_rounds = DIFF_ROUNDS.get('nightmare', 500)
 
+        # === IDENTICAL TO V4 ===
         bot_positions: dict[int, tuple[int, int]] = {}
         bot_inventories: dict[int, list[int]] = {}
         for bid in range(num_bots):
@@ -151,12 +54,6 @@ class WavePipelineSolver(LMAPFSolver):
         preview_order = state.get_preview_order()
         future = self._get_future_orders(state, all_orders)
 
-        # Reset hold on order change
-        active_id = active_order.id if active_order else -1
-        if active_id != self._hold_order_id:
-            self._hold_count = 0
-            self._hold_order_id = active_id
-
         active_needs: dict[int, int] = {}
         carrying_active: dict[int, int] = {}
         if active_order:
@@ -171,10 +68,12 @@ class WavePipelineSolver(LMAPFSolver):
             s = need - carrying_active.get(t, 0)
             if s > 0:
                 active_short[t] = s
+        total_short = sum(active_short.values())
 
         chain_plan = self.chain_planner.plan_chain(
             active_order, future, bot_positions, bot_inventories)
 
+        active_id = active_order.id if active_order else -1
         if active_id != self._last_active_id:
             self._trips.clear()
             self._last_active_id = active_id
@@ -185,15 +84,15 @@ class WavePipelineSolver(LMAPFSolver):
             if trip['age'] > 20:
                 del self._trips[bid]
 
-        # V4 allocation with more preview pickers
+        # ===== ONLY CHANGE: max_preview_pickers_override=10 =====
         goals, goal_types, pickup_targets = self.allocator.allocate(
             bot_positions, bot_inventories,
             active_order, preview_order, rnd, num_rounds,
             future_orders=future, chain_plan=chain_plan,
             allow_preview_pickup=True,
-            max_preview_pickers_override=self._max_pp)
+            max_preview_pickers_override=10)
 
-        # Apply persistent trips
+        # Apply persistent trips (same as V4)
         for bid in list(self._trips.keys()):
             trip = self._trips[bid]
             pos = bot_positions[bid]
@@ -214,6 +113,7 @@ class WavePipelineSolver(LMAPFSolver):
             if trip.get('item_idx') is not None:
                 pickup_targets[bid] = trip['item_idx']
 
+        # Record new trips (same as V4)
         for bid in range(num_bots):
             gt = goal_types.get(bid)
             if gt in ('pickup', 'preview') and bid in pickup_targets:
@@ -221,12 +121,15 @@ class WavePipelineSolver(LMAPFSolver):
                     item_idx = pickup_targets[bid]
                     tid = int(self.ms.item_types[item_idx]) if item_idx >= 0 else -1
                     self._trips[bid] = {
-                        'goal': goals[bid], 'goal_type': gt,
-                        'item_idx': item_idx, 'type_id': tid,
-                        'inv_count': len(bot_inventories[bid]), 'age': 0,
+                        'goal': goals[bid],
+                        'goal_type': gt,
+                        'item_idx': item_idx,
+                        'type_id': tid,
+                        'inv_count': len(bot_inventories[bid]),
+                        'age': 0,
                     }
 
-        # POST-PROCESS: recycle idle bots
+        # POST-PROCESS: (same as V4)
         claimed_items = set(pickup_targets.values())
         for bid in range(num_bots):
             gt = goal_types.get(bid, 'park')
@@ -276,7 +179,7 @@ class WavePipelineSolver(LMAPFSolver):
                             'inv_count': len(inv), 'age': 0,
                         }
 
-        # Urgency order
+        # Urgency order (same as V4)
         def _urgency_key(bid):
             gt = goal_types.get(bid, 'park')
             dist = self.tables.get_distance(
@@ -295,11 +198,12 @@ class WavePipelineSolver(LMAPFSolver):
                 return (5, dist)
         urgency_order = sorted(range(num_bots), key=_urgency_key)
 
+        # PIBT pathfinding (same as V4)
         path_actions = self.pathfinder.plan_all(
             bot_positions, goals, urgency_order,
             goal_types=goal_types)
 
-        # Build actions with trigger hold
+        # Build actions (same as V4 — NO staging ACT_DROPOFF)
         actions: list[tuple[int, int]] = [(ACT_WAIT, -1)] * num_bots
 
         for bid in range(num_bots):
@@ -312,22 +216,20 @@ class WavePipelineSolver(LMAPFSolver):
                 actions[bid] = (act, -1)
                 continue
 
+            # AT DROPOFF: deliver only for 'deliver' bots
             if pos in self.drop_set:
                 if gt == 'deliver' and bot_inventories[bid]:
-                    if self._should_hold_trigger(
-                            bid, bot_positions, bot_inventories,
-                            active_order, preview_order, rnd, num_rounds):
-                        actions[bid] = (ACT_WAIT, -1)
-                    else:
-                        actions[bid] = (ACT_DROPOFF, -1)
+                    actions[bid] = (ACT_DROPOFF, -1)
                     continue
 
+            # AT PICKUP TARGET
             if gt in ('pickup', 'preview') and bid in pickup_targets:
                 item_idx = pickup_targets[bid]
                 if pos == goal:
                     actions[bid] = (ACT_PICKUP, item_idx)
                     continue
 
+            # Opportunistic adjacent pickup
             if gt in ('pickup', 'preview', 'deliver') and len(bot_inventories[bid]) < INV_CAP:
                 pickup_act = self._check_adjacent_pickup(
                     bid, pos, active_order, preview_order, gt,
@@ -336,17 +238,18 @@ class WavePipelineSolver(LMAPFSolver):
                     actions[bid] = pickup_act
                     continue
 
+            # PIBT action
             act = path_actions.get(bid, ACT_WAIT)
             actions[bid] = (act, -1)
 
         return actions
 
     @staticmethod
-    def run_sim(seed: int, verbose: bool = False, max_pp: int = 8) -> tuple[int, list]:
+    def run_sim(seed: int, verbose: bool = False) -> tuple[int, list]:
         state, all_orders = init_game(seed, 'nightmare', num_orders=200)
         ms = state.map_state
         tables = PrecomputedTables.get(ms)
-        solver = WavePipelineSolver(ms, tables, future_orders=all_orders, max_pp=max_pp)
+        solver = ChainReactorSolver(ms, tables, future_orders=all_orders)
         num_rounds = DIFF_ROUNDS['nightmare']
         chains, max_chain = 0, 0
         action_log = []
@@ -399,34 +302,32 @@ class WavePipelineSolver(LMAPFSolver):
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description='Wave Pipeline Solver')
+    parser = argparse.ArgumentParser(description='Chain Reactor')
     parser.add_argument('--seeds', default='7005')
     parser.add_argument('-v', '--verbose', action='store_true')
     parser.add_argument('--compare', action='store_true')
-    parser.add_argument('--pp', type=int, default=8,
-                        help='max preview pickers (default 8)')
     args = parser.parse_args()
 
     from configs import parse_seeds
     seeds = parse_seeds(args.seeds)
-    scores, scores_v4 = [], []
+    scores_cr, scores_v4 = [], []
 
     for seed in seeds:
         print(f"\n{'='*50}")
-        print(f"Seed {seed} - Wave Pipeline (pp={args.pp})")
+        print(f"Seed {seed} - Chain Reactor (pp=10)")
         print(f"{'='*50}")
-        score, _ = WavePipelineSolver.run_sim(seed, verbose=args.verbose, max_pp=args.pp)
-        scores.append(score)
+        score, _ = ChainReactorSolver.run_sim(seed, verbose=args.verbose)
+        scores_cr.append(score)
 
         if args.compare:
             print(f"\n--- V4 ---")
             s4, _ = LMAPFSolver.run_sim(seed, verbose=args.verbose)
             scores_v4.append(s4)
-            print(f"\nWave={score} vs V4={s4} (delta={score - s4:+d})")
+            print(f"\nCR={score} vs V4={s4} (delta={score - s4:+d})")
 
     if len(seeds) > 1:
         import statistics
-        print(f"\nWave: mean={statistics.mean(scores):.1f} "
-              f"max={max(scores)} min={min(scores)}")
+        print(f"\nCR: mean={statistics.mean(scores_cr):.1f} "
+              f"max={max(scores_cr)} min={min(scores_cr)}")
         if scores_v4:
             print(f"V4: mean={statistics.mean(scores_v4):.1f}")

@@ -1,0 +1,11 @@
+Test server starting on ws://localhost:8770/ws
+Difficulty: nightmare, from data/live_init.json
+Connect with: python nightmare_live.py "ws://localhost:8770/ws?token=test"
+Client connected from ('::1', 50855, 0, 0)
+Loaded 2 orders from DB
+Game started: nightmare seed=7005 bots=20 rounds=500 items=144 types=21
+Dropoffs: [(1, 16), (15, 16), (27, 16)]
+Spawn: (28, 16)
+  SRV R0: parsed=[('wait', -1), ('wait', -1), ('wait', -1), ('wait', -1), ('wait', -1)] inv=[]
+R  0/500 Score:  0 Ord:0 Delta:+0
+Client disconnected

@@ -1,0 +1,29 @@
+Test server starting on ws://localhost:8765/ws
+Difficulty: nightmare, Seed: 7005
+Connect with: python nightmare_live.py "ws://localhost:8765/ws?token=test"
+Traceback (most recent call last):
+  File "X:\KODE\AINM\PRE\grocery-bot-gpu\test_server.py", line 253, in <module>
+    main()
+  File "X:\KODE\AINM\PRE\grocery-bot-gpu\test_server.py", line 249, in main
+    asyncio.run(server_main(args.port, args.seed, args.difficulty))
+  File "C:\python312\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "C:\python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "X:\KODE\AINM\PRE\grocery-bot-gpu\test_server.py", line 238, in server_main
+    async with websockets.serve(handler, "localhost", port, max_size=10_000_000):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\python312\Lib\site-packages\websockets\asyncio\server.py", line 813, in __aenter__
+    return await self
+           ^^^^^^^^^^
+  File "C:\python312\Lib\site-packages\websockets\asyncio\server.py", line 831, in __await_impl__
+    server = await self.create_server
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\python312\Lib\asyncio\base_events.py", line 1584, in create_server
+    raise OSError(err.errno, msg) from None
+OSError: [Errno 10048] error while attempting to bind on address ('127.0.0.1', 8765): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted

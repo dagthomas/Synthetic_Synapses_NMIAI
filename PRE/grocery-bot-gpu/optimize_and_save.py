@@ -80,6 +80,41 @@ def main() -> None:
         emit({"type": "gpu_phase", "phase": phase_name, "iteration": iteration,
               "score": cpu_score, "elapsed": round(time.time() - t0, 1)})
 
+    # Nightmare uses zone-partitioned solver (20 bots → 3 zones of 7+7+6)
+    if args.difficulty == 'nightmare':
+        from gpu_sequential_solver import solve_nightmare_zones
+        emit({"type": "gpu_phase", "phase": "nightmare_zone_solve",
+              "iteration": 0, "score": 0,
+              "elapsed": round(time.time() - t0, 1)})
+        try:
+            score, actions = solve_nightmare_zones(
+                capture_data=capture,
+                difficulty='nightmare',
+                device='cuda',
+                max_states=args.max_states or 50_000,
+                max_refine_iters=args.refine_iters,
+                no_filler=True,
+                speed_bonus=args.speed_bonus or 100.0,
+                verbose=True,
+            )
+        except Exception as e:
+            emit({"type": "optimize_done", "score": 0, "prev_score": prev_score,
+                  "error": str(e), "elapsed": round(time.time() - t0, 1)})
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+
+        elapsed = time.time() - t0
+        if score > 0:
+            saved = save_solution(args.difficulty, score, actions)
+            emit({"type": "optimize_done", "score": score, "prev_score": prev_score,
+                  "saved": saved, "elapsed": round(elapsed, 1), "orders": n_orders})
+        else:
+            emit({"type": "optimize_done", "score": 0, "prev_score": prev_score,
+                  "saved": False, "elapsed": round(elapsed, 1),
+                  "error": "nightmare zone solver returned score 0"})
+        return
+
     kwargs = {
         'capture_data': capture,
         'difficulty': args.difficulty,

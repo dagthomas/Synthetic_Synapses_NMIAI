@@ -33,6 +33,30 @@ from live_solver import ws_to_capture
 SEND_DELAY = 0.0  # Zero delay — cached responses are pre-built, no computation in hot loop
 
 
+def _get_drop_zones(map_state: MapState) -> list[tuple[int, int]]:
+    """Get all dropoff zones. Returns list with 1 entry for easy-expert, 3 for nightmare."""
+    if hasattr(map_state, 'drop_off_zones') and len(map_state.drop_off_zones) > 0:
+        return [tuple(dz) for dz in map_state.drop_off_zones]
+    return [tuple(map_state.drop_off)]
+
+
+def _nearest_drop(pos: tuple[int, int], drop_zones: list[tuple[int, int]]) -> tuple[int, int]:
+    """Find nearest dropoff zone to position (Manhattan distance)."""
+    best = drop_zones[0]
+    best_d = abs(pos[0] - best[0]) + abs(pos[1] - best[1])
+    for dz in drop_zones[1:]:
+        d = abs(pos[0] - dz[0]) + abs(pos[1] - dz[1])
+        if d < best_d:
+            best_d = d
+            best = dz
+    return best
+
+
+def _is_at_drop(pos: tuple[int, int], drop_zones: list[tuple[int, int]]) -> bool:
+    """Check if position is at any dropoff zone."""
+    return pos in drop_zones
+
+
 def predict_full_sim(actions_list: list[list[tuple[int, int]]],
                      capture: CaptureData, map_state: MapState) -> list[list[tuple[int, int]]]:
     """Simulate full game from capture to predict positions per round.
@@ -79,7 +103,11 @@ def extract_goals(actions_list: list[list[tuple[int, int]]], map_state: MapState
                         goal_pos = exp_pos
                     bot_goals[bid].append((rnd, goal_pos, ACT_PICKUP, item_idx))
             elif act == ACT_DROPOFF:
-                bot_goals[bid].append((rnd, map_state.drop_off, ACT_DROPOFF, -1))
+                # Use nearest dropoff zone to bot's expected position
+                drop_zones = _get_drop_zones(map_state)
+                bot_pos = expected_positions[rnd][bid] if rnd < len(expected_positions) else None
+                drop_pos = _nearest_drop(bot_pos, drop_zones) if bot_pos else drop_zones[0]
+                bot_goals[bid].append((rnd, drop_pos, ACT_DROPOFF, -1))
 
     return bot_goals
 
@@ -204,7 +232,8 @@ def goal_following_action(bid: int, bot: dict, data: dict, map_state: MapState,
     bx, by = bot['position']
     bpos = (bx, by)
     inv = bot.get('inventory', [])
-    drop_off = tuple(map_state.drop_off)
+    drop_zones = _get_drop_zones(map_state)
+    drop_off = _nearest_drop(bpos, drop_zones)
     occupied = {tuple(b['position']) for b in live_bots if b['id'] != bid}
 
     goals = bot_goals.get(bid, [])
@@ -229,8 +258,8 @@ def goal_following_action(bid: int, bot: dict, data: dict, map_state: MapState,
 
     goal_rnd, goal_pos, goal_act, goal_item_idx = goals[gidx]
 
-    # At dropoff with items -> always drop off first
-    if bpos == drop_off and len(inv) > 0:
+    # At any dropoff with items -> always drop off first
+    if _is_at_drop(bpos, drop_zones) and len(inv) > 0:
         # Advance past dropoff goals since we're delivering
         while gidx < len(goals) and goals[gidx][2] == ACT_DROPOFF:
             gidx += 1
@@ -251,7 +280,7 @@ def goal_following_action(bid: int, bot: dict, data: dict, map_state: MapState,
         if len(inv) >= INV_CAP:
             # Full inventory but goal is pickup — need to deliver first
             nav = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
-            if nav == ACT_WAIT and bpos == drop_off:
+            if nav == ACT_WAIT and _is_at_drop(bpos, drop_zones):
                 return {'bot': bid, 'action': 'drop_off'}
             return {'bot': bid, 'action': _ACT_NAMES[nav]}
 
@@ -265,9 +294,11 @@ def goal_following_action(bid: int, bot: dict, data: dict, map_state: MapState,
             nav = bfs_next_action(bpos, goal_pos, walkable, occupied, map_state)
         return {'bot': bid, 'action': _ACT_NAMES[nav]}
 
-    # Goal is DROPOFF: navigate to dropoff
+    # Goal is DROPOFF: navigate to nearest dropoff (or goal_pos from extract_goals)
     if goal_act == ACT_DROPOFF:
-        if bpos == drop_off:
+        # Use the goal position from extract_goals (nearest zone at plan time)
+        drop_target = goal_pos if goal_pos else drop_off
+        if _is_at_drop(bpos, drop_zones):
             if len(inv) > 0:
                 bot_goal_idx[bid] = gidx + 1
                 return {'bot': bid, 'action': 'drop_off'}
@@ -279,7 +310,7 @@ def goal_following_action(bid: int, bot: dict, data: dict, map_state: MapState,
                                              current_round)
 
         if len(inv) > 0:
-            nav = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
+            nav = bfs_next_action(bpos, drop_target, walkable, occupied, map_state)
             return {'bot': bid, 'action': _ACT_NAMES[nav]}
         else:
             # No items to deliver — skip to next goal
@@ -349,7 +380,8 @@ def greedy_action(bot: dict, data: dict, map_state: MapState,
     bx, by = bot['position']
     bpos = (bx, by)
     inv = bot.get('inventory', [])
-    drop_off = tuple(map_state.drop_off)
+    drop_zones = _get_drop_zones(map_state)
+    drop_off = _nearest_drop(bpos, drop_zones)
     occupied = {tuple(b['position']) for b in live_bots if b['id'] != bid}
 
     # Build set of item types needed by active order
@@ -381,17 +413,17 @@ def greedy_action(bot: dict, data: dict, map_state: MapState,
     # Bot inventory already contains type names (e.g. "cream", "eggs")
     inv_types = list(inv)
 
-    # 1. At dropoff with ANY items -> always drop off (even non-matching — frees inventory,
+    # 1. At any dropoff with ANY items -> always drop off (even non-matching — frees inventory,
     #    and items might match a future order via auto-delivery)
-    if bpos == drop_off and len(inv) > 0:
+    if _is_at_drop(bpos, drop_zones) and len(inv) > 0:
         return {'bot': bid, 'action': 'drop_off'}
 
-    # 2. Has items matching active order -> deliver to dropoff
+    # 2. Has items matching active order -> deliver to nearest dropoff
     if len(inv) > 0:
         has_active_match = any(t in needed_types for t in inv_types)
         if has_active_match or len(inv) >= INV_CAP:
             nav = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
-            if nav == ACT_WAIT and bpos == drop_off:
+            if nav == ACT_WAIT and _is_at_drop(bpos, drop_zones):
                 return {'bot': bid, 'action': 'drop_off'}
             return {'bot': bid, 'action': _ACT_NAMES[nav]}
 
@@ -437,7 +469,7 @@ def greedy_action(bot: dict, data: dict, map_state: MapState,
     # 4. Has items but no match -> deliver anyway (frees inv for future orders)
     if len(inv) > 0:
         nav = bfs_next_action(bpos, drop_off, walkable, occupied, map_state)
-        if nav == ACT_WAIT and bpos == drop_off:
+        if nav == ACT_WAIT and _is_at_drop(bpos, drop_zones):
             return {'bot': bid, 'action': 'drop_off'}
         return {'bot': bid, 'action': _ACT_NAMES[nav]}
 

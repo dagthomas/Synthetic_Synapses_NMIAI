@@ -1953,23 +1953,22 @@ class AnytimeGPUStream:
         return ws_actions, f'{plan.source}_recovery'
 
     def _nightmare_v2(self, live_bots, data):
-        """Nightmare solver V3: chain reaction pipeline with MRTA."""
-        if not hasattr(self, '_nm_solver_v2') or self._nm_solver_v2 is None:
-            from nightmare_solver_v2 import NightmareSolverV3
+        """Nightmare solver: V6 (allocator + PIBT + staging cap=6)."""
+        if not hasattr(self, '_nm_solver_v6') or self._nm_solver_v6 is None:
+            from nightmare_solver_v6 import NightmareSolverV6
             if self._map_state and self._tables:
-                # Try to load captured future orders for chain planning
                 future_orders = self._load_nightmare_future_orders()
-                self._nm_solver_v2 = NightmareSolverV3(
+                self._nm_solver_v6 = NightmareSolverV6(
                     self._map_state, self._tables,
                     future_orders=future_orders)
             else:
                 return [{'bot': b['id'], 'action': 'wait'} for b in live_bots]
-        return self._nm_solver_v2.ws_action(live_bots, data, self._map_state)
+        return self._nm_solver_v6.ws_action(live_bots, data, self._map_state)
 
     def _load_nightmare_future_orders(self) -> list:
         """Try to load captured orders from PostgreSQL for nightmare chain planning."""
         try:
-            from capture_store import load_capture
+            from solution_store import load_capture
             cap = load_capture('nightmare')
             if cap and cap.get('orders'):
                 from game_engine import Order

@@ -34,6 +34,7 @@ from game_engine import (
 from configs import DIFF_ROUNDS, CONFIGS
 from precompute import PrecomputedTables
 from nightmare_solver_v2 import NightmareSolverV3, record_to_pg
+from nightmare_lmapf_solver import LMAPFSolver
 from nightmare_pathfinder import build_walkable
 
 NUM_ROUNDS = 500
@@ -66,6 +67,31 @@ class PerturbedV3(NightmareSolverV3):
 
     def action(self, state, all_orders, rnd):
         """V3 action with occasional stall count perturbation."""
+        if self.perturbation_rate > 0:
+            for bid in range(len(state.bot_positions)):
+                if self.rng.random() < self.perturbation_rate:
+                    self.stall_counts[bid] = self.rng.randint(0, 5)
+        return super().action(state, all_orders, rnd)
+
+
+class PerturbedV4(LMAPFSolver):
+    """V4 with stochastic perturbations for multi-restart search."""
+
+    def __init__(self, *args, rng_seed=None, perturbation_rate=0.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rng = random.Random(rng_seed)
+        self.perturbation_rate = perturbation_rate
+
+    def _escape_action(self, bid, pos, rnd):
+        dirs = [ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT]
+        self.rng.shuffle(dirs)
+        for a in dirs:
+            nx, ny = pos[0] + DX[a], pos[1] + DY[a]
+            if (nx, ny) in self.walkable:
+                return a
+        return ACT_WAIT
+
+    def action(self, state, all_orders, rnd):
         if self.perturbation_rate > 0:
             for bid in range(len(state.bot_positions)):
                 if self.rng.random() < self.perturbation_rate:
@@ -109,9 +135,21 @@ class NightmareTrainer:
         solver = NightmareSolverV3(self.ms, self.tables, future_orders=self.all_orders)
         return self._run_solver(solver)
 
+    def run_v4_baseline(self):
+        """Run vanilla V4. Returns (score, orders_completed, action_log)."""
+        solver = LMAPFSolver(self.ms, self.tables, future_orders=self.all_orders)
+        return self._run_solver(solver)
+
     def run_v3_perturbed(self, rng_seed, perturbation_rate=0.02):
         """Run V3 with stochastic perturbations."""
         solver = PerturbedV3(
+            self.ms, self.tables, future_orders=self.all_orders,
+            rng_seed=rng_seed, perturbation_rate=perturbation_rate)
+        return self._run_solver(solver)
+
+    def run_v4_perturbed(self, rng_seed, perturbation_rate=0.02):
+        """Run V4 with stochastic perturbations."""
+        solver = PerturbedV4(
             self.ms, self.tables, future_orders=self.all_orders,
             rng_seed=rng_seed, perturbation_rate=perturbation_rate)
         return self._run_solver(solver)
@@ -120,21 +158,34 @@ class NightmareTrainer:
         """Multi-restart training + checkpoint search. Returns (best_score, best_log)."""
         t0 = time.time()
 
-        # Phase 1: V3 baseline
-        best_score, best_ord, best_log = self.run_v3_baseline()
+        # Phase 1: V4 baseline (best baseline)
+        best_score, best_ord, best_log = self.run_v4_baseline()
         if self.verbose:
-            print(f"  Baseline: score={best_score} orders={best_ord}")
+            print(f"  V4 Baseline: score={best_score} orders={best_ord}")
+
+        # Also try V3 baseline
+        v3_score, v3_ord, v3_log = self.run_v3_baseline()
+        if self.verbose:
+            print(f"  V3 Baseline: score={v3_score} orders={v3_ord}")
+        if v3_score > best_score:
+            best_score = v3_score
+            best_ord = v3_ord
+            best_log = v3_log
 
         # Phase 2: Quick stochastic restarts (15% of budget)
-        # Perturbations occasionally find better solutions via different
-        # stall escape patterns and congestion avoidance
+        # Mix V3 and V4 perturbations
         restart_budget = max_time * 0.15
         for i in range(num_restarts - 1):
             if time.time() - t0 > restart_budget:
                 break
             rate = random.uniform(0.005, 0.06)
-            score, ords, log = self.run_v3_perturbed(
-                rng_seed=i * 17 + 42, perturbation_rate=rate)
+            # Alternate V3 and V4
+            if i % 2 == 0:
+                score, ords, log = self.run_v4_perturbed(
+                    rng_seed=i * 17 + 42, perturbation_rate=rate)
+            else:
+                score, ords, log = self.run_v3_perturbed(
+                    rng_seed=i * 17 + 42, perturbation_rate=rate)
             if score > best_score:
                 best_score = score
                 best_ord = ords
@@ -192,12 +243,17 @@ class NightmareTrainer:
             cp_rnd = random.choices(cp_rounds, weights=weights, k=1)[0]
             state = checkpoints[cp_rnd].copy()
 
-            # Fresh solver with optional light perturbation
+            # Fresh solver with optional light perturbation (alternate V3/V4)
             rng_seed = trials * 31 + 7
-            solver = PerturbedV3(
-                self.ms, self.tables, future_orders=self.all_orders,
-                rng_seed=rng_seed,
-                perturbation_rate=random.uniform(0.0, 0.02))
+            rate = random.uniform(0.0, 0.02)
+            if trials % 2 == 0:
+                solver = PerturbedV4(
+                    self.ms, self.tables, future_orders=self.all_orders,
+                    rng_seed=rng_seed, perturbation_rate=rate)
+            else:
+                solver = PerturbedV3(
+                    self.ms, self.tables, future_orders=self.all_orders,
+                    rng_seed=rng_seed, perturbation_rate=rate)
 
             # Get V3's normal action, then force one bot to move differently
             state.round = cp_rnd

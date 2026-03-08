@@ -214,27 +214,48 @@ def gpu_optimize(difficulty: str, max_states: Optional[int] = None,
             warm_only = False
 
     if not warm_only:
-        kwargs = {
-            'capture_data': capture,
-            'difficulty': difficulty,
-            'device': 'cuda',
-            'verbose': True,
-            'no_filler': True,
-            'speed_bonus': speed_bonus,
-        }
-        if max_states:
-            kwargs['max_states'] = max_states
-        if max_time_s:
-            kwargs['max_time_s'] = max_time_s
-        if orderings is not None:
-            kwargs['num_pass1_orderings'] = orderings
-        if refine_iters is not None:
-            kwargs['max_refine_iters'] = refine_iters
-        if use_2bot_dp:
-            kwargs['use_2bot_dp'] = True
-        if max_dp_bots is not None:
-            kwargs['max_dp_bots'] = max_dp_bots
-        score, actions = solve_sequential(**kwargs)
+        if difficulty == 'nightmare':
+            # Nightmare: V6 heuristic → GPU refine (cold-start sequential DP is catastrophic)
+            from nightmare_solver_v6 import NightmareSolverV6
+            print(f"    Nightmare: running V6 heuristic...", file=sys.stderr)
+            v6_score, v6_actions = NightmareSolverV6.run_from_capture(capture, verbose=False)
+            print(f"    V6 heuristic: {v6_score}", file=sys.stderr)
+            ref_kwargs = {
+                'capture_data': capture,
+                'difficulty': 'nightmare',
+                'device': 'cuda',
+                'no_filler': True,
+                'speed_bonus': speed_bonus,
+            }
+            if max_time_s:
+                ref_kwargs['max_time_s'] = max_time_s
+            if max_states:
+                ref_kwargs['max_states'] = max_states
+            if refine_iters:
+                ref_kwargs['max_refine_iters'] = refine_iters
+            score, actions = refine_from_solution(v6_actions, **ref_kwargs)
+        else:
+            kwargs = {
+                'capture_data': capture,
+                'difficulty': difficulty,
+                'device': 'cuda',
+                'verbose': True,
+                'no_filler': True,
+                'speed_bonus': speed_bonus,
+            }
+            if max_states:
+                kwargs['max_states'] = max_states
+            if max_time_s:
+                kwargs['max_time_s'] = max_time_s
+            if orderings is not None:
+                kwargs['num_pass1_orderings'] = orderings
+            if refine_iters is not None:
+                kwargs['max_refine_iters'] = refine_iters
+            if use_2bot_dp:
+                kwargs['use_2bot_dp'] = True
+            if max_dp_bots is not None:
+                kwargs['max_dp_bots'] = max_dp_bots
+            score, actions = solve_sequential(**kwargs)
 
     elapsed = time.time() - t0
 

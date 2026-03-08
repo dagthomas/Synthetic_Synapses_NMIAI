@@ -1,0 +1,150 @@
+Test server starting on ws://localhost:8766/ws
+Difficulty: nightmare, Seed: 7005
+Connect with: python nightmare_live.py "ws://localhost:8766/ws?token=test"
+Client connected from ('::1', 51758, 0, 0)
+Game started: nightmare seed=7005 bots=20 rounds=500 items=156 types=21
+Dropoffs: [(1, 16), (15, 16), (27, 16)]
+Spawn: (28, 16)
+  SRV R0: parsed=[('lt', -1), ('up', -1), ('wait', -1), ('wait', -1), ('wait', -1)] inv=[]
+R  0/500 Score:  0 Ord:0 Delta:+0
+  SRV R1: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('up', -1), ('wait', -1)] inv=[]
+R  1/500 Score:  0 Ord:0 Delta:+0
+  SRV R2: parsed=[('lt', -1), ('up', -1), ('lt', -1), ('up', -1), ('lt', -1)] inv=[]
+R  2/500 Score:  0 Ord:0 Delta:+0
+  SRV R3: parsed=[('PU', 155), ('dn', -1), ('rt', -1), ('up', -1), ('rt', -1)] inv=[]
+R  3/500 Score:  0 Ord:0 Delta:+0
+  SRV R4: parsed=[('lt', -1), ('up', -1), ('lt', -1), ('up', -1), ('lt', -1)] inv=['b0:[8]']
+R  4/500 Score:  0 Ord:0 Delta:+0
+  SRV R5: parsed=[('lt', -1), ('up', -1), ('lt', -1), ('up', -1), ('lt', -1)] inv=['b0:[8]']
+  SRV R6: parsed=[('PU', 142), ('up', -1), ('up', -1), ('up', -1), ('lt', -1)] inv=['b0:[8]']
+  SRV R7: parsed=[('PU', 142), ('up', -1), ('PU', 142), ('up', -1), ('up', -1)] inv=['b0:[8, 16]']
+  SRV R8: parsed=[('lt', -1), ('up', -1), ('up', -1), ('lt', -1), ('up', -1)] inv=['b0:[8, 16, 16]', 'b2:[16]']
+  SRV R9: parsed=[('lt', -1), ('up', -1), ('dn', -1), ('lt', -1), ('lt', -1)] inv=['b0:[8, 16, 16]', 'b2:[16]']
+R 16/500 Score:  3 Ord:0 Delta:+3
+R 31/500 Score:  6 Ord:0 Delta:+3
+R 50/500 Score: 14 Ord:1 Delta:+8
+R 52/500 Score: 15 Ord:1 Delta:+1
+R 54/500 Score: 16 Ord:1 Delta:+1
+R 58/500 Score: 23 Ord:2 Delta:+7
+R 65/500 Score: 25 Ord:2 Delta:+2
+R 70/500 Score: 34 Ord:3 Delta:+9
+R 75/500 Score: 35 Ord:3 Delta:+1
+R 81/500 Score: 36 Ord:3 Delta:+1
+R 89/500 Score: 37 Ord:3 Delta:+1
+R 98/500 Score: 44 Ord:4 Delta:+7
+  SRV R100: parsed=[('lt', -1), ('PU', 63), ('DO', -1), ('dn', -1), ('PU', 89)] inv=['b0:[4, 4]', 'b1:[9, 8]', 'b2:[16, 5]', 'b3:[3, 0, 14]', 'b4:[6, 16]']
+R100/500 Score: 46 Ord:4 Delta:+2
+R102/500 Score: 49 Ord:4 Delta:+3
+R109/500 Score: 55 Ord:5 Delta:+6
+R110/500 Score: 56 Ord:5 Delta:+1
+R112/500 Score: 57 Ord:5 Delta:+1
+R113/500 Score: 58 Ord:5 Delta:+1
+R117/500 Score: 59 Ord:5 Delta:+1
+R120/500 Score: 66 Ord:6 Delta:+7
+R123/500 Score: 67 Ord:6 Delta:+1
+R126/500 Score: 69 Ord:6 Delta:+2
+R130/500 Score: 71 Ord:6 Delta:+2
+R135/500 Score: 77 Ord:7 Delta:+6
+R136/500 Score: 78 Ord:7 Delta:+1
+R141/500 Score: 79 Ord:7 Delta:+1
+R144/500 Score: 82 Ord:7 Delta:+3
+R147/500 Score: 90 Ord:8 Delta:+8
+R150/500 Score: 90 Ord:8 Delta:+0
+R151/500 Score: 91 Ord:8 Delta:+1
+R152/500 Score: 92 Ord:8 Delta:+1
+R155/500 Score: 93 Ord:8 Delta:+1
+R166/500 Score:101 Ord:9 Delta:+8
+R170/500 Score:103 Ord:9 Delta:+2
+R178/500 Score:104 Ord:9 Delta:+1
+R183/500 Score:111 Ord:10 Delta:+7
+R184/500 Score:112 Ord:10 Delta:+1
+R185/500 Score:113 Ord:10 Delta:+1
+R194/500 Score:120 Ord:11 Delta:+7
+R196/500 Score:121 Ord:11 Delta:+1
+R199/500 Score:122 Ord:11 Delta:+1
+  SRV R200: parsed=[('rt', -1), ('dn', -1), ('lt', -1), ('rt', -1), ('up', -1)] inv=['b0:[4]', 'b1:[9, 0, 3]', 'b2:[5, 14, 20]', 'b3:[15]', 'b4:[1]']
+R200/500 Score:122 Ord:11 Delta:+0
+R204/500 Score:123 Ord:11 Delta:+1
+R205/500 Score:124 Ord:11 Delta:+1
+R208/500 Score:125 Ord:11 Delta:+1
+R210/500 Score:134 Ord:12 Delta:+9
+R213/500 Score:135 Ord:12 Delta:+1
+R215/500 Score:136 Ord:12 Delta:+1
+R222/500 Score:137 Ord:12 Delta:+1
+R226/500 Score:145 Ord:13 Delta:+8
+R227/500 Score:147 Ord:13 Delta:+2
+R233/500 Score:154 Ord:14 Delta:+7
+R235/500 Score:155 Ord:14 Delta:+1
+R236/500 Score:156 Ord:14 Delta:+1
+R237/500 Score:157 Ord:14 Delta:+1
+R240/500 Score:158 Ord:14 Delta:+1
+R242/500 Score:164 Ord:15 Delta:+6
+R246/500 Score:165 Ord:15 Delta:+1
+R247/500 Score:166 Ord:15 Delta:+1
+R249/500 Score:167 Ord:15 Delta:+1
+R250/500 Score:167 Ord:15 Delta:+0
+R253/500 Score:168 Ord:15 Delta:+1
+R265/500 Score:175 Ord:16 Delta:+7
+R266/500 Score:176 Ord:16 Delta:+1
+R269/500 Score:177 Ord:16 Delta:+1
+R275/500 Score:178 Ord:16 Delta:+1
+R277/500 Score:179 Ord:16 Delta:+1
+R288/500 Score:180 Ord:16 Delta:+1
+R290/500 Score:190 Ord:17 Delta:+10
+R293/500 Score:191 Ord:17 Delta:+1
+R295/500 Score:192 Ord:17 Delta:+1
+R296/500 Score:199 Ord:18 Delta:+7
+  SRV R300: parsed=[('lt', -1), ('up', -1), ('lt', -1), ('dn', -1), ('lt', -1)] inv=['b0:[2, 16, 7]', 'b2:[14]', 'b3:[20, 5, 4]', 'b4:[1, 4, 12]']
+R300/500 Score:200 Ord:18 Delta:+1
+R304/500 Score:201 Ord:18 Delta:+1
+R306/500 Score:210 Ord:19 Delta:+9
+R315/500 Score:211 Ord:19 Delta:+1
+R319/500 Score:220 Ord:20 Delta:+9
+R331/500 Score:221 Ord:20 Delta:+1
+R332/500 Score:222 Ord:20 Delta:+1
+R340/500 Score:223 Ord:20 Delta:+1
+R350/500 Score:223 Ord:20 Delta:+0
+R362/500 Score:232 Ord:21 Delta:+9
+R365/500 Score:233 Ord:21 Delta:+1
+R366/500 Score:234 Ord:21 Delta:+1
+R368/500 Score:235 Ord:21 Delta:+1
+R373/500 Score:242 Ord:22 Delta:+7
+R375/500 Score:243 Ord:22 Delta:+1
+R376/500 Score:244 Ord:22 Delta:+1
+R379/500 Score:245 Ord:22 Delta:+1
+R380/500 Score:246 Ord:22 Delta:+1
+R384/500 Score:253 Ord:23 Delta:+7
+R386/500 Score:255 Ord:23 Delta:+2
+R394/500 Score:263 Ord:24 Delta:+8
+R395/500 Score:264 Ord:24 Delta:+1
+  SRV R400: parsed=[('up', -1), ('up', -1), ('up', -1), ('PU', 137), ('up', -1)] inv=['b0:[3, 16]', 'b2:[14, 16, 13]', 'b3:[5, 4]', 'b4:[12, 17]']
+R400/500 Score:264 Ord:24 Delta:+0
+R405/500 Score:265 Ord:24 Delta:+1
+R416/500 Score:273 Ord:25 Delta:+8
+R421/500 Score:274 Ord:25 Delta:+1
+R428/500 Score:275 Ord:25 Delta:+1
+R435/500 Score:282 Ord:26 Delta:+7
+R438/500 Score:290 Ord:27 Delta:+8
+R442/500 Score:291 Ord:27 Delta:+1
+R443/500 Score:292 Ord:27 Delta:+1
+R445/500 Score:293 Ord:27 Delta:+1
+R449/500 Score:294 Ord:27 Delta:+1
+R450/500 Score:294 Ord:27 Delta:+0
+R451/500 Score:300 Ord:28 Delta:+6
+R454/500 Score:301 Ord:28 Delta:+1
+R456/500 Score:302 Ord:28 Delta:+1
+R459/500 Score:303 Ord:28 Delta:+1
+R461/500 Score:304 Ord:28 Delta:+1
+R464/500 Score:310 Ord:29 Delta:+6
+R468/500 Score:313 Ord:29 Delta:+3
+R476/500 Score:320 Ord:30 Delta:+7
+R479/500 Score:321 Ord:30 Delta:+1
+R481/500 Score:323 Ord:30 Delta:+2
+R488/500 Score:331 Ord:31 Delta:+8
+R495/500 Score:331 Ord:31 Delta:+0
+R496/500 Score:332 Ord:31 Delta:+1
+R497/500 Score:332 Ord:31 Delta:+0
+R498/500 Score:332 Ord:31 Delta:+0
+R499/500 Score:332 Ord:31 Delta:+0
+
+GAME OVER: Score=332 Orders=31 Items=177

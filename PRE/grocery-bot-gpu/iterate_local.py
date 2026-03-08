@@ -23,7 +23,7 @@ from game_engine import (
     MAX_ROUNDS, ACT_WAIT, CELL_WALL,
 )
 from configs import CONFIGS, DIFF_ROUNDS
-from gpu_sequential_solver import solve_sequential, refine_from_solution, SolveConfig
+from gpu_sequential_solver import solve_sequential, refine_from_solution, SolveConfig, solve_nightmare_zones
 
 
 def make_capture_from_seed(difficulty: str, seed: int,
@@ -54,7 +54,7 @@ def make_capture_from_seed(difficulty: str, seed: int,
         req_names = [ms.item_type_names[int(tid)] for tid in o.required]
         orders.append({'items_required': req_names})
 
-    return {
+    capture = {
         'difficulty': difficulty,
         'num_bots': CONFIGS[difficulty]['bots'],
         'grid': {'width': ms.width, 'height': ms.height, 'walls': walls},
@@ -62,7 +62,11 @@ def make_capture_from_seed(difficulty: str, seed: int,
         'drop_off': list(ms.drop_off),
         'spawn': list(ms.spawn),
         'orders': orders,
-    }, ms, all_orders
+    }
+    # Multi-dropoff support (nightmare has 3 zones)
+    if hasattr(ms, 'drop_off_zones') and len(ms.drop_off_zones) > 1:
+        capture['drop_off_zones'] = [list(z) for z in ms.drop_off_zones]
+    return capture, ms, all_orders
 
 
 def simulate_solution(difficulty: str, seed: int,
@@ -128,7 +132,31 @@ def run_full_foresight(args: argparse.Namespace) -> int:
         print(f"{'='*60}", file=sys.stderr)
 
         try:
-            if best_actions and loop > 0:
+            if args.difficulty == 'nightmare':
+                if best_actions and loop > 0:
+                    # Warm-start: refine from best solution
+                    score, actions = refine_from_solution(
+                        best_actions, capture_data=capture,
+                        difficulty='nightmare', device='cuda',
+                        no_filler=True, max_states=args.max_states,
+                        max_refine_iters=args.refine_iters,
+                        speed_bonus=loop_speed_bonus,
+                        max_time_s=loop_time)
+                else:
+                    # Cold-start: V6 heuristic → GPU refine
+                    from nightmare_solver_v6 import NightmareSolverV6
+                    print(f"  Nightmare: V6 heuristic...", file=sys.stderr)
+                    v6_score, v6_actions = NightmareSolverV6.run_sim(
+                        args.seed, verbose=False)
+                    print(f"  V6 heuristic: {v6_score}", file=sys.stderr)
+                    score, actions = refine_from_solution(
+                        v6_actions, capture_data=capture,
+                        difficulty='nightmare', device='cuda',
+                        no_filler=True, max_states=args.max_states,
+                        max_refine_iters=args.refine_iters,
+                        speed_bonus=loop_speed_bonus,
+                        max_time_s=loop_time)
+            elif best_actions and loop > 0:
                 # Warm-start: refine from best solution with new order set
                 score, actions = refine_from_solution(
                     best_actions, capture_data=capture,
@@ -226,8 +254,28 @@ def run_iterative(args: argparse.Namespace) -> int:
 
         capture, _, _ = make_capture_from_seed(args.difficulty, args.seed, num_orders)
 
-        # If we have a previous solution, refine it. Otherwise cold start.
-        if best_actions and iteration > 0:
+        if args.difficulty == 'nightmare':
+            if best_actions and iteration > 0:
+                score, actions = refine_from_solution(
+                    best_actions, capture_data=capture,
+                    difficulty='nightmare', device='cuda',
+                    no_filler=True, max_states=args.max_states,
+                    max_refine_iters=args.refine_iters,
+                    speed_bonus=iter_speed_bonus,
+                    max_time_s=iter_time)
+            else:
+                from nightmare_solver_v6 import NightmareSolverV6
+                v6_score, v6_actions = NightmareSolverV6.run_sim(
+                    args.seed, verbose=False)
+                print(f"  V6 heuristic: {v6_score}", file=sys.stderr)
+                score, actions = refine_from_solution(
+                    v6_actions, capture_data=capture,
+                    difficulty='nightmare', device='cuda',
+                    no_filler=True, max_states=args.max_states,
+                    max_refine_iters=args.refine_iters,
+                    speed_bonus=iter_speed_bonus,
+                    max_time_s=iter_time)
+        elif best_actions and iteration > 0:
             try:
                 score, actions = refine_from_solution(
                     best_actions, capture_data=capture,

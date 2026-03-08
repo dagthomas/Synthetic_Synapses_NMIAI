@@ -1,0 +1,42 @@
+Test server starting on ws://localhost:8766/ws
+Difficulty: nightmare, from data/live_init.json
+Connect with: python nightmare_live.py "ws://localhost:8766/ws?token=test"
+Client connected from ('::1', 57798, 0, 0)
+Game started: nightmare seed=7005 bots=20 rounds=500 items=144 types=21
+Dropoffs: [(1, 16), (15, 16), (27, 16)]
+Spawn: (28, 16)
+  SRV R0: parsed=[('up', -1), ('lt', -1), ('wait', -1), ('wait', -1), ('wait', -1)] inv=[]
+R  0/500 Score:  0 Ord:0 Delta:+0
+  SRV R1: parsed=[('lt', -1), ('lt', -1), ('up', -1), ('lt', -1), ('wait', -1)] inv=[]
+R  1/500 Score:  0 Ord:0 Delta:+0
+  SRV R2: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1)] inv=[]
+R  2/500 Score:  0 Ord:0 Delta:+0
+  SRV R3: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1), ('up', -1)] inv=[]
+R  3/500 Score:  0 Ord:0 Delta:+0
+  SRV R4: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1), ('up', -1)] inv=[]
+R  4/500 Score:  0 Ord:0 Delta:+0
+  SRV R5: parsed=[('lt', -1), ('lt', -1), ('lt', -1), ('lt', -1), ('up', -1)] inv=[]
+  SRV R6: parsed=[('PU', 118), ('up', -1), ('up', -1), ('rt', -1), ('dn', -1)] inv=[]
+  SRV R7: parsed=[('PU', 118), ('lt', -1), ('PU', 118), ('up', -1), ('up', -1)] inv=[]
+  SRV R8: parsed=[('PU', 118), ('rt', -1), ('PU', 118), ('up', -1), ('dn', -1)] inv=[]
+  SRV R9: parsed=[('dn', -1), ('dn', -1), ('PU', 118), ('up', -1), ('up', -1)] inv=[]
+R 50/500 Score:  0 Ord:0 Delta:+0
+  SRV R100: parsed=[('up', -1), ('PU', 121), ('PU', 116), ('PU', 57), ('PU', 103)] inv=[]
+R100/500 Score:  0 Ord:0 Delta:+0
+R150/500 Score:  0 Ord:0 Delta:+0
+  SRV R200: parsed=[('up', -1), ('rt', -1), ('PU', 94), ('dn', -1), ('PU', 82)] inv=[]
+R200/500 Score:  0 Ord:0 Delta:+0
+R250/500 Score:  0 Ord:0 Delta:+0
+  SRV R300: parsed=[('PU', 124), ('rt', -1), ('up', -1), ('dn', -1), ('PU', 103)] inv=[]
+R300/500 Score:  0 Ord:0 Delta:+0
+R350/500 Score:  0 Ord:0 Delta:+0
+  SRV R400: parsed=[('rt', -1), ('PU', 52), ('PU', 103), ('up', -1), ('lt', -1)] inv=[]
+R400/500 Score:  0 Ord:0 Delta:+0
+R450/500 Score:  0 Ord:0 Delta:+0
+R495/500 Score:  0 Ord:0 Delta:+0
+R496/500 Score:  0 Ord:0 Delta:+0
+R497/500 Score:  0 Ord:0 Delta:+0
+R498/500 Score:  0 Ord:0 Delta:+0
+R499/500 Score:  0 Ord:0 Delta:+0
+
+GAME OVER: Score=0 Orders=0 Items=0

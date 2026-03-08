@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS runs (
     shelves JSONB NOT NULL,
     items JSONB NOT NULL,
     drop_off JSONB NOT NULL,
+    drop_off_zones JSONB,
     spawn JSONB NOT NULL,
     final_score INTEGER NOT NULL,
     items_delivered INTEGER NOT NULL,

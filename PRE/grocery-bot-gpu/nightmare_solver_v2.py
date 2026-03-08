@@ -57,6 +57,7 @@ class NightmareSolverV3:
 
         # Pre-loaded future orders (from capture or all_orders in sim)
         self.future_orders = future_orders or []
+        self._seq_pos = -1  # cached sequence position
 
         # Stall tracking
         self.stall_counts: dict[int, int] = {}
@@ -91,6 +92,59 @@ class NightmareSolverV3:
                 future.append(self.future_orders[i])
 
         return future[:depth]
+
+    def _find_sequence_pos(self, active_order: Order | None) -> int:
+        """Match active order to captured sequence index."""
+        if not active_order or not self.future_orders:
+            return -1
+        active_req = tuple(sorted(active_order.required))
+        # Search near cached position first, then broaden
+        start = max(0, self._seq_pos - 1)
+        for i in range(start, len(self.future_orders)):
+            if tuple(sorted(self.future_orders[i].required)) == active_req:
+                self._seq_pos = i
+                return i
+        # Wrap-around search (shouldn't happen normally)
+        for i in range(0, start):
+            if tuple(sorted(self.future_orders[i].required)) == active_req:
+                self._seq_pos = i
+                return i
+        return -1
+
+    def _build_lookahead(self, active_order: Order | None,
+                         preview_order: Order | None) -> Order | None:
+        """Combine preview + next 2 captured orders into a lookahead order.
+
+        Bots assigned to this mega-preview will pre-fetch items for upcoming
+        orders. When those orders become active, bots at dropoff auto-deliver
+        via chain reaction.
+        """
+        if not self.future_orders:
+            return preview_order
+
+        seq_pos = self._find_sequence_pos(active_order)
+        if seq_pos < 0:
+            return preview_order
+
+        # Collect types: preview + orders seq_pos+2 and seq_pos+3
+        all_types: list[int] = []
+        if preview_order:
+            all_types.extend(preview_order.required)
+        lookahead_count = 0
+        for i in range(seq_pos + 2, min(seq_pos + 4, len(self.future_orders))):
+            all_types.extend(self.future_orders[i].required)
+            lookahead_count += 1
+
+        if not all_types:
+            return preview_order
+
+        # Log only on sequence position change
+        if seq_pos != getattr(self, '_last_log_seq', -1):
+            self._last_log_seq = seq_pos
+            import sys
+            print(f"  [lookahead] seq={seq_pos} +{lookahead_count} future, "
+                  f"{len(all_types)} types", file=sys.stderr)
+        return Order(0, all_types, 'preview')
 
     def action(self, state: GameState, all_orders: list[Order], rnd: int) -> list[tuple[int, int]]:
         """Per-round entry point. Returns [(action_type, item_idx), ...] per bot."""
@@ -176,6 +230,11 @@ class NightmareSolverV3:
         # Build final actions
         actions: list[tuple[int, int]] = [(ACT_WAIT, -1)] * num_bots
 
+        # Track preview types picked this round to prevent surplus
+        preview_picked_round: dict[int, int] = {}  # type_id → count picked
+
+        total_short = sum(active_short.values())
+
         for bid in range(num_bots):
             pos = bot_positions[bid]
             gt = goal_types.get(bid, 'park')
@@ -206,7 +265,8 @@ class NightmareSolverV3:
             if gt in ('pickup', 'preview') and len(bot_inventories[bid]) < INV_CAP:
                 pickup_act = self._check_adjacent_pickup(
                     bid, pos, active_order, preview_order, gt,
-                    bot_inventories[bid], active_short, chain_plan)
+                    bot_inventories[bid], active_short, chain_plan,
+                    preview_picked_round)
                 if pickup_act is not None:
                     actions[bid] = pickup_act
                     continue
@@ -215,7 +275,8 @@ class NightmareSolverV3:
             if gt == 'deliver' and len(bot_inventories[bid]) < INV_CAP:
                 pickup_act = self._check_adjacent_pickup(
                     bid, pos, active_order, preview_order, gt,
-                    bot_inventories[bid], active_short, chain_plan)
+                    bot_inventories[bid], active_short, chain_plan,
+                    preview_picked_round)
                 if pickup_act is not None:
                     actions[bid] = pickup_act
                     continue
@@ -232,12 +293,9 @@ class NightmareSolverV3:
                                 goal_type: str,
                                 bot_inv: list[int],
                                 active_short: dict[int, int],
-                                chain_plan=None) -> tuple[int, int] | None:
-        """Check if any adjacent item is worth picking up.
-
-        V3: Deliver bots also pick preview items when active is fully covered
-        (fills spare slots for chain reaction auto-delivery).
-        """
+                                chain_plan=None,
+                                preview_picked_round=None) -> tuple[int, int] | None:
+        """Check if any adjacent item is worth picking up."""
         ms = self.ms
         bot_types = set(bot_inv)
         total_short = sum(active_short.values())
@@ -250,12 +308,10 @@ class NightmareSolverV3:
                 if tid in bot_types and active_short[tid] <= 1:
                     continue
             elif total_short == 0 and preview_order and preview_order.needs_type(tid):
-                # Pick preview when ALL active items are covered (any bot type)
-                # Chain reaction: at dropoff, preview items auto-deliver
                 if tid in bot_types:
-                    continue  # already carrying this type
+                    continue
             elif goal_type == 'preview' and preview_order and preview_order.needs_type(tid):
-                pass  # preview bots always pick preview items
+                pass
             else:
                 continue
 
@@ -342,13 +398,13 @@ class NightmareSolverV3:
             if s > 0:
                 active_short[t] = s
 
-        # Task allocation: active items only, no preview pickups
+        # Task allocation with preview pickup enabled for chain staging
         num_rounds = data.get('max_rounds', 500)
         goals, goal_types, pickup_targets = self.allocator.allocate(
             bot_pos_dict, bot_inv_dict,
             active_order, preview_order, rnd, num_rounds,
             future_orders=None, chain_plan=None,
-            allow_preview_pickup=False)
+            allow_preview_pickup=True)
 
         # Urgency order (V2-identical)
         priority_map = {'deliver': 0, 'pickup': 1, 'stage': 2, 'preview': 3, 'flee': 4, 'park': 5}
@@ -385,8 +441,8 @@ class NightmareSolverV3:
                 ws_actions.append({'bot': bid, 'action': 'drop_off'})
                 continue
 
-            # At pickup target (active items only)
-            if gt == 'pickup' and bid in pickup_targets:
+            # At pickup target (active or preview/future items)
+            if gt in ('pickup', 'preview') and bid in pickup_targets:
                 item_idx = pickup_targets[bid]
                 if pos == goal and item_idx < len(ms.items):
                     ws_actions.append({
@@ -396,9 +452,18 @@ class NightmareSolverV3:
                     })
                     continue
 
-            # Opportunistic: only pick items still needed by active order
+            # Opportunistic: pick items still needed by active order
             if len(inv_names) < INV_CAP and gt in ('pickup', 'deliver') and active_short:
                 opp = self._ws_active_adjacent(bid, pos, ms, active_short)
+                if opp is not None:
+                    ws_actions.append(opp)
+                    continue
+
+            # Deliver bots: fill spare slots with preview items (free chain reaction)
+            if (len(inv_names) < INV_CAP and gt == 'deliver'
+                    and not active_short and preview_order):
+                opp = self._ws_preview_adjacent(bid, pos, ms, preview_order,
+                                                set(bot_inv_dict.get(bid, [])))
                 if opp is not None:
                     ws_actions.append(opp)
                     continue
@@ -415,6 +480,25 @@ class NightmareSolverV3:
         for item_idx in range(ms.num_items):
             tid = int(ms.item_types[item_idx])
             if tid not in active_short:
+                continue
+            for adj in ms.item_adjacencies.get(item_idx, []):
+                if adj == pos:
+                    return {
+                        'bot': bid,
+                        'action': 'pick_up',
+                        'item_id': ms.items[item_idx]['id'],
+                    }
+        return None
+
+    def _ws_preview_adjacent(self, bid: int, pos: tuple[int, int],
+                             ms: MapState, preview_order: Order,
+                             bot_types: set) -> dict | None:
+        """Pick up adjacent preview item when active is fully covered."""
+        for item_idx in range(ms.num_items):
+            tid = int(ms.item_types[item_idx])
+            if not preview_order.needs_type(tid):
+                continue
+            if tid in bot_types:
                 continue
             for adj in ms.item_adjacencies.get(item_idx, []):
                 if adj == pos:
