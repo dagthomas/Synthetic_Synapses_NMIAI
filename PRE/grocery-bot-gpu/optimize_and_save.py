@@ -48,6 +48,22 @@ def main() -> None:
     if args.orderings is None:
         args.orderings = 3 if args.difficulty in ('hard', 'expert') else 1
 
+    # Auto-detect max_states based on VRAM if not specified
+    if args.max_states is None:
+        try:
+            import torch
+            vram_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        except Exception:
+            vram_gb = 8
+        if args.difficulty == 'nightmare':
+            args.max_states = 30000 if vram_gb < 24 else (100000 if vram_gb < 64 else 200000)
+        elif args.difficulty == 'expert':
+            args.max_states = 50000 if vram_gb < 24 else (100000 if vram_gb < 64 else 200000)
+        else:
+            args.max_states = 100000 if vram_gb < 24 else 200000
+        print(f"Auto max_states={args.max_states} (VRAM={vram_gb:.0f}GB, {args.difficulty})",
+              file=sys.stderr)
+
     from solution_store import load_capture, save_solution, load_meta
 
     capture = load_capture(args.difficulty)
@@ -67,7 +83,11 @@ def main() -> None:
         "orders": n_orders,
     })
 
-    from gpu_sequential_solver import solve_sequential, refine_from_solution, duo_refine_from_solution
+    from gpu_sequential_solver import solve_sequential, refine_from_solution
+    try:
+        from gpu_sequential_solver import duo_refine_from_solution
+    except ImportError:
+        duo_refine_from_solution = None
     from solution_store import load_solution
 
     t0 = time.time()
@@ -162,7 +182,7 @@ def main() -> None:
                           "elapsed": round(time.time() - t0, 1)})
 
     # Duo refinement: 2-bot joint DP on weakest+strongest pairs
-    if args.duo_refine and score > 0:
+    if args.duo_refine and duo_refine_from_solution and score > 0:
         remaining = args.max_time - (time.time() - t0) if args.max_time else 300
         if remaining > 30:
             emit({"type": "gpu_phase", "phase": "duo_refine",
@@ -187,7 +207,7 @@ def main() -> None:
                       "iteration": 0, "score": score,
                       "elapsed": round(time.time() - t0, 1)})
                 print(f"  Duo refine error: {e}", file=sys.stderr)
-    elif args.duo_refine and existing_actions and prev_score > 0:
+    elif args.duo_refine and duo_refine_from_solution and existing_actions and prev_score > 0:
         # Duo-only mode: refine existing solution even if cold start scored 0
         remaining = args.max_time - (time.time() - t0) if args.max_time else 300
         if remaining > 30:

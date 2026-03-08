@@ -114,12 +114,16 @@ def cpu_verify(gs_template, all_orders, combined_actions, num_bots):
 
 
 def _make_combined(bot_actions, num_bots):
-    """Convert bot_actions dict to per-round combined format."""
+    """Convert bot_actions dict to per-round combined format.
+    Missing bots get WAIT actions."""
     combined = []
     for r in range(MAX_ROUNDS):
         round_acts = []
         for bid in range(num_bots):
-            round_acts.append(bot_actions[bid][r])
+            if bid in bot_actions:
+                round_acts.append(bot_actions[bid][r])
+            else:
+                round_acts.append((ACT_WAIT, -1))
         combined.append(round_acts)
     return combined
 
@@ -135,7 +139,8 @@ def _fresh_gs(gs_orig, capture_data, no_filler=False):
 def solve_sequential(capture_data=None, seed=None, difficulty=None,
                      device='cuda', max_states=500000, verbose=True,
                      on_bot_progress=None, on_round=None, on_phase=None,
-                     max_refine_iters=2, bot_order=None, no_filler=False):
+                     max_refine_iters=2, bot_order=None, no_filler=False,
+                     max_time_s=None, **kwargs):
     """Sequential per-bot GPU DP with iterative refinement.
 
     Pass 1: Sequential planning (bot 0 solo, bot 1 with 0 locked, ...).
@@ -222,6 +227,11 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
               file=sys.stderr)
 
     for bot_id in plan_order:
+        if max_time_s and (time.time() - t0) > max_time_s:
+            if verbose:
+                print(f"  Time limit ({max_time_s}s) reached, stopping Pass 1",
+                      file=sys.stderr)
+            break
         t_bot = time.time()
         if verbose:
             print(f"\n=== Pass 1, Bot {bot_id}/{num_bots} ===", file=sys.stderr)
@@ -282,6 +292,11 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
     # --- Pass 2+: Per-bot Refinement with Immediate CPU Verify ---
     # Re-plan one bot at a time, immediately verify, keep only improvements.
     for iteration in range(max_refine_iters):
+        if max_time_s and (time.time() - t0) > max_time_s:
+            if verbose:
+                print(f"  Time limit ({max_time_s}s) reached, stopping refinement",
+                      file=sys.stderr)
+            break
         if on_phase:
             on_phase(f"refine", iteration + 1, best_score)
         if verbose:
@@ -291,6 +306,8 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
         iter_improved = False
 
         for bot_id in range(num_bots):
+            if max_time_s and (time.time() - t0) > max_time_s:
+                break
             t_bot = time.time()
             if verbose:
                 print(f"\n=== Refine iter {iteration+1}, Bot {bot_id}/{num_bots} ===",
@@ -374,13 +391,20 @@ def solve_sequential(capture_data=None, seed=None, difficulty=None,
 def solve_multi_restart(capture_data=None, seed=None, difficulty=None,
                         device='cuda', max_states=500000, verbose=True,
                         max_refine_iters=2, num_restarts=3,
-                        on_restart=None):
+                        on_restart=None, no_filler=False,
+                        num_screen=0, n_screen_steps=0,
+                        all_orders_override=None, no_compile=False,
+                        **kwargs):
     """Run sequential solver with multiple random bot orderings, keep best.
 
     Args:
         num_restarts: Number of random bot orderings to try. First is always
                       the default [0,1,...,N-1] order.
         on_restart: Optional callback(restart_idx, bot_order, score, best_score).
+        no_filler: Only use captured orders (no random filler).
+        num_screen/n_screen_steps: Ignored (for caller compat).
+        all_orders_override: Ignored (for caller compat).
+        no_compile: Ignored (for caller compat).
 
     Returns:
         (best_score, best_actions).
@@ -401,7 +425,7 @@ def solve_multi_restart(capture_data=None, seed=None, difficulty=None,
         return solve_sequential(
             capture_data=capture_data, seed=seed, difficulty=difficulty,
             device=device, max_states=max_states, verbose=verbose,
-            max_refine_iters=0)
+            max_refine_iters=0, no_filler=no_filler)
 
     # Generate bot orderings
     orderings = [list(range(num_bots))]  # default order first
@@ -426,7 +450,8 @@ def solve_multi_restart(capture_data=None, seed=None, difficulty=None,
         score, actions = solve_sequential(
             capture_data=capture_data, seed=seed, difficulty=difficulty,
             device=device, max_states=max_states, verbose=verbose,
-            max_refine_iters=max_refine_iters, bot_order=order)
+            max_refine_iters=max_refine_iters, bot_order=order,
+            no_filler=no_filler)
 
         if score > best_score:
             best_score = score
@@ -448,7 +473,9 @@ def solve_multi_restart(capture_data=None, seed=None, difficulty=None,
 def refine_from_solution(combined_actions, capture_data=None, seed=None,
                          difficulty=None, device='cuda', max_states=500000,
                          verbose=True, max_refine_iters=3,
-                         on_bot_progress=None, on_round=None, on_phase=None):
+                         on_bot_progress=None, on_round=None, on_phase=None,
+                         no_filler=False, all_orders_override=None,
+                         no_compile=False, **kwargs):
     """Refine an existing multi-bot solution via GPU DP.
 
     Loads a pre-existing solution (e.g., from a previous GPU DP run or Python
@@ -457,6 +484,8 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
     Args:
         combined_actions: List of 300 round_actions, each is [(act, item)] * num_bots.
         Other args same as solve_sequential.
+        no_filler: Only use captured orders (no random filler).
+        all_orders_override/no_compile: Accepted for caller compat.
 
     Returns:
         (best_score, best_combined_actions).
@@ -465,7 +494,8 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
 
     # Initialize game
     if capture_data:
-        gs, all_orders = init_game_from_capture(capture_data)
+        num_orders = len(capture_data['orders']) if no_filler else 100
+        gs, all_orders = init_game_from_capture(capture_data, num_orders=num_orders)
         diff = capture_data.get('difficulty', difficulty or 'easy')
     elif seed and difficulty:
         gs, all_orders = init_game(seed, difficulty)
@@ -483,7 +513,7 @@ def refine_from_solution(combined_actions, capture_data=None, seed=None,
                             for r_acts in combined_actions]
 
     # Verify starting score
-    gs_v = gs.copy() if not capture_data else init_game_from_capture(capture_data)[0]
+    gs_v = gs.copy() if not capture_data else init_game_from_capture(capture_data, num_orders=num_orders)[0]
     best_score = cpu_verify(gs_v, all_orders, combined_actions, num_bots)
     best_actions = {k: list(v) for k, v in bot_actions.items()}
 

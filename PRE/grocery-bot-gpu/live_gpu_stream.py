@@ -50,13 +50,15 @@ from live_solver import ws_to_capture
 from gpu_sequential_solver import solve_sequential, refine_from_solution, solve_multi_restart
 from solution_store import save_solution, merge_capture, save_capture as store_capture, load_meta
 from precompute import PrecomputedTables
+from nightmare_bot import NightmareBot
 
 # ── GPU pass state budgets per difficulty ──────────────────────────────────────
 PASSES = {
-    'easy':   [50_000, 500_000, 2_000_000],
-    'medium': [20_000, 200_000, 1_000_000],
-    'hard':   [10_000, 100_000, 500_000],
-    'expert': [5_000,  50_000,  200_000],
+    'easy':      [50_000, 500_000, 2_000_000],
+    'medium':    [20_000, 200_000, 1_000_000],
+    'hard':      [10_000, 100_000, 500_000],
+    'expert':    [5_000,  50_000,  200_000],
+    'nightmare': [3_000,  15_000,  50_000],
 }
 
 # ── Per-round GPU DP parameters per difficulty ─────────────────────────────────
@@ -140,6 +142,8 @@ class AnytimeGPUStream:
         self._solve_gen = 0        # bumped when new orders arrive
         self._seen_order_ids = set()
         self._data_ready = threading.Event()  # set after round 0
+
+        self._nightmare_bot = None  # NightmareBot instance for nightmare greedy
 
         # ── anti-congestion state (populated after round 0) ────────────────────
         self._aisle_cols = set()         # x-coords of narrow aisle columns
@@ -754,6 +758,11 @@ class AnytimeGPUStream:
             self._tables = None
 
         self._data_ready.set()
+
+        # NightmareBot for reactive tier — uses PIBT + Hungarian for all 20 bots
+        if self._difficulty == 'nightmare':
+            self._nightmare_bot = NightmareBot(verbose=True)
+            self._nightmare_bot.init_from_ws(data)
 
         print(f"  [init] {self._difficulty} {self._num_bots}bots "
               f"orders={len(capture['orders'])} walkable={len(self._walkable)}",
@@ -1675,6 +1684,10 @@ class AnytimeGPUStream:
                     n_synced = len(synced_bots)
                     n_desynced = len(desynced_bots)
 
+                    # Nightmare: if majority desynced, PIBT is better than per-bot BFS recovery
+                    if self._nightmare_bot is not None and n_desynced > n_synced:
+                        return self._nightmare_bot.decide_ws(data), 'nightmare_pibt'
+
                     if n_synced > 0 and 0 <= dp_rnd < len(plan.actions):
                         ws_actions = [None] * len(live_bots)
                         greedy_occ = set(tuple(b['position']) for b in live_bots)
@@ -1760,6 +1773,8 @@ class AnytimeGPUStream:
             if pr_result is not None:
                 pr_actions, pr_score = pr_result
                 return pr_actions, 'per_round_gpu'
+            if self._nightmare_bot is not None:
+                return self._nightmare_bot.decide_ws(data), 'nightmare_pibt'
             return self._greedy_all(live_bots, data, occupied), 'greedy'
 
         # ── Single-bot: plan (synced) > per-round GPU > plan (recovery) > greedy ──
@@ -1768,12 +1783,16 @@ class AnytimeGPUStream:
             if pr_result is not None:
                 pr_actions, pr_score = pr_result
                 return pr_actions, 'per_round_gpu'
+            if self._nightmare_bot is not None:
+                return self._nightmare_bot.decide_ws(data), 'nightmare_pibt'
             return self._greedy_all(live_bots, data, occupied), 'greedy'
 
         dp_rnd = rnd - offset
 
         if not (0 <= dp_rnd < len(plan.actions)):
             # Outside plan range: greedy
+            if self._nightmare_bot is not None:
+                return self._nightmare_bot.decide_ws(data), 'nightmare_pibt'
             return self._greedy_all(live_bots, data, occupied), 'greedy'
 
         # Check if all bots are at expected positions

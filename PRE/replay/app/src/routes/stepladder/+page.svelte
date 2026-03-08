@@ -1,4 +1,7 @@
 <script>
+	// ── Server data (today's best capture) ──────────────────────────────
+	let { data } = $props();
+
 	// ── Constants ─────────────────────────────────────────────────────────
 	const PHASE_LABELS = {
 		capture: 'Zig Capture',
@@ -18,21 +21,21 @@
 	// ── Input State ──────────────────────────────────────────────────────
 	let mode          = $state('offline'); // 'live' or 'offline'
 	let wsUrl         = $state('');
-	let difficulty    = $state('nightmare');
+	let difficulty    = $state(data.defaultDifficulty || 'nightmare');
 	let captureBot    = $state('auto');   // 'auto', 'zig', 'python'
 	let gpu           = $state('auto');
 	let deepBudget    = $state(300);     // seconds for deep training per iteration
 	let maxStates     = $state('');       // empty = auto
 
-	// auto: Zig for easy-expert, Python for nightmare
+	// auto: Zig for easy-expert, NightmareBot for nightmare
 	let activeCaptureBot = $derived(
 		captureBot !== 'auto' ? captureBot
-			: difficulty === 'nightmare' ? 'python' : 'zig'
+			: difficulty === 'nightmare' ? 'nightmare' : 'zig'
 	);
 
 	// ── Offline Capture ─────────────────────────────────────────────────
-	let offlineCapture = $state(null);   // loaded capture JSON data
-	let offlineFileName = $state('');
+	let offlineCapture = $state(data.defaultCapture || null);
+	let offlineFileName = $state(data.defaultFileName || '');
 	let captureLoading = $state(false);
 
 	function handleCaptureFile(e) {
@@ -75,14 +78,22 @@
 	}
 
 	// Auto-load capture when difficulty changes in offline mode
+	// Skip initial load if server already provided today's best capture
+	let serverDataUsed = data.defaultCapture ? true : false;
 	$effect(() => {
+		const diff = difficulty; // always track so effect re-runs on change
 		if (mode === 'offline') {
-			autoLoadCapture(difficulty);
+			if (serverDataUsed) {
+				serverDataUsed = false;
+				return;
+			}
+			autoLoadCapture(diff);
 		}
 	});
 
-	// ── Remote GPU ───────────────────────────────────────────────────────
+	// ── GPU ─────────────────────────────────────────────────────────────
 	let gpuConnected  = $state(false);
+	let gpuSource     = $state('none');  // 'remote' | 'local' | 'none'
 	let gpuInfo       = $state(null);
 	let gpuChecking   = $state(false);
 
@@ -92,13 +103,15 @@
 			const res = await fetch('/api/gpu-remote');
 			gpuInfo = await res.json();
 			gpuConnected = gpuInfo.connected;
+			gpuSource = gpuInfo.source || 'none';
 			if (gpuConnected) {
-				addLog(`GPU connected: ${gpuInfo.name} (${gpuInfo.vram_gb} GB)`);
+				addLog(`GPU connected: ${gpuInfo.name} (${gpuInfo.vram_gb} GB) [${gpuSource}]`);
 			} else {
 				addLog(`GPU not reachable: ${gpuInfo.error || 'connection refused'}`);
 			}
 		} catch (e) {
 			gpuConnected = false;
+			gpuSource = 'none';
 			addLog(`GPU check failed: ${e.message}`);
 		}
 		gpuChecking = false;
@@ -196,6 +209,7 @@
 					url: wsUrl.trim(),
 					difficulty,
 					iteration: iterNum,
+					captureBot: activeCaptureBot,
 					gpu: 'local',  // only capture locally, no deep training
 					deepBudget: 0, // skip deep training on local
 					maxStates: maxStates ? parseInt(maxStates) : null,
@@ -232,8 +246,8 @@
 				}
 			}
 
-			// Step 2: Remote GPU optimize (if connected)
-			if (gpuConnected && captureData) {
+			// Step 2: Remote GPU optimize (if remote GPU connected)
+			if (gpuConnected && gpuSource === 'remote' && captureData) {
 				currentPhase = 'optimize';
 				addLog(`Phase: Remote GPU optimize (${fmtTime(deepBudget)} budget)...`);
 
@@ -329,7 +343,7 @@
 		abortCtrl = ctrl;
 
 		try {
-			if (gpuConnected) {
+			if (gpuConnected && gpuSource === 'remote') {
 				// Remote GPU optimize
 				addLog(`Sending to remote GPU (${fmtTime(deepBudget)} budget)...`);
 
@@ -505,11 +519,14 @@
 			case 'optimize_done':
 			case 'gpu_bot_done':
 			case 'gpu_phase':
-				// Forward GPU events to log
-				if (evt.type === 'gpu_bot_done') {
+				if (evt.type === 'optimize_start') {
+					addLog(`GPU start: ${evt.difficulty} ${evt.orders} orders, prev_score=${evt.prev_score}`);
+				} else if (evt.type === 'gpu_bot_done') {
 					addLog(`Bot ${evt.bot}/${evt.num_bots}: score=${evt.score} (${evt.elapsed}s)`);
 				} else if (evt.type === 'optimize_done') {
-					addLog(`Optimize done: score=${evt.score}`);
+					addLog(`Optimize done: score=${evt.score}${evt.error ? ` error: ${evt.error}` : ''}`);
+				} else if (evt.type === 'gpu_phase') {
+					addLog(`GPU phase: ${evt.phase} iter=${evt.iteration} score=${evt.score}`);
 				}
 				break;
 
@@ -561,7 +578,7 @@
 		{#if gpuChecking}
 			<span>Checking GPU...</span>
 		{:else if gpuConnected}
-			<span>GPU: {gpuInfo?.name} ({gpuInfo?.vram_gb} GB)</span>
+			<span>GPU: {gpuInfo?.name} ({gpuInfo?.vram_gb} GB) [{gpuSource}]</span>
 		{:else}
 			<span>GPU not connected</span>
 		{/if}
@@ -622,11 +639,12 @@
 				</select>
 			</label>
 
-			<label title="Bot brukt for capture (live-modus). Zig: rask C-bot (stotter ikke nightmare). Python: live_gpu_stream.py (stotter alle). Auto: Zig for easy-expert, Python for nightmare.">
+			<label title="Bot brukt for capture (live-modus). Zig: rask C-bot (stotter ikke nightmare). NightmareBot: PIBT+Hungarian (stotter alle). Python: live_gpu_stream.py. Auto: Zig for easy-expert, NightmareBot for nightmare.">
 				<span class="label">Capture Bot</span>
 				<select bind:value={captureBot} disabled={running}>
 					<option value="auto">Auto ({activeCaptureBot})</option>
 					<option value="zig">Zig</option>
+					<option value="nightmare">NightmareBot</option>
 					<option value="python">Python</option>
 				</select>
 			</label>

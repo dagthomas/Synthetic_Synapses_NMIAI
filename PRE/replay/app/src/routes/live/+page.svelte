@@ -412,6 +412,7 @@
 					<option value="zig">Zig</option>
 					<option value="python">Python</option>
 					<option value="gpu">GPU</option>
+					<option value="nightmare">Nightmare</option>
 				</select>
 			</label>
 			{#if tokenInfo}

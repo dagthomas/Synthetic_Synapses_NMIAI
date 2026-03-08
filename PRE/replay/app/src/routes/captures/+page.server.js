@@ -1,90 +1,100 @@
-import { resolve } from 'path';
-import { readdir, readFile } from 'fs/promises';
-import { GPU_DIR } from '$lib/paths.server.js';
-
-const CAPTURES_DIR = resolve(GPU_DIR, 'captures');
-
-// Extract date from filename like "expert_2026-03-05.json" or "expert_2026-03-06_095709_2orders.json"
-function parseCaptureFile(filename) {
-	const m = filename.match(/^(\w+?)_(\d{4}-\d{2}-\d{2})(?:_(\d{6})_(\d+)orders)?\.json$/);
-	if (!m) return null;
-	return {
-		difficulty: m[1],
-		date: m[2],
-		time: m[3] || null,
-		filename
-	};
-}
+import { query } from '$lib/db.server.js';
 
 export async function load() {
-	let files;
-	try {
-		files = await readdir(CAPTURES_DIR);
-	} catch {
-		return { days: {} };
+	// Today's date in YYYY-MM-DD
+	const today = new Date().toISOString().slice(0, 10);
+
+	// Best run per difficulty for today (highest final_score)
+	const runs = await query(`
+		SELECT DISTINCT ON (difficulty)
+			id, difficulty, seed, bot_count, final_score, items_delivered,
+			orders_completed, run_type, created_at
+		FROM runs
+		WHERE created_at::date = $1::date
+		ORDER BY difficulty, final_score DESC, id DESC
+	`, [today]);
+
+	// Extract all unique orders from best runs' round data (separate rounds table)
+	const runOrdersMap = {};
+	for (const run of runs) {
+		const orderRows = await query(`
+			SELECT order_id, items_required FROM (
+				SELECT DISTINCT ON (ord->>'id')
+					ord->>'id' AS order_id,
+					ord->'items_required' AS items_required,
+					r.round_number AS first_round
+				FROM rounds r,
+					jsonb_array_elements(r.orders) AS ord
+				WHERE r.run_id = $1
+				ORDER BY ord->>'id', r.round_number
+			) sub
+			ORDER BY first_round, order_id
+		`, [run.id]);
+		runOrdersMap[run.difficulty] = orderRows.map(r => ({
+			id: r.order_id,
+			items: r.items_required || [],
+		}));
 	}
 
-	const jsonFiles = files.filter(f => f.endsWith('.json'));
+	// Captures from DB for today
+	const captures = await query(`
+		SELECT difficulty, date, num_orders, capture_data, created_at, updated_at
+		FROM captures
+		WHERE date = $1
+	`, [today]);
 
-	// Group by difficulty+date, find best (most orders) per group
-	const groups = {}; // key: "difficulty|date" -> { files: [...], best: null }
+	// GPU solutions for today
+	const solutions = await query(`
+		SELECT difficulty, score, num_bots, date
+		FROM gpu_solutions
+		WHERE date = $1
+	`, [today]);
 
-	for (const fname of jsonFiles) {
-		const parsed = parseCaptureFile(fname);
-		if (!parsed) continue; // skip files like captured_orders_expert.json
+	// Order sequences
+	const orderSeqs = await query(`
+		SELECT difficulty, map_seed, total_orders, date
+		FROM order_sequences
+		WHERE date = $1
+	`, [today]);
 
-		const key = `${parsed.difficulty}|${parsed.date}`;
-		if (!groups[key]) {
-			groups[key] = { difficulty: parsed.difficulty, date: parsed.date, fileCount: 0, best: null };
-		}
-		groups[key].fileCount++;
-
-		// Read file to count orders
-		try {
-			const raw = await readFile(resolve(CAPTURES_DIR, fname), 'utf-8');
-			const data = JSON.parse(raw);
-			const orders = data.orders || [];
-			const total = data.total_orders_discovered || orders.length;
-			const capturedAt = data.captured_at || null;
-
-			if (!groups[key].best || total > groups[key].best.total) {
-				groups[key].best = {
-					filename: fname,
-					total,
-					capturedAt,
-					orders: orders.map((o, i) => ({
-						id: o.id || `order_${i}`,
-						items: o.items_required || []
-					}))
-				};
-			}
-		} catch {
-			// skip unreadable files
-		}
-	}
-
-	// Sort by date descending, group by difficulty
-	const entries = Object.values(groups).sort((a, b) => b.date.localeCompare(a.date));
-
-	// Group by difficulty
-	const byDifficulty = {};
+	// Build combined view per difficulty
 	const difficultyOrder = ['nightmare', 'expert', 'hard', 'medium', 'easy'];
-	for (const entry of entries) {
-		if (!byDifficulty[entry.difficulty]) {
-			byDifficulty[entry.difficulty] = [];
-		}
-		byDifficulty[entry.difficulty].push(entry);
-	}
+	const byDifficulty = {};
 
-	// Sort difficulties by priority
-	const sorted = {};
 	for (const diff of difficultyOrder) {
-		if (byDifficulty[diff]) sorted[diff] = byDifficulty[diff];
-	}
-	// Add any remaining
-	for (const [diff, entries] of Object.entries(byDifficulty)) {
-		if (!sorted[diff]) sorted[diff] = entries;
+		const run = runs.find(r => r.difficulty === diff);
+		const cap = captures.find(c => c.difficulty === diff);
+		const sol = solutions.find(s => s.difficulty === diff);
+		const seq = orderSeqs.find(o => o.difficulty === diff);
+
+		if (!run && !cap && !sol) continue;
+
+		// Prefer run orders (most complete — extracted from game rounds), fall back to capture orders
+		const runOrders = runOrdersMap[diff] || [];
+		const captureOrderList = (cap?.capture_data?.orders || []).map((o, i) => ({
+			id: o.id || `order_${i}`,
+			items: o.items_required || []
+		}));
+		const allOrders = runOrders.length > captureOrderList.length ? runOrders : captureOrderList;
+
+		byDifficulty[diff] = {
+			difficulty: diff,
+			date: today,
+			bestRun: run ? {
+				id: run.id,
+				score: run.final_score,
+				itemsDelivered: run.items_delivered,
+				ordersCompleted: run.orders_completed,
+				runType: run.run_type,
+				botCount: run.bot_count,
+				seed: run.seed,
+				createdAt: run.created_at
+			} : null,
+			captureOrders: allOrders,
+			totalOrders: Math.max(seq?.total_orders || 0, allOrders.length),
+			gpuScore: sol?.score || null,
+		};
 	}
 
-	return { byDifficulty: sorted };
+	return { today, byDifficulty };
 }

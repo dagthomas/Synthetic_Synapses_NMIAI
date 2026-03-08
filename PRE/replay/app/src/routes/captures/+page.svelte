@@ -16,75 +16,81 @@
 		medium: 'Medium',
 		easy: 'Easy'
 	};
-
-	function formatDate(dateStr) {
-		const d = new Date(dateStr + 'T00:00:00');
-		const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-		const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-		return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
-	}
-
-	function isToday(dateStr) {
-		const today = new Date().toISOString().slice(0, 10);
-		return dateStr === today;
-	}
 </script>
 
 <div class="page stagger">
 	<div class="header">
 		<h1>captures</h1>
-		<p class="subtitle">best captured orders per difficulty per day</p>
+		<p class="subtitle">today ({data.today}) &mdash; best per difficulty from DB</p>
 	</div>
 
 	{#if Object.keys(data.byDifficulty).length === 0}
-		<div class="card empty">No capture files found.</div>
+		<div class="card empty">No captures or runs found for today.</div>
 	{/if}
 
-	{#each Object.entries(data.byDifficulty) as [difficulty, days]}
+	{#each Object.entries(data.byDifficulty) as [difficulty, info]}
 		<section class="diff-section">
 			<h2 class="diff-title" style="color: {diffColors[difficulty] || '#c9d1d9'}">
 				{diffLabels[difficulty] || difficulty}
 			</h2>
 
-			{#each days as day}
-				<div class="day-card card" class:today={isToday(day.date)}>
+			<div class="day-card card today">
+				<!-- Best run -->
+				{#if info.bestRun}
 					<div class="day-header">
 						<div class="day-date">
-							<span class="date-text">{formatDate(day.date)}</span>
-							{#if isToday(day.date)}
-								<span class="today-badge">today</span>
-							{/if}
+							<span class="today-badge">best run</span>
+							<span class="run-meta">
+								run #{info.bestRun.id} &middot; {info.bestRun.runType} &middot; {info.bestRun.botCount} bots &middot; seed {info.bestRun.seed}
+							</span>
 						</div>
 						<div class="day-meta">
-							<span class="order-count" style="color: {diffColors[difficulty] || '#c9d1d9'}">
-								{day.best?.total || 0} orders
+							<span class="score" style="color: {diffColors[difficulty] || '#c9d1d9'}">
+								{info.bestRun.score} pts
 							</span>
-							<span class="file-count">{day.fileCount} capture{day.fileCount !== 1 ? 's' : ''}</span>
 						</div>
 					</div>
-
-					<div class="best-file">
-						<span class="file-label">best:</span>
-						<code>{day.best?.filename || '?'}</code>
+					<div class="stats-row">
+						<span class="stat"><b>{info.bestRun.itemsDelivered}</b> items delivered</span>
+						<span class="stat"><b>{info.bestRun.ordersCompleted}</b> orders completed</span>
+						{#if info.gpuScore != null}
+							<span class="stat"><b>{info.gpuScore}</b> GPU plan score</span>
+						{/if}
 					</div>
+				{:else if info.gpuScore != null}
+					<div class="day-header">
+						<span class="today-badge">gpu only</span>
+						<span class="score" style="color: {diffColors[difficulty] || '#c9d1d9'}">
+							{info.gpuScore} pts (plan)
+						</span>
+					</div>
+				{/if}
 
-					{#if day.best?.orders?.length}
-						<div class="orders-grid">
-							{#each day.best.orders as order, i}
-								<div class="order-row">
-									<span class="order-id">#{i}</span>
-									<div class="order-items">
-										{#each order.items as item}
-											<span class="item-tag">{item}</span>
-										{/each}
-									</div>
-									<span class="item-count">{order.items.length} items</span>
-								</div>
-							{/each}
-						</div>
-					{/if}
+				<!-- Orders -->
+				<div class="orders-header">
+					<span class="order-count" style="color: {diffColors[difficulty] || '#c9d1d9'}">
+						{info.totalOrders} orders discovered
+					</span>
 				</div>
-			{/each}
+
+				{#if info.captureOrders.length}
+					<div class="orders-grid">
+						{#each info.captureOrders as order, i}
+							<div class="order-row">
+								<span class="order-id">#{i}</span>
+								<div class="order-items">
+									{#each order.items as item}
+										<span class="item-tag">{item}</span>
+									{/each}
+								</div>
+								<span class="item-count">{order.items.length} items</span>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="no-orders">No orders in capture data</div>
+				{/if}
+			</div>
 		</section>
 	{/each}
 </div>
@@ -147,11 +153,6 @@
 		align-items: center;
 		gap: 0.5rem;
 	}
-	.date-text {
-		font-weight: 600;
-		color: var(--text);
-		font-size: 0.85rem;
-	}
 	.today-badge {
 		background: var(--orange);
 		color: #000;
@@ -162,33 +163,49 @@
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
+	.run-meta {
+		color: var(--text-muted);
+		font-size: 0.72rem;
+	}
 	.day-meta {
 		display: flex;
 		align-items: center;
 		gap: 1rem;
 	}
-	.order-count {
+	.score {
 		font-weight: 700;
-		font-size: 0.9rem;
-	}
-	.file-count {
-		color: var(--text-muted);
-		font-size: 0.72rem;
+		font-size: 1.1rem;
 	}
 
-	.best-file {
+	.stats-row {
+		display: flex;
+		gap: 1.5rem;
 		margin-bottom: 0.75rem;
+		padding: 0.4rem 0.5rem;
+		background: rgba(0, 0, 0, 0.15);
+		border-radius: 2px;
+	}
+	.stat {
+		color: var(--text-muted);
 		font-size: 0.72rem;
 	}
-	.file-label {
-		color: var(--text-muted);
+	.stat b {
+		color: var(--text);
+		font-weight: 600;
 	}
-	.best-file code {
+
+	.orders-header {
+		margin-bottom: 0.5rem;
+	}
+	.order-count {
+		font-weight: 700;
+		font-size: 0.85rem;
+	}
+
+	.no-orders {
 		color: var(--text-muted);
-		background: rgba(0, 0, 0, 0.3);
-		padding: 0.1rem 0.35rem;
-		border-radius: 2px;
-		font-size: 0.7rem;
+		font-size: 0.72rem;
+		padding: 0.5rem;
 	}
 
 	.orders-grid {

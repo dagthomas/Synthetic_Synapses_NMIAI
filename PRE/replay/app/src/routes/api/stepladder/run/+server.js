@@ -20,6 +20,7 @@ export async function POST({ request }) {
 		difficulty,                   // easy|medium|hard|expert|nightmare
 		iteration = 0,                // current iteration number
 		phase = 'auto',               // auto|capture|replay|optimize|deep
+		captureBot = 'auto',          // auto|zig|nightmare|python
 		gpu = 'auto',                 // auto|b200|5090
 		deepBudget = 300,             // seconds for deep training
 		maxStates = null,             // override max states
@@ -89,17 +90,23 @@ export async function POST({ request }) {
 				} catch { return null; }
 			}
 
-			// ── Phase: Capture (Zig on Windows, Python on Linux) ──────
+			// ── Phase: Capture ────────────────────────────────────────
 			function runCapture() {
 				return new Promise((res) => {
 					sendEvent('phase_start', { phase: 'capture', elapsed: elapsed() });
 
-					// Try Zig bot first (Windows), fall back to Python
-					// Zig bot doesn't support nightmare (20 bots)
+					// Determine which bot to use
 					const zigExe = resolve(ZIG_BOT_DIR, 'zig-out', 'bin', 'grocery-bot.exe');
-					const useZig = existsSync(zigExe) && difficulty !== 'nightmare';
+					let bot = captureBot;
+					if (bot === 'auto') {
+						bot = (difficulty === 'nightmare') ? 'nightmare' : 'zig';
+					}
+					// Zig doesn't support nightmare
+					if (bot === 'zig' && (difficulty === 'nightmare' || !existsSync(zigExe))) {
+						bot = 'nightmare';
+					}
 
-					if (useZig) {
+					if (bot === 'zig') {
 						sendEvent('log', { text: '[capture] Using Zig bot' });
 						const spawnMs = Date.now();
 						ctx.process = spawn(zigExe, [url], {
@@ -137,8 +144,44 @@ export async function POST({ request }) {
 							sendEvent('error', { message: `Zig capture failed: ${err.message}` });
 							res({ score: 0 });
 						});
+					} else if (bot === 'nightmare') {
+						// NightmareBot — PIBT+Hungarian, outputs to stderr
+						sendEvent('log', { text: `[capture] Using NightmareBot (${difficulty})` });
+						const spawnMs = Date.now();
+						const args = ['-u', 'nightmare_bot.py', url, '-v'];
+						ctx.process = spawn(PYTHON, args, {
+							cwd: GPU_DIR, stdio: ['pipe', 'pipe', 'pipe'],
+						});
+
+						let score = 0;
+						ctx.process.stderr.on('data', (data) => {
+							for (const line of data.toString().split('\n')) {
+								if (!line.trim()) continue;
+								const rm = line.match(/R(\d+)\/(\d+)\s+Score:(\d+)/);
+								if (rm) {
+									score = parseInt(rm[3]);
+									if (parseInt(rm[1]) % 20 === 0 || rm[1] === rm[2]) {
+										sendEvent('round', { round: parseInt(rm[1]), max: parseInt(rm[2]), score });
+									}
+								}
+								const gm = line.match(/GAME_OVER\s+Score:(\d+)/);
+								if (gm) score = parseInt(gm[1]);
+								sendEvent('log', { text: `[nightmare] ${line.trim()}` });
+							}
+						});
+						ctx.process.stdout.on('data', () => {});
+
+						ctx.process.on('close', () => {
+							const logPath = findNewestLog(GPU_DIR, spawnMs);
+							sendEvent('phase_done', { phase: 'capture', score, elapsed: elapsed() });
+							res({ score, logPath });
+						});
+						ctx.process.on('error', (err) => {
+							sendEvent('error', { message: `NightmareBot capture failed: ${err.message}` });
+							res({ score: 0 });
+						});
 					} else {
-						// Python fallback — live_gpu_stream.py --cpu (nightmare or Linux)
+						// Python fallback — live_gpu_stream.py --cpu
 						sendEvent('log', { text: `[capture] Using live_gpu_stream.py --cpu (${difficulty})` });
 						const spawnMs = Date.now();
 						const args = [

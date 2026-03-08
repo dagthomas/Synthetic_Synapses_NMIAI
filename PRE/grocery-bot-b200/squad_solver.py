@@ -30,9 +30,29 @@ from game_engine import (
 )
 from gpu_sequential_solver import (
     solve_sequential, refine_from_solution, pre_simulate_locked,
-    cpu_verify, _make_combined, compute_bot_contributions,
-    greedy_plan_bots, SolveConfig, compute_type_assignments,
+    cpu_verify, _make_combined,
 )
+# Optional advanced functions — may not exist in all versions
+try:
+    from gpu_sequential_solver import compute_bot_contributions
+except ImportError:
+    compute_bot_contributions = None
+try:
+    from gpu_sequential_solver import greedy_plan_bots, SolveConfig, compute_type_assignments
+except ImportError:
+    greedy_plan_bots = compute_type_assignments = None
+    # Minimal fallback so squad_solver can at least import
+    from dataclasses import dataclass, field as dc_field
+    @dataclass
+    class SolveConfig:
+        max_states: int = 100000
+        no_filler: bool = False
+        no_compile: bool = False
+        bot_order: list = dc_field(default_factory=list)
+        speed_bonus: float = 0.0
+        max_dp_bots: int = 10
+        max_refine_iters: int = 0
+        num_pass1_orderings: int = 1
 from solution_store import save_solution, load_capture, load_solution, load_meta
 from configs import CONFIGS
 from b200_config import get_params, B200Params
@@ -477,11 +497,16 @@ def _lns_loop(capture_data, config, gs, all_orders, ms,
             # Full destroy: reset 2-3 bots completely
             n_destroy = min(config.joint_squad_size, dp_bots)
             # Pick weakest bots
-            contribs = compute_bot_contributions(
-                gs.copy(), all_orders, bot_actions, num_bots,
-                list(range(dp_bots)),
-            )
-            destroy_bids = sorted(range(dp_bots), key=lambda b: contribs.get(b, 0))[:n_destroy]
+            if compute_bot_contributions:
+                contribs = compute_bot_contributions(
+                    gs.copy(), all_orders, bot_actions, num_bots,
+                    list(range(dp_bots)),
+                )
+                destroy_bids = sorted(range(dp_bots), key=lambda b: contribs.get(b, 0))[:n_destroy]
+            else:
+                # Fallback: destroy random bots
+                import random
+                destroy_bids = random.sample(range(dp_bots), n_destroy)
 
         elif strategy == 'window':
             # Window destroy: find congestion hotspot, reset bots in that window

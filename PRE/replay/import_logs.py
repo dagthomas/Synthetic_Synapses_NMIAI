@@ -28,6 +28,7 @@ DIFFICULTY_MAP = {
     (16, 12, 3): "medium",
     (22, 14, 5): "hard",
     (28, 18, 10): "expert",
+    (30, 18, 20): "nightmare",
 }
 
 

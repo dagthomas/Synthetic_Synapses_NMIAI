@@ -34,6 +34,15 @@ function getBotCommand(difficulty, solver) {
 			logDir: GPU_DIR,
 		};
 	}
+	if (solver === 'nightmare') {
+		return {
+			cmd: PYTHON,
+			args: ['nightmare_bot.py'],
+			cwd: GPU_DIR,
+			logDir: GPU_DIR,
+			extraArgs: ['--verbose'],
+		};
+	}
 	// Zig: try difficulty-specific executable first, fall back to generic
 	const specific = resolve(BOT_DIR, 'zig-out', 'bin', `grocery-bot-${difficulty}.exe`);
 	let botPath;
@@ -229,7 +238,7 @@ export async function POST({ request }) {
 				} catch (e) { /* log file may not be readable yet */ }
 			}
 
-			const solverLabels = { zig: 'Zig', python: 'Python', gpu: 'GPU', replay: 'Replay' };
+			const solverLabels = { zig: 'Zig', python: 'Python', gpu: 'GPU', replay: 'Replay', nightmare: 'Nightmare' };
 			const solverLabel = solverLabels[solver || 'zig'] || 'Zig';
 			sendEvent('status', { message: `Starting ${solverLabel} bot: ${botInfo.cmd}` });
 			sendEvent('status', { message: `CWD: ${botInfo.cwd}` });
@@ -262,6 +271,16 @@ export async function POST({ request }) {
 				} catch {
 					sendEvent('error', { message: `Python solver not found: ${scriptPath}` });
 					sendEvent('done', { code: -1, message: 'live_solver.py not found in grocery-bot-gpu/' });
+					cleanup();
+					return;
+				}
+			} else if (solver === 'nightmare') {
+				const scriptPath = resolve(botInfo.cwd, 'nightmare_bot.py');
+				try {
+					statSync(scriptPath);
+				} catch {
+					sendEvent('error', { message: `Nightmare solver not found: ${scriptPath}` });
+					sendEvent('done', { code: -1, message: 'nightmare_bot.py not found in grocery-bot-gpu/' });
 					cleanup();
 					return;
 				}
