@@ -1,21 +1,19 @@
 """Cascade solver for nightmare mode.
 
 Exploits the auto-delivery chain reaction mechanic: when the active order
-completes, bots AT A DROPOFF ZONE get their inventories scanned and matching
-items are auto-delivered to the new active order. If that also completes,
-it cascades again (still DZ-only).
+completes, ALL bots' inventories are scanned and matching items are
+auto-delivered to the new active order. If that also completes, it cascades
+again. Per official docs: "Any items in bot inventories that match the new
+active order are auto-delivered."
 
-IMPORTANT: Bots MUST be at a dropoff zone for auto-delivery. Bots elsewhere
-keep their items. The MCP docs saying "any items in bot inventories" are WRONG.
-Empirically confirmed: only DZ bots participate in cascade auto-delivery.
-
-Strategy: Stack bots with future-order items AT dropoff zones before triggering.
-20 bots x 3 slots = 60 item slots. Orders average ~5 items.
+Strategy: Fill bots with future-order items via prefetching. When the active
+order completes, cascade auto-delivers from ALL bots anywhere on the map.
+20 bots x 3 slots = 60 item slots. Orders average ~5 items = up to 12 orders
+per cascade chain.
 
 Bot roles:
   - Delivery team (3-5 bots): complete the active order ASAP at DZ
-  - Prefetch team (15-17 bots): pick items for future orders, then
-    CONVERGE on dropoff zones before cascade fires. Timing is critical.
+  - Prefetch team (15-17 bots): pick items for future orders everywhere
 
 Usage:
     python nightmare_cascade_solver.py --seeds 7005 -v
@@ -70,13 +68,12 @@ def _inv_type_counts(inv: list[int]) -> dict[int, int]:
 class CascadeSolver:
     """Exploit auto-delivery cascades: prefetch items for future orders.
 
-    When the delivery team completes the active order, bots AT DROPOFF ZONES
-    get their inventories scanned for matching items. If matching items are
-    found, they auto-deliver. If a new active order is fully satisfied by
-    items held by DZ bots, it completes instantly and cascades continue.
+    When the delivery team completes the active order, ALL bots' inventories
+    are scanned for matching items. Matching items auto-deliver regardless of
+    bot position. Cascades can chain through multiple orders in one round.
 
-    Key strategy: get prefetch bots TO the dropoff zones before cascade fires.
-    Bots NOT at DZ keep their items — they must physically deliver later.
+    Key strategy: fill ALL bots with future-order items. No need to be at DZ
+    for cascade — just pick the right items and the delivery team triggers it.
     """
 
     # How many future orders to look ahead for prefetching
@@ -105,15 +102,6 @@ class CascadeSolver:
 
         # Pre-loaded future orders (full lookahead in sim, or from capture)
         self.future_orders = future_orders or []
-
-        # Zone assignment: divide bots across DZs to reduce cross-map traffic
-        # Each bot is assigned to a "home DZ" based on bot ID
-        num_dz = len(self.drop_zones)
-        bots_per_zone = self.num_bots // num_dz
-        self.bot_home_dz: dict[int, tuple[int, int]] = {}
-        for bid in range(self.num_bots):
-            zone = min(bid // bots_per_zone, num_dz - 1)
-            self.bot_home_dz[bid] = self.drop_zones[zone]
 
         # Item index lookup: type_id -> [(item_idx, [adj_positions])]
         self.type_items: dict[int, list[tuple[int, list[tuple[int, int]]]]] = {}
@@ -147,6 +135,10 @@ class CascadeSolver:
 
         # Track last goal types for utilization stats
         self._last_goal_types: dict[int, str] = {}
+
+        # Active order stuck detection
+        self._active_stuck_rounds = 0
+        self._last_orders_completed = 0
 
     # ------------------------------------------------------------------
     # Future order management
@@ -352,7 +344,7 @@ class CascadeSolver:
             if filtered_short:
                 item_idx, adj_pos = self._assign_item(
                     bid, pos, filtered_short, active_type_assigned,
-                    claimed_items, strict=False)
+                    claimed_items, strict=False, is_active=True)
                 if item_idx is not None:
                     goals[bid] = adj_pos
                     goal_types[bid] = 'pickup'
@@ -388,7 +380,7 @@ class CascadeSolver:
             pos = bot_positions[bid]
             item_idx, adj_pos = self._assign_item(
                 bid, pos, remaining_short, active_fetch_assigned,
-                claimed_items, strict=True)
+                claimed_items, strict=True, is_active=True)
             if item_idx is not None:
                 goals[bid] = adj_pos
                 goal_types[bid] = 'pickup'
@@ -406,10 +398,15 @@ class CascadeSolver:
         remaining_empty = [bid for bid in empty_bots if bid not in assigned_to_active]
 
         # === Phase 3: Prefetch for future orders ===
-        # In endgame, skip prefetch — all remaining bots park or deliver
-        # Track how many items have been assigned to each future order's types
+        # Always reserve 1 empty bot + more if active has uncovered shortfall.
+        # Prevents deadlock: single carrier stuck in traffic, all others fill up.
+        # Prevent all-full deadlock: if most bots already have items,
+        # don't let the last few fill up (they're needed for active order)
+        bots_with_items = sum(1 for bid in range(self.num_bots)
+                              if len(bot_inventories.get(bid, [])) > 0)
+        # Keep at least 2 bots without items for active order emergencies
+        reserve = max(0, 2 - (self.num_bots - bots_with_items))
         prefetch_assigned: list[dict[int, int]] = [{} for _ in future_orders]
-        # Also build a global prefetch type counter to avoid massive over-assignment
         global_prefetch_assigned: dict[int, int] = {}
 
         # Sort remaining empties by proximity to any future item
@@ -420,8 +417,19 @@ class CascadeSolver:
         remaining_empty.sort(key=lambda bid:
             self._min_dist_to_types(bot_positions[bid], all_future_types))
 
+        # Limit prefetch to leave reserves
+        max_prefetch_empty = max(0, len(remaining_empty) - reserve)
+        prefetch_count = 0
+
         for bid in remaining_empty:
             if bid in goals:
+                continue
+            # Reserve empty bots for active order
+            if prefetch_count >= max_prefetch_empty:
+                park = self._corridor_parking(bot_positions[bid], occupied_goals)
+                occupied_goals.add(park)
+                goals[bid] = park
+                goal_types[bid] = 'park'
                 continue
             pos = bot_positions[bid]
             assigned = False
@@ -430,7 +438,7 @@ class CascadeSolver:
             for fi, needs in enumerate(prefetch_needs):
                 if not needs:
                     continue
-                # Check what's still needed after global assignments
+                # Check what's still needed after per-order assignments
                 effective_needs: dict[int, int] = {}
                 for t, n in needs.items():
                     already = prefetch_assigned[fi].get(t, 0)
@@ -441,8 +449,9 @@ class CascadeSolver:
                 if not effective_needs:
                     continue
 
+                # Use per-order counts (not global) to avoid double-limiting
                 item_idx, adj_pos = self._assign_item(
-                    bid, pos, effective_needs, global_prefetch_assigned,
+                    bid, pos, effective_needs, prefetch_assigned[fi],
                     claimed_items, strict=True)
                 if item_idx is not None:
                     goals[bid] = adj_pos
@@ -452,6 +461,7 @@ class CascadeSolver:
                     prefetch_assigned[fi][tid] = prefetch_assigned[fi].get(tid, 0) + 1
                     global_prefetch_assigned[tid] = global_prefetch_assigned.get(tid, 0) + 1
                     claimed_items.add(item_idx)
+                    prefetch_count += 1
                     assigned = True
                     break
 
@@ -462,21 +472,9 @@ class CascadeSolver:
                 goals[bid] = park
                 goal_types[bid] = 'park'
 
-        # === Phase 4: Prefetch carriers -- fetch more or stage at DZ ===
-        # DZ-ONLY cascade: bots must be AT dropoff for auto-delivery.
-        # Only stage bots with PREVIEW-matching items when active is nearly done.
-        # Staging too many bots causes DZ congestion (20 bots, 3 DZs).
-        active_nearly_done = sum(active_short.values()) <= 2
-        # Preview needs for targeted staging
-        preview_needs_set: set[int] = set()
-        if future_orders:
-            for t in future_orders[0].needs():
-                preview_needs_set.add(t)
-
-        # Max staging bots — cap at 2 per DZ to limit congestion
-        max_staging = len(self.drop_zones) * 2
-        staging_count = 0
-
+        # === Phase 4: Prefetch carriers -- keep collecting or park ===
+        # ALL bots auto-deliver on cascade (not just DZ bots).
+        # No need to stage at DZ — just keep prefetching useful items.
         for bid in prefetch_carriers:
             pos = bot_positions[bid]
             inv = bot_inventories[bid]
@@ -501,7 +499,7 @@ class CascadeSolver:
                         continue
 
                     item_idx, adj_pos = self._assign_item(
-                        bid, pos, effective_needs, global_prefetch_assigned,
+                        bid, pos, effective_needs, prefetch_assigned[fi],
                         claimed_items, strict=True)
                     if item_idx is not None:
                         goals[bid] = adj_pos
@@ -515,27 +513,17 @@ class CascadeSolver:
                         break
 
                 if not assigned:
-                    # No more items to fetch -> park
+                    # No more items to fetch -> park out of the way
                     park = self._corridor_parking(pos, occupied_goals)
                     occupied_goals.add(park)
                     goals[bid] = park
                     goal_types[bid] = 'park'
             else:
-                # Full inventory with useful items
-                # Stage at DZ only if: active nearly done AND has preview items
-                # AND we haven't hit the staging cap
-                has_preview = any(t in preview_needs_set for t in inv)
-                if active_nearly_done and has_preview and staging_count < max_staging:
-                    dz = self._balanced_dropoff(pos, dropoff_loads, bid)
-                    dropoff_loads[dz] += 1
-                    goals[bid] = dz
-                    goal_types[bid] = 'stage'
-                    staging_count += 1
-                else:
-                    park = self._corridor_parking(pos, occupied_goals)
-                    occupied_goals.add(park)
-                    goals[bid] = park
-                    goal_types[bid] = 'park'
+                # Full inventory with useful items — just park, cascade handles delivery
+                park = self._corridor_parking(pos, occupied_goals)
+                occupied_goals.add(park)
+                goals[bid] = park
+                goal_types[bid] = 'park'
 
         # === Phase 5: Dead bots -> corridor parking ===
         for bid in dead_bots:
@@ -587,6 +575,13 @@ class CascadeSolver:
             else:
                 self.stall_counts[bid] = 0
             self.prev_positions[bid] = pos
+
+        # Track active order stuck duration
+        if state.orders_completed > self._last_orders_completed:
+            self._active_stuck_rounds = 0
+            self._last_orders_completed = state.orders_completed
+        else:
+            self._active_stuck_rounds += 1
 
         # Get orders
         active_order = state.get_active_order()
@@ -660,22 +655,15 @@ class CascadeSolver:
                 actions[bid] = (act, -1)
                 continue
 
-            # AT DROPOFF: deliver if carrying items AND goal is 'deliver'
-            # Also: staging bots at DZ deliver if they have active-matching items
-            if pos in self.drop_set:
-                if gt == 'deliver' and bot_inventories[bid]:
+            # AT DROPOFF: deliver bots drop off, others with active items too
+            if pos in self.drop_set and bot_inventories[bid]:
+                if gt == 'deliver':
                     actions[bid] = (ACT_DROPOFF, -1)
                     continue
-                if gt == 'stage' and bot_inventories[bid]:
-                    # Stage bots: deliver if carrying active-matching items
-                    # (helps complete active faster → triggers cascade)
-                    inv = bot_inventories[bid]
-                    has_active_item = any(t in active_needs for t in inv)
-                    if has_active_item:
-                        actions[bid] = (ACT_DROPOFF, -1)
-                        continue
-                    # Otherwise wait at DZ for cascade auto-delivery
-                    actions[bid] = (ACT_WAIT, -1)
+                # Any bot at DZ with active-matching items should deliver
+                inv = bot_inventories[bid]
+                if any(t in active_needs for t in inv):
+                    actions[bid] = (ACT_DROPOFF, -1)
                     continue
 
             # AT PICKUP TARGET: pick up item
@@ -810,13 +798,10 @@ class CascadeSolver:
                           bot_id: int | None = None) -> tuple[int, int]:
         best = self.drop_zones[0]
         best_score = 9999
-        home_dz = self.bot_home_dz.get(bot_id) if bot_id is not None else None
         for dz in self.drop_zones:
             d = self.tables.get_distance(pos, dz)
             load_pen = loads.get(dz, 0) * 5
-            # Home DZ bonus: prefer bot's assigned zone
-            home_bonus = -1 if dz == home_dz else 0
-            score = d + load_pen + home_bonus
+            score = d + load_pen
             if score < best_score:
                 best_score = score
                 best = dz
@@ -826,19 +811,19 @@ class CascadeSolver:
                      needed: dict[int, int],
                      assigned_counts: dict[int, int],
                      claimed: set[int],
-                     strict: bool = False
+                     strict: bool = False,
+                     is_active: bool = False,
                      ) -> tuple[int | None, tuple[int, int] | None]:
         """Find the best item to pick up for a needed type.
 
         Returns (item_idx, adjacent_position) or (None, None).
-        Cost = distance_to_item + 0.5 * distance_item_to_home_DZ
-        Zone-aware: prefers items near the bot's home DZ.
+        Active: cost = distance + 0.5 * drop_distance (must deliver to DZ)
+        Prefetch: cost = distance only (cascade auto-delivers from anywhere)
         """
         best_idx = None
         best_adj = None
         best_cost = 9999.0
-        # Use bot's home DZ for distance calculation (zone-aware)
-        home_dz = self.bot_home_dz.get(bot_id, self.drop_zones[0])
+        drop_weight = 0.1
 
         for tid, need_count in needed.items():
             if need_count <= 0:
@@ -851,9 +836,8 @@ class CascadeSolver:
                     continue
                 for adj in adj_cells:
                     d = self.tables.get_distance(bot_pos, adj)
-                    # Zone-aware: distance to bot's home DZ
-                    drop_d = self.tables.get_distance(adj, home_dz)
-                    cost = d + drop_d * 0.5
+                    drop_d = self._drop_dist(adj) if drop_weight > 0 else 0
+                    cost = d + drop_d * drop_weight
                     if cost < best_cost:
                         best_cost = cost
                         best_idx = item_idx
@@ -935,6 +919,15 @@ class CascadeSolver:
 
         rnd = data.get('round', 0)
         num_rounds = data.get('max_rounds', 500)
+
+        # Track active stuck
+        cur_score = data.get('score', 0)
+        cur_completed = data.get('active_order_index', 0)
+        if cur_completed > self._last_orders_completed:
+            self._active_stuck_rounds = 0
+            self._last_orders_completed = cur_completed
+        else:
+            self._active_stuck_rounds += 1
 
         # Update congestion and stall
         self.congestion.update(list(bot_pos_dict.values()))
@@ -1019,18 +1012,16 @@ class CascadeSolver:
                 ws_actions.append({'bot': bid, 'action': ACTION_NAMES[act]})
                 continue
 
-            # At dropoff: deliver
-            if pos in self.drop_set and gt == 'deliver' and inv_names:
-                ws_actions.append({'bot': bid, 'action': 'drop_off'})
-                continue
-            # At dropoff: staging bots deliver active-matching or wait
-            if pos in self.drop_set and gt == 'stage' and inv_names:
+            # At dropoff: deliver bots drop off, others with active items too
+            if pos in self.drop_set and inv_names:
+                if gt == 'deliver':
+                    ws_actions.append({'bot': bid, 'action': 'drop_off'})
+                    continue
+                # Any bot at DZ with active-matching items should deliver
                 inv_types = [ms.type_name_to_id.get(n, -1) for n in inv_names]
                 if any(t in active_needs for t in inv_types):
                     ws_actions.append({'bot': bid, 'action': 'drop_off'})
                     continue
-                ws_actions.append({'bot': bid, 'action': 'wait'})
-                continue
 
             # At pickup target
             if gt in ('pickup', 'prefetch') and bid in pickup_targets:

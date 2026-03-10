@@ -1,0 +1,347 @@
+  Cache loaded: X:\KODE\AINM\PRE\grocery-bot-gpu\cache\tables_5a7a6da2c937.npz (2.0ms, 220 cells)
+=== Cascade Diagnostic ===
+Difficulty: ?, Bots: 20, DZs: [[1, 16], [15, 16], [27, 16]]
+Max rounds: 500
+
+R  0 STATUS: score=0 orders=0 DZ_bots=0 active_need=6
+
+R 17 DELIVERY: score=1 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 1 at (15, 16): []
+  DZ bot 17 at (27, 16): []
+  Active order: need=5 req=['sugar', 'eggs', 'lettuce', 'oats', 'rice', 'flour']
+
+R 21 DELIVERY: score=2 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 0 at (27, 16): ['rice', 'sugar']
+  DZ bot 1 at (15, 16): []
+  Active order: need=4 req=['sugar', 'eggs', 'lettuce', 'oats', 'rice', 'flour']
+
+R 22 DELIVERY: score=3 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 0 at (27, 16): ['sugar']
+  Active order: need=3 req=['sugar', 'eggs', 'lettuce', 'oats', 'rice', 'flour']
+
+R 42 DELIVERY: score=11 (+8) orders=0 (+0) items_del=0 (+0)
+  DZ bot 3 at (15, 16): []
+  Active order: need=6 req=['sugar', 'eggs', 'pasta', 'rice', 'oats', 'milk']
+
+R 46 DELIVERY: score=12 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 0 at (27, 16): []
+  DZ bot 2 at (15, 16): ['eggs']
+  Active order: need=5 req=['sugar', 'eggs', 'pasta', 'rice', 'oats', 'milk']
+
+R 47 DELIVERY: score=13 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 0 at (27, 16): []
+  DZ bot 2 at (15, 16): []
+  Active order: need=4 req=['sugar', 'eggs', 'pasta', 'rice', 'oats', 'milk']
+
+R 50 STATUS: score=13 orders=0 DZ_bots=0 active_need=4
+
+R 54 DELIVERY: score=14 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 7 at (27, 16): []
+  Active order: need=3 req=['sugar', 'eggs', 'pasta', 'rice', 'oats', 'milk']
+
+R 58 DELIVERY: score=15 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 10 at (27, 16): []
+  DZ bot 12 at (15, 16): ['cheese']
+  Active order: need=2 req=['sugar', 'eggs', 'pasta', 'rice', 'oats', 'milk']
+
+R 61 DELIVERY: score=22 (+7) orders=0 (+0) items_del=0 (+0)
+  DZ bot 4 at (27, 16): []
+  DZ bot 6 at (15, 16): []
+  Active order: need=5 req=['cheese', 'bananas', 'flour', 'cereal', 'cereal']
+
+R 65 DELIVERY: score=23 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 12 at (15, 16): []
+  Active order: need=4 req=['cheese', 'bananas', 'flour', 'cereal', 'cereal']
+
+R 73 DELIVERY: score=24 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 13 at (27, 16): []
+  Active order: need=3 req=['cheese', 'bananas', 'flour', 'cereal', 'cereal']
+
+R 77 DELIVERY: score=25 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 4 at (27, 16): []
+  DZ bot 16 at (15, 16): ['juice']
+  Active order: need=2 req=['cheese', 'bananas', 'flour', 'cereal', 'cereal']
+
+R 81 DELIVERY: score=26 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 14 at (27, 16): []
+  DZ bot 15 at (15, 16): ['cereal', 'carrots', 'yogurt']
+  Active order: need=1 req=['cheese', 'bananas', 'flour', 'cereal', 'cereal']
+
+R 82 DELIVERY: score=34 (+8) orders=0 (+0) items_del=0 (+0)
+  DZ bot 15 at (15, 16): []
+  DZ bot 19 at (27, 16): []
+  Active order: need=5 req=['carrots', 'sugar', 'apples', 'bananas', 'eggs', 'juice', 'yogurt']
+
+R 86 DELIVERY: score=35 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 16 at (15, 16): []
+  Active order: need=4 req=['carrots', 'sugar', 'apples', 'bananas', 'eggs', 'juice', 'yogurt']
+
+R 89 DELIVERY: score=36 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 13 at (27, 16): []
+  DZ bot 18 at (15, 16): []
+  Active order: need=3 req=['carrots', 'sugar', 'apples', 'bananas', 'eggs', 'juice', 'yogurt']
+
+R 94 DELIVERY: score=37 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 3 at (15, 16): []
+  Active order: need=2 req=['carrots', 'sugar', 'apples', 'bananas', 'eggs', 'juice', 'yogurt']
+
+R100 STATUS: score=37 orders=0 DZ_bots=1 active_need=2
+
+R101 DELIVERY: score=38 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 5 at (27, 16): []
+  Active order: need=1 req=['carrots', 'sugar', 'apples', 'bananas', 'eggs', 'juice', 'yogurt']
+
+R106 DELIVERY: score=44 (+6) orders=0 (+0) items_del=0 (+0)
+  DZ bot 8 at (27, 16): []
+  Active order: need=4 req=['rice', 'carrots', 'cereal', 'cheese']
+
+R111 DELIVERY: score=46 (+2) orders=0 (+0) items_del=0 (+0)
+  DZ bot 1 at (27, 16): []
+  DZ bot 12 at (15, 16): []
+  Active order: need=2 req=['rice', 'carrots', 'cereal', 'cheese']
+
+R121 DELIVERY: score=54 (+8) orders=0 (+0) items_del=0 (+0)
+  DZ bot 7 at (27, 16): []
+  DZ bot 18 at (15, 16): ['flour']
+  Active order: need=4 req=['apples', 'cream', 'lettuce', 'peppers', 'flour']
+
+R122 DELIVERY: score=55 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 18 at (15, 16): []
+  Active order: need=3 req=['apples', 'cream', 'lettuce', 'peppers', 'flour']
+
+R129 DELIVERY: score=56 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 3 at (27, 16): []
+  Active order: need=2 req=['apples', 'cream', 'lettuce', 'peppers', 'flour']
+
+R133 DELIVERY: score=57 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 19 at (27, 16): []
+  Active order: need=1 req=['apples', 'cream', 'lettuce', 'peppers', 'flour']
+
+R138 DELIVERY: score=64 (+7) orders=0 (+0) items_del=0 (+0)
+  DZ bot 9 at (15, 16): []
+  Active order: need=4 req=['onions', 'rice', 'onions', 'carrots', 'butter']
+
+R146 DELIVERY: score=65 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 4 at (15, 16): ['flour']
+  Active order: need=3 req=['onions', 'rice', 'onions', 'carrots', 'butter']
+
+R148 DELIVERY: score=66 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 7 at (27, 16): []
+  DZ bot 15 at (15, 16): ['carrots', 'flour']
+  Active order: need=2 req=['onions', 'rice', 'onions', 'carrots', 'butter']
+
+R149 DELIVERY: score=67 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 15 at (15, 16): ['flour']
+  Active order: need=1 req=['onions', 'rice', 'onions', 'carrots', 'butter']
+
+R150 STATUS: score=67 orders=0 DZ_bots=1 active_need=1
+
+R151 DELIVERY: score=75 (+8) orders=0 (+0) items_del=0 (+0)
+  DZ bot 1 at (27, 16): []
+  Active order: need=5 req=['pasta', 'rice', 'flour', 'cheese', 'bread', 'sugar', 'bread']
+
+R154 DELIVERY: score=76 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 6 at (15, 16): []
+  Active order: need=4 req=['pasta', 'rice', 'flour', 'cheese', 'bread', 'sugar', 'bread']
+
+R158 DELIVERY: score=78 (+2) orders=0 (+0) items_del=0 (+0)
+  DZ bot 4 at (15, 16): []
+  DZ bot 12 at (27, 16): []
+  Active order: need=2 req=['pasta', 'rice', 'flour', 'cheese', 'bread', 'sugar', 'bread']
+
+R161 DELIVERY: score=79 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 9 at (27, 16): []
+  Active order: need=1 req=['pasta', 'rice', 'flour', 'cheese', 'bread', 'sugar', 'bread']
+
+R167 DELIVERY: score=85 (+6) orders=0 (+0) items_del=0 (+0)
+  DZ bot 18 at (27, 16): []
+  Active order: need=4 req=['flour', 'milk', 'tomatoes', 'peppers']
+
+R170 DELIVERY: score=86 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 12 at (27, 16): []
+  DZ bot 15 at (15, 16): []
+  Active order: need=3 req=['flour', 'milk', 'tomatoes', 'peppers']
+
+R175 DELIVERY: score=87 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 0 at (27, 16): ['tomatoes']
+  DZ bot 16 at (15, 16): ['apples']
+  Active order: need=2 req=['flour', 'milk', 'tomatoes', 'peppers']
+
+R176 DELIVERY: score=88 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 0 at (27, 16): []
+  Active order: need=1 req=['flour', 'milk', 'tomatoes', 'peppers']
+
+R190 DELIVERY: score=95 (+7) orders=0 (+0) items_del=0 (+0)
+  DZ bot 13 at (27, 16): []
+  Active order: need=3 req=['oats', 'cereal', 'carrots', 'cream']
+
+R199 DELIVERY: score=96 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 9 at (27, 16): []
+  DZ bot 14 at (15, 16): ['cream', 'cheese']
+  Active order: need=2 req=['oats', 'cereal', 'carrots', 'cream']
+
+R200 STATUS: score=96 orders=0 DZ_bots=1 active_need=2
+
+R201 DELIVERY: score=97 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 14 at (15, 16): ['cream', 'cheese']
+  DZ bot 19 at (27, 16): ['yogurt']
+  Active order: need=1 req=['oats', 'cereal', 'carrots', 'cream']
+
+R208 DELIVERY: score=104 (+7) orders=0 (+0) items_del=0 (+0)
+  DZ bot 4 at (15, 16): []
+  Active order: need=6 req=['cream', 'cheese', 'lettuce', 'onions', 'carrots', 'yogurt', 'bread']
+
+R212 DELIVERY: score=106 (+2) orders=0 (+0) items_del=0 (+0)
+  DZ bot 9 at (27, 16): ['onions']
+  DZ bot 14 at (15, 16): []
+  Active order: need=4 req=['cream', 'cheese', 'lettuce', 'onions', 'carrots', 'yogurt', 'bread']
+
+R213 DELIVERY: score=107 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 9 at (27, 16): []
+  Active order: need=3 req=['cream', 'cheese', 'lettuce', 'onions', 'carrots', 'yogurt', 'bread']
+
+R216 DELIVERY: score=108 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 18 at (27, 16): []
+  Active order: need=2 req=['cream', 'cheese', 'lettuce', 'onions', 'carrots', 'yogurt', 'bread']
+
+R219 DELIVERY: score=109 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 19 at (15, 16): ['cream']
+  Active order: need=1 req=['cream', 'cheese', 'lettuce', 'onions', 'carrots', 'yogurt', 'bread']
+
+R231 DELIVERY: score=116 (+7) orders=0 (+0) items_del=0 (+0)
+  DZ bot 15 at (27, 16): []
+  Active order: need=6 req=['milk', 'pasta', 'onions', 'eggs', 'apples', 'cream', 'carrots']
+
+R234 DELIVERY: score=117 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 19 at (15, 16): []
+  Active order: need=5 req=['milk', 'pasta', 'onions', 'eggs', 'apples', 'cream', 'carrots']
+
+R237 DELIVERY: score=118 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 6 at (15, 16): []
+  DZ bot 15 at (27, 16): []
+  Active order: need=4 req=['milk', 'pasta', 'onions', 'eggs', 'apples', 'cream', 'carrots']
+
+R240 DELIVERY: score=119 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 2 at (15, 16): []
+  Active order: need=3 req=['milk', 'pasta', 'onions', 'eggs', 'apples', 'cream', 'carrots']
+
+R243 DELIVERY: score=120 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 8 at (27, 16): ['pasta', 'peppers']
+  DZ bot 16 at (15, 16): []
+  Active order: need=2 req=['milk', 'pasta', 'onions', 'eggs', 'apples', 'cream', 'carrots']
+
+R244 DELIVERY: score=121 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 8 at (27, 16): ['peppers']
+  Active order: need=1 req=['milk', 'pasta', 'onions', 'eggs', 'apples', 'cream', 'carrots']
+
+R250 STATUS: score=121 orders=0 DZ_bots=1 active_need=1
+
+R251 DELIVERY: score=127 (+6) orders=0 (+0) items_del=0 (+0)
+  DZ bot 10 at (27, 16): []
+  Active order: need=6 req=['bananas', 'peppers', 'cereal', 'bread', 'cream', 'lettuce']
+
+R257 DELIVERY: score=128 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 8 at (27, 16): []
+  DZ bot 17 at (15, 16): ['rice', 'bread', 'flour']
+  Active order: need=5 req=['bananas', 'peppers', 'cereal', 'bread', 'cream', 'lettuce']
+
+R258 DELIVERY: score=129 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 17 at (15, 16): ['rice', 'flour']
+  Active order: need=4 req=['bananas', 'peppers', 'cereal', 'bread', 'cream', 'lettuce']
+
+R261 DELIVERY: score=130 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 4 at (15, 16): ['flour']
+  DZ bot 15 at (27, 16): []
+  Active order: need=3 req=['bananas', 'peppers', 'cereal', 'bread', 'cream', 'lettuce']
+
+R265 DELIVERY: score=131 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 12 at (15, 16): []
+  Active order: need=2 req=['bananas', 'peppers', 'cereal', 'bread', 'cream', 'lettuce']
+
+R272 DELIVERY: score=139 (+8) orders=0 (+0) items_del=0 (+0)
+  DZ bot 9 at (15, 16): []
+  DZ bot 14 at (27, 16): []
+  Active order: need=6 req=['flour', 'peppers', 'bread', 'milk', 'oats', 'cream', 'sugar']
+
+R280 DELIVERY: score=140 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 4 at (15, 16): []
+  Active order: need=5 req=['flour', 'peppers', 'bread', 'milk', 'oats', 'cream', 'sugar']
+
+R283 DELIVERY: score=142 (+2) orders=0 (+0) items_del=0 (+0)
+  DZ bot 3 at (15, 16): []
+  DZ bot 6 at (27, 16): ['sugar']
+  Active order: need=3 req=['flour', 'peppers', 'bread', 'milk', 'oats', 'cream', 'sugar']
+
+R284 DELIVERY: score=143 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 6 at (27, 16): []
+  Active order: need=2 req=['flour', 'peppers', 'bread', 'milk', 'oats', 'cream', 'sugar']
+
+R293 DELIVERY: score=144 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 0 at (27, 16): ['pasta']
+  Active order: need=1 req=['flour', 'peppers', 'bread', 'milk', 'oats', 'cream', 'sugar']
+
+R296 DELIVERY: score=150 (+6) orders=0 (+0) items_del=0 (+0)
+  DZ bot 19 at (27, 16): ['sugar']
+  Active order: need=5 req=['pasta', 'pasta', 'eggs', 'pasta', 'pasta']
+
+R299 DELIVERY: score=151 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 0 at (27, 16): []
+  Active order: need=4 req=['pasta', 'pasta', 'eggs', 'pasta', 'pasta']
+
+R300 STATUS: score=151 orders=0 DZ_bots=1 active_need=4
+
+R301 DELIVERY: score=152 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 16 at (15, 16): []
+  Active order: need=3 req=['pasta', 'pasta', 'eggs', 'pasta', 'pasta']
+
+R305 DELIVERY: score=153 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 4 at (15, 16): []
+  Active order: need=2 req=['pasta', 'pasta', 'eggs', 'pasta', 'pasta']
+
+R308 DELIVERY: score=154 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 9 at (15, 16): ['carrots']
+  Active order: need=1 req=['pasta', 'pasta', 'eggs', 'pasta', 'pasta']
+
+R341 DELIVERY: score=160 (+6) orders=0 (+0) items_del=0 (+0)
+  DZ bot 1 at (27, 16): []
+  Active order: need=4 req=['bread', 'carrots', 'tomatoes', 'onions']
+
+R350 STATUS: score=160 orders=0 DZ_bots=0 active_need=4
+
+R354 DELIVERY: score=161 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 2 at (15, 16): []
+  Active order: need=3 req=['bread', 'carrots', 'tomatoes', 'onions']
+
+R367 DELIVERY: score=162 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 9 at (15, 16): []
+  Active order: need=2 req=['bread', 'carrots', 'tomatoes', 'onions']
+
+R394 DELIVERY: score=163 (+1) orders=0 (+0) items_del=0 (+0)
+  DZ bot 11 at (27, 16): []
+  Active order: need=1 req=['bread', 'carrots', 'tomatoes', 'onions']
+
+R400 STATUS: score=163 orders=0 DZ_bots=0 active_need=1
+
+R435 DELIVERY: score=169 (+6) orders=0 (+0) items_del=0 (+0)
+  DZ bot 14 at (27, 16): []
+  Active order: need=7 req=['rice', 'juice', 'eggs', 'flour', 'juice', 'yogurt', 'pasta']
+
+R450 STATUS: score=169 orders=0 DZ_bots=0 active_need=7
+
+R476 DELIVERY: score=171 (+2) orders=0 (+0) items_del=0 (+0)
+  DZ bot 11 at (27, 16): ['pasta']
+  DZ bot 18 at (1, 16): ['yogurt']
+  Active order: need=5 req=['rice', 'juice', 'eggs', 'flour', 'juice', 'yogurt', 'pasta']
+
+R489 DELIVERY: score=173 (+2) orders=0 (+0) items_del=0 (+0)
+  DZ bot 16 at (27, 16): []
+  Active order: need=3 req=['rice', 'juice', 'eggs', 'flour', 'juice', 'yogurt', 'pasta']
+
+
+=== GAME OVER ===
+Final score: 173
+Orders completed: 0
+
+=== Summary ===
+Final score: 173
+Orders completed: 0
