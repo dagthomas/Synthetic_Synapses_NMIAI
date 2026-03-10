@@ -215,25 +215,16 @@ def gpu_optimize(difficulty: str, max_states: Optional[int] = None,
 
     if not warm_only:
         if difficulty == 'nightmare':
-            # Nightmare: V6 heuristic → GPU refine (cold-start sequential DP is catastrophic)
-            from nightmare_solver_v6 import NightmareSolverV6
-            print(f"    Nightmare: running V6 heuristic...", file=sys.stderr)
-            v6_score, v6_actions = NightmareSolverV6.run_from_capture(capture, verbose=False)
-            print(f"    V6 heuristic: {v6_score}", file=sys.stderr)
-            ref_kwargs = {
-                'capture_data': capture,
-                'difficulty': 'nightmare',
-                'device': 'cuda',
-                'no_filler': True,
-                'speed_bonus': speed_bonus,
-            }
-            if max_time_s:
-                ref_kwargs['max_time_s'] = max_time_s
-            if max_states:
-                ref_kwargs['max_states'] = max_states
-            if refine_iters:
-                ref_kwargs['max_refine_iters'] = refine_iters
-            score, actions = refine_from_solution(v6_actions, **ref_kwargs)
+            # Nightmare: multi-restart V3/V4 heuristic training.
+            # GPU sequential DP refinement is proven useless for 20-bot nightmare
+            # (0 improvement on any bot), so we use all available time for
+            # heuristic training with perturbations + checkpoint search.
+            from nightmare_offline import NightmareTrainer
+            train_time = max_time_s or 120
+            print(f"    Nightmare: V3/V4 multi-restart training ({train_time}s)...",
+                  file=sys.stderr)
+            trainer = NightmareTrainer(capture_data=capture, verbose=True)
+            score, actions = trainer.train(max_time=train_time)
         else:
             kwargs = {
                 'capture_data': capture,

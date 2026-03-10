@@ -331,13 +331,18 @@ class NightmareTaskAlloc:
         if max_preview_pickers_override >= 0:
             max_preview_pickers = max_preview_pickers_override
         else:
-            max_preview_pickers = min(4, len(empty_by_proximity)) if allow_preview_pickup else 0
+            # Scale preview pickers with map openness (more walkable = less congestion)
+            walkable_count = len(self.tables.pos_to_idx)
+            if walkable_count >= 210:
+                max_preview_pickers = min(10, len(empty_by_proximity)) if allow_preview_pickup else 0
+            else:
+                max_preview_pickers = min(4, len(empty_by_proximity)) if allow_preview_pickup else 0
         preview_assigned = 0
 
         for bid in empty_by_proximity:
             pos = bot_positions[bid]
 
-            # Active pickup first
+            # Active pickup first (global — urgency over zone preference)
             if active_short:
                 item_idx, adj_pos = self._assign_item(
                     bid, pos, active_short, type_assigned, claimed_items)
@@ -350,23 +355,27 @@ class NightmareTaskAlloc:
                     claimed_items.add(item_idx)
                     continue
 
-            # Preview pickup when active fully covered
+            # Preview pickup (relaxed: allow even when active not fully covered,
+            # as long as enough bots are assigned to active)
             remaining_active = sum(max(0, s - type_assigned.get(t, 0))
                                    for t, s in active_short.items())
-            if remaining_active == 0 and preview_short and preview_assigned < max_preview_pickers:
-                item_idx, adj_pos = self._assign_item(
-                    bid, pos, preview_short, preview_type_assigned,
-                    claimed_items, strict=True)
-                if item_idx is not None:
-                    goals[bid] = adj_pos
-                    goal_types[bid] = 'preview'
-                    pickup_targets[bid] = item_idx
-                    tid = int(self.ms.item_types[item_idx])
-                    preview_type_assigned[tid] = preview_type_assigned.get(tid, 0) + 1
-                    self._preview_bot_types[bid] = tid
-                    claimed_items.add(item_idx)
-                    preview_assigned += 1
-                    continue
+            if preview_short and preview_assigned < max_preview_pickers:
+                # Only if active has enough assigned OR no active items needed
+                active_pickers = sum(1 for b, gt in goal_types.items() if gt == 'pickup')
+                if remaining_active == 0 or active_pickers >= remaining_active:
+                    item_idx, adj_pos = self._assign_item(
+                        bid, pos, preview_short, preview_type_assigned,
+                        claimed_items, strict=True)
+                    if item_idx is not None:
+                        goals[bid] = adj_pos
+                        goal_types[bid] = 'preview'
+                        pickup_targets[bid] = item_idx
+                        tid = int(self.ms.item_types[item_idx])
+                        preview_type_assigned[tid] = preview_type_assigned.get(tid, 0) + 1
+                        self._preview_bot_types[bid] = tid
+                        claimed_items.add(item_idx)
+                        preview_assigned += 1
+                        continue
 
             # Park in corridor — out of the way
             park = self._corridor_parking(pos, occupied_goals)

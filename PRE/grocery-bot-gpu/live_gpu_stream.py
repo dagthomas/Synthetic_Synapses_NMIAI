@@ -756,11 +756,44 @@ class AnytimeGPUStream:
         self._bot_pos_history = {}   # bot_id → list of last 6 positions
         self._bot_stall_count = {}   # bot_id → rounds stuck at same position
 
-        try:
-            self._tables = PrecomputedTables.get(self._map_state)
-        except Exception as e:
-            print(f"  [init] PrecomputedTables unavailable: {e}", file=sys.stderr)
+        if self._difficulty == 'nightmare':
+            # Nightmare: defer PrecomputedTables + V3 to background thread
+            # so round 0 responds in <100ms (greedy fallback until ready).
             self._tables = None
+            self._nm_solver_v3 = None
+            def _bg_init_nightmare():
+                try:
+                    tables = PrecomputedTables.get(self._map_state)
+                    self._tables = tables
+                    print(f"  [bg] PrecomputedTables ready", file=sys.stderr)
+                except Exception as e:
+                    print(f"  [bg] PrecomputedTables failed: {e}", file=sys.stderr)
+                    return
+                try:
+                    from nightmare_cascade_solver import CascadeSolver
+                    future_orders = self._load_nightmare_future_orders()
+                    self._nm_solver_v3 = CascadeSolver(
+                        self._map_state, tables,
+                        future_orders=future_orders)
+                    print(f"  [bg] CascadeSolver ready ({len(future_orders)} orders)", file=sys.stderr)
+                except Exception as e:
+                    print(f"  [bg] CascadeSolver init failed: {e}", file=sys.stderr)
+                    # Fallback to V3
+                    try:
+                        from nightmare_solver_v2 import NightmareSolverV3
+                        self._nm_solver_v3 = NightmareSolverV3(
+                            self._map_state, tables,
+                            future_orders=future_orders)
+                        print(f"  [bg] Fallback to V3", file=sys.stderr)
+                    except Exception as e2:
+                        print(f"  [bg] V3 fallback failed: {e2}", file=sys.stderr)
+            threading.Thread(target=_bg_init_nightmare, daemon=True).start()
+        else:
+            try:
+                self._tables = PrecomputedTables.get(self._map_state)
+            except Exception as e:
+                print(f"  [init] PrecomputedTables unavailable: {e}", file=sys.stderr)
+                self._tables = None
 
         # ── Multi-dropoff zone setup (nightmare: 3 zones) ──────────────────
         self._drop_off_zones = list(ms.drop_off_zones)
@@ -884,7 +917,25 @@ class AnytimeGPUStream:
                 self._solve_gen += 1
                 gen = self._solve_gen
             print(f"  [orders] +{new_count} new (total={total}), gen→{gen}", file=sys.stderr)
-            if self._difficulty != 'nightmare':
+            if self._difficulty == 'nightmare':
+                # Feed discovered orders into V3's future_orders for chain planning
+                if hasattr(self, '_nm_solver_v3') and self._nm_solver_v3 is not None:
+                    ms = self._map_state
+                    for order in data.get('orders', []):
+                        oid = order.get('id', '')
+                        req_names = order.get('items_required', [])
+                        req_ids = [ms.type_name_to_id.get(n, 0) for n in req_names]
+                        from game_engine import Order as GEOrder
+                        new_order = GEOrder(total, req_ids, 'future')
+                        # Avoid duplicates by checking required types
+                        req_key = tuple(sorted(req_ids))
+                        existing_keys = {tuple(sorted(o.required))
+                                         for o in self._nm_solver_v3.future_orders}
+                        if req_key not in existing_keys:
+                            self._nm_solver_v3.future_orders.append(new_order)
+                    print(f"  [nightmare] V3 future_orders: {len(self._nm_solver_v3.future_orders)}",
+                          file=sys.stderr)
+            else:
                 self._start_mapf(gen)
                 # Rebuild per-round searcher with updated order list
                 threading.Thread(target=self._rebuild_pr_searcher, daemon=True).start()
@@ -1953,17 +2004,29 @@ class AnytimeGPUStream:
         return ws_actions, f'{plan.source}_recovery'
 
     def _nightmare_v2(self, live_bots, data):
-        """Nightmare solver: V6 (allocator + PIBT + staging cap=6)."""
-        if not hasattr(self, '_nm_solver_v6') or self._nm_solver_v6 is None:
-            from nightmare_solver_v6 import NightmareSolverV6
-            if self._map_state and self._tables:
-                future_orders = self._load_nightmare_future_orders()
-                self._nm_solver_v6 = NightmareSolverV6(
-                    self._map_state, self._tables,
-                    future_orders=future_orders)
-            else:
-                return [{'bot': b['id'], 'action': 'wait'} for b in live_bots]
-        return self._nm_solver_v6.ws_action(live_bots, data, self._map_state)
+        """Nightmare solver: CascadeSolver (or V3 fallback).
+        Falls back to greedy while solver initializes in background."""
+        rnd = data.get('round', 0)
+        if not hasattr(self, '_nm_solver_v3') or self._nm_solver_v3 is None:
+            # Solver still initializing in background — use greedy fallback
+            if rnd % 10 == 0:
+                print(f"  [nm] R{rnd} GREEDY (solver not ready)", file=sys.stderr)
+            occupied = {tuple(b['position']) for b in live_bots}
+            return self._nightmare_greedy(live_bots, data, occupied)
+        try:
+            result = self._nm_solver_v3.ws_action(live_bots, data, self._map_state)
+            score = data.get('score', 0)
+            if rnd % 25 == 0 or rnd < 5:
+                solver_name = type(self._nm_solver_v3).__name__
+                print(f"  [nm] R{rnd} score={score} solver={solver_name}",
+                      file=sys.stderr)
+            return result
+        except Exception as e:
+            import traceback
+            print(f"  [nm] R{rnd} ERROR: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            occupied = {tuple(b['position']) for b in live_bots}
+            return self._nightmare_greedy(live_bots, data, occupied)
 
     def _load_nightmare_future_orders(self) -> list:
         """Try to load captured orders from PostgreSQL for nightmare chain planning."""

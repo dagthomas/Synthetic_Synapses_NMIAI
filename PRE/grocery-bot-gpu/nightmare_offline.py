@@ -28,6 +28,7 @@ import numpy as np
 
 from game_engine import (
     init_game, init_game_from_capture, step, GameState, Order, MapState,
+    build_map_from_capture, generate_all_orders,
     ACT_WAIT, ACT_PICKUP, ACT_DROPOFF, INV_CAP, DX, DY,
     ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT,
 )
@@ -102,9 +103,29 @@ class PerturbedV4(LMAPFSolver):
 class NightmareTrainer:
     """Offline trainer: V3 multi-restart + checkpoint perturbation search."""
 
-    def __init__(self, seed=None, capture_data=None, verbose=False):
-        """Init from seed (sim) or capture_data (live orders)."""
-        if seed is not None:
+    def __init__(self, seed=None, capture_data=None, verbose=False, live_map=None):
+        """Init from seed (sim) or capture_data (live orders).
+
+        If live_map is provided with seed, uses live server map layout
+        with seed-based orders (for realistic benchmarking).
+        """
+        if seed is not None and live_map is not None:
+            # Live map layout + seed-based orders
+            all_orders = generate_all_orders(seed, live_map, 'nightmare', count=100)
+            num_bots = CONFIGS['nightmare']['bots']
+            state = GameState(live_map)
+            state.bot_positions = np.zeros((num_bots, 2), dtype=np.int16)
+            state.bot_inventories = np.full((num_bots, INV_CAP), -1, dtype=np.int8)
+            for i in range(num_bots):
+                state.bot_positions[i] = [live_map.spawn[0], live_map.spawn[1]]
+            state.orders = [all_orders[0].copy(), all_orders[1].copy()]
+            state.orders[0].status = 'active'
+            state.orders[1].status = 'preview'
+            state.next_order_idx = 2
+            state.active_idx = 0
+            self.state0 = state
+            self.all_orders = all_orders
+        elif seed is not None:
             self.state0, self.all_orders = init_game(seed, 'nightmare', num_orders=100)
         elif capture_data is not None:
             n = len(capture_data.get('orders', []))
@@ -324,9 +345,9 @@ class NightmareTrainer:
 
 # ── Pipeline functions ──
 
-def train_sim(seed, max_time=120, verbose=False, no_record=False):
+def train_sim(seed, max_time=120, verbose=False, no_record=False, live_map=None):
     """Train on a known seed and save best solution."""
-    trainer = NightmareTrainer(seed=seed, verbose=verbose)
+    trainer = NightmareTrainer(seed=seed, verbose=verbose, live_map=live_map)
     score, action_log = trainer.train(max_time=max_time)
 
     from solution_store import save_solution
@@ -337,7 +358,21 @@ def train_sim(seed, max_time=120, verbose=False, no_record=False):
 
     if not no_record:
         try:
-            state, all_orders = init_game(seed, 'nightmare', num_orders=100)
+            if live_map is not None:
+                all_orders = generate_all_orders(seed, live_map, 'nightmare', count=100)
+                num_bots = CONFIGS['nightmare']['bots']
+                state = GameState(live_map)
+                state.bot_positions = np.zeros((num_bots, 2), dtype=np.int16)
+                state.bot_inventories = np.full((num_bots, INV_CAP), -1, dtype=np.int8)
+                for i in range(num_bots):
+                    state.bot_positions[i] = [live_map.spawn[0], live_map.spawn[1]]
+                state.orders = [all_orders[0].copy(), all_orders[1].copy()]
+                state.orders[0].status = 'active'
+                state.orders[1].status = 'preview'
+                state.next_order_idx = 2
+                state.active_idx = 0
+            else:
+                state, all_orders = init_game(seed, 'nightmare', num_orders=100)
             for rnd, acts in enumerate(action_log):
                 state.round = rnd
                 step(state, acts, all_orders)
@@ -525,6 +560,8 @@ def main():
     parser.add_argument('--no-record', action='store_true',
                         help='Skip PostgreSQL recording')
     parser.add_argument('-v', '--verbose', action='store_true')
+    parser.add_argument('--no-live-map', action='store_true',
+                        help='Use procedural map instead of live server map')
     args = parser.parse_args()
 
     if args.ws_url:
@@ -537,11 +574,32 @@ def main():
     else:
         seeds = [args.seed]
 
+    # Load live map from captured data (default for nightmare)
+    live_map = None
+    if not args.no_live_map:
+        try:
+            from solution_store import load_capture
+            from game_engine import CELL_FLOOR, CELL_DROPOFF
+            cap = load_capture('nightmare')
+            if cap and cap.get('grid'):
+                live_map = build_map_from_capture(cap)
+                walkable = sum(1 for y in range(live_map.height)
+                               for x in range(live_map.width)
+                               if live_map.grid[y, x] in (CELL_FLOOR, CELL_DROPOFF))
+                print(f"Using live map: {live_map.width}x{live_map.height}, "
+                      f"{live_map.num_items} items, {walkable} walkable",
+                      file=sys.stderr)
+            else:
+                print("No capture data found, using procedural map", file=sys.stderr)
+        except Exception as e:
+            print(f"Could not load live map: {e}, using procedural map", file=sys.stderr)
+
     scores = []
     t0 = time.time()
     for seed in seeds:
         st = time.time()
-        score, _ = train_sim(seed, args.train_time, args.verbose, args.no_record)
+        score, _ = train_sim(seed, args.train_time, args.verbose, args.no_record,
+                             live_map=live_map)
         elapsed = time.time() - st
         scores.append(score)
         print(f"Seed {seed}: {score} ({elapsed:.1f}s)")

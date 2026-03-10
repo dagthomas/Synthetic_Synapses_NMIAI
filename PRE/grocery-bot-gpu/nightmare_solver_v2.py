@@ -17,6 +17,7 @@ import numpy as np
 
 from game_engine import (
     init_game, step, GameState, Order, MapState,
+    build_map_from_capture, generate_all_orders,
     ACT_WAIT, ACT_MOVE_UP, ACT_MOVE_DOWN, ACT_MOVE_LEFT, ACT_MOVE_RIGHT,
     ACT_PICKUP, ACT_DROPOFF, INV_CAP, DX, DY,
     CELL_FLOOR, CELL_DROPOFF, actions_to_ws_format,
@@ -54,6 +55,15 @@ class NightmareSolverV3:
                                                self.traffic, self.congestion)
         self.allocator = NightmareTaskAlloc(map_state, self.tables, self.drop_zones)
         self.chain_planner = ChainPlanner(map_state, self.tables, self.drop_zones)
+        # Pipeline allocator for live mode (uses future orders for staging)
+        self._pipeline_alloc = None
+        if future_orders:
+            try:
+                from nightmare_pipeline_alloc import NightmarePipelineAlloc
+                self._pipeline_alloc = NightmarePipelineAlloc(
+                    map_state, self.tables, self.drop_zones)
+            except Exception:
+                pass
 
         # Pre-loaded future orders (from capture or all_orders in sim)
         self.future_orders = future_orders or []
@@ -102,6 +112,10 @@ class NightmareSolverV3:
         start = max(0, self._seq_pos - 1)
         for i in range(start, len(self.future_orders)):
             if tuple(sorted(self.future_orders[i].required)) == active_req:
+                if i != self._seq_pos:
+                    import sys
+                    print(f"  [seq] Matched active order at pos {i} "
+                          f"(types={active_req})", file=sys.stderr)
                 self._seq_pos = i
                 return i
         # Wrap-around search (shouldn't happen normally)
@@ -109,6 +123,13 @@ class NightmareSolverV3:
             if tuple(sorted(self.future_orders[i].required)) == active_req:
                 self._seq_pos = i
                 return i
+        # Debug: log first mismatch
+        if not hasattr(self, '_seq_miss_logged'):
+            self._seq_miss_logged = True
+            import sys
+            print(f"  [seq] NO MATCH: active={active_req}, "
+                  f"future[0]={tuple(sorted(self.future_orders[0].required)) if self.future_orders else 'empty'}",
+                  file=sys.stderr)
         return -1
 
     def _build_lookahead(self, active_order: Order | None,
@@ -204,28 +225,31 @@ class NightmareSolverV3:
             bot_positions, bot_inventories,
             active_order, preview_order, rnd, num_rounds,
             future_orders=future, chain_plan=chain_plan)
+        self._last_goal_types = goal_types  # for diagnostics
 
-        # Build urgency order (V2-identical)
+        # Build urgency order with tiebreak rotation
         def _urgency_key(bid):
             gt = goal_types.get(bid, 'park')
             dist = self.tables.get_distance(bot_positions[bid], goals.get(bid, self.spawn))
+            rotation = (bid + rnd) % 100
             if gt == 'deliver':
-                return (0, dist)
+                return (0, dist, rotation)
             elif gt == 'flee':
                 drop_dist = min(self.tables.get_distance(bot_positions[bid], dz)
                                 for dz in self.drop_zones)
-                return (1 if drop_dist < 5 else 4, dist)
+                return (1 if drop_dist < 5 else 4, dist, rotation)
             elif gt == 'pickup':
-                return (2, dist)
+                return (2, dist, rotation)
             elif gt in ('stage', 'preview'):
-                return (3, dist)
+                return (3, dist, rotation)
             else:
-                return (5, dist)
+                return (5, dist, rotation)
         urgency_order = sorted(range(num_bots), key=_urgency_key)
 
-        # Pathfinding with reservation + yield protocol
+        # Pathfinding with recursive PIBT
         path_actions = self.pathfinder.plan_all(
-            bot_positions, goals, urgency_order, goal_types=goal_types)
+            bot_positions, goals, urgency_order, goal_types=goal_types,
+            round_number=rnd)
 
         # Build final actions
         actions: list[tuple[int, int]] = [(ACT_WAIT, -1)] * num_bots
@@ -261,18 +285,8 @@ class NightmareSolverV3:
                     actions[bid] = (ACT_PICKUP, item_idx)
                     continue
 
-            # ADJACENT to needed item (opportunistic)
-            if gt in ('pickup', 'preview') and len(bot_inventories[bid]) < INV_CAP:
-                pickup_act = self._check_adjacent_pickup(
-                    bid, pos, active_order, preview_order, gt,
-                    bot_inventories[bid], active_short, chain_plan,
-                    preview_picked_round)
-                if pickup_act is not None:
-                    actions[bid] = pickup_act
-                    continue
-
-            # Deliver bots: opportunistic pickup
-            if gt == 'deliver' and len(bot_inventories[bid]) < INV_CAP:
+            # ADJACENT to needed item (opportunistic — all bot types)
+            if len(bot_inventories[bid]) < INV_CAP:
                 pickup_act = self._check_adjacent_pickup(
                     bid, pos, active_order, preview_order, gt,
                     bot_inventories[bid], active_short, chain_plan,
@@ -308,6 +322,9 @@ class NightmareSolverV3:
                 if tid in bot_types and active_short[tid] <= 1:
                     continue
             elif total_short == 0 and preview_order and preview_order.needs_type(tid):
+                # Guard: bots near full inventory shouldn't pick preview speculatively
+                if len(bot_inv) >= 2 and goal_type not in ('pickup', 'preview', 'deliver'):
+                    continue
                 if tid in bot_types:
                     continue
             elif goal_type == 'preview' and preview_order and preview_order.needs_type(tid):
@@ -379,8 +396,14 @@ class NightmareSolverV3:
                 self.stall_counts[bid] = 0
             self.prev_positions[bid] = pos
 
-        # Live mode: only active + preview visible, no chain planning
+        # Future orders for task allocation (no chain planning — too aggressive for live)
+        future = []
         chain_plan = None
+        if self.future_orders and active_order:
+            seq_pos = self._find_sequence_pos(active_order)
+            if seq_pos >= 0:
+                for i in range(seq_pos + 2, min(seq_pos + 6, len(self.future_orders))):
+                    future.append(self.future_orders[i])
 
         # Compute active shortfall
         active_needs: dict[int, int] = {}
@@ -398,26 +421,28 @@ class NightmareSolverV3:
             if s > 0:
                 active_short[t] = s
 
-        # Task allocation with preview pickup enabled for chain staging
+        # Task allocation (standard allocator — pipeline too congestion-prone)
         num_rounds = data.get('max_rounds', 500)
         goals, goal_types, pickup_targets = self.allocator.allocate(
             bot_pos_dict, bot_inv_dict,
             active_order, preview_order, rnd, num_rounds,
-            future_orders=None, chain_plan=None,
+            future_orders=future, chain_plan=None,
             allow_preview_pickup=True)
 
-        # Urgency order (V2-identical)
+        # Urgency order with tiebreak rotation (idle bots get lowest priority)
         priority_map = {'deliver': 0, 'pickup': 1, 'stage': 2, 'preview': 3, 'flee': 4, 'park': 5}
         all_bids = [bot['id'] for bot in live_bots]
         urgency_order = sorted(all_bids, key=lambda bid: (
             priority_map.get(goal_types.get(bid, 'park'), 5),
             self.tables.get_distance(bot_pos_dict.get(bid, self.spawn),
-                                     goals.get(bid, self.spawn))
+                                     goals.get(bid, self.spawn)),
+            (bid + rnd) % 100
         ))
 
-        # Pathfinding with yield protocol
+        # Pathfinding with recursive PIBT
         path_actions = self.pathfinder.plan_all(
-            bot_pos_dict, goals, urgency_order, goal_types=goal_types)
+            bot_pos_dict, goals, urgency_order, goal_types=goal_types,
+            round_number=rnd)
 
         # Build WS actions
         ACTION_NAMES = ['wait', 'move_up', 'move_down', 'move_left', 'move_right', 'pick_up', 'drop_off']
@@ -441,7 +466,7 @@ class NightmareSolverV3:
                 ws_actions.append({'bot': bid, 'action': 'drop_off'})
                 continue
 
-            # At pickup target (active or preview/future items)
+            # At pickup target (active, preview, or future items)
             if gt in ('pickup', 'preview') and bid in pickup_targets:
                 item_idx = pickup_targets[bid]
                 if pos == goal and item_idx < len(ms.items):
@@ -452,21 +477,25 @@ class NightmareSolverV3:
                     })
                     continue
 
-            # Opportunistic: pick items still needed by active order
-            if len(inv_names) < INV_CAP and gt in ('pickup', 'deliver') and active_short:
+            # Opportunistic: pick active-needed items (all bot types)
+            if len(inv_names) < INV_CAP and active_short:
                 opp = self._ws_active_adjacent(bid, pos, ms, active_short)
                 if opp is not None:
                     ws_actions.append(opp)
                     continue
 
-            # Deliver bots: fill spare slots with preview items (free chain reaction)
-            if (len(inv_names) < INV_CAP and gt == 'deliver'
+            # Fill spare slots with preview items (all bot types, guard: <2 items for idle)
+            if (len(inv_names) < INV_CAP
                     and not active_short and preview_order):
-                opp = self._ws_preview_adjacent(bid, pos, ms, preview_order,
-                                                set(bot_inv_dict.get(bid, [])))
-                if opp is not None:
-                    ws_actions.append(opp)
-                    continue
+                # Idle bots (park/flee/stage): only if <2 items to avoid dead inv
+                if gt in ('park', 'flee', 'stage') and len(inv_names) >= 2:
+                    pass
+                else:
+                    opp = self._ws_preview_adjacent(bid, pos, ms, preview_order,
+                                                    set(bot_inv_dict.get(bid, [])))
+                    if opp is not None:
+                        ws_actions.append(opp)
+                        continue
 
             # Use pathfinder action
             act = path_actions.get(bid, ACT_WAIT)
@@ -559,16 +588,42 @@ class NightmareSolverV3:
         return None
 
     @staticmethod
-    def run_sim(seed: int, verbose: bool = False) -> tuple[int, list]:
-        """Run full simulation with V3 chain pipeline. Returns (score, action_log)."""
-        state, all_orders = init_game(seed, 'nightmare', num_orders=100)
-        ms = state.map_state
+    def run_sim(seed: int, verbose: bool = False, live_map: MapState | None = None) -> tuple[int, list]:
+        """Run full simulation with V3 chain pipeline. Returns (score, action_log).
+
+        If live_map is provided, uses the live server map layout with seed-based
+        orders. Otherwise falls back to procedural map (legacy).
+        """
+        if live_map is not None:
+            # Use live map layout + seed-based orders
+            all_orders = generate_all_orders(seed, live_map, 'nightmare', count=100)
+            num_bots = CONFIGS['nightmare']['bots']
+            state = GameState(live_map)
+            state.bot_positions = np.zeros((num_bots, 2), dtype=np.int16)
+            state.bot_inventories = np.full((num_bots, INV_CAP), -1, dtype=np.int8)
+            for i in range(num_bots):
+                state.bot_positions[i] = [live_map.spawn[0], live_map.spawn[1]]
+            state.orders = [all_orders[0].copy(), all_orders[1].copy()]
+            state.orders[0].status = 'active'
+            state.orders[1].status = 'preview'
+            state.next_order_idx = 2
+            state.active_idx = 0
+            ms = live_map
+        else:
+            state, all_orders = init_game(seed, 'nightmare', num_orders=100)
+            ms = state.map_state
         tables = PrecomputedTables.get(ms)
         solver = NightmareSolverV3(ms, tables, future_orders=all_orders)
         num_rounds = DIFF_ROUNDS['nightmare']
         chains = 0
         max_chain = 0
         action_log = []
+
+        # Utilization tracking
+        goal_totals = {'deliver': 0, 'pickup': 0, 'preview': 0, 'stage': 0, 'flee': 0, 'park': 0}
+        order_rounds = []
+        stall_total = 0
+        escape_total = 0
 
         t0 = time.time()
         for rnd in range(num_rounds):
@@ -586,9 +641,21 @@ class NightmareSolverV3:
 
             actions = solver.action(state, all_orders, rnd)
             action_log.append(actions)
+            # Track utilization
+            for gt in getattr(solver, '_last_goal_types', {}).values():
+                if gt in goal_totals:
+                    goal_totals[gt] += 1
+            # Track stalls
+            for b in range(len(state.bot_positions)):
+                if solver.stall_counts.get(b, 0) >= 1:
+                    stall_total += 1
+                if solver.stall_counts.get(b, 0) >= 3:
+                    escape_total += 1
             o_before = state.orders_completed
             step(state, actions, all_orders)
             c = state.orders_completed - o_before
+            if c > 0:
+                order_rounds.append(rnd)
             if c > 1:
                 chains += c - 1
                 max_chain = max(max_chain, c)
@@ -623,6 +690,17 @@ class NightmareSolverV3:
                   f" Time={elapsed:.1f}s ({elapsed/num_rounds*1000:.1f}ms/rnd)")
             if solver.chain_events:
                 print(f"Chain events: {solver.chain_events}")
+            # Utilization summary
+            avg_per_rnd = {gt: cnt / num_rounds for gt, cnt in sorted(goal_totals.items())}
+            working = avg_per_rnd.get('deliver', 0) + avg_per_rnd.get('pickup', 0) + avg_per_rnd.get('preview', 0) + avg_per_rnd.get('stage', 0)
+            idle = avg_per_rnd.get('flee', 0) + avg_per_rnd.get('park', 0)
+            print(f"Avg/rnd: {' '.join(f'{gt}={v:.1f}' for gt, v in avg_per_rnd.items())}")
+            print(f"Working={working:.1f} Idle={idle:.1f} ({idle/(working+idle)*100:.0f}% idle)")
+            if len(order_rounds) > 1:
+                gaps = [order_rounds[i+1] - order_rounds[i] for i in range(len(order_rounds)-1)]
+                print(f"Order gaps: avg={np.mean(gaps):.1f} min={min(gaps)} max={max(gaps)}")
+            print(f"Stalls: {stall_total} ({stall_total/num_rounds:.1f}/rnd) "
+                  f"Escapes: {escape_total} ({escape_total/num_rounds:.2f}/rnd)")
         return state.score, action_log
 
 
@@ -723,27 +801,63 @@ def record_to_pg(seed, score, orders_completed, items_delivered, action_log, ela
 
 def main():
     import argparse
+    import sys
     parser = argparse.ArgumentParser(description='Nightmare solver V3 (chain pipeline)')
     parser.add_argument('--seeds', default='1000-1009')
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--no-record', action='store_true', help='Skip PostgreSQL recording')
     parser.add_argument('--v2', action='store_true', help='Use V2 solver (no chain planning)')
+    parser.add_argument('--no-live-map', action='store_true',
+                        help='Use procedural map instead of live server map')
     args = parser.parse_args()
 
     from configs import parse_seeds
     seeds = parse_seeds(args.seeds)
 
+    # Load live map from captured data (default for nightmare)
+    live_map = None
+    if not args.no_live_map:
+        try:
+            from solution_store import load_capture
+            cap = load_capture('nightmare')
+            if cap and cap.get('grid'):
+                live_map = build_map_from_capture(cap)
+                print(f"Using live map: {live_map.width}x{live_map.height}, "
+                      f"{live_map.num_items} items, "
+                      f"{sum(1 for y in range(live_map.height) for x in range(live_map.width) if live_map.grid[y, x] in (CELL_FLOOR, CELL_DROPOFF))} walkable",
+                      file=sys.stderr)
+            else:
+                print("No capture data found, using procedural map", file=sys.stderr)
+        except Exception as e:
+            print(f"Could not load live map: {e}, using procedural map", file=sys.stderr)
+
     scores = []
     t0 = time.time()
     for seed in seeds:
         st = time.time()
-        score, action_log = NightmareSolverV3.run_sim(seed, verbose=args.verbose)
+        score, action_log = NightmareSolverV3.run_sim(seed, verbose=args.verbose,
+                                                       live_map=live_map)
         elapsed = time.time() - st
         scores.append(score)
         print(f"Seed {seed}: {score}")
 
         if not args.no_record:
-            state2, all_orders2 = init_game(seed, 'nightmare', num_orders=100)
+            # Replay for DB recording using same map
+            if live_map is not None:
+                all_orders2 = generate_all_orders(seed, live_map, 'nightmare', count=100)
+                num_bots = CONFIGS['nightmare']['bots']
+                state2 = GameState(live_map)
+                state2.bot_positions = np.zeros((num_bots, 2), dtype=np.int16)
+                state2.bot_inventories = np.full((num_bots, INV_CAP), -1, dtype=np.int8)
+                for i in range(num_bots):
+                    state2.bot_positions[i] = [live_map.spawn[0], live_map.spawn[1]]
+                state2.orders = [all_orders2[0].copy(), all_orders2[1].copy()]
+                state2.orders[0].status = 'active'
+                state2.orders[1].status = 'preview'
+                state2.next_order_idx = 2
+                state2.active_idx = 0
+            else:
+                state2, all_orders2 = init_game(seed, 'nightmare', num_orders=100)
             for rnd, acts in enumerate(action_log):
                 state2.round = rnd
                 step(state2, acts, all_orders2)

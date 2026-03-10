@@ -133,29 +133,14 @@ def run_full_foresight(args: argparse.Namespace) -> int:
 
         try:
             if args.difficulty == 'nightmare':
-                if best_actions and loop > 0:
-                    # Warm-start: refine from best solution
-                    score, actions = refine_from_solution(
-                        best_actions, capture_data=capture,
-                        difficulty='nightmare', device='cuda',
-                        no_filler=True, max_states=args.max_states,
-                        max_refine_iters=args.refine_iters,
-                        speed_bonus=loop_speed_bonus,
-                        max_time_s=loop_time)
-                else:
-                    # Cold-start: V6 heuristic → GPU refine
-                    from nightmare_solver_v6 import NightmareSolverV6
-                    print(f"  Nightmare: V6 heuristic...", file=sys.stderr)
-                    v6_score, v6_actions = NightmareSolverV6.run_sim(
-                        args.seed, verbose=False)
-                    print(f"  V6 heuristic: {v6_score}", file=sys.stderr)
-                    score, actions = refine_from_solution(
-                        v6_actions, capture_data=capture,
-                        difficulty='nightmare', device='cuda',
-                        no_filler=True, max_states=args.max_states,
-                        max_refine_iters=args.refine_iters,
-                        speed_bonus=loop_speed_bonus,
-                        max_time_s=loop_time)
+                # Nightmare: GPU DP refinement proven useless (0 improvement
+                # on any of 20 bots). Use all time for heuristic training.
+                from nightmare_offline import NightmareTrainer
+                train_time = max(30, loop_time)
+                print(f"  Nightmare: V3/V4 training ({train_time:.0f}s)...",
+                      file=sys.stderr)
+                trainer = NightmareTrainer(seed=args.seed, verbose=True)
+                score, actions = trainer.train(max_time=train_time)
             elif best_actions and loop > 0:
                 # Warm-start: refine from best solution with new order set
                 score, actions = refine_from_solution(
@@ -255,26 +240,13 @@ def run_iterative(args: argparse.Namespace) -> int:
         capture, _, _ = make_capture_from_seed(args.difficulty, args.seed, num_orders)
 
         if args.difficulty == 'nightmare':
-            if best_actions and iteration > 0:
-                score, actions = refine_from_solution(
-                    best_actions, capture_data=capture,
-                    difficulty='nightmare', device='cuda',
-                    no_filler=True, max_states=args.max_states,
-                    max_refine_iters=args.refine_iters,
-                    speed_bonus=iter_speed_bonus,
-                    max_time_s=iter_time)
-            else:
-                from nightmare_solver_v6 import NightmareSolverV6
-                v6_score, v6_actions = NightmareSolverV6.run_sim(
-                    args.seed, verbose=False)
-                print(f"  V6 heuristic: {v6_score}", file=sys.stderr)
-                score, actions = refine_from_solution(
-                    v6_actions, capture_data=capture,
-                    difficulty='nightmare', device='cuda',
-                    no_filler=True, max_states=args.max_states,
-                    max_refine_iters=args.refine_iters,
-                    speed_bonus=iter_speed_bonus,
-                    max_time_s=iter_time)
+            # Nightmare: GPU DP refinement proven useless. Use heuristic training.
+            from nightmare_offline import NightmareTrainer
+            train_time = max(30, iter_time)
+            print(f"  Nightmare: V3/V4 training ({train_time:.0f}s)...",
+                  file=sys.stderr)
+            trainer = NightmareTrainer(seed=args.seed, verbose=True)
+            score, actions = trainer.train(max_time=train_time)
         elif best_actions and iteration > 0:
             try:
                 score, actions = refine_from_solution(
