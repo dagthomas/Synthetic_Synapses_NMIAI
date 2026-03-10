@@ -778,7 +778,6 @@ class AnytimeGPUStream:
                     print(f"  [bg] CascadeSolver ready ({len(future_orders)} orders)", file=sys.stderr)
                 except Exception as e:
                     print(f"  [bg] CascadeSolver init failed: {e}", file=sys.stderr)
-                    # Fallback to V3
                     try:
                         from nightmare_solver_v2 import NightmareSolverV3
                         self._nm_solver_v3 = NightmareSolverV3(

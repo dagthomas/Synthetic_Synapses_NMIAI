@@ -1261,6 +1261,11 @@ class GPUBeamSearcher:
         bot_inv = bot_inv.gather(1, sort_idx.long())
 
         active_idx = new_aidx
+
+        sort_key = (bot_inv < 0).to(torch.int8)
+        _, sort_idx = sort_key.sort(dim=1, stable=True)
+        bot_inv = bot_inv.gather(1, sort_idx.long())
+
         return bot_x, bot_y, bot_inv, active_idx, active_del, score, orders_comp
 
     @torch.no_grad()
@@ -1471,9 +1476,6 @@ class GPUBeamSearcher:
             # Multi-bot: aggressively value preview items from the start.
             # Orders complete in 30-50 rounds with multiple bots delivering,
             # so pre-fetching early creates seamless order transitions.
-            # At 0% done: 12000 (was 5000 — much stronger pre-fetch signal)
-            # At 50% done: 16000
-            # At 100% done: 20000
             frac_exp = fraction_done.unsqueeze(1).expand_as(inv_matches_preview)
             preview_val_per_item = 5000.0 + 10000.0 * frac_exp
             preview_value = inv_matches_preview.float() * preview_val_per_item

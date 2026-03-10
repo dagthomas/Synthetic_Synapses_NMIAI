@@ -90,30 +90,61 @@ Per-bot priority cascade each round:
 - **Anti-oscillation**: Position history (24 rounds), stall detection (threshold 6), escape mode (4 rounds), near-dropoff patience (dist<=2, max 3 waits).
 - **Desync detection** (main.zig): Detects 1-round action offset via position mismatch. Shifts to effective positions when triggered.
 
-## Game Mechanics
+## Game Mechanics (Official Rules 2026-03-10)
 
 ### Scoring
 - **+1 per item** delivered to active order
 - **+5 bonus** per completed order
 - 4-item order completed = 4 + 5 = **9 points**
 - 3-item order completed = 3 + 5 = **8 points**
-- Key metric: **rounds per completed order** (lower = more orders = higher score)
+- Leaderboard = **sum of best scores across all maps** (best score per map saved automatically)
+
+### 5 Difficulty Levels
+| Level | Grid | Bots | Aisles | Item Types | Drop Zones | Rounds | Wall-clock |
+|-------|------|------|--------|------------|------------|--------|------------|
+| Easy | 12x10 | 1 | 2 | 4 | 1 | 300 | 120s |
+| Medium | 16x12 | 3 | 3 | 8 | 1 | 300 | 120s |
+| Hard | 22x14 | 5 | 4 | 12 | 1 | 300 | 120s |
+| Expert | 28x18 | 10 | 5 | 16 | 1 | 300 | 120s |
+| Nightmare | 30x18 | 20 | 6 | 21 | 3 | 500 | 300s |
+
+### Order Sizes
+| Level | Items per Order |
+|-------|----------------|
+| Easy | 3-4 |
+| Medium | 3-5 |
+| Hard | 3-5 |
+| Expert | 4-6 |
+| Nightmare | 4-6 |
+
+### Sequential Orders (Infinite)
+- **Active order**: current order, full details visible, can deliver items
+- **Preview order**: next order, full details visible, can pre-pick items but CANNOT deliver
+- **Infinite**: when you complete an order, a new one appears. Orders never run out. Rounds are the only limit.
+- Bad picks waste inventory slots — choose wisely
 
 ### Items Are Infinite
-- Shelves never deplete. The items list stays constant throughout 300 rounds.
+- Shelves never deplete. The items list stays constant throughout all rounds.
 - Same `item_id` can be picked up repeatedly from the same shelf tile.
 - No scarcity — optimize purely for shortest round-trip loops.
 
-### Drop-Off Chain Reaction
+### Drop-Off Chain Reaction (CRITICAL)
 - When the active order completes via drop_off, the preview order becomes active **immediately**.
-- Any items already in inventory matching the NEW active order are **auto-delivered** on the same drop_off action.
-- This can **cascade**: if auto-delivered items complete the new order, the next preview also activates.
-- **Exploit**: On the final pickup trip for an active order, fill spare inventory slots with preview-order items. They deliver for free on the same drop-off.
+- **Only bots AT a dropoff zone** get their inventories re-checked against the new active order. Bots elsewhere **keep their items** (DZ-only auto-delivery, empirically confirmed).
+- This can **cascade**: if auto-delivered items at DZ complete the new order, the next preview also activates, and DZ bots' inventories are re-checked again.
+- **Exploit**: Stack bots with future-order items AT the dropoff zone before triggering the cascade. When any bot completes the active order, all other DZ bots' matching items auto-deliver.
+- **MCP docs are WRONG** about "any items in bot inventories" — only DZ bots participate.
 
-### Pickup Directions
-- Pickup works from **all 4 cardinal directions** (Manhattan distance 1).
-- Some shelves sandwiched between other shelves have only 1 accessible side.
+### Pickup Rules
+- Bot must be **adjacent** (Manhattan distance 1) to the shelf containing the item
+- Works from **all 4 cardinal directions**
+- Bot inventory must not be full (max 3 items)
 - Choose the pickup tile that minimizes the **TOTAL trip**, not just the approach distance.
+
+### Dropoff Rules
+- Bot must be standing **on** the drop-off cell
+- Only items matching the **active order** are delivered — non-matching items **stay in inventory**
+- Multiple drop-off zones on Nightmare (any zone works)
 
 ### Action Resolution
 - Bot 0 moves first, then bot 1, etc. **Lower IDs have collision priority.**
@@ -121,16 +152,16 @@ Per-bot priority cascade each round:
 - Bots block each other on all tiles **except the spawn tile**.
 
 ### Deterministic Per Day
-- Same day = same map layout, item placement, **and full order sequence** (all 50 orders are fixed).
-- Orders are NOT random per game — they are deterministic for the day's seed.
-- Can pre-capture order sequences from prior runs and reuse. Each run that progresses further discovers more orders to add to the master list.
-- Within a single day, all games on the same difficulty see identical orders in identical sequence.
+- Same day = same map layout, item placement, **and full order sequence** (orders are fixed per day's seed).
+- Orders are NOT random per game — they are deterministic for the day.
+- Can pre-capture order sequences from prior runs and reuse.
+- Item placement and orders change daily at midnight UTC. Grid structure stays the same.
 
 ### Limits
-- 300 rounds max, 120s wall-clock, 2s response timeout per round
+- 300 rounds max (500 Nightmare), 120s wall-clock (300s Nightmare), 2s response timeout per round
 - Max 3 items per bot inventory (INV_CAP = 3)
-- 60s cooldown between games
-- Sequential orders: active + preview visible
+- 60s cooldown between games, max 40/hour, 300/day per team
+- Disconnect = game over (no reconnect)
 - Drop-off at (1, h-2), spawn at (w-2, h-2)
 
 ## Token & Session Rules (CRITICAL for iterate pipeline)
@@ -142,12 +173,13 @@ Per-bot priority cascade each round:
 - Competition scoring: only MAX score per map counts across all attempts
 
 ## Difficulty Configs
-| | Bots | Grid | Types | Order Size |
-|---|---|---|---|---|
-| Easy | 1 | 12x10 | 4 | 3-4 |
-| Medium | 3 | 16x12 | 8 | 3-5 |
-| Hard | 5 | 22x14 | 12 | 3-5 |
-| Expert | 10 | 28x18 | 16 | 4-6 |
+| | Bots | Grid | Types | Order Size | Rounds | Drop Zones |
+|---|---|---|---|---|---|---|
+| Easy | 1 | 12x10 | 4 | 3-4 | 300 | 1 |
+| Medium | 3 | 16x12 | 8 | 3-5 | 300 | 1 |
+| Hard | 5 | 22x14 | 12 | 3-5 | 300 | 1 |
+| Expert | 10 | 28x18 | 16 | 4-6 | 300 | 1 |
+| Nightmare | 20 | 30x18 | 21 | 4-6 | 500 | 3 |
 
 ## Critical Tuning Parameters
 These parameters are tightly coupled. Changes often cause cascading regressions.

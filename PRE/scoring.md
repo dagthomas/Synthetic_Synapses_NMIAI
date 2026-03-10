@@ -4,7 +4,7 @@
 
 Per game:
 ```
-score = items_delivered × 1 + orders_completed × 5
+score = items_delivered x 1 + orders_completed x 5
 ```
 
 - **+1 point** for each item delivered to the drop-off
@@ -12,12 +12,12 @@ score = items_delivered × 1 + orders_completed × 5
 
 ## Leaderboard
 
-Your **leaderboard score** is the **sum of your best scores across all 4 maps**.
+Your **leaderboard score** is the **sum of your best scores across all 5 maps**.
 
-- Play each map as many times as you want (10s cooldown)
+- Play each map as many times as you want (60s cooldown, 40/hour, 300/day)
 - Only your highest score per map is saved
 - Deterministic within a day — same algorithm = same score
-- To maximize your rank: get good scores on ALL 4 maps
+- To maximize your rank: get good scores on ALL maps
 
 ## Daily Rotation
 
@@ -25,7 +25,17 @@ Item placement on shelves and order contents change daily at midnight UTC. The g
 
 ## Infinite Orders
 
-Orders never run out. When you complete the active order, the next one activates and a new preview appears. The only limit is the **300 round** cap. Score as much as you can before time runs out.
+Orders never run out. When you complete the active order, the next one activates and a new preview appears. The only limit is the round cap. Score as much as you can before time runs out.
+
+## Order Sizes
+
+| Level | Items per Order |
+|-------|----------------|
+| Easy | 3-4 |
+| Medium | 3-5 |
+| Hard | 3-5 |
+| Expert | 4-6 |
+| Nightmare | 4-6 |
 
 ## Score Examples
 
@@ -40,8 +50,8 @@ Orders never run out. When you complete the active order, the next one activates
 
 | Condition | Description |
 |-----------|-------------|
-| 300 rounds used | Maximum rounds reached |
-| Wall-clock timeout | 120 seconds elapsed |
+| 300 rounds used (500 Nightmare) | Maximum rounds reached |
+| Wall-clock timeout | 120 seconds elapsed (300s Nightmare) |
 | Disconnect | Client disconnected |
 
 ## Strategy Tips
@@ -49,7 +59,8 @@ Orders never run out. When you complete the active order, the next one activates
 - **Complete orders, don't just deliver items** — the +5 order bonus is significant
 - **Focus on the active order first** — you can only deliver to the current order
 - **Pre-pick items for the preview order** — look ahead and pre-stage items in bot inventories
-- **Don't pick random items** — non-matching items waste inventory slots
+- **Exploit cascade chain reactions** — when active order completes, bots AT the dropoff zone get inventories auto-checked against the new active order (DZ-only, not all bots)
+- **Don't pick random items** — non-matching items waste inventory slots permanently
 - **Scale your strategy by bot count** — Easy (1 bot) is a different problem than Expert (10 bots)
 - **Plan routes** — full map visible from round 1, use BFS/A* for pathfinding
-- **Play all 4 maps** — leaderboard is the sum of all maps
+- **Play all maps** — leaderboard is the sum of all maps
