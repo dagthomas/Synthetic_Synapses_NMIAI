@@ -3,12 +3,14 @@ import logging
 import os
 import shutil
 import uuid
+from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from google.adk.runners import InMemoryRunner
 from google.genai import types as genai_types
+from pydantic import BaseModel
 
 from agent import create_agent
 from config import AGENT_API_KEY, GOOGLE_API_KEY, MAX_AGENT_TURNS
@@ -26,17 +28,34 @@ security = HTTPBearer(auto_error=False)
 app = FastAPI(title="Tripletex AI Agent")
 
 
+# --- Request models for Swagger UI ---
+class FileAttachment(BaseModel):
+    filename: str
+    content_base64: str
+    mime_type: str = "application/pdf"
+
+
+class TripletexCredentials(BaseModel):
+    base_url: str
+    session_token: str
+
+
+class SolveRequest(BaseModel):
+    prompt: str
+    files: list[FileAttachment] = []
+    tripletex_credentials: TripletexCredentials
+
+
 @app.post("/solve")
-async def solve(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
     # Optional Bearer token auth
     if AGENT_API_KEY:
         if not credentials or credentials.credentials != AGENT_API_KEY:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
-    body = await request.json()
-    prompt = body["prompt"]
-    files = body.get("files", [])
-    creds = body["tripletex_credentials"]
+    prompt = body.prompt
+    files = body.files
+    creds = body.tripletex_credentials
 
     # Per-request isolation
     request_id = str(uuid.uuid4())
@@ -47,15 +66,15 @@ async def solve(request: Request, credentials: HTTPAuthorizationCredentials = De
     if files:
         os.makedirs(files_dir, exist_ok=True)
         for f in files:
-            data = base64.b64decode(f["content_base64"])
-            filepath = os.path.join(files_dir, f["filename"])
+            data = base64.b64decode(f.content_base64)
+            filepath = os.path.join(files_dir, f.filename)
             with open(filepath, "wb") as fh:
                 fh.write(data)
-            file_names.append(f["filename"])
-            log.info(f"Saved attachment: {f['filename']} ({len(data)} bytes)")
+            file_names.append(f.filename)
+            log.info(f"Saved attachment: {f.filename} ({len(data)} bytes)")
 
     # Build per-request client and tools
-    client = TripletexClient(creds["base_url"], creds["session_token"])
+    client = TripletexClient(creds.base_url, creds.session_token)
     tools = build_all_tools(client, files_dir=files_dir if files else "")
 
     # Build agent and runner
@@ -79,12 +98,6 @@ async def solve(request: Request, credentials: HTTPAuthorizationCredentials = De
         role="user",
         parts=[genai_types.Part(text=user_text)],
     )
-
-    # Pre-activate common modules (1 API call, prevents module-not-enabled errors)
-    client.put("/company/modules", json={
-        "moduleDepartment": True,
-        "moduleProjectEconomy": True,
-    })
 
     # Run agent with turn limit
     log.info(f"Running agent for request {request_id} (session={session_id})")

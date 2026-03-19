@@ -11,6 +11,7 @@ def build_employee_tools(client: TripletexClient) -> dict:
         phoneNumberMobile: str = "",
         userType: str = "STANDARD",
         department_id: int = 0,
+        dateOfBirth: str = "",
     ) -> dict:
         """Create a new employee in Tripletex.
 
@@ -21,6 +22,7 @@ def build_employee_tools(client: TripletexClient) -> dict:
             phoneNumberMobile: The employee's mobile phone number.
             userType: User access type. Use "EXTENDED" for account administrator, "STANDARD" for normal users, "NO_ACCESS" for no login.
             department_id: Optional department ID to assign the employee to (0 to skip).
+            dateOfBirth: Date of birth in YYYY-MM-DD format (optional).
 
         Returns:
             The created employee with id and fields, or an error message.
@@ -42,6 +44,8 @@ def build_employee_tools(client: TripletexClient) -> dict:
             body["department"] = {"id": department_id}
         if phoneNumberMobile:
             body["phoneNumberMobile"] = phoneNumberMobile
+        if dateOfBirth:
+            body["dateOfBirth"] = dateOfBirth
         return client.post("/employee", json=body)
 
     def update_employee(employee_id: int, firstName: str = "", lastName: str = "", email: str = "", phoneNumberMobile: str = "") -> dict:
