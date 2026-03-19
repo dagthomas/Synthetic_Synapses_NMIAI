@@ -63,7 +63,7 @@ Create employment (2 calls):
   → create_employee → create_employment(employee_id, startDate, employmentType)
 
 Ledger correction (1-3 calls):
-  → create_voucher(date, description, postings='[{"accountNumber": 1920, "amount": 100}, {"accountNumber": 7700, "amount": -100}]')
+  → create_voucher(date, description, postings with accountNumber and amount where positive=debit, negative=credit)
   → Or: get_ledger_accounts → create_voucher (if account numbers unknown)
 
 Bank reconciliation (2-4 calls):
