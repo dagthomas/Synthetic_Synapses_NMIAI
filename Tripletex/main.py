@@ -1,8 +1,10 @@
 import base64
+import json
 import logging
 import os
 import shutil
 import uuid
+from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Depends
@@ -16,6 +18,24 @@ from agent import create_agent
 from config import AGENT_API_KEY, GOOGLE_API_KEY, MAX_AGENT_TURNS
 from tripletex_client import TripletexClient
 from tools import build_all_tools
+
+# Dashboard solve_log integration (lazy init on first use)
+_has_dashboard = False
+_dashboard_inited = False
+create_solve_log = None
+
+def _ensure_dashboard():
+    global _has_dashboard, _dashboard_inited, create_solve_log
+    if _dashboard_inited:
+        return
+    _dashboard_inited = True
+    try:
+        from dashboard.db import init_db, create_solve_log as _csl
+        init_db()
+        create_solve_log = _csl
+        _has_dashboard = True
+    except Exception:
+        _has_dashboard = False
 
 # Set Google API key for ADK
 os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
@@ -45,6 +65,21 @@ class SolveRequest(BaseModel):
     files: list[FileAttachment] = []
     tripletex_credentials: TripletexCredentials
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "prompt": "Opprett en ansatt med navn Ola Nordmann, ola@example.org. Han skal være kontoadministrator.",
+                    "files": [],
+                    "tripletex_credentials": {
+                        "base_url": "https://kkpqfuj-amager.tripletex.dev/v2",
+                        "session_token": "YOUR_TOKEN_HERE"
+                    }
+                }
+            ]
+        }
+    }
+
 
 @app.post("/solve")
 async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -59,6 +94,19 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
 
     # Per-request isolation
     request_id = str(uuid.uuid4())
+
+    # Save payload for replay/debugging
+    payloads_dir = os.path.join(os.path.dirname(__file__), "payloads")
+    os.makedirs(payloads_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    payload_file = os.path.join(payloads_dir, f"{ts}_{request_id[:8]}.json")
+    with open(payload_file, "w", encoding="utf-8") as pf:
+        json.dump({
+            "prompt": prompt,
+            "files": [{"filename": f.filename, "mime_type": f.mime_type} for f in files],
+            "tripletex_credentials": {"base_url": creds.base_url, "session_token": creds.session_token[:8] + "..."},
+        }, pf, ensure_ascii=False, indent=2)
+    log.info(f"Payload saved to {payload_file}")
     files_dir = os.path.join(os.environ.get("TEMP", "/tmp"), f"tripletex_{request_id}")
 
     # Decode attachments
@@ -148,6 +196,23 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
     # Cleanup temp files
     if files_dir and os.path.exists(files_dir):
         shutil.rmtree(files_dir, ignore_errors=True)
+
+    # Save to dashboard solve_logs
+    _ensure_dashboard()
+    if _has_dashboard:
+        try:
+            create_solve_log(
+                request_id=request_id,
+                prompt=prompt,
+                files_json=json.dumps([f.filename for f in files]),
+                base_url=creds.base_url,
+                api_calls=client._call_count,
+                api_errors=client._error_count,
+                elapsed_seconds=elapsed,
+                agent_response=final_text[:2000] if final_text else "",
+            )
+        except Exception as e:
+            log.warning(f"Failed to save solve_log: {e}")
 
     return JSONResponse({"status": "completed"})
 

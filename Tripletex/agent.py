@@ -25,12 +25,12 @@ CRITICAL FIELD RULES:
 - Employee roles: "kontoadministrator"/"account administrator" → set userType="EXTENDED". "No login access" → userType="NO_ACCESS". Default is "STANDARD".
 - Invoice: invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
 - Order lines: need product_id, count. Get product_id from create_product response.
-- Voucher postings: debit and credit MUST balance (sum debits = sum credits).
+- Voucher postings: amounts MUST balance (sum of all amounts = 0). Positive = debit, negative = credit. Use accountNumber (tool resolves to ID).
 
 OPTIMAL CALL PATTERNS (target these exact call counts):
 
 Create employee (1 call):
-  → create_employee(firstName, lastName, email, userType)
+  → create_employee(firstName, lastName, email, userType, dateOfBirth if given)
 
 Create customer (1 call):
   → create_customer(name, email)
@@ -53,17 +53,18 @@ Credit note (5 calls):
 Travel expense (2 calls):
   → create_employee → create_travel_expense(employee_id, title, departureDate, returnDate)
 
-Create project (2-3 calls):
-  → create_customer → enable_module("moduleProjectEconomy") if needed → create_project(name, customer_id, startDate)
+Create project (2 calls):
+  → create_customer → create_project(name, customer_id, startDate)
 
-Create department (1-2 calls):
-  → enable_module("moduleDepartment") if needed → create_department(name, departmentNumber)
+Create department (1 call):
+  → create_department(name, departmentNumber)
 
 Create employment (2 calls):
   → create_employee → create_employment(employee_id, startDate, employmentType)
 
-Ledger correction (2-3 calls):
-  → get_ledger_accounts or get_ledger_postings → create_voucher or delete_voucher
+Ledger correction (1-3 calls):
+  → create_voucher(date, description, postings='[{"accountNumber": 1920, "amount": 100}, {"accountNumber": 7700, "amount": -100}]')
+  → Or: get_ledger_accounts → create_voucher (if account numbers unknown)
 
 Bank reconciliation (2-4 calls):
   → search_bank_accounts → create_bank_reconciliation → adjust or close
@@ -73,7 +74,6 @@ Delete/reverse (2 calls):
 
 ERROR HANDLING:
 - If a tool returns an error, read the message carefully. Fix your input in ONE retry.
-- "Module not enabled" → call enable_module with the module name, then retry.
 - Do NOT retry more than once. Do NOT try different parameter combinations blindly.
 
 LANGUAGE:

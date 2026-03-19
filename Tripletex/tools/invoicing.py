@@ -91,16 +91,22 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
             },
         )
 
-    def create_credit_note(invoice_id: int) -> dict:
+    def create_credit_note(invoice_id: int, date: str = "") -> dict:
         """Create a credit note for an existing invoice.
 
         Args:
             invoice_id: The ID of the invoice to credit.
+            date: Credit note date in YYYY-MM-DD format. If empty, uses today's date.
 
         Returns:
             The created credit note or an error message.
         """
-        return client.post(f"/invoice/{invoice_id}/:createCreditNote", json={})
+        from datetime import date as dt_date
+        credit_date = date if date else dt_date.today().isoformat()
+        return client.put(
+            f"/invoice/{invoice_id}/:createCreditNote",
+            params={"date": credit_date},
+        )
 
     return {
         "create_order": create_order,

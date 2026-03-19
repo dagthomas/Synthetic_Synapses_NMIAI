@@ -31,7 +31,15 @@ def build_address_tools(client: TripletexClient) -> dict:
         Returns:
             The updated address or an error message.
         """
-        body = {}
+        _WRITABLE = {
+            "id", "version", "addressLine1", "addressLine2", "postalCode",
+            "city", "country", "name",
+        }
+        current = client.get(f"/deliveryAddress/{address_id}", params={"fields": "*"})
+        full = current.get("value", {})
+        body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
+        if isinstance(body.get("country"), dict):
+            body["country"] = {"id": body["country"]["id"]}
         if addressLine1:
             body["addressLine1"] = addressLine1
         if postalCode:

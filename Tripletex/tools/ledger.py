@@ -49,19 +49,35 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Args:
             date: Voucher date in YYYY-MM-DD format.
             description: Description of the voucher.
-            postings: JSON string of postings, each with 'accountNumber', 'debitAmount', 'creditAmount'. Example: '[{"accountNumber": 1920, "debitAmount": 1000, "creditAmount": 0}]'
+            postings: JSON string of postings, each with 'accountId' (ledger account ID) and 'amount' (positive=debit, negative=credit). Example: '[{"accountId": 123, "amount": 1000}, {"accountId": 456, "amount": -1000}]'. You can also use 'accountNumber' and the tool will look up the account ID.
 
         Returns:
             The created voucher with id, or an error message.
         """
         posting_list = _json.loads(postings) if isinstance(postings, str) else postings
         formatted = []
-        for p in posting_list:
-            formatted.append({
-                "account": {"number": p["accountNumber"]},
-                "debitAmount": p.get("debitAmount", 0),
-                "creditAmount": p.get("creditAmount", 0),
-            })
+        for i, p in enumerate(posting_list):
+            entry = {"row": i + 1}
+            if "accountId" in p:
+                entry["account"] = {"id": p["accountId"]}
+            elif "accountNumber" in p:
+                # Look up account by number
+                acct_result = client.get("/ledger/account", params={"number": str(p["accountNumber"]), "fields": "id", "count": 1})
+                accts = acct_result.get("values", [])
+                if accts:
+                    entry["account"] = {"id": accts[0]["id"]}
+                else:
+                    return {"error": True, "message": f"Account {p['accountNumber']} not found"}
+            # Tripletex uses 'amount' (positive=debit, negative=credit)
+            amount = p.get("amount", 0)
+            if not amount:
+                # Support legacy debit/credit format
+                debit = p.get("debitAmount", 0)
+                credit = p.get("creditAmount", 0)
+                amount = debit - credit
+            entry["amount"] = amount
+            entry["amountCurrency"] = amount
+            formatted.append(entry)
         body = {
             "date": date,
             "description": description,

@@ -12,7 +12,7 @@ def build_bank_tools(client: TripletexClient) -> dict:
         Returns:
             A list of bank accounts with id, register number, and reconciliation support.
         """
-        return client.get("/bank", params={"fields": "id,registerNumber,name,bankAccountNumber,isBankReconciliationSupport"})
+        return client.get("/bank", params={"fields": "id,registerNumbers,name,displayName"})
 
     def search_bank_reconciliations(accountId: int = 0) -> dict:
         """Search for bank reconciliations, optionally filtered by account.
@@ -126,28 +126,6 @@ def build_bank_tools(client: TripletexClient) -> dict:
             params["bankAccountId"] = bankAccountId
         return client.get("/bank/statement", params=params)
 
-    def create_bank_statement(bankAccountId: int, fromDate: str, toDate: str, balanceStart: float, balanceEnd: float) -> dict:
-        """Create a bank statement for an account and period.
-
-        Args:
-            bankAccountId: The bank account ID.
-            fromDate: Statement start date in YYYY-MM-DD format.
-            toDate: Statement end date in YYYY-MM-DD format.
-            balanceStart: Opening balance.
-            balanceEnd: Closing balance.
-
-        Returns:
-            The created bank statement or an error message.
-        """
-        body = {
-            "bank": {"id": bankAccountId},
-            "fromDate": fromDate,
-            "toDate": toDate,
-            "balanceStart": balanceStart,
-            "balanceEnd": balanceEnd,
-        }
-        return client.post("/bank/statement", json=body)
-
     return {
         "search_bank_accounts": search_bank_accounts,
         "search_bank_reconciliations": search_bank_reconciliations,
@@ -159,5 +137,4 @@ def build_bank_tools(client: TripletexClient) -> dict:
         "delete_bank_reconciliation": delete_bank_reconciliation,
         "get_bank_reconciliation_match_count": get_bank_reconciliation_match_count,
         "search_bank_statements": search_bank_statements,
-        "create_bank_statement": create_bank_statement,
     }

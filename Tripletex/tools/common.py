@@ -28,19 +28,7 @@ def build_common_tools(client: TripletexClient) -> dict:
         """
         return client.delete(f"/{entity_type}/{entity_id}")
 
-    def enable_module(module_name: str) -> dict:
-        """Enable a Tripletex module. Call this if a task fails because a module is not activated.
-
-        Args:
-            module_name: The module to enable, e.g. 'moduleDepartment', 'moduleProjectEconomy'.
-
-        Returns:
-            Confirmation or error message.
-        """
-        return client.put("/company/modules", json={module_name: True})
-
     return {
         "get_entity_by_id": get_entity_by_id,
         "delete_entity": delete_entity,
-        "enable_module": enable_module,
     }

@@ -32,7 +32,7 @@ def build_travel_tools(client: TripletexClient) -> dict:
             },
         }
         if description:
-            body["description"] = description
+            body["travelDetails"]["detailedJourneyDescription"] = description
         return client.post("/travelExpense", json=body)
 
     def delete_travel_expense(travel_expense_id: int) -> dict:
@@ -55,7 +55,7 @@ def build_travel_tools(client: TripletexClient) -> dict:
         Returns:
             A list of travel expenses.
         """
-        params = {"fields": "id,title,employee,departureDate,returnDate"}
+        params = {"fields": "id,title,employee,travelDetails,date"}
         if employee_id:
             params["employeeId"] = employee_id
         return client.get("/travelExpense", params=params)

@@ -59,7 +59,14 @@ def build_supplier_tools(client: TripletexClient) -> dict:
         Returns:
             The updated supplier or an error message.
         """
-        body = {}
+        _WRITABLE = {
+            "id", "version", "name", "email", "phoneNumber", "phoneNumberMobile",
+            "organizationNumber", "isSupplier", "isCustomer", "accountManager",
+            "description", "bankAccounts",
+        }
+        current = client.get(f"/supplier/{supplier_id}", params={"fields": "*"})
+        full = current.get("value", {})
+        body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
         if name:
             body["name"] = name
         if email:

@@ -27,21 +27,13 @@ def build_balance_tools(client: TripletexClient) -> dict:
             params["accountNumberTo"] = accountNumberTo
         return client.get("/balanceSheet", params=params)
 
-    def search_periods() -> dict:
-        """Search for accounting periods.
-
-        Returns:
-            A list of accounting periods with id, start, end dates.
-        """
-        return client.get("/period", params={"fields": "*"})
-
     def search_voucher_types() -> dict:
-        """Search for available voucher types.
+        """Search for available voucher types (e.g. 'Utgående faktura', 'Leverandørfaktura', 'Betaling').
 
         Returns:
-            A list of voucher types with id and name.
+            A list of voucher types with id, name, and displayName.
         """
-        return client.get("/voucherType", params={"fields": "*"})
+        return client.get("/ledger/voucherType", params={"fields": "*"})
 
     def get_year_end(yearEndId: int) -> dict:
         """Get a year-end entry by ID.
@@ -80,24 +72,22 @@ def build_balance_tools(client: TripletexClient) -> dict:
         """Get the current company information.
 
         Args:
-            company_id: The company ID (0 to search for it).
+            company_id: The company ID (0 to auto-detect from session).
 
         Returns:
             Company details including name, org number, modules.
         """
         if company_id:
             return client.get(f"/company/{company_id}", params={"fields": "*"})
-        # Search for the company
-        result = client.get("/company", params={"fields": "id,name", "count": 1})
-        companies = result.get("values", [])
-        if companies:
-            cid = companies[0]["id"]
+        # Get company ID from session token
+        who = client.get("/token/session/>whoAmI", params={"fields": "companyId"})
+        cid = who.get("value", {}).get("companyId", 0) if isinstance(who.get("value"), dict) else 0
+        if cid:
             return client.get(f"/company/{cid}", params={"fields": "*"})
-        return result
+        return {"error": True, "message": "Could not determine company ID"}
 
     return {
         "get_balance_sheet": get_balance_sheet,
-        "search_periods": search_periods,
         "search_voucher_types": search_voucher_types,
         "get_year_end": get_year_end,
         "search_year_ends": search_year_ends,
