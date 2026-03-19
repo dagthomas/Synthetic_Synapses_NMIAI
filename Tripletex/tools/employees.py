@@ -10,6 +10,7 @@ def build_employee_tools(client: TripletexClient) -> dict:
         email: str,
         phoneNumberMobile: str = "",
         userType: str = "STANDARD",
+        department_id: int = 0,
     ) -> dict:
         """Create a new employee in Tripletex.
 
@@ -18,28 +19,20 @@ def build_employee_tools(client: TripletexClient) -> dict:
             lastName: The employee's last name.
             email: The employee's email address.
             phoneNumberMobile: The employee's mobile phone number.
-            userType: User access type. Use "STANDARD" for normal users, "NO_ACCESS" for no login.
+            userType: User access type. Use "EXTENDED" for account administrator, "STANDARD" for normal users, "NO_ACCESS" for no login.
+            department_id: Optional department ID to assign the employee to (0 to skip).
 
         Returns:
             The created employee with id and fields, or an error message.
         """
-        # Tripletex requires a department — auto-resolve one
-        dept_result = client.get("/department", params={"fields": "id", "count": 1})
-        depts = dept_result.get("values", [])
-        if depts:
-            dept_id = depts[0]["id"]
-        else:
-            dept_create = client.post("/department", json={"name": "Generell", "departmentNumber": "1"})
-            dept_id = dept_create.get("value", {}).get("id", 0)
-
         body = {
             "firstName": firstName,
             "lastName": lastName,
             "email": email,
             "userType": userType,
         }
-        if dept_id:
-            body["department"] = {"id": dept_id}
+        if department_id:
+            body["department"] = {"id": department_id}
         if phoneNumberMobile:
             body["phoneNumberMobile"] = phoneNumberMobile
         return client.post("/employee", json=body)
@@ -57,7 +50,17 @@ def build_employee_tools(client: TripletexClient) -> dict:
         Returns:
             The updated employee data or an error message.
         """
-        body = {}
+        # Tripletex PUT requires writable fields — GET first, keep only writable, merge
+        _WRITABLE = {
+            "id", "version", "firstName", "lastName", "email",
+            "phoneNumberMobile", "phoneNumberHome", "phoneNumberWork",
+            "dateOfBirth", "department", "employeeNumber", "address",
+            "userType", "nationalIdentityNumber", "bankAccountNumber",
+            "comments", "employeeCategory",
+        }
+        current = client.get(f"/employee/{employee_id}", params={"fields": "*"})
+        full = current.get("value", {})
+        body = {k: v for k, v in full.items() if k in _WRITABLE} if full else {}
         if firstName:
             body["firstName"] = firstName
         if lastName:

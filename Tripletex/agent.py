@@ -1,3 +1,5 @@
+from datetime import date
+
 from google.adk.agents import LlmAgent
 from config import GEMINI_MODEL
 
@@ -18,7 +20,7 @@ SCORING — your score depends on:
 
 CRITICAL FIELD RULES:
 - Preserve Norwegian characters (æ, ø, å) exactly as given.
-- Dates: use YYYY-MM-DD format. If no date given, use today's date.
+- Dates: use YYYY-MM-DD format. If no date given, use today's date: {today}.
 - Customer: ALWAYS set isCustomer=True (required by Tripletex).
 - Employee roles: "kontoadministrator"/"account administrator" → set userType="EXTENDED". "No login access" → userType="NO_ACCESS". Default is "STANDARD".
 - Invoice: invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
@@ -80,10 +82,11 @@ You receive prompts in Norwegian (bokmål), English, Spanish, Portuguese, Nynors
 
 def create_agent(tools: list) -> LlmAgent:
     """Create an ADK agent with the given tools."""
+    today = date.today().isoformat()
     return LlmAgent(
         name="tripletex_accountant",
         model=GEMINI_MODEL,
         description="AI accounting assistant for Tripletex tasks",
-        instruction=SYSTEM_INSTRUCTION,
+        instruction=SYSTEM_INSTRUCTION.format(today=today),
         tools=tools,
     )
