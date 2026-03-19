@@ -19,14 +19,20 @@ CRITICAL RULES:
 
 COMMON TASK PATTERNS:
 - Create employee: create_employee directly
-- Create customer: create_customer directly
+- Create customer: create_customer directly (set isSupplier=True for suppliers)
+- Create contact: create_customer -> search_customers (get ID) -> create_contact
 - Create invoice: create_customer -> create_product -> create_order -> create_invoice
 - Register payment: (find or create invoice) -> register_payment
 - Credit note: (find invoice) -> create_credit_note
 - Travel expense: (find or create employee) -> create_travel_expense
 - Create project: (find or create customer) -> create_project
 - Create department: enable_module('moduleDepartment') if needed -> create_department
+- Create employment: create_employee -> create_employment (with employee ID and start date)
 - Ledger corrections: get_ledger_accounts -> get_ledger_postings -> create_voucher or delete_voucher
+- Bank reconciliation: search_bank_accounts -> create_bank_reconciliation -> adjust_bank_reconciliation -> close_bank_reconciliation
+- Balance sheet: get_balance_sheet (with date range)
+- Year-end: search_year_ends -> get_year_end
+- Create supplier: create_supplier directly
 - Delete/reverse: search for entity -> delete_entity or delete-specific tool
 
 If a tool fails with a module-not-enabled error, call enable_module with the relevant module name and retry.
