@@ -100,11 +100,18 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
     )
 
     # Run agent with turn limit
-    log.info(f"Running agent for request {request_id} (session={session_id})")
-    log.info(f"Prompt: {prompt[:200]}...")
+    log.info(f"{'='*60}")
+    log.info(f"[REQ {request_id[:8]}] START")
+    log.info(f"[REQ {request_id[:8]}] Prompt: {prompt}")
+    log.info(f"[REQ {request_id[:8]}] Files: {file_names}")
+    log.info(f"[REQ {request_id[:8]}] Base URL: {creds.base_url}")
+    log.info(f"[REQ {request_id[:8]}] Session: {session_id}")
+    log.info(f"{'='*60}")
 
     final_text = ""
     turn_count = 0
+    import time as _time
+    t_start = _time.time()
     try:
         async for event in runner.run_async(
             user_id="tripletex",
@@ -115,19 +122,28 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
                 for part in event.content.parts:
                     if hasattr(part, "text") and part.text:
                         final_text = part.text
+                        log.info(f"[AGENT] Text: {part.text[:500]}")
                     if hasattr(part, "function_call") and part.function_call:
                         turn_count += 1
-                        log.info(f"Tool call #{turn_count}: {part.function_call.name}({part.function_call.args})")
+                        log.info(f"[AGENT] Tool call #{turn_count}: {part.function_call.name}({part.function_call.args})")
                         if turn_count >= MAX_AGENT_TURNS:
-                            log.warning(f"Turn limit reached ({MAX_AGENT_TURNS}), stopping agent")
+                            log.warning(f"[AGENT] Turn limit reached ({MAX_AGENT_TURNS}), stopping")
                             break
+                    if hasattr(part, "function_response") and part.function_response:
+                        resp_str = str(part.function_response.response)[:500]
+                        log.info(f"[AGENT] Tool result: {part.function_response.name} -> {resp_str}")
             if turn_count >= MAX_AGENT_TURNS:
                 break
     except Exception as e:
-        log.error(f"Agent error: {e}", exc_info=True)
+        log.error(f"[AGENT] Error: {e}", exc_info=True)
 
-    log.info(f"Agent done. API calls: {client._call_count}, errors: {client._error_count}")
-    log.info(f"Final response: {final_text[:200]}")
+    elapsed = _time.time() - t_start
+    log.info(f"{'='*60}")
+    log.info(f"[REQ {request_id[:8]}] DONE in {elapsed:.1f}s")
+    log.info(f"[REQ {request_id[:8]}] API calls: {client._call_count}, errors: {client._error_count}")
+    log.info(f"[REQ {request_id[:8]}] Agent turns: {turn_count}")
+    log.info(f"[REQ {request_id[:8]}] Final response: {final_text}")
+    log.info(f"{'='*60}")
 
     # Cleanup temp files
     if files_dir and os.path.exists(files_dir):
