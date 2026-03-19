@@ -76,13 +76,24 @@ def build_balance_tools(client: TripletexClient) -> dict:
             params["code"] = code
         return client.get("/currency", params=params)
 
-    def get_company_info() -> dict:
+    def get_company_info(company_id: int = 0) -> dict:
         """Get the current company information.
+
+        Args:
+            company_id: The company ID (0 to search for it).
 
         Returns:
             Company details including name, org number, modules.
         """
-        return client.get("/company", params={"fields": "*"})
+        if company_id:
+            return client.get(f"/company/{company_id}", params={"fields": "*"})
+        # Search for the company
+        result = client.get("/company", params={"fields": "id,name", "count": 1})
+        companies = result.get("values", [])
+        if companies:
+            cid = companies[0]["id"]
+            return client.get(f"/company/{cid}", params={"fields": "*"})
+        return result
 
     return {
         "get_balance_sheet": get_balance_sheet,

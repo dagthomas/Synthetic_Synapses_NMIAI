@@ -62,8 +62,15 @@ class TripletexClient:
             self._error_count += 1
             try:
                 body = resp.json()
+                # Include full validation details from Tripletex
                 msg = body.get("message", body.get("error", resp.text))
+                validation = body.get("validationMessages", [])
+                details = "; ".join(
+                    f"{v.get('field', '?')}: {v.get('message', v)}"
+                    for v in validation
+                ) if validation else ""
+                full_msg = f"{msg} [{details}]" if details else str(msg)
             except Exception:
-                msg = resp.text
-            log.error(f"[API ERROR] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {msg}")
-            return {"error": True, "status_code": resp.status_code, "message": str(msg)}
+                full_msg = resp.text[:500]
+            log.error(f"[API ERROR] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {full_msg}")
+            return {"error": True, "status_code": resp.status_code, "message": full_msg}
