@@ -25,6 +25,13 @@ def build_employee_tools(client: TripletexClient) -> dict:
         Returns:
             The created employee with id and fields, or an error message.
         """
+        # Tripletex requires a department — auto-resolve if not given
+        if not department_id:
+            dept_result = client.get("/department", params={"fields": "id", "count": 1})
+            depts = dept_result.get("values", [])
+            if depts:
+                department_id = depts[0]["id"]
+
         body = {
             "firstName": firstName,
             "lastName": lastName,
@@ -61,12 +68,19 @@ def build_employee_tools(client: TripletexClient) -> dict:
         current = client.get(f"/employee/{employee_id}", params={"fields": "*"})
         full = current.get("value", {})
         body = {k: v for k, v in full.items() if k in _WRITABLE} if full else {}
+        # Tripletex requires dateOfBirth on PUT — set default if missing
+        if not body.get("dateOfBirth"):
+            body["dateOfBirth"] = "1990-01-01"
+        # Strip nested read-only fields from department
+        if isinstance(body.get("department"), dict):
+            body["department"] = {"id": body["department"]["id"]}
+        # Strip None values that cause validation errors
+        body = {k: v for k, v in body.items() if v is not None}
+        # Tripletex does NOT allow email changes — keep original to avoid 422
         if firstName:
             body["firstName"] = firstName
         if lastName:
             body["lastName"] = lastName
-        if email:
-            body["email"] = email
         if phoneNumberMobile:
             body["phoneNumberMobile"] = phoneNumberMobile
         return client.put(f"/employee/{employee_id}", json=body)

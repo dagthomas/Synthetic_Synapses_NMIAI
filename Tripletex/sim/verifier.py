@@ -83,7 +83,9 @@ def _best_match(entities: list, expected: dict, search_fields: list) -> dict | N
         for key, val in expected.items():
             if key.startswith("_"):
                 continue
-            actual = e.get(key)
+            # For update tasks: new_email -> email, new_phoneNumber -> phoneNumber
+            api_key = key[4:] if key.startswith("new_") else key
+            actual = e.get(api_key)
             if actual is not None and _fields_match(actual, val):
                 score += 1
         if score > best_score:
@@ -214,7 +216,7 @@ def verify_update(
             search_params[sf] = expected[sf]
 
     entities = _search_entity(client, task_def.entity_type, search_params)
-    entity = entities[0] if entities else None
+    entity = _best_match(entities, expected, task_def.search_fields)
 
     for fc in task_def.field_checks:
         if fc.field == "_found":

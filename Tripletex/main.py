@@ -4,8 +4,9 @@ import os
 import shutil
 import uuid
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from google.adk.runners import InMemoryRunner
 from google.genai import types as genai_types
 
@@ -20,15 +21,16 @@ os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
+security = HTTPBearer(auto_error=False)
+
 app = FastAPI(title="Tripletex AI Agent")
 
 
 @app.post("/solve")
-async def solve(request: Request):
+async def solve(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
     # Optional Bearer token auth
     if AGENT_API_KEY:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header != f"Bearer {AGENT_API_KEY}":
+        if not credentials or credentials.credentials != AGENT_API_KEY:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
     body = await request.json()

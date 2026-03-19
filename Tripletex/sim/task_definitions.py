@@ -216,37 +216,32 @@ Expected fields:
 UPDATE_EMPLOYEE = TaskDef(
     name="update_employee",
     tier=1,
-    description="Update an employee's contact info",
+    description="Update an employee's phone number",
     gen_instruction="""\
-Generate a task to update an existing employee's contact information.
-The prompt should first instruct to create the employee, then update a field.
+Generate a task to update an existing employee's mobile phone number.
+The prompt should first instruct to create the employee, then update their phone.
+NOTE: Tripletex does NOT allow changing email after creation — only phone can be updated.
 
 Include ALL:
 - firstName: employee's first name
 - lastName: employee's last name
-- email: original email
-- new_email: the new email to set
-OR
-- new_phoneNumberMobile: the new phone number to set (+47 format)
-
-Pick ONE of new_email or new_phoneNumberMobile to update (not both).
+- email: employee's email
+- new_phoneNumberMobile: the new phone number to set (+47 8-digit format, e.g. "+4791234567")
 
 Expected fields:
 - firstName (string)
 - lastName (string)
-- email (string) - original email
-- new_email (string, only if updating email)
-- new_phoneNumberMobile (string, only if updating phone)""",
+- email (string)
+- new_phoneNumberMobile (string)""",
     entity_type="employee",
     search_fields=["firstName", "lastName"],
     field_checks=[
         FieldCheck("_found", 2),
         FieldCheck("firstName", 1),
         FieldCheck("lastName", 1),
-        FieldCheck("new_email", 3),
         FieldCheck("new_phoneNumberMobile", 3),
     ],
-    baseline_calls=2,  # POST + PUT
+    baseline_calls=4,  # GET dept + POST employee + GET employee + PUT employee
 )
 
 UPDATE_CUSTOMER = TaskDef(

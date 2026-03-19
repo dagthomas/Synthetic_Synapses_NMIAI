@@ -48,7 +48,18 @@ def build_customer_tools(client: TripletexClient) -> dict:
         Returns:
             The updated customer data or an error message.
         """
-        body = {}
+        # Tripletex PUT requires writable fields — GET first, keep only writable, merge
+        _WRITABLE = {
+            "id", "version", "name", "email", "phoneNumber", "phoneNumberMobile",
+            "organizationNumber", "isCustomer", "isSupplier", "accountManager",
+            "description", "language", "invoiceEmail", "category1", "category2",
+            "category3", "bankAccounts", "invoiceSendMethod",
+        }
+        current = client.get(f"/customer/{customer_id}", params={"fields": "*"})
+        full = current.get("value", {})
+        body = {k: v for k, v in full.items() if k in _WRITABLE} if full else {}
+        # Strip None values that cause validation errors
+        body = {k: v for k, v in body.items() if v is not None}
         if name:
             body["name"] = name
         if email:
