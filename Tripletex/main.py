@@ -60,6 +60,13 @@ async def solve(request: Request):
     agent = create_agent(tools)
     runner = InMemoryRunner(agent=agent, app_name="tripletex_agent")
 
+    # Create session for this request
+    session = await runner.session_service.create_session(
+        app_name="tripletex_agent",
+        user_id="tripletex",
+    )
+    session_id = session.id
+
     # Build user message
     user_text = prompt
     if file_names:
@@ -78,7 +85,7 @@ async def solve(request: Request):
     })
 
     # Run agent with turn limit
-    log.info(f"Running agent for request {request_id}")
+    log.info(f"Running agent for request {request_id} (session={session_id})")
     log.info(f"Prompt: {prompt[:200]}...")
 
     final_text = ""
@@ -86,7 +93,7 @@ async def solve(request: Request):
     try:
         async for event in runner.run_async(
             user_id="tripletex",
-            session_id=request_id,
+            session_id=session_id,
             new_message=user_message,
         ):
             if event.content and event.content.parts:
@@ -112,3 +119,13 @@ async def solve(request: Request):
         shutil.rmtree(files_dir, ignore_errors=True)
 
     return JSONResponse({"status": "completed"})
+
+
+if __name__ == "__main__":
+    import argparse
+    import uvicorn
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run(app, host="127.0.0.1", port=args.port)

@@ -16,7 +16,7 @@ def build_project_tools(client: TripletexClient) -> dict:
         Args:
             name: Project name.
             customer_id: ID of the customer linked to this project (0 if none).
-            projectManagerId: ID of the employee managing the project (0 if none).
+            projectManagerId: ID of the employee managing the project (0 to auto-assign).
             startDate: Project start date in YYYY-MM-DD format.
             description: Optional project description.
 
@@ -26,8 +26,16 @@ def build_project_tools(client: TripletexClient) -> dict:
         body = {"name": name}
         if customer_id:
             body["customer"] = {"id": customer_id}
+
+        # Tripletex requires a projectManager — auto-resolve if not given
         if projectManagerId:
             body["projectManager"] = {"id": projectManagerId}
+        else:
+            emp_result = client.get("/employee", params={"fields": "id", "count": 1})
+            emps = emp_result.get("values", [])
+            if emps:
+                body["projectManager"] = {"id": emps[0]["id"]}
+
         if startDate:
             body["startDate"] = startDate
         if description:

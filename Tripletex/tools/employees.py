@@ -8,8 +8,8 @@ def build_employee_tools(client: TripletexClient) -> dict:
         firstName: str,
         lastName: str,
         email: str,
-        isAdministrator: bool = False,
         phoneNumberMobile: str = "",
+        userType: str = "STANDARD",
     ) -> dict:
         """Create a new employee in Tripletex.
 
@@ -17,19 +17,29 @@ def build_employee_tools(client: TripletexClient) -> dict:
             firstName: The employee's first name.
             lastName: The employee's last name.
             email: The employee's email address.
-            isAdministrator: Whether the employee should be an account administrator.
             phoneNumberMobile: The employee's mobile phone number.
+            userType: User access type. Use "STANDARD" for normal users, "NO_ACCESS" for no login.
 
         Returns:
             The created employee with id and fields, or an error message.
         """
+        # Tripletex requires a department — auto-resolve one
+        dept_result = client.get("/department", params={"fields": "id", "count": 1})
+        depts = dept_result.get("values", [])
+        if depts:
+            dept_id = depts[0]["id"]
+        else:
+            dept_create = client.post("/department", json={"name": "Generell", "departmentNumber": "1"})
+            dept_id = dept_create.get("value", {}).get("id", 0)
+
         body = {
             "firstName": firstName,
             "lastName": lastName,
             "email": email,
+            "userType": userType,
         }
-        if isAdministrator:
-            body["isAdministrator"] = True
+        if dept_id:
+            body["department"] = {"id": dept_id}
         if phoneNumberMobile:
             body["phoneNumberMobile"] = phoneNumberMobile
         return client.post("/employee", json=body)

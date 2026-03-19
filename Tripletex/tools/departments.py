@@ -19,7 +19,7 @@ def build_department_tools(client: TripletexClient) -> dict:
         """
         body = {"name": name}
         if departmentNumber:
-            body["number"] = departmentNumber
+            body["departmentNumber"] = departmentNumber
         return client.post("/department", json=body)
 
     return {"create_department": create_department}

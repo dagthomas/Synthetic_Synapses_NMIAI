@@ -27,11 +27,11 @@ class TripletexClient:
         resp = requests.post(url, auth=self.auth, json=json)
         return self._handle_response(resp)
 
-    def put(self, endpoint: str, json: dict | None = None) -> dict:
+    def put(self, endpoint: str, json: dict | None = None, params: dict | None = None) -> dict:
         url = f"{self.base_url}{endpoint}"
-        log.info(f"PUT {url} body={json}")
+        log.info(f"PUT {url} body={json} params={params}")
         self._call_count += 1
-        resp = requests.put(url, auth=self.auth, json=json)
+        resp = requests.put(url, auth=self.auth, json=json, params=params)
         return self._handle_response(resp)
 
     def delete(self, endpoint: str) -> dict:

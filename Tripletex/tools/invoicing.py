@@ -34,6 +34,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
 
         body = {
             "customer": {"id": customer_id},
+            "orderDate": deliveryDate,
             "deliveryDate": deliveryDate,
             "orderLines": formatted_lines,
         }
@@ -70,18 +71,25 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
 
         Args:
             invoice_id: The ID of the invoice being paid.
-            amount: The payment amount.
+            amount: The payment amount (including VAT).
             paymentDate: Payment date in YYYY-MM-DD format.
 
         Returns:
             Confirmation of payment or an error message.
         """
-        body = {
-            "invoice": {"id": invoice_id},
-            "amount": amount,
-            "date": paymentDate,
-        }
-        return client.post("/payment", json=body)
+        # Resolve paymentTypeId (e.g. "Betalt til bank")
+        pt_result = client.get("/invoice/paymentType", params={"fields": "id,description", "count": 10})
+        payment_types = pt_result.get("values", [])
+        payment_type_id = payment_types[0]["id"] if payment_types else 0
+
+        return client.put(
+            f"/invoice/{invoice_id}/:payment",
+            params={
+                "paymentDate": paymentDate,
+                "paymentTypeId": payment_type_id,
+                "paidAmount": amount,
+            },
+        )
 
     def create_credit_note(invoice_id: int) -> dict:
         """Create a credit note for an existing invoice.

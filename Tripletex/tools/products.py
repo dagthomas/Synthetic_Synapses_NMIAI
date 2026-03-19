@@ -6,26 +6,26 @@ def build_product_tools(client: TripletexClient) -> dict:
 
     def create_product(
         name: str,
-        priceExcludingVat: float = 0.0,
-        priceIncludingVat: float = 0.0,
+        priceExcludingVatCurrency: float = 0.0,
+        priceIncludingVatCurrency: float = 0.0,
         productNumber: str = "",
     ) -> dict:
         """Create a new product in Tripletex.
 
         Args:
             name: The product name.
-            priceExcludingVat: Price excluding VAT.
-            priceIncludingVat: Price including VAT.
+            priceExcludingVatCurrency: Price excluding VAT in NOK.
+            priceIncludingVatCurrency: Price including VAT in NOK.
             productNumber: Optional product number/SKU.
 
         Returns:
             The created product with id and fields, or an error message.
         """
         body = {"name": name}
-        if priceExcludingVat:
-            body["priceExcludingVat"] = priceExcludingVat
-        if priceIncludingVat:
-            body["priceIncludingVat"] = priceIncludingVat
+        if priceExcludingVatCurrency:
+            body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
+        if priceIncludingVatCurrency:
+            body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
         if productNumber:
             body["number"] = productNumber
         return client.post("/product", json=body)
@@ -39,7 +39,7 @@ def build_product_tools(client: TripletexClient) -> dict:
         Returns:
             A list of matching products with id, name, number, price fields.
         """
-        params = {"fields": "id,name,number,priceExcludingVat,priceIncludingVat"}
+        params = {"fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency"}
         if name:
             params["name"] = name
         return client.get("/product", params=params)

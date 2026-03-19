@@ -26,8 +26,10 @@ def build_travel_tools(client: TripletexClient) -> dict:
         body = {
             "employee": {"id": employee_id},
             "title": title,
-            "departureDate": departureDate,
-            "returnDate": returnDate,
+            "travelDetails": {
+                "departureDate": departureDate,
+                "returnDate": returnDate,
+            },
         }
         if description:
             body["description"] = description
