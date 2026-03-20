@@ -293,7 +293,16 @@ async def replay_payloads(req: ReplayRequest):
                 )
                 elapsed = _time.time() - t0
                 http_status = resp.status_code
-                body = resp.json() if resp.status_code == 200 else {"error": resp.text[:500]}
+                content_type = resp.headers.get("content-type", "")
+                if "application/json" not in content_type:
+                    body = {"error": f"Agent returned {content_type or 'unknown content-type'} (not JSON). Is the agent running at {agent_url}?"}
+                elif resp.status_code == 200:
+                    body = resp.json()
+                else:
+                    body = {"error": resp.text[:500]}
+            except httpx.ConnectError:
+                elapsed = _time.time() - t0
+                body = {"error": f"Cannot connect to agent at {agent_url}. Is the agent server running?"}
             except Exception as e:
                 elapsed = _time.time() - t0
                 body = {"error": str(e)}

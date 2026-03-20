@@ -38,8 +38,13 @@ OPTIMAL CALL PATTERNS (target these exact call counts):
 Create employee (1 call):
   → create_employee(firstName, lastName, email, userType, dateOfBirth if given)
 
+Create employee as admin (1 call):
+  → create_employee(firstName, lastName, email, userType="EXTENDED")
+  → "kontoadministrator"/"account administrator" → userType="EXTENDED"
+
 Create customer (1 call):
-  → create_customer(name, email)
+  → create_customer(name, email, organizationNumber if given)
+  → If prompt says "org.nr" or "organisasjonsnummer" → include it
 
 Create supplier (1 call):
   → create_supplier(name, email)
@@ -59,10 +64,16 @@ Credit note (5 calls):
 Travel expense (2 calls):
   → create_employee → create_travel_expense(employee_id, title, departureDate, returnDate)
 
-Create project (2-3 calls):
-  → create_customer → create_employee(projectManagerName) → create_project(name, customer_id, projectManagerId=newEmployeeId, startDate)
-  → ALWAYS create_employee for the project manager. NEVER search for or reuse existing employees.
-  → The create_project tool auto-handles project manager access. Do NOT manually retry or work around projectManager errors.
+Create project with project manager (3 calls):
+  → create_customer(name, organizationNumber) → create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED") → create_project(name, customer_id, projectManagerId=newEmployeeId, startDate)
+  → ALWAYS create a NEW employee for the project manager — even if you think they might exist.
+  → Pass userType="EXTENDED" when creating the PM employee — this saves API calls.
+  → The create_project tool auto-handles PM employment and entitlements internally.
+  → If create_project returns an error about PM access, do NOT retry or substitute a different PM. The tool handles retries internally.
+
+Create project without PM (2 calls):
+  → create_customer → create_project(name, customer_id)
+  → Tool auto-assigns default PM.
 
 Create department (1 call):
   → create_department(name, departmentNumber)
@@ -70,9 +81,9 @@ Create department (1 call):
 Create employment (2 calls):
   → create_employee → create_employment(employee_id, startDate, employmentType)
 
-Ledger correction (1-3 calls):
+Ledger correction (1 call):
   → create_voucher(date, description, postings with accountNumber and amount where positive=debit, negative=credit)
-  → Or: get_ledger_accounts → create_voucher (if account numbers unknown)
+  → Standard account numbers: 1920=bank, 1500=receivables, 2400=payables, 3000=revenue, 4000=cost of goods
 
 Bank reconciliation (2-4 calls):
   → search_bank_accounts → create_bank_reconciliation → adjust or close

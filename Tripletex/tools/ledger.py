@@ -96,9 +96,113 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         """
         return client.delete(f"/ledger/voucher/{voucher_id}")
 
+    def create_ledger_account(number: int, name: str, description: str = "") -> dict:
+        """Create a new ledger account in the chart of accounts.
+
+        Args:
+            number: Account number (e.g. 1920, 7700).
+            name: Account name.
+            description: Optional description.
+
+        Returns:
+            Created account or error.
+        """
+        body = {"number": number, "name": name}
+        if description:
+            body["description"] = description
+        return client.post("/ledger/account", json=body)
+
+    def reverse_voucher(voucher_id: int, date: str = "") -> dict:
+        """Reverse a voucher, creating a new counter-voucher.
+
+        Args:
+            voucher_id: ID of the voucher to reverse.
+            date: Date for the reversal YYYY-MM-DD (empty for today).
+
+        Returns:
+            The reversed voucher or error.
+        """
+        params = {}
+        if date:
+            params["date"] = date
+        return client.put(f"/ledger/voucher/{voucher_id}/:reverse", params=params if params else None)
+
+    def create_opening_balance(voucherDate: str, balancePostings: str) -> dict:
+        """Create an opening balance. Zeroes out all movements before this date.
+
+        Args:
+            voucherDate: Date for opening balance YYYY-MM-DD (must be first day of month).
+            balancePostings: JSON string of postings, each with 'accountId' (or 'accountNumber') and 'amount'. Example: '[{"accountNumber": 1920, "amount": 50000}]'
+
+        Returns:
+            Created opening balance or error.
+        """
+        posting_list = _json.loads(balancePostings) if isinstance(balancePostings, str) else balancePostings
+        formatted = []
+        for p in posting_list:
+            entry = {}
+            if "accountId" in p:
+                entry["account"] = {"id": p["accountId"]}
+            elif "accountNumber" in p:
+                acct = client.get("/ledger/account", params={"number": str(p["accountNumber"]), "fields": "id", "count": 1})
+                accts = acct.get("values", [])
+                if accts:
+                    entry["account"] = {"id": accts[0]["id"]}
+                else:
+                    return {"error": True, "message": f"Account {p['accountNumber']} not found"}
+            entry["amount"] = p.get("amount", 0)
+            formatted.append(entry)
+        body = {"voucherDate": voucherDate, "balancePostings": formatted}
+        return client.post("/ledger/voucher/openingBalance", json=body)
+
+    def search_vouchers(dateFrom: str = "", dateTo: str = "") -> dict:
+        """Search for vouchers within a date range.
+
+        Args:
+            dateFrom: Start date YYYY-MM-DD.
+            dateTo: End date YYYY-MM-DD.
+
+        Returns:
+            A list of vouchers.
+        """
+        params = {"fields": "id,date,description,voucherType,number"}
+        if dateFrom:
+            params["dateFrom"] = dateFrom
+        if dateTo:
+            params["dateTo"] = dateTo
+        return client.get("/ledger/voucher", params=params)
+
+    def update_voucher(voucher_id: int, date: str = "", description: str = "") -> dict:
+        """Update a voucher's date or description.
+
+        Args:
+            voucher_id: ID of the voucher.
+            date: New date YYYY-MM-DD (empty to keep).
+            description: New description (empty to keep).
+
+        Returns:
+            Updated voucher or error.
+        """
+        current = client.get(f"/ledger/voucher/{voucher_id}", params={"fields": "*"})
+        full = current.get("value", {})
+        _WRITABLE = {"id", "version", "date", "description", "voucherType", "postings", "externalVoucherNumber"}
+        body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
+        if isinstance(body.get("voucherType"), dict):
+            body["voucherType"] = {"id": body["voucherType"]["id"]}
+        if date:
+            body["date"] = date
+        if description:
+            body["description"] = description
+        return client.put(f"/ledger/voucher/{voucher_id}", json=body)
+
     return {
         "get_ledger_accounts": get_ledger_accounts,
         "get_ledger_postings": get_ledger_postings,
         "create_voucher": create_voucher,
         "delete_voucher": delete_voucher,
+        "create_ledger_account": create_ledger_account,
+        "reverse_voucher": reverse_voucher,
+        "create_opening_balance": create_opening_balance,
+        "search_vouchers": search_vouchers,
+        "update_voucher": update_voucher,
     }

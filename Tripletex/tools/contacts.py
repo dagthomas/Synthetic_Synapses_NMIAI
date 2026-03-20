@@ -53,7 +53,61 @@ def build_contact_tools(client: TripletexClient) -> dict:
             params["customerId"] = customer_id
         return client.get("/contact", params=params)
 
+    def update_contact(
+        contact_id: int,
+        firstName: str = "",
+        lastName: str = "",
+        email: str = "",
+        phoneNumberMobile: str = "",
+    ) -> dict:
+        """Update a contact person.
+
+        Args:
+            contact_id: ID of the contact to update.
+            firstName: New first name (empty to keep).
+            lastName: New last name (empty to keep).
+            email: New email (empty to keep).
+            phoneNumberMobile: New phone (empty to keep).
+
+        Returns:
+            Updated contact or error.
+        """
+        _WRITABLE = {
+            "id", "version", "firstName", "lastName", "email",
+            "phoneNumberMobile", "phoneNumberWork", "customer",
+            "department", "isInactive",
+        }
+        current = client.get(f"/contact/{contact_id}", params={"fields": "*"})
+        full = current.get("value", {})
+        body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
+        if isinstance(body.get("customer"), dict):
+            body["customer"] = {"id": body["customer"]["id"]}
+        if isinstance(body.get("department"), dict):
+            body["department"] = {"id": body["department"]["id"]}
+        if firstName:
+            body["firstName"] = firstName
+        if lastName:
+            body["lastName"] = lastName
+        if email:
+            body["email"] = email
+        if phoneNumberMobile:
+            body["phoneNumberMobile"] = phoneNumberMobile
+        return client.put(f"/contact/{contact_id}", json=body)
+
+    def delete_contact(contact_id: int) -> dict:
+        """Delete a contact person.
+
+        Args:
+            contact_id: ID of the contact to delete.
+
+        Returns:
+            Confirmation or error.
+        """
+        return client.delete(f"/contact/{contact_id}")
+
     return {
         "create_contact": create_contact,
         "search_contacts": search_contacts,
+        "update_contact": update_contact,
+        "delete_contact": delete_contact,
     }

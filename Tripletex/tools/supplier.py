@@ -75,8 +75,20 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             body["phoneNumber"] = phoneNumber
         return client.put(f"/supplier/{supplier_id}", json=body)
 
+    def delete_supplier(supplier_id: int) -> dict:
+        """Delete a supplier.
+
+        Args:
+            supplier_id: ID of the supplier.
+
+        Returns:
+            Confirmation or error.
+        """
+        return client.delete(f"/supplier/{supplier_id}")
+
     return {
         "create_supplier": create_supplier,
         "search_suppliers": search_suppliers,
         "update_supplier": update_supplier,
+        "delete_supplier": delete_supplier,
     }

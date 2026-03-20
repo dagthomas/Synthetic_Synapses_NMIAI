@@ -85,8 +85,20 @@ def build_customer_tools(client: TripletexClient) -> dict:
             params["email"] = email
         return client.get("/customer", params=params)
 
+    def delete_customer(customer_id: int) -> dict:
+        """Delete a customer.
+
+        Args:
+            customer_id: ID of the customer.
+
+        Returns:
+            Confirmation or error.
+        """
+        return client.delete(f"/customer/{customer_id}")
+
     return {
         "create_customer": create_customer,
         "update_customer": update_customer,
         "search_customers": search_customers,
+        "delete_customer": delete_customer,
     }
