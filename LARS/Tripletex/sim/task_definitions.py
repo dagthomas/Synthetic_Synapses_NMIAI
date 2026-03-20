@@ -713,6 +713,71 @@ Expected fields:
 # TIER 1 — Additional (update/delete for basic entities)
 # ═══════════════════════════════════════════════════════════════════════
 
+UPDATE_DEPARTMENT = TaskDef(
+    name="update_department",
+    tier=1,
+    description="Update a department's name or number",
+    gen_instruction="""\
+Generate a task to update an existing department in Tripletex.
+The prompt should first instruct to create the department, then update a field.
+
+Include ALL:
+- name: original department name
+Pick ONE to update:
+- new_name: a new department name
+- new_departmentNumber: a new department number (1-3 digit string)
+
+Expected fields:
+- name (string)
+- new_name (string, only if updating name)
+- new_departmentNumber (string, only if updating number)""",
+    entity_type="department",
+    search_fields=["name"],
+    field_checks=[
+        FieldCheck("_found", 2),
+        FieldCheck("name", 2),
+        FieldCheck("new_name", 3),
+        FieldCheck("new_departmentNumber", 3),
+    ],
+    baseline_calls=2,
+)
+
+UPDATE_CONTACT = TaskDef(
+    name="update_contact",
+    tier=1,
+    description="Update a contact person's information",
+    gen_instruction="""\
+Generate a task to update an existing contact person in Tripletex.
+The prompt should first instruct to create a customer, add a contact person, then update the contact.
+
+Include ALL:
+- customer_name: company name ending in AS
+- firstName: contact's first name
+- lastName: contact's last name
+- email: contact's original email
+Pick ONE to update:
+- new_email: the new email to set
+- new_phoneNumberMobile: the new phone number (+47 format)
+
+Expected fields:
+- customer_name (string)
+- firstName (string)
+- lastName (string)
+- email (string)
+- new_email (string, only if updating email)
+- new_phoneNumberMobile (string, only if updating phone)""",
+    entity_type="contact",
+    search_fields=["firstName", "lastName"],
+    field_checks=[
+        FieldCheck("_found", 2),
+        FieldCheck("firstName", 1),
+        FieldCheck("lastName", 1),
+        FieldCheck("new_email", 3),
+        FieldCheck("new_phoneNumberMobile", 3),
+    ],
+    baseline_calls=3,  # POST customer + POST contact + PUT contact
+)
+
 UPDATE_PRODUCT = TaskDef(
     name="update_product",
     tier=1,
@@ -1026,6 +1091,8 @@ ALL_TASKS: dict[str, TaskDef] = {
     "update_customer": UPDATE_CUSTOMER,
     "update_product": UPDATE_PRODUCT,
     "update_supplier": UPDATE_SUPPLIER,
+    "update_department": UPDATE_DEPARTMENT,
+    "update_contact": UPDATE_CONTACT,
     # Tier 2 — multi-step
     "create_invoice": CREATE_INVOICE,
     "create_multi_line_invoice": CREATE_MULTI_LINE_INVOICE,

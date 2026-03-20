@@ -53,6 +53,39 @@ class TripletexClient:
         elapsed = time.time() - t0
         return self._handle_response(resp, "DELETE", url, elapsed)
 
+    def _prewarm_caches(self):
+        """Fetch commonly needed IDs (department, division) before agent starts.
+
+        Resets call counters so these infrastructure lookups don't count
+        against the agent's efficiency score.
+        """
+        # Default department
+        try:
+            dept_result = requests.get(
+                f"{self.base_url}/department",
+                auth=self.auth,
+                params={"fields": "id", "count": 1},
+            )
+            if dept_result.status_code == 200:
+                depts = dept_result.json().get("values", [])
+                if depts:
+                    self._cache["default_department"] = depts[0]["id"]
+        except Exception:
+            pass
+        # Default division
+        try:
+            div_result = requests.get(
+                f"{self.base_url}/division",
+                auth=self.auth,
+                params={"fields": "id", "count": 1},
+            )
+            if div_result.status_code == 200:
+                divs = div_result.json().get("values", [])
+                if divs:
+                    self._cache["default_division"] = divs[0]["id"]
+        except Exception:
+            pass
+
     def get_cached(self, key: str) -> int | None:
         """Get a cached ID value (e.g., 'default_department', 'default_division')."""
         return self._cache.get(key)

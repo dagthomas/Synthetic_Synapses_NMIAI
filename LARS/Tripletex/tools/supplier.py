@@ -63,7 +63,7 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             params["organizationNumber"] = organizationNumber
         return client.get("/supplier", params=params)
 
-    def update_supplier(supplier_id: int, name: str = "", email: str = "", phoneNumber: str = "") -> dict:
+    def update_supplier(supplier_id: int, name: str = "", email: str = "", phoneNumber: str = "", version: int = -1) -> dict:
         """Update an existing supplier.
 
         Args:
@@ -71,10 +71,23 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             name: New supplier name (empty to keep unchanged).
             email: New email (empty to keep unchanged).
             phoneNumber: New phone number (empty to keep unchanged).
+            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
 
         Returns:
             The updated supplier or an error message.
         """
+        if version >= 0:
+            # Fast path: build minimal PUT body without GET
+            body = {"id": supplier_id, "version": version, "isSupplier": True}
+            if name:
+                body["name"] = name
+            if email:
+                body["email"] = email
+            if phoneNumber:
+                body["phoneNumber"] = phoneNumber
+            return client.put(f"/supplier/{supplier_id}", json=body)
+
+        # Fallback: GET first to preserve existing fields
         _WRITABLE = {
             "id", "version", "name", "email", "phoneNumber", "phoneNumberMobile",
             "organizationNumber", "isSupplier", "isCustomer", "accountManager",

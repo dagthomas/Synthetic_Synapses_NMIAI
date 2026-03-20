@@ -9,6 +9,7 @@ import {
   Table2,
   Zap,
   Shield,
+  ScrollText,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -22,6 +23,7 @@ export type PanelId =
   | "sandbox"
   | "replay"
   | "explorer"
+  | "logs"
   | "report"
   | "errors"
   | "coverage"
@@ -42,10 +44,11 @@ const NAV_MAIN: NavItem[] = [
 ]
 
 const NAV_DATA: NavItem[] = [
-  { id: "report", label: "Report", icon: FileText, shortcut: "5" },
-  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "6" },
-  { id: "coverage", label: "API Coverage", icon: Shield, shortcut: "7" },
-  { id: "results", label: "Results", icon: Table2, shortcut: "8" },
+  { id: "logs", label: "Solve Logs", icon: ScrollText, shortcut: "5" },
+  { id: "report", label: "Report", icon: FileText, shortcut: "6" },
+  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "7" },
+  { id: "coverage", label: "API Coverage", icon: Shield, shortcut: "8" },
+  { id: "results", label: "Results", icon: Table2, shortcut: "9" },
 ]
 
 interface SidebarProps {

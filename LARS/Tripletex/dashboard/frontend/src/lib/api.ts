@@ -11,6 +11,7 @@ import type {
   RunStats,
   Languages,
   CoverageCategory,
+  SolveLog,
 } from "@/types/api"
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
@@ -93,3 +94,7 @@ export const fetchToolCatalog = () =>
 // Coverage
 export const fetchCoverage = () =>
   request<CoverageCategory[]>("/api/coverage")
+
+// Solve Logs
+export const fetchLogs = (limit = 100) =>
+  request<SolveLog[]>(`/api/logs?limit=${limit}`)

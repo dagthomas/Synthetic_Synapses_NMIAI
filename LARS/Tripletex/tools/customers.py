@@ -52,7 +52,7 @@ def build_customer_tools(client: TripletexClient) -> dict:
             body["physicalAddress"] = addr
         return client.post("/customer", json=body)
 
-    def update_customer(customer_id: int, name: str = "", email: str = "", phoneNumber: str = "") -> dict:
+    def update_customer(customer_id: int, name: str = "", email: str = "", phoneNumber: str = "", version: int = -1) -> dict:
         """Update an existing customer's fields.
 
         Args:
@@ -60,11 +60,23 @@ def build_customer_tools(client: TripletexClient) -> dict:
             name: New name (leave empty to keep current).
             email: New email (leave empty to keep current).
             phoneNumber: New phone number (leave empty to keep current).
+            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
 
         Returns:
             The updated customer data or an error message.
         """
-        # Tripletex PUT requires writable fields — GET first, keep only writable, merge
+        if version >= 0:
+            # Fast path: build minimal PUT body without GET
+            body = {"id": customer_id, "version": version, "isCustomer": True}
+            if name:
+                body["name"] = name
+            if email:
+                body["email"] = email
+            if phoneNumber:
+                body["phoneNumber"] = phoneNumber
+            return client.put(f"/customer/{customer_id}", json=body)
+
+        # Fallback: GET first to preserve existing fields
         _WRITABLE = {
             "id", "version", "name", "email", "phoneNumber", "phoneNumberMobile",
             "organizationNumber", "isCustomer", "isSupplier", "accountManager",
@@ -74,7 +86,6 @@ def build_customer_tools(client: TripletexClient) -> dict:
         current = client.get(f"/customer/{customer_id}", params={"fields": "*"})
         full = current.get("value", {})
         body = {k: v for k, v in full.items() if k in _WRITABLE} if full else {}
-        # Strip None values that cause validation errors
         body = {k: v for k, v in body.items() if v is not None}
         if name:
             body["name"] = name

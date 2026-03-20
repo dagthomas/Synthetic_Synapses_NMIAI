@@ -50,6 +50,7 @@ def build_product_tools(client: TripletexClient) -> dict:
         priceExcludingVatCurrency: float = 0.0,
         priceIncludingVatCurrency: float = 0.0,
         description: str = "",
+        version: int = -1,
     ) -> dict:
         """Update an existing product.
 
@@ -59,10 +60,25 @@ def build_product_tools(client: TripletexClient) -> dict:
             priceExcludingVatCurrency: New price excl VAT (0 to keep current).
             priceIncludingVatCurrency: New price incl VAT (0 to keep current).
             description: New description (empty to keep current).
+            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
 
         Returns:
             The updated product or an error message.
         """
+        if version >= 0:
+            # Fast path: build minimal PUT body without GET
+            body = {"id": product_id, "version": version}
+            if name:
+                body["name"] = name
+            if priceExcludingVatCurrency:
+                body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
+            if priceIncludingVatCurrency:
+                body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
+            if description:
+                body["description"] = description
+            return client.put(f"/product/{product_id}", json=body)
+
+        # Fallback: GET first to preserve existing fields
         _WRITABLE = {
             "id", "version", "name", "number", "description",
             "priceExcludingVatCurrency", "priceIncludingVatCurrency",
@@ -75,11 +91,9 @@ def build_product_tools(client: TripletexClient) -> dict:
             body["name"] = name
         if priceExcludingVatCurrency:
             body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
-            # Remove stale incl-VAT so Tripletex recalculates it
             body.pop("priceIncludingVatCurrency", None)
         if priceIncludingVatCurrency:
             body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
-            # Remove stale excl-VAT so Tripletex recalculates it
             body.pop("priceExcludingVatCurrency", None)
         if description:
             body["description"] = description

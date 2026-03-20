@@ -36,17 +36,26 @@ def build_department_tools(client: TripletexClient) -> dict:
             params["name"] = name
         return client.get("/department", params=params)
 
-    def update_department(department_id: int, name: str = "", departmentNumber: str = "") -> dict:
+    def update_department(department_id: int, name: str = "", departmentNumber: str = "", version: int = -1) -> dict:
         """Update a department.
 
         Args:
             department_id: The ID of the department to update.
             name: New name (empty to keep current).
             departmentNumber: New number (empty to keep current).
+            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
 
         Returns:
             The updated department or error.
         """
+        if version >= 0:
+            body = {"id": department_id, "version": version}
+            if name:
+                body["name"] = name
+            if departmentNumber:
+                body["departmentNumber"] = departmentNumber
+            return client.put(f"/department/{department_id}", json=body)
+
         _WRITABLE = {"id", "version", "name", "departmentNumber", "departmentManager", "isInactive"}
         current = client.get(f"/department/{department_id}", params={"fields": "*"})
         full = current.get("value", {})

@@ -12,6 +12,7 @@ import { ReportPanel } from "@/components/panels/report-panel"
 import { ErrorsPanel } from "@/components/panels/errors-panel"
 import { ResultsPanel } from "@/components/panels/results-panel"
 import { CoveragePanel } from "@/components/panels/coverage-panel"
+import { LogsPanel } from "@/components/panels/logs-panel"
 import { useRuns } from "@/hooks/use-api"
 import type { EvalRun } from "@/types/api"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -68,6 +69,7 @@ function Dashboard() {
             {activePanel === "sandbox" && <SandboxPanel />}
             {activePanel === "replay" && <ReplayPanel />}
             {activePanel === "explorer" && <ToolExplorerPanel />}
+            {activePanel === "logs" && <LogsPanel />}
             {activePanel === "report" && <ReportPanel batchRuns={batchRuns} />}
             {activePanel === "errors" && <ErrorsPanel />}
             {activePanel === "coverage" && <CoveragePanel />}

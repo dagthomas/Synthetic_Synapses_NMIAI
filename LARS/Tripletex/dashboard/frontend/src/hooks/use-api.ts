@@ -6,6 +6,7 @@ import {
   fetchSandboxHealth,
   fetchPayloads,
   fetchCoverage,
+  fetchLogs,
 } from "@/lib/api"
 
 export function useTasks() {
@@ -47,5 +48,12 @@ export function useCoverage() {
   return useSWR("coverage", fetchCoverage, {
     revalidateOnFocus: false,
     dedupingInterval: 60_000,
+  })
+}
+
+export function useLogs(enabled = true) {
+  return useSWR(enabled ? "logs" : null, () => fetchLogs(100), {
+    refreshInterval: 10_000,
+    dedupingInterval: 5_000,
   })
 }

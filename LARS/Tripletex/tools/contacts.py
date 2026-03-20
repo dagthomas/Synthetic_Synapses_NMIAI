@@ -60,6 +60,8 @@ def build_contact_tools(client: TripletexClient) -> dict:
         email: str = "",
         phoneNumberMobile: str = "",
         isInactive: bool = False,
+        version: int = -1,
+        customer_id: int = 0,
     ) -> dict:
         """Update a contact person. Set isInactive=True to deactivate.
 
@@ -70,10 +72,26 @@ def build_contact_tools(client: TripletexClient) -> dict:
             email: New email (empty to keep).
             phoneNumberMobile: New phone (empty to keep).
             isInactive: Set to True to deactivate the contact.
+            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
+            customer_id: Customer ID (required for fast path when version is provided).
 
         Returns:
             Updated contact or error.
         """
+        if version >= 0 and customer_id:
+            body = {"id": contact_id, "version": version, "customer": {"id": customer_id}}
+            if firstName:
+                body["firstName"] = firstName
+            if lastName:
+                body["lastName"] = lastName
+            if email:
+                body["email"] = email
+            if phoneNumberMobile:
+                body["phoneNumberMobile"] = phoneNumberMobile
+            if isInactive:
+                body["isInactive"] = True
+            return client.put(f"/contact/{contact_id}", json=body)
+
         _WRITABLE = {
             "id", "version", "firstName", "lastName", "email",
             "phoneNumberMobile", "phoneNumberWork", "customer",

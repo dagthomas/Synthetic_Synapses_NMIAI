@@ -159,3 +159,21 @@ export interface CoverageCategory {
   covered: string[]
   uncovered: string[]
 }
+
+export interface SolveLog {
+  id: number | null
+  request_id: string
+  prompt: string
+  files_json: string
+  base_url: string
+  api_calls: number
+  api_errors: number
+  elapsed_seconds: number
+  agent_response: string
+  tool_calls_json?: string
+  api_log_json?: string
+  task_type?: string
+  tool_count?: number
+  created_at: string
+  source?: string
+}

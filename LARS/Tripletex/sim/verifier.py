@@ -1286,7 +1286,8 @@ def verify_task(
         return verify_contact(client, task_def, expected)
 
     # Update tasks (Tier 1)
-    if name in ("update_employee", "update_customer", "update_product", "update_supplier"):
+    if name in ("update_employee", "update_customer", "update_product", "update_supplier",
+                 "update_department", "update_contact"):
         return verify_update(client, task_def, expected)
 
     # Invoice tasks (Tier 2)
