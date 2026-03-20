@@ -27,6 +27,8 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
         }
         if invoiceNumber:
             body["invoiceNumber"] = invoiceNumber
+        if amount:
+            body["amount"] = amount
         return client.post("/supplierInvoice", json=body)
 
     def search_incoming_invoices(

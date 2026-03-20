@@ -59,8 +59,9 @@ def build_contact_tools(client: TripletexClient) -> dict:
         lastName: str = "",
         email: str = "",
         phoneNumberMobile: str = "",
+        isInactive: bool = False,
     ) -> dict:
-        """Update a contact person.
+        """Update a contact person. Set isInactive=True to deactivate.
 
         Args:
             contact_id: ID of the contact to update.
@@ -68,6 +69,7 @@ def build_contact_tools(client: TripletexClient) -> dict:
             lastName: New last name (empty to keep).
             email: New email (empty to keep).
             phoneNumberMobile: New phone (empty to keep).
+            isInactive: Set to True to deactivate the contact.
 
         Returns:
             Updated contact or error.
@@ -92,6 +94,8 @@ def build_contact_tools(client: TripletexClient) -> dict:
             body["email"] = email
         if phoneNumberMobile:
             body["phoneNumberMobile"] = phoneNumberMobile
+        if isInactive:
+            body["isInactive"] = True
         return client.put(f"/contact/{contact_id}", json=body)
 
     def delete_contact(contact_id: int) -> dict:

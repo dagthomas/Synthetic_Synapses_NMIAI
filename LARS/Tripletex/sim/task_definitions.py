@@ -46,6 +46,7 @@ class TaskDef:
     baseline_calls: int
     extra_verifications: list[dict] = field(default_factory=list)
     pre_create: Optional[dict] = None
+    sandbox_broken: bool = False  # True = cannot be verified in dev sandbox
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -60,21 +61,28 @@ CREATE_EMPLOYEE = TaskDef(
 Generate a task to create an employee in Tripletex.
 Always include: firstName, lastName, email.
 50% chance: include a mobile phone number (phoneNumberMobile, +47 format).
-Use realistic Scandinavian names. Email domain: example.com or test.no.
+40% chance: make the employee an administrator/kontoadministrator (userType should be "EXTENDED").
+30% chance: include dateOfBirth (YYYY-MM-DD, realistic adult age).
+Use varied, uncommon Scandinavian names to avoid collisions (avoid Lars, Erik, Henrik, Silje, Johansen, Olsen, Hansen).
+Examples: Tormod, Halvard, Bjarte, Solveig, Ragnhild, Astrid, Grønnli, Bergsland, Thorsnes, Kjærstad.
+Email domain: example.com or test.no.
 
 Expected fields:
 - firstName (string)
 - lastName (string)
 - email (string)
-- phoneNumberMobile (string, only if included)""",
+- phoneNumberMobile (string, only if included)
+- userType (string, "EXTENDED" if admin, "STANDARD" otherwise — always include this field)
+- dateOfBirth (string YYYY-MM-DD, only if included)""",
     entity_type="employee",
-    search_fields=["firstName", "lastName"],
+    search_fields=["firstName", "lastName", "email"],
     field_checks=[
         FieldCheck("_found", 2),
         FieldCheck("firstName", 2),
         FieldCheck("lastName", 2),
         FieldCheck("email", 2),
-        FieldCheck("phoneNumberMobile", 2),
+        FieldCheck("phoneNumberMobile", 1),
+        FieldCheck("dateOfBirth", 1),
     ],
     baseline_calls=1,
 )
@@ -88,20 +96,27 @@ Generate a task to create a customer in Tripletex.
 Always include: name (company name ending in AS, ANS, or DA), email.
 30% chance: include organizationNumber (9-digit Norwegian org number).
 30% chance: include phoneNumber (+47 format).
+50% chance: include a postal address with addressLine1 (street), postalCode (4-digit), city.
 
 Expected fields:
 - name (string)
 - email (string)
 - organizationNumber (string, only if included)
-- phoneNumber (string, only if included)""",
+- phoneNumber (string, only if included)
+- addressLine1 (string, only if address included)
+- postalCode (string, only if address included)
+- city (string, only if address included)""",
     entity_type="customer",
     search_fields=["name"],
     field_checks=[
         FieldCheck("_found", 2),
-        FieldCheck("name", 2),
-        FieldCheck("email", 2),
-        FieldCheck("organizationNumber", 2),
-        FieldCheck("phoneNumber", 2),
+        FieldCheck("name", 1),
+        FieldCheck("email", 1),
+        FieldCheck("organizationNumber", 1),
+        FieldCheck("phoneNumber", 1),
+        FieldCheck("addressLine1", 1),
+        FieldCheck("postalCode", 1),
+        FieldCheck("city", 1),
     ],
     baseline_calls=1,
 )
@@ -160,20 +175,30 @@ CREATE_SUPPLIER = TaskDef(
 Generate a task to create a supplier in Tripletex.
 Always include: name (company name ending in AS), email.
 50% chance: include organizationNumber (9-digit).
+30% chance: include phoneNumber (+47 format).
+40% chance: include a postal address with addressLine1 (street), postalCode (4-digit), city.
 
 The prompt should make clear this is a SUPPLIER (leverandør), not a customer.
 
 Expected fields:
 - name (string)
 - email (string)
-- organizationNumber (string, only if included)""",
+- organizationNumber (string, only if included)
+- phoneNumber (string, only if included)
+- addressLine1 (string, only if address included)
+- postalCode (string, only if address included)
+- city (string, only if address included)""",
     entity_type="supplier",
     search_fields=["name"],
     field_checks=[
         FieldCheck("_found", 2),
-        FieldCheck("name", 3),
-        FieldCheck("email", 3),
-        FieldCheck("organizationNumber", 2),
+        FieldCheck("name", 2),
+        FieldCheck("email", 2),
+        FieldCheck("organizationNumber", 1),
+        FieldCheck("phoneNumber", 1),
+        FieldCheck("addressLine1", 1),
+        FieldCheck("postalCode", 1),
+        FieldCheck("city", 1),
     ],
     baseline_calls=1,
 )
@@ -428,7 +453,7 @@ Include ALL:
 - invoice_date: March 2026 (YYYY-MM-DD)
 - due_date: 14-30 days after invoice_date (YYYY-MM-DD)
 - payment_date: same as or a few days after invoice_date (YYYY-MM-DD)
-- payment_amount: total = product_price * quantity * 1.25 (25% MVA)
+- payment_amount: total = product_price * quantity (NO VAT — sandbox products have no VAT by default)
 
 Expected fields:
 - customer_name, customer_email, product_name, product_price (number)
@@ -467,6 +492,7 @@ The prompt should say: create the invoice, then immediately create a credit note
 
 Expected fields:
 - customer_name (string)
+- customer_email (string)
 - product_name (string)
 - invoice_date (string, YYYY-MM-DD)""",
     entity_type="invoice",
@@ -488,7 +514,9 @@ CREATE_EMPLOYEE_WITH_EMPLOYMENT = TaskDef(
     gen_instruction="""\
 Generate a task to create an employee with employment details in Tripletex.
 Include ALL:
-- firstName, lastName, email
+- firstName, lastName — use varied, uncommon Scandinavian names (avoid Lars, Erik, Henrik, Silje, Johansen, Olsen, Hansen).
+  Examples: Bjarte, Halvard, Torgeir, Solveig, Ragnhild, Ingvild, Kjærstad, Thorsnes, Grønnli, Bergsland.
+- email: use the pattern firstname.lastname@firma.no or test.no
 - start_date: employment start date (YYYY-MM-DD, in 2026)
 - employment_type: "maritim" or "ordinær"
 
@@ -500,7 +528,7 @@ Expected fields:
 - email (string)
 - start_date (string, YYYY-MM-DD)""",
     entity_type="employee",
-    search_fields=["firstName", "lastName"],
+    search_fields=["firstName", "lastName", "email"],
     field_checks=[
         FieldCheck("_found", 2),
         FieldCheck("firstName", 1),
@@ -629,12 +657,14 @@ The task is essentially: make an invoice, then issue a credit note to cancel it.
 
 Include ALL:
 - customer_name: company name ending in AS
+- customer_email: email for the customer
 - product_name: product name
 - product_price: price (100-5000)
 - invoice_date: March 2026 (YYYY-MM-DD)
 
 Expected fields:
 - customer_name (string)
+- customer_email (string)
 - product_name (string)
 - invoice_date (string, YYYY-MM-DD)""",
     entity_type="invoice",
@@ -680,6 +710,307 @@ Expected fields:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# TIER 1 — Additional (update/delete for basic entities)
+# ═══════════════════════════════════════════════════════════════════════
+
+UPDATE_PRODUCT = TaskDef(
+    name="update_product",
+    tier=1,
+    description="Update a product's price or name",
+    gen_instruction="""\
+Generate a task to update an existing product in Tripletex.
+The prompt should first instruct to create the product, then update a field.
+
+Include ALL:
+- name: original product name
+- priceExcludingVatCurrency: original price (100-10000)
+Pick ONE to update (50/50):
+- new_name: a new product name
+- new_priceExcludingVatCurrency: a new price
+
+Expected fields:
+- name (string)
+- priceExcludingVatCurrency (number)
+- new_name (string, only if updating name)
+- new_priceExcludingVatCurrency (number, only if updating price)""",
+    entity_type="product",
+    search_fields=["name"],
+    field_checks=[
+        FieldCheck("_found", 2),
+        FieldCheck("name", 2),
+        FieldCheck("new_name", 3),
+        FieldCheck("new_priceExcludingVatCurrency", 3),
+    ],
+    baseline_calls=2,
+)
+
+UPDATE_SUPPLIER = TaskDef(
+    name="update_supplier",
+    tier=1,
+    description="Update a supplier's information",
+    gen_instruction="""\
+Generate a task to update an existing supplier in Tripletex.
+The prompt should first instruct to create the supplier, then update a field.
+
+Include ALL:
+- name: supplier company name ending in AS
+- email: original email
+Pick ONE to update:
+- new_email: the new email to set
+- new_phoneNumber: the new phone number (+47 format)
+
+Expected fields:
+- name (string)
+- email (string)
+- new_email (string, only if updating email)
+- new_phoneNumber (string, only if updating phone)""",
+    entity_type="supplier",
+    search_fields=["name"],
+    field_checks=[
+        FieldCheck("_found", 2),
+        FieldCheck("name", 2),
+        FieldCheck("new_email", 3),
+        FieldCheck("new_phoneNumber", 3),
+    ],
+    baseline_calls=2,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TIER 2 — Additional multi-step tasks
+# ═══════════════════════════════════════════════════════════════════════
+
+CREATE_SUPPLIER_INVOICE = TaskDef(
+    name="create_supplier_invoice",
+    tier=2,
+    description="Create an incoming invoice from a supplier",
+    sandbox_broken=True,  # POST /supplierInvoice returns 500 in dev sandbox
+    gen_instruction="""\
+Generate a task to create an incoming invoice (leverandørfaktura) in Tripletex.
+Include ALL:
+- supplier_name: company name ending in AS
+- supplier_email: email for the supplier
+- invoice_date: March 2026 (YYYY-MM-DD)
+- invoice_number: a vendor invoice number (e.g. "F-2026-001")
+
+The prompt should instruct to first create the supplier, then register the incoming invoice.
+
+Expected fields:
+- supplier_name (string)
+- supplier_email (string)
+- invoice_date (string, YYYY-MM-DD)
+- invoice_number (string)""",
+    entity_type="supplierInvoice",
+    search_fields=[],
+    field_checks=[
+        FieldCheck("_supplier_found", 2),
+        FieldCheck("_found", 2),
+        FieldCheck("supplier_name", 1),
+        FieldCheck("invoice_date", 2),
+        FieldCheck("invoice_number", 2),
+    ],
+    baseline_calls=2,
+)
+
+CREATE_TRAVEL_EXPENSE_WITH_COSTS = TaskDef(
+    name="create_travel_expense_with_costs",
+    tier=2,
+    description="Create a travel expense with cost lines",
+    gen_instruction="""\
+Generate a task to create a travel expense report WITH cost/expense items.
+Include ALL:
+- employee_firstName, employee_lastName, employee_email
+- title: travel expense title
+- departure_date: a date in 2026 (YYYY-MM-DD)
+- return_date: 1-5 days after departure (YYYY-MM-DD)
+- cost_amount: amount for a cost item (100-5000 NOK)
+- cost_description: what the cost was for (e.g. "Hotell", "Taxi", "Fly")
+
+Expected fields:
+- employee_firstName (string)
+- employee_lastName (string)
+- title (string)
+- departure_date (string, YYYY-MM-DD)
+- return_date (string, YYYY-MM-DD)
+- cost_amount (number)""",
+    entity_type="travelExpense",
+    search_fields=["title"],
+    field_checks=[
+        FieldCheck("_employee_found", 1),
+        FieldCheck("_found", 2),
+        FieldCheck("title", 1),
+        FieldCheck("departure_date", 2),
+        FieldCheck("return_date", 2),
+        FieldCheck("_cost_found", 2),
+    ],
+    baseline_calls=3,
+)
+
+CREATE_PROJECT_WITH_PM = TaskDef(
+    name="create_project_with_pm",
+    tier=2,
+    description="Create a project with a new project manager",
+    gen_instruction="""\
+Generate a task to create a project with a specific project manager.
+Include ALL:
+- project_name: realistic project name
+- customer_name: company name ending in AS
+- pm_firstName: project manager's first name
+- pm_lastName: project manager's last name
+- pm_email: project manager's email
+- start_date: a date in 2026 (YYYY-MM-DD)
+
+The prompt should instruct to create the customer, create the project manager as an employee,
+and then create the project with them as project manager (prosjektleder).
+
+Expected fields:
+- project_name (string)
+- customer_name (string)
+- pm_firstName (string)
+- pm_lastName (string)
+- start_date (string, YYYY-MM-DD)""",
+    entity_type="project",
+    search_fields=["project_name"],
+    field_checks=[
+        FieldCheck("_found", 2),
+        FieldCheck("project_name", 2),
+        FieldCheck("customer_name", 1),
+        FieldCheck("_pm_found", 2),
+        FieldCheck("start_date", 2),
+    ],
+    baseline_calls=3,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TIER 3 — Additional advanced tasks
+# ═══════════════════════════════════════════════════════════════════════
+
+DELETE_SUPPLIER = TaskDef(
+    name="delete_supplier",
+    tier=3,
+    description="Delete a supplier",
+    gen_instruction="""\
+Generate a task to delete a supplier from Tripletex.
+Reference them by company name.
+
+Include:
+- name: company name ending in AS
+
+Expected fields:
+- name (string)""",
+    entity_type="supplier",
+    search_fields=["name"],
+    field_checks=[
+        FieldCheck("_deleted", 5),
+        FieldCheck("name", 3),
+    ],
+    baseline_calls=2,
+    pre_create={"type": "supplier", "fields": ["name"]},
+)
+
+DELETE_PRODUCT = TaskDef(
+    name="delete_product",
+    tier=3,
+    description="Delete a product",
+    gen_instruction="""\
+Generate a task to delete a product from Tripletex.
+Reference it by name.
+
+Include:
+- name: product name
+
+Expected fields:
+- name (string)""",
+    entity_type="product",
+    search_fields=["name"],
+    field_checks=[
+        FieldCheck("_deleted", 5),
+        FieldCheck("name", 3),
+    ],
+    baseline_calls=2,
+    pre_create={"type": "product", "fields": ["name"]},
+)
+
+DELETE_DEPARTMENT = TaskDef(
+    name="delete_department",
+    tier=3,
+    description="Delete a department",
+    gen_instruction="""\
+Generate a task to delete a department from Tripletex.
+Reference it by name.
+
+Include:
+- name: department name (e.g. "Salg", "IT-avdeling")
+
+Expected fields:
+- name (string)""",
+    entity_type="department",
+    search_fields=["name"],
+    field_checks=[
+        FieldCheck("_deleted", 5),
+        FieldCheck("name", 3),
+    ],
+    baseline_calls=2,
+    pre_create={"type": "department", "fields": ["name"]},
+)
+
+DELETE_CONTACT = TaskDef(
+    name="delete_contact",
+    tier=3,
+    description="Delete a contact person",
+    gen_instruction="""\
+Generate a task to delete a contact person from Tripletex.
+Reference them by first and last name.
+
+Include:
+- firstName: contact's first name
+- lastName: contact's last name
+
+Expected fields:
+- firstName (string)
+- lastName (string)""",
+    entity_type="contact",
+    search_fields=["firstName", "lastName"],
+    field_checks=[
+        FieldCheck("_deleted", 5),
+        FieldCheck("firstName", 2),
+        FieldCheck("lastName", 1),
+    ],
+    baseline_calls=2,
+    pre_create={"type": "contact", "fields": ["firstName", "lastName"]},
+)
+
+DELETE_EMPLOYEE = TaskDef(
+    name="delete_employee",
+    tier=3,
+    description="Deactivate an employee",
+    sandbox_broken=True,  # DELETE returns 403, employee model has no isInactive
+    gen_instruction="""\
+Generate a task to deactivate/remove an employee from Tripletex.
+NOTE: Tripletex does not allow deleting employees with employments.
+The agent should search for the employee and either delete or deactivate them.
+
+Include:
+- firstName: employee's first name
+- lastName: employee's last name
+
+Expected fields:
+- firstName (string)
+- lastName (string)""",
+    entity_type="employee",
+    search_fields=["firstName", "lastName"],
+    field_checks=[
+        FieldCheck("_deleted", 5),
+        FieldCheck("firstName", 2),
+        FieldCheck("lastName", 1),
+    ],
+    baseline_calls=2,
+    pre_create={"type": "employee", "fields": ["firstName", "lastName"]},
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Registry
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -693,6 +1024,8 @@ ALL_TASKS: dict[str, TaskDef] = {
     "create_contact": CREATE_CONTACT,
     "update_employee": UPDATE_EMPLOYEE,
     "update_customer": UPDATE_CUSTOMER,
+    "update_product": UPDATE_PRODUCT,
+    "update_supplier": UPDATE_SUPPLIER,
     # Tier 2 — multi-step
     "create_invoice": CREATE_INVOICE,
     "create_multi_line_invoice": CREATE_MULTI_LINE_INVOICE,
@@ -701,6 +1034,9 @@ ALL_TASKS: dict[str, TaskDef] = {
     "invoice_with_payment": INVOICE_WITH_PAYMENT,
     "create_credit_note": CREATE_CREDIT_NOTE,
     "create_employee_with_employment": CREATE_EMPLOYEE_WITH_EMPLOYMENT,
+    "create_supplier_invoice": CREATE_SUPPLIER_INVOICE,
+    "create_travel_expense_with_costs": CREATE_TRAVEL_EXPENSE_WITH_COSTS,
+    "create_project_with_pm": CREATE_PROJECT_WITH_PM,
     # Tier 3 — advanced
     "delete_travel_expense": DELETE_TRAVEL_EXPENSE,
     "delete_customer": DELETE_CUSTOMER,
@@ -708,6 +1044,11 @@ ALL_TASKS: dict[str, TaskDef] = {
     "reverse_voucher": REVERSE_VOUCHER,
     "delete_invoice": DELETE_INVOICE,
     "create_opening_balance": CREATE_OPENING_BALANCE,
+    "delete_supplier": DELETE_SUPPLIER,
+    "delete_product": DELETE_PRODUCT,
+    "delete_department": DELETE_DEPARTMENT,
+    "delete_contact": DELETE_CONTACT,
+    "delete_employee": DELETE_EMPLOYEE,
 }
 
 TIER1_TASKS = [t for t in ALL_TASKS.values() if t.tier == 1]

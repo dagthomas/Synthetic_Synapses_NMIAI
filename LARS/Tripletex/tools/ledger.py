@@ -68,15 +68,15 @@ def build_ledger_tools(client: TripletexClient) -> dict:
                     entry["account"] = {"id": accts[0]["id"]}
                 else:
                     return {"error": True, "message": f"Account {p['accountNumber']} not found"}
-            # Tripletex uses 'amount' (positive=debit, negative=credit)
+            # Tripletex requires 'amountGross' (positive=debit, negative=credit)
             amount = p.get("amount", 0)
             if not amount:
                 # Support legacy debit/credit format
                 debit = p.get("debitAmount", 0)
                 credit = p.get("creditAmount", 0)
                 amount = debit - credit
-            entry["amount"] = amount
-            entry["amountCurrency"] = amount
+            entry["amountGross"] = amount
+            entry["amountGrossCurrency"] = amount
             formatted.append(entry)
         body = {
             "date": date,

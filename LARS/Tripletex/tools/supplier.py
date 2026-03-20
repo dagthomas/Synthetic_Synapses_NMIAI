@@ -9,6 +9,9 @@ def build_supplier_tools(client: TripletexClient) -> dict:
         email: str = "",
         phoneNumber: str = "",
         organizationNumber: str = "",
+        addressLine1: str = "",
+        postalCode: str = "",
+        city: str = "",
     ) -> dict:
         """Create a new supplier.
 
@@ -17,6 +20,9 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             email: Supplier email address.
             phoneNumber: Supplier phone number.
             organizationNumber: Norwegian org number (9 digits).
+            addressLine1: Street address (e.g. "Storgata 1").
+            postalCode: Postal/zip code (e.g. "0182").
+            city: City name (e.g. "Oslo").
 
         Returns:
             The created supplier with id, or an error message.
@@ -28,6 +34,16 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             body["phoneNumber"] = phoneNumber
         if organizationNumber:
             body["organizationNumber"] = organizationNumber
+        if addressLine1 or postalCode or city:
+            addr = {}
+            if addressLine1:
+                addr["addressLine1"] = addressLine1
+            if postalCode:
+                addr["postalCode"] = postalCode
+            if city:
+                addr["city"] = city
+            body["postalAddress"] = addr
+            body["physicalAddress"] = addr
         return client.post("/supplier", json=body)
 
     def search_suppliers(name: str = "", organizationNumber: str = "") -> dict:

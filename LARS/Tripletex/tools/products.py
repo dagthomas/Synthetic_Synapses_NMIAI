@@ -75,8 +75,12 @@ def build_product_tools(client: TripletexClient) -> dict:
             body["name"] = name
         if priceExcludingVatCurrency:
             body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
+            # Remove stale incl-VAT so Tripletex recalculates it
+            body.pop("priceIncludingVatCurrency", None)
         if priceIncludingVatCurrency:
             body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
+            # Remove stale excl-VAT so Tripletex recalculates it
+            body.pop("priceExcludingVatCurrency", None)
         if description:
             body["description"] = description
         return client.put(f"/product/{product_id}", json=body)

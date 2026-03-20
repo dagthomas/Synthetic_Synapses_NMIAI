@@ -57,8 +57,8 @@ def build_employee_tools(client: TripletexClient) -> dict:
             body["dateOfBirth"] = dateOfBirth
         return client.post("/employee", json=body)
 
-    def update_employee(employee_id: int, firstName: str = "", lastName: str = "", email: str = "", phoneNumberMobile: str = "") -> dict:
-        """Update an existing employee's fields.
+    def update_employee(employee_id: int, firstName: str = "", lastName: str = "", email: str = "", phoneNumberMobile: str = "", isInactive: bool = False) -> dict:
+        """Update an existing employee's fields. Set isInactive=True to deactivate.
 
         Args:
             employee_id: The ID of the employee to update.
@@ -66,6 +66,7 @@ def build_employee_tools(client: TripletexClient) -> dict:
             lastName: New last name (leave empty to keep current).
             email: New email (leave empty to keep current).
             phoneNumberMobile: New phone number (leave empty to keep current).
+            isInactive: Set to True to deactivate the employee.
 
         Returns:
             The updated employee data or an error message.
@@ -76,7 +77,7 @@ def build_employee_tools(client: TripletexClient) -> dict:
             "phoneNumberMobile", "phoneNumberHome", "phoneNumberWork",
             "dateOfBirth", "department", "employeeNumber", "address",
             "userType", "nationalIdentityNumber", "bankAccountNumber",
-            "comments", "employeeCategory",
+            "comments", "employeeCategory", "isInactive",
         }
         current = client.get(f"/employee/{employee_id}", params={"fields": "*"})
         full = current.get("value", {})
@@ -96,6 +97,8 @@ def build_employee_tools(client: TripletexClient) -> dict:
             body["lastName"] = lastName
         if phoneNumberMobile:
             body["phoneNumberMobile"] = phoneNumberMobile
+        if isInactive:
+            body["isInactive"] = True
         return client.put(f"/employee/{employee_id}", json=body)
 
     def search_employees(firstName: str = "", lastName: str = "", email: str = "") -> dict:

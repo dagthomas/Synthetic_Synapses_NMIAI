@@ -46,15 +46,17 @@ Create employee as admin (1 call):
   → "kontoadministrator"/"account administrator"/"administrator" → userType="EXTENDED"
 
 Create customer (1 call):
-  → create_customer(name, email, organizationNumber if given, phoneNumber if given)
+  → create_customer(name, email, organizationNumber if given, phoneNumber if given, addressLine1, postalCode, city if address given)
   → If prompt says "org.nr" or "organisasjonsnummer" → include it
+  → If prompt mentions an address/adresse → include addressLine1, postalCode, city
 
 Create product (1 call):
   → create_product(name, priceExcludingVatCurrency, number if given)
 
 Create supplier (1 call):
-  → create_supplier(name, email, organizationNumber if given, phoneNumber if given)
+  → create_supplier(name, email, organizationNumber if given, phoneNumber if given, addressLine1, postalCode, city if address given)
   → "leverandør" = supplier
+  → If prompt mentions an address/adresse → include addressLine1, postalCode, city
 
 Create department (1 call):
   → create_department(name, departmentNumber if given)
@@ -141,6 +143,15 @@ Delete supplier (2 calls):
 Delete product (2 calls):
   → search_products(name) → delete_product(product_id)
 
+Delete contact (2-3 calls):
+  → search_contacts(firstName, lastName) → delete_contact(contact_id)
+  → If DELETE returns 403/error: update_contact(contact_id, isInactive=True) to deactivate instead
+
+Delete employee / deaktiver ansatt (2-3 calls):
+  → search_employees(firstName, lastName) → update_employee(employee_id, isInactive=True)
+  → Tripletex does NOT allow deleting employees — always deactivate with isInactive=True
+  → "slett ansatt"/"deaktiver ansatt"/"fjern ansatt" = deactivate employee
+
 Ledger correction / korrigeringsbilag (1 call):
   → create_voucher(date, description, postings=[{{accountNumber, amount}}])
   → Postings MUST balance: sum of all amounts = 0
@@ -211,7 +222,9 @@ KEY NORWEGIAN TERMS:
 - lønn = salary, arbeidstid = working hours, årsoppgjør = year-end
 - leverandørfaktura/inngående faktura = supplier/incoming invoice
 - bankavstemming = bank reconciliation, åpningsbalanse = opening balance
-- MVA = VAT, moms = VAT, diett = per diem, kjøregodtgjørelse = mileage allowance"""
+- MVA = VAT, moms = VAT, diett = per diem, kjøregodtgjørelse = mileage allowance
+- adresse = address, postadresse = postal address, gateadresse = street address
+- postnummer = postal code, poststed = city, gate/vei = street"""
 
 
 def create_agent(tools: list) -> LlmAgent:

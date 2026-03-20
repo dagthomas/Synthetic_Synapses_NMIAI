@@ -11,6 +11,9 @@ def build_customer_tools(client: TripletexClient) -> dict:
         isSupplier: bool = False,
         phoneNumber: str = "",
         organizationNumber: str = "",
+        addressLine1: str = "",
+        postalCode: str = "",
+        city: str = "",
     ) -> dict:
         """Create a new customer (or supplier) in Tripletex.
 
@@ -21,6 +24,9 @@ def build_customer_tools(client: TripletexClient) -> dict:
             isSupplier: Whether this is a supplier.
             phoneNumber: Contact phone number.
             organizationNumber: Norwegian org number.
+            addressLine1: Street address (e.g. "Storgata 1").
+            postalCode: Postal/zip code (e.g. "0182").
+            city: City name (e.g. "Oslo").
 
         Returns:
             The created customer with id and fields, or an error message.
@@ -34,6 +40,16 @@ def build_customer_tools(client: TripletexClient) -> dict:
             body["phoneNumber"] = phoneNumber
         if organizationNumber:
             body["organizationNumber"] = organizationNumber
+        if addressLine1 or postalCode or city:
+            addr = {}
+            if addressLine1:
+                addr["addressLine1"] = addressLine1
+            if postalCode:
+                addr["postalCode"] = postalCode
+            if city:
+                addr["city"] = city
+            body["postalAddress"] = addr
+            body["physicalAddress"] = addr
         return client.post("/customer", json=body)
 
     def update_customer(customer_id: int, name: str = "", email: str = "", phoneNumber: str = "") -> dict:

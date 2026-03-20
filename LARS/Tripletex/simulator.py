@@ -102,16 +102,89 @@ def pre_create_for_deletion(client: TripletexClient, task_def, expected: dict) -
 
     if task_def.name == "reverse_voucher":
         description = expected.get("description", "Test Bilag")
+        # Look up account IDs first
+        acct1920 = client.get("/ledger/account", params={"number": "1920", "fields": "id", "count": 1})
+        acct3000 = client.get("/ledger/account", params={"number": "3000", "fields": "id", "count": 1})
+        a1 = acct1920.get("values", [{}])[0].get("id", 0)
+        a2 = acct3000.get("values", [{}])[0].get("id", 0)
         result = client.post("/ledger/voucher", json={
             "date": "2026-03-01",
             "description": description,
             "postings": [
-                {"account": {"number": 1920}, "debitAmount": 1000, "creditAmount": 0},
-                {"account": {"number": 3000}, "debitAmount": 0, "creditAmount": 1000},
+                {"account": {"id": a1}, "amountGross": 1000, "amountGrossCurrency": 1000, "row": 1},
+                {"account": {"id": a2}, "amountGross": -1000, "amountGrossCurrency": -1000, "row": 2},
             ],
         })
         if "error" in result:
             log.error(f"Failed to pre-create voucher: {result}")
+            return 0
+        return result.get("value", {}).get("id", 0)
+
+    if task_def.name == "delete_supplier":
+        name = expected.get("name", "Temp Leverandør AS")
+        result = client.post("/supplier", json={
+            "name": name,
+            "email": "slett@example.com",
+            "isSupplier": True,
+        })
+        if "error" in result:
+            log.error(f"Failed to pre-create supplier: {result}")
+            return 0
+        return result.get("value", {}).get("id", 0)
+
+    if task_def.name == "delete_product":
+        name = expected.get("name", "Temp Produkt")
+        result = client.post("/product", json={
+            "name": name,
+            "priceExcludingVatCurrency": 100,
+        })
+        if "error" in result:
+            log.error(f"Failed to pre-create product: {result}")
+            return 0
+        return result.get("value", {}).get("id", 0)
+
+    if task_def.name == "delete_department":
+        name = expected.get("name", "Temp Avdeling")
+        result = client.post("/department", json={"name": name})
+        if "error" in result:
+            log.error(f"Failed to pre-create department: {result}")
+            return 0
+        return result.get("value", {}).get("id", 0)
+
+    if task_def.name == "delete_contact":
+        first = expected.get("firstName", "Temp")
+        last = expected.get("lastName", "Kontakt")
+        # Need a customer first
+        cust = client.post("/customer", json={"name": "Temp Kunde AS", "isCustomer": True, "email": "temp@example.com"})
+        cust_id = cust.get("value", {}).get("id", 0)
+        if not cust_id:
+            log.error(f"Failed to pre-create customer for contact: {cust}")
+            return 0
+        result = client.post("/contact", json={
+            "firstName": first,
+            "lastName": last,
+            "email": "kontakt@example.com",
+            "customer": {"id": cust_id},
+        })
+        if "error" in result:
+            log.error(f"Failed to pre-create contact: {result}")
+            return 0
+        return result.get("value", {}).get("id", 0)
+
+    if task_def.name == "delete_employee":
+        import uuid as _uuid
+        first = expected.get("firstName", "Temp")
+        last = expected.get("lastName", "Ansatt")
+        dept_r = client.get("/department", params={"fields": "id", "count": 1})
+        depts = dept_r.get("values", [])
+        dept_id = depts[0]["id"] if depts else 0
+        unique_email = f"del-{_uuid.uuid4().hex[:8]}@example.com"
+        body = {"firstName": first, "lastName": last, "email": unique_email, "userType": "NO_ACCESS"}
+        if dept_id:
+            body["department"] = {"id": dept_id}
+        result = client.post("/employee", json=body)
+        if "error" in result:
+            log.error(f"Failed to pre-create employee: {result}")
             return 0
         return result.get("value", {}).get("id", 0)
 
@@ -221,6 +294,10 @@ def run_single(args, client: TripletexClient) -> dict:
         task_def = ALL_TASKS[args.task]
     else:
         task_def = random.choice(list(ALL_TASKS.values()))
+
+    if task_def.sandbox_broken:
+        log.warning(f"Skipping {task_def.name} — marked as sandbox_broken")
+        return {"score": -1, "skipped": True, "task": task_def.name}
 
     # Generate task prompt + expected values
     log.info(f"Generating task: {task_def.name} (tier {task_def.tier})")
@@ -349,16 +426,21 @@ def main():
 
     # Summary for batch runs
     if args.batch > 1:
+        actual = [s for s in scores if not s.get("skipped")]
+        skipped = [s for s in scores if s.get("skipped")]
         print("\n" + "=" * 70)
         print("  BATCH SUMMARY")
         print("=" * 70)
-        total = sum(s["final_score"] for s in scores)
-        avg = total / len(scores)
-        perfect = sum(1 for s in scores if s["correctness"] == 1.0)
-        print(f"  Tasks run:     {len(scores)}")
-        print(f"  Perfect:       {perfect}/{len(scores)}")
-        print(f"  Total score:   {total:.2f}")
-        print(f"  Average score: {avg:.2f}")
+        if actual:
+            total = sum(s["final_score"] for s in actual)
+            avg = total / len(actual)
+            perfect = sum(1 for s in actual if s["correctness"] == 1.0)
+            print(f"  Tasks run:     {len(actual)}")
+            print(f"  Perfect:       {perfect}/{len(actual)}")
+            print(f"  Total score:   {total:.2f}")
+            print(f"  Average score: {avg:.2f}")
+        if skipped:
+            print(f"  Skipped:       {len(skipped)} (sandbox broken)")
         print("=" * 70)
 
 
