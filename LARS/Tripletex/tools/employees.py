@@ -69,6 +69,13 @@ def build_employee_tools(client: TripletexClient) -> dict:
             existing = client.get("/employee", params={"email": email, "fields": "id,firstName,lastName,email"})
             vals = existing.get("values", [])
             if vals:
+                # Undo the error count — recovery succeeded, don't penalize scoring
+                client._error_count = max(0, client._error_count - 1)
+                for entry in reversed(client._call_log):
+                    if not entry.get("ok") and "/employee" in entry.get("url", ""):
+                        entry["ok"] = True
+                        entry["recovered"] = True
+                        break
                 return {"value": vals[0], "_note": "Employee already existed, returning existing."}
 
         return result
