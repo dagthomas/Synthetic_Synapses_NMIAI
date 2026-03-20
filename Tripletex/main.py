@@ -226,6 +226,7 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False) -> dict:
                 api_errors=client._error_count,
                 elapsed_seconds=elapsed,
                 agent_response=final_text[:2000] if final_text else "",
+                tool_calls_json=json.dumps(tool_calls[:50], default=str)[:10000],
             )
         except Exception as e:
             log.warning(f"Failed to save solve_log: {e}")

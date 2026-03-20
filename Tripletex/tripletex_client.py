@@ -20,7 +20,7 @@ class TripletexClient:
         log.info(f"[API #{self._call_count+1}] GET {url} params={params}")
         self._call_count += 1
         t0 = time.time()
-        resp = requests.get(url, auth=self.auth, params=params)
+        resp = self._do_request("GET", url, params=params)
         elapsed = time.time() - t0
         return self._handle_response(resp, "GET", url, elapsed)
 
@@ -29,7 +29,7 @@ class TripletexClient:
         log.info(f"[API #{self._call_count+1}] POST {url} body={json}")
         self._call_count += 1
         t0 = time.time()
-        resp = requests.post(url, auth=self.auth, json=json)
+        resp = self._do_request("POST", url, json=json)
         elapsed = time.time() - t0
         return self._handle_response(resp, "POST", url, elapsed)
 
@@ -38,7 +38,7 @@ class TripletexClient:
         log.info(f"[API #{self._call_count+1}] PUT {url} body={json} params={params}")
         self._call_count += 1
         t0 = time.time()
-        resp = requests.put(url, auth=self.auth, json=json, params=params)
+        resp = self._do_request("PUT", url, json=json, params=params)
         elapsed = time.time() - t0
         return self._handle_response(resp, "PUT", url, elapsed)
 
@@ -47,9 +47,18 @@ class TripletexClient:
         log.info(f"[API #{self._call_count+1}] DELETE {url}")
         self._call_count += 1
         t0 = time.time()
-        resp = requests.delete(url, auth=self.auth)
+        resp = self._do_request("DELETE", url)
         elapsed = time.time() - t0
         return self._handle_response(resp, "DELETE", url, elapsed)
+
+    def _do_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Execute request with single retry on 401 (transient token errors)."""
+        resp = requests.request(method, url, auth=self.auth, **kwargs)
+        if resp.status_code == 401:
+            log.warning(f"[API] {method} {url} -> 401, retrying once after 1s...")
+            time.sleep(1)
+            resp = requests.request(method, url, auth=self.auth, **kwargs)
+        return resp
 
     def _handle_response(self, resp: requests.Response, method: str, url: str, elapsed: float) -> dict:
         try:

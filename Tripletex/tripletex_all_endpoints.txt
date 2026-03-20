@@ -1,0 +1,5166 @@
+====================================================================================================
+TRIPLETEX API v2.74.00 - ALL MODIFIABLE ENDPOINTS (POST / PUT / DELETE)
+Total: 437 endpoints across 37 categories
+Fields marked *REQ* are required. readOnly fields are excluded.
+====================================================================================================
+
+====================================================================================================
+  ACCOUNTINGOFFICE (3 endpoints)
+====================================================================================================
+
+  PUT    /accountingOffice/reconciliations/{reconciliationId}/control/:controlReconciliation
+         Mark a reconciliation as controlled
+         Path/Query params: reconciliationId
+
+  PUT    /accountingOffice/reconciliations/{reconciliationId}/control/:reconcile
+         Mark a reconciliation as reconciled
+         Path/Query params: reconciliationId
+
+  PUT    /accountingOffice/reconciliations/{reconciliationId}/control/:requestControl
+         Request control of a reconciliation
+         Path/Query params: reconciliationId
+         Body: array[integer]
+
+====================================================================================================
+  ACTIVITY (2 endpoints)
+====================================================================================================
+
+  POST   /activity
+         Add activity.
+         Body: Activity
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - activityType: string
+           - isChargeable: boolean
+           - rate: number
+           - costPercentage: number
+           - displayName: string
+
+  POST   /activity/list
+         Add multiple activities.
+         Body: array[Activity]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - activityType: string
+           - isChargeable: boolean
+           - rate: number
+           - costPercentage: number
+           - displayName: string
+
+====================================================================================================
+  ASSET (8 endpoints)
+====================================================================================================
+
+  POST   /asset
+         Create one asset.
+         Body: Asset
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - displayName: string
+           - description: string
+           - dateOfAcquisition: string
+           - acquisitionCost: number
+           - account: Account
+           - incomingBalance: number
+           - lifetime: integer(int32)
+           - depreciationRemainingValue: number
+           - depreciationAccount: Account
+           - hasHistoryFromExternalSystem: boolean
+           - externalLastDepreciation: string
+           - externalLastAccountedValue: number
+           - externalAccumulatedDepreciation: number
+           - depreciationMethod: string
+           - depreciationFrom: string
+           - accumulatedDepreciation: number
+           - depreciationRate: number
+           - department: Department
+           - project: Project
+           - saleDate: string
+
+  DELETE /asset/deleteImport
+         [BETA] Delete most recent assets import.
+
+  DELETE /asset/deleteStartingBalance
+         [BETA] Delete the asset starting balance.
+
+  POST   /asset/duplicate/{id}
+         Create copy of one asset
+         Path/Query params: id
+
+  POST   /asset/list
+         Create several assets.
+         Body: array[Asset]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - displayName: string
+           - description: string
+           - dateOfAcquisition: string
+           - acquisitionCost: number
+           - account: Account
+           - incomingBalance: number
+           - lifetime: integer(int32)
+           - depreciationRemainingValue: number
+           - depreciationAccount: Account
+           - hasHistoryFromExternalSystem: boolean
+           - externalLastDepreciation: string
+           - externalLastAccountedValue: number
+           - externalAccumulatedDepreciation: number
+           - depreciationMethod: string
+           - depreciationFrom: string
+           - accumulatedDepreciation: number
+           - depreciationRate: number
+           - department: Department
+           - project: Project
+           - saleDate: string
+
+  POST   /asset/upload
+         [BETA] Upload Excel file with Assets in the standard Tripletex defined format.
+         Path/Query params: ?isPreview, ?startDate
+         Body: object
+           - file: string(binary) *REQ*
+
+  PUT    /asset/{id}
+         Update asset.
+         Path/Query params: id
+         Body: Asset
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - displayName: string
+           - description: string
+           - dateOfAcquisition: string
+           - acquisitionCost: number
+           - account: Account
+           - incomingBalance: number
+           - lifetime: integer(int32)
+           - depreciationRemainingValue: number
+           - depreciationAccount: Account
+           - hasHistoryFromExternalSystem: boolean
+           - externalLastDepreciation: string
+           - externalLastAccountedValue: number
+           - externalAccumulatedDepreciation: number
+           - depreciationMethod: string
+           - depreciationFrom: string
+           - accumulatedDepreciation: number
+           - depreciationRate: number
+           - department: Department
+           - project: Project
+           - saleDate: string
+
+  DELETE /asset/{id}
+         Delete asset.
+         Path/Query params: id
+
+====================================================================================================
+  ATTESTATION (1 endpoints)
+====================================================================================================
+
+  PUT    /attestation/:addApprover
+         AttestationAddApprover_addApprover
+         Body: NewApproverBody
+           - attestationId: integer(int64)
+           - employeeId: integer(int64)
+           - note: string
+           - position: string
+           - attestationObjectId: integer(int64)
+
+====================================================================================================
+  BALANCE (1 endpoints)
+====================================================================================================
+
+  POST   /balance/reconciliation/annual/context
+         Create a annualBalance reconciliation context for a customer
+         Body: AnnualBalanceContextRequest
+           - customerId: integer(int64)
+           - year: integer(int32)
+
+====================================================================================================
+  BANK (14 endpoints)
+====================================================================================================
+
+  POST   /bank/reconciliation
+         Post a bank reconciliation.
+         Body: BankReconciliation
+           - id: integer(int64)
+           - version: integer(int32)
+           - account: Account
+           - accountingPeriod: AccountingPeriod
+           - voucher: Voucher
+           - isClosed: boolean
+           - type: string
+           - bankAccountClosingBalanceCurrency: number
+           - closedByContact: Contact
+           - closedByEmployee: Employee
+           - attachment: Document
+
+  POST   /bank/reconciliation/match
+         Create a bank reconciliation match.
+         Body: BankReconciliationMatch
+           - id: integer(int64)
+           - version: integer(int32)
+           - bankReconciliation: BankReconciliation
+           - type: string
+           - transactions: array[BankTransaction]
+           - postings: array[Posting]
+
+  PUT    /bank/reconciliation/match/:suggest
+         Suggest matches for a bank reconciliation by ID.
+         Path/Query params: ?bankReconciliationId
+
+  PUT    /bank/reconciliation/match/{id}
+         Update a bank reconciliation match by ID.
+         Path/Query params: id
+         Body: BankReconciliationMatch
+           - id: integer(int64)
+           - version: integer(int32)
+           - bankReconciliation: BankReconciliation
+           - type: string
+           - transactions: array[BankTransaction]
+           - postings: array[Posting]
+
+  DELETE /bank/reconciliation/match/{id}
+         Delete a bank reconciliation match by ID.
+         Path/Query params: id
+
+  POST   /bank/reconciliation/matches/counter
+         [BETA] Reset the number of matches after the page has been accessed.
+         Path/Query params: ?bankReconciliationId
+
+  POST   /bank/reconciliation/settings
+         Post bank reconciliation settings.
+         Body: BankReconciliationSettings
+           - id: integer(int64)
+           - version: integer(int32)
+           - numberOfMatchesPerPage: string
+
+  PUT    /bank/reconciliation/settings/{id}
+         Update bank reconciliation settings.
+         Path/Query params: id
+         Body: BankReconciliationSettings
+           - id: integer(int64)
+           - version: integer(int32)
+           - numberOfMatchesPerPage: string
+
+  PUT    /bank/reconciliation/transactions/unmatched:csv
+         Get all unmatched transactions in csv format
+
+  PUT    /bank/reconciliation/{id}
+         Update a bank reconciliation.
+         Path/Query params: id
+         Body: BankReconciliation
+           - id: integer(int64)
+           - version: integer(int32)
+           - account: Account
+           - accountingPeriod: AccountingPeriod
+           - voucher: Voucher
+           - isClosed: boolean
+           - type: string
+           - bankAccountClosingBalanceCurrency: number
+           - closedByContact: Contact
+           - closedByEmployee: Employee
+           - attachment: Document
+
+  DELETE /bank/reconciliation/{id}
+         Delete bank reconciliation by ID.
+         Path/Query params: id
+
+  PUT    /bank/reconciliation/{id}/:adjustment
+         Add an adjustment to reconciliation by ID.
+         Path/Query params: id
+         Body: array[BankReconciliationAdjustment]
+           - paymentType: BankReconciliationPaymentType
+           - bankTransactions: array[BankTransaction]
+           - postingDate: string
+           - amount: number
+           - postings: array[Posting]
+           - bankReconciliationMatch: BankReconciliationMatch
+           - date: string
+           - description: string
+           - interimAccount: Account
+           - voucherNumber: string
+           - voucherViewLink: string
+           - voucherDetailsLink: string
+
+  POST   /bank/statement/import
+         Upload bank statement file.
+         Path/Query params: ?bankId, ?accountId, ?fromDate, ?toDate, ?fileFormat
+         Body: object
+           - file: string(binary) *REQ*
+
+  DELETE /bank/statement/{id}
+         Delete bank statement by ID.
+         Path/Query params: id
+
+====================================================================================================
+  COMPANY (3 endpoints)
+====================================================================================================
+
+  PUT    /company
+         Update company information.
+         Body: Company
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - startDate: string
+           - endDate: string
+           - organizationNumber: string
+           - email: string
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - faxNumber: string
+           - address: Address
+           - type: string
+           - currency: Currency
+
+  POST   /company/salesmodules
+         [BETA] Add (activate) a new sales module.
+         Body: SalesModule
+           - name: string
+           - costStartDate: string
+
+  PUT    /company/settings/altinn
+         Update AltInn id and password.
+         Body: AltinnCompanyModule
+           - altInnId: integer(int32)
+           - altInnPassword: string
+
+====================================================================================================
+  CONTACT (4 endpoints)
+====================================================================================================
+
+  POST   /contact
+         Create contact.
+         Body: Contact
+           - id: integer(int64)
+           - version: integer(int32)
+           - firstName: string
+           - lastName: string
+           - displayName: string
+           - email: string
+           - phoneNumberMobileCountry: Country
+           - phoneNumberMobile: string
+           - phoneNumberWork: string
+           - customer: Customer
+           - department: Department
+           - isInactive: boolean
+
+  POST   /contact/list
+         Create multiple contacts.
+         Body: array[Contact]
+           - id: integer(int64)
+           - version: integer(int32)
+           - firstName: string
+           - lastName: string
+           - displayName: string
+           - email: string
+           - phoneNumberMobileCountry: Country
+           - phoneNumberMobile: string
+           - phoneNumberWork: string
+           - customer: Customer
+           - department: Department
+           - isInactive: boolean
+
+  DELETE /contact/list
+         [BETA] Delete multiple contacts.
+         Path/Query params: ?ids
+
+  PUT    /contact/{id}
+         Update contact.
+         Path/Query params: id
+         Body: Contact
+           - id: integer(int64)
+           - version: integer(int32)
+           - firstName: string
+           - lastName: string
+           - displayName: string
+           - email: string
+           - phoneNumberMobileCountry: Country
+           - phoneNumberMobile: string
+           - phoneNumberWork: string
+           - customer: Customer
+           - department: Department
+           - isInactive: boolean
+
+====================================================================================================
+  CUSTOMER (7 endpoints)
+====================================================================================================
+
+  POST   /customer
+         Create customer. Related customer addresses may also be created.
+         Body: Customer
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - organizationNumber: string
+           - globalLocationNumber: integer(int64)
+           - supplierNumber: integer(int32)
+           - customerNumber: integer(int32)
+           - isSupplier: boolean
+           - isInactive: boolean
+           - accountManager: Employee
+           - department: Department
+           - email: string
+           - invoiceEmail: string
+           - overdueNoticeEmail: string
+           - bankAccounts: array[string]
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - description: string
+           - language: string
+           - displayName: string
+           - isPrivateIndividual: boolean
+           - singleCustomerInvoice: boolean
+           - invoiceSendMethod: string
+           - emailAttachmentType: string
+           - postalAddress: Address
+           - physicalAddress: Address
+           - deliveryAddress: DeliveryAddress
+           - category1: CustomerCategory
+           - category2: CustomerCategory
+           - category3: CustomerCategory
+           - invoicesDueIn: integer(int32)
+           - invoicesDueInType: string
+           - currency: Currency
+           - bankAccountPresentation: array[CompanyBankAccountPresentation]
+           - ledgerAccount: Account
+           - isFactoring: boolean
+           - invoiceSendSMSNotification: boolean
+           - invoiceSMSNotificationNumber: string
+           - isAutomaticSoftReminderEnabled: boolean
+           - isAutomaticReminderEnabled: boolean
+           - isAutomaticNoticeOfDebtCollectionEnabled: boolean
+           - discountPercentage: number
+           - website: string
+
+  POST   /customer/category
+         Add new customer/supplier category.
+         Body: CustomerCategory
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - type: integer(int32)
+           - displayName: string
+
+  PUT    /customer/category/{id}
+         Update customer/supplier category.
+         Path/Query params: id
+         Body: CustomerCategory
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - type: integer(int32)
+           - displayName: string
+
+  POST   /customer/list
+         [BETA] Create multiple customers. Related supplier addresses may also be created.
+         Body: array[Customer]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - organizationNumber: string
+           - globalLocationNumber: integer(int64)
+           - supplierNumber: integer(int32)
+           - customerNumber: integer(int32)
+           - isSupplier: boolean
+           - isInactive: boolean
+           - accountManager: Employee
+           - department: Department
+           - email: string
+           - invoiceEmail: string
+           - overdueNoticeEmail: string
+           - bankAccounts: array[string]
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - description: string
+           - language: string
+           - displayName: string
+           - isPrivateIndividual: boolean
+           - singleCustomerInvoice: boolean
+           - invoiceSendMethod: string
+           - emailAttachmentType: string
+           - postalAddress: Address
+           - physicalAddress: Address
+           - deliveryAddress: DeliveryAddress
+           - category1: CustomerCategory
+           - category2: CustomerCategory
+           - category3: CustomerCategory
+           - invoicesDueIn: integer(int32)
+           - invoicesDueInType: string
+           - currency: Currency
+           - bankAccountPresentation: array[CompanyBankAccountPresentation]
+           - ledgerAccount: Account
+           - isFactoring: boolean
+           - invoiceSendSMSNotification: boolean
+           - invoiceSMSNotificationNumber: string
+           - isAutomaticSoftReminderEnabled: boolean
+           - isAutomaticReminderEnabled: boolean
+           - isAutomaticNoticeOfDebtCollectionEnabled: boolean
+           - discountPercentage: number
+           - website: string
+
+  PUT    /customer/list
+         [BETA] Update multiple customers. Addresses can also be updated.
+         Body: array[Customer]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - organizationNumber: string
+           - globalLocationNumber: integer(int64)
+           - supplierNumber: integer(int32)
+           - customerNumber: integer(int32)
+           - isSupplier: boolean
+           - isInactive: boolean
+           - accountManager: Employee
+           - department: Department
+           - email: string
+           - invoiceEmail: string
+           - overdueNoticeEmail: string
+           - bankAccounts: array[string]
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - description: string
+           - language: string
+           - displayName: string
+           - isPrivateIndividual: boolean
+           - singleCustomerInvoice: boolean
+           - invoiceSendMethod: string
+           - emailAttachmentType: string
+           - postalAddress: Address
+           - physicalAddress: Address
+           - deliveryAddress: DeliveryAddress
+           - category1: CustomerCategory
+           - category2: CustomerCategory
+           - category3: CustomerCategory
+           - invoicesDueIn: integer(int32)
+           - invoicesDueInType: string
+           - currency: Currency
+           - bankAccountPresentation: array[CompanyBankAccountPresentation]
+           - ledgerAccount: Account
+           - isFactoring: boolean
+           - invoiceSendSMSNotification: boolean
+           - invoiceSMSNotificationNumber: string
+           - isAutomaticSoftReminderEnabled: boolean
+           - isAutomaticReminderEnabled: boolean
+           - isAutomaticNoticeOfDebtCollectionEnabled: boolean
+           - discountPercentage: number
+           - website: string
+
+  PUT    /customer/{id}
+         Update customer. 
+         Path/Query params: id
+         Body: Customer
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - organizationNumber: string
+           - globalLocationNumber: integer(int64)
+           - supplierNumber: integer(int32)
+           - customerNumber: integer(int32)
+           - isSupplier: boolean
+           - isInactive: boolean
+           - accountManager: Employee
+           - department: Department
+           - email: string
+           - invoiceEmail: string
+           - overdueNoticeEmail: string
+           - bankAccounts: array[string]
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - description: string
+           - language: string
+           - displayName: string
+           - isPrivateIndividual: boolean
+           - singleCustomerInvoice: boolean
+           - invoiceSendMethod: string
+           - emailAttachmentType: string
+           - postalAddress: Address
+           - physicalAddress: Address
+           - deliveryAddress: DeliveryAddress
+           - category1: CustomerCategory
+           - category2: CustomerCategory
+           - category3: CustomerCategory
+           - invoicesDueIn: integer(int32)
+           - invoicesDueInType: string
+           - currency: Currency
+           - bankAccountPresentation: array[CompanyBankAccountPresentation]
+           - ledgerAccount: Account
+           - isFactoring: boolean
+           - invoiceSendSMSNotification: boolean
+           - invoiceSMSNotificationNumber: string
+           - isAutomaticSoftReminderEnabled: boolean
+           - isAutomaticReminderEnabled: boolean
+           - isAutomaticNoticeOfDebtCollectionEnabled: boolean
+           - discountPercentage: number
+           - website: string
+
+  DELETE /customer/{id}
+         [BETA] Delete customer by ID
+         Path/Query params: id
+
+====================================================================================================
+  DELIVERYADDRESS (1 endpoints)
+====================================================================================================
+
+  PUT    /deliveryAddress/{id}
+         Update address.
+         Path/Query params: id
+         Body: DeliveryAddress
+           - id: integer(int64)
+           - version: integer(int32)
+           - addressLine1: string
+           - addressLine2: string
+           - postalCode: string
+           - city: string
+           - country: Country
+           - knr: integer(int32)
+           - gnr: integer(int32)
+           - bnr: integer(int32)
+           - fnr: integer(int32)
+           - snr: integer(int32)
+           - unitNumber: string
+           - name: string
+           - customerVendor: Company
+
+====================================================================================================
+  DEPARTMENT (5 endpoints)
+====================================================================================================
+
+  POST   /department
+         Add new department.
+         Body: Department
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - departmentNumber: string
+           - departmentManager: Employee
+           - isInactive: boolean
+
+  POST   /department/list
+         Register new departments.
+         Body: array[Department]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - departmentNumber: string
+           - departmentManager: Employee
+           - isInactive: boolean
+
+  PUT    /department/list
+         Update multiple departments.
+         Body: array[Department]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - departmentNumber: string
+           - departmentManager: Employee
+           - isInactive: boolean
+
+  PUT    /department/{id}
+         Update department.
+         Path/Query params: id
+         Body: Department
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - departmentNumber: string
+           - departmentManager: Employee
+           - isInactive: boolean
+
+  DELETE /department/{id}
+         Delete department by ID
+         Path/Query params: id
+
+====================================================================================================
+  DIVISION (4 endpoints)
+====================================================================================================
+
+  POST   /division
+         Create division.
+         Body: Division
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - name: string
+           - startDate: string
+           - endDate: string
+           - organizationNumber: string
+           - municipalityDate: string
+           - municipality: Municipality
+
+  POST   /division/list
+         Create divisions.
+         Body: array[Division]
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - name: string
+           - startDate: string
+           - endDate: string
+           - organizationNumber: string
+           - municipalityDate: string
+           - municipality: Municipality
+
+  PUT    /division/list
+         Update multiple divisions.
+         Body: array[Division]
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - name: string
+           - startDate: string
+           - endDate: string
+           - organizationNumber: string
+           - municipalityDate: string
+           - municipality: Municipality
+
+  PUT    /division/{id}
+         Update division information.
+         Path/Query params: id
+         Body: Division
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - name: string
+           - startDate: string
+           - endDate: string
+           - organizationNumber: string
+           - municipalityDate: string
+           - municipality: Municipality
+
+====================================================================================================
+  DOCUMENTARCHIVE (10 endpoints)
+====================================================================================================
+
+  POST   /documentArchive/account/{id}
+         [BETA] Upload file to Account Document Archive.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /documentArchive/customer/{id}
+         [BETA] Upload file to Customer Document Archive.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /documentArchive/dynamicControlForm/{id}
+         [BETA] Upload file to Control Form Document Archive.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /documentArchive/employee/{id}
+         [BETA] Upload file to Employee Document Archive.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /documentArchive/product/{id}
+         [BETA] Upload file to Product Document Archive.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /documentArchive/project/{id}
+         [BETA] Upload file to Project Document Archive.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /documentArchive/reception
+         [BETA] Upload a file to the document archive reception. Send as multipart form.
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /documentArchive/supplier/{id}
+         [BETA] Upload file to Supplier Document Archive.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  PUT    /documentArchive/{id}
+         [BETA] Update document archive.
+         Path/Query params: id
+         Body: DocumentArchive
+           - id: integer(int64)
+           - version: integer(int32)
+           - fileName: string
+           - archiveDate: string
+           - mimeType: string
+
+  DELETE /documentArchive/{id}
+         [BETA] Delete document archive.
+         Path/Query params: id
+
+====================================================================================================
+  EMPLOYEE (27 endpoints)
+====================================================================================================
+
+  POST   /employee
+         Create one employee.
+         Body: Employee
+           - id: integer(int64)
+           - version: integer(int32)
+           - firstName: string
+           - lastName: string
+           - employeeNumber: string
+           - dateOfBirth: string
+           - email: string
+           - phoneNumberMobileCountry: Country
+           - phoneNumberMobile: string
+           - phoneNumberHome: string
+           - phoneNumberWork: string
+           - nationalIdentityNumber: string
+           - dnumber: string
+           - internationalId: InternationalId
+           - bankAccountNumber: string
+           - iban: string
+           - bic: string
+           - creditorBankCountryId: integer(int32)
+           - usesAbroadPayment: boolean
+           - userType: string
+           - isContact: boolean
+           - comments: string
+           - address: Address
+           - department: Department
+           - employments: array[Employment]
+           - holidayAllowanceEarned: HolidayAllowanceEarned
+           - employeeCategory: EmployeeCategory
+
+  POST   /employee/category
+         Create a new employee category.
+         Body: EmployeeCategory
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - name: string
+           - number: string
+           - description: string
+
+  POST   /employee/category/list
+         Create new employee categories.
+         Body: array[EmployeeCategory]
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - name: string
+           - number: string
+           - description: string
+
+  PUT    /employee/category/list
+         Update multiple employee categories.
+         Body: array[EmployeeCategory]
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - name: string
+           - number: string
+           - description: string
+
+  DELETE /employee/category/list
+         Delete multiple employee categories
+         Path/Query params: ?ids
+
+  PUT    /employee/category/{id}
+         Update employee category information.
+         Path/Query params: id
+         Body: EmployeeCategory
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - name: string
+           - number: string
+           - description: string
+
+  DELETE /employee/category/{id}
+         Delete employee category by ID
+         Path/Query params: id
+
+  POST   /employee/employment
+         Create employment.
+         Body: Employment
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - employmentId: string
+           - startDate: string
+           - endDate: string
+           - employmentEndReason: string
+           - division: Division
+           - lastSalaryChangeDate: string
+           - noEmploymentRelationship: boolean
+           - isMainEmployer: boolean
+           - taxDeductionCode: string
+           - employmentDetails: array[EmploymentDetails]
+           - isRemoveAccessAtEmploymentEnded: boolean
+           - latestSalary: EmploymentDetails
+
+  POST   /employee/employment/details
+         Create employment details.
+         Body: EmploymentDetails
+           - id: integer(int64)
+           - version: integer(int32)
+           - employment: Employment
+           - date: string
+           - employmentType: string
+           - employmentForm: string
+           - maritimeEmployment: MaritimeEmployment
+           - remunerationType: string
+           - workingHoursScheme: string
+           - shiftDurationHours: number
+           - occupationCode: OccupationCode
+           - percentageOfFullTimeEquivalent: number
+           - annualSalary: number
+           - hourlyWage: number
+           - payrollTaxMunicipalityId: Municipality
+
+  PUT    /employee/employment/details/{id}
+         Update employment details. 
+         Path/Query params: id
+         Body: EmploymentDetails
+           - id: integer(int64)
+           - version: integer(int32)
+           - employment: Employment
+           - date: string
+           - employmentType: string
+           - employmentForm: string
+           - maritimeEmployment: MaritimeEmployment
+           - remunerationType: string
+           - workingHoursScheme: string
+           - shiftDurationHours: number
+           - occupationCode: OccupationCode
+           - percentageOfFullTimeEquivalent: number
+           - annualSalary: number
+           - hourlyWage: number
+           - payrollTaxMunicipalityId: Municipality
+
+  POST   /employee/employment/leaveOfAbsence
+         Create leave of absence.
+         Body: LeaveOfAbsence
+           - id: integer(int64)
+           - version: integer(int32)
+           - employment: Employment
+           - importedLeaveOfAbsenceId: string
+           - startDate: string
+           - endDate: string
+           - percentage: number
+           - isWageDeduction: boolean
+           - type: string
+
+  POST   /employee/employment/leaveOfAbsence/list
+         Create multiple leave of absences.
+         Body: array[LeaveOfAbsence]
+           - id: integer(int64)
+           - version: integer(int32)
+           - employment: Employment
+           - importedLeaveOfAbsenceId: string
+           - startDate: string
+           - endDate: string
+           - percentage: number
+           - isWageDeduction: boolean
+           - type: string
+
+  PUT    /employee/employment/leaveOfAbsence/{id}
+         Update leave of absence.
+         Path/Query params: id
+         Body: LeaveOfAbsence
+           - id: integer(int64)
+           - version: integer(int32)
+           - employment: Employment
+           - importedLeaveOfAbsenceId: string
+           - startDate: string
+           - endDate: string
+           - percentage: number
+           - isWageDeduction: boolean
+           - type: string
+
+  PUT    /employee/employment/{id}
+         Update employemnt. 
+         Path/Query params: id
+         Body: Employment
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - employmentId: string
+           - startDate: string
+           - endDate: string
+           - employmentEndReason: string
+           - division: Division
+           - lastSalaryChangeDate: string
+           - noEmploymentRelationship: boolean
+           - isMainEmployer: boolean
+           - taxDeductionCode: string
+           - employmentDetails: array[EmploymentDetails]
+           - isRemoveAccessAtEmploymentEnded: boolean
+           - latestSalary: EmploymentDetails
+
+  PUT    /employee/entitlement/:grantClientEntitlementsByTemplate
+         [BETA] Update employee entitlements in client account.
+         Path/Query params: ?employeeId, ?customerId, ?template
+
+  PUT    /employee/entitlement/:grantEntitlementsByTemplate
+         [BETA] Update employee entitlements.
+         Path/Query params: ?employeeId, ?template
+
+  POST   /employee/hourlyCostAndRate
+         Create hourly cost and rate.
+         Body: HourlyCostAndRate
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - date: string
+           - rate: number
+           - budgetRate: number
+           - hourCostRate: number
+
+  PUT    /employee/hourlyCostAndRate/{id}
+         Update hourly cost and rate. 
+         Path/Query params: id
+         Body: HourlyCostAndRate
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - date: string
+           - rate: number
+           - budgetRate: number
+           - hourCostRate: number
+
+  POST   /employee/list
+         Create several employees.
+         Body: array[Employee]
+           - id: integer(int64)
+           - version: integer(int32)
+           - firstName: string
+           - lastName: string
+           - employeeNumber: string
+           - dateOfBirth: string
+           - email: string
+           - phoneNumberMobileCountry: Country
+           - phoneNumberMobile: string
+           - phoneNumberHome: string
+           - phoneNumberWork: string
+           - nationalIdentityNumber: string
+           - dnumber: string
+           - internationalId: InternationalId
+           - bankAccountNumber: string
+           - iban: string
+           - bic: string
+           - creditorBankCountryId: integer(int32)
+           - usesAbroadPayment: boolean
+           - userType: string
+           - isContact: boolean
+           - comments: string
+           - address: Address
+           - department: Department
+           - employments: array[Employment]
+           - holidayAllowanceEarned: HolidayAllowanceEarned
+           - employeeCategory: EmployeeCategory
+
+  POST   /employee/nextOfKin
+         Create next of kin.
+         Body: NextOfKin
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - name: string
+           - phoneNumber: string
+           - address: string
+           - typeOfRelationship: string
+
+  PUT    /employee/nextOfKin/{id}
+         Update next of kin. 
+         Path/Query params: id
+         Body: NextOfKin
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - name: string
+           - phoneNumber: string
+           - address: string
+           - typeOfRelationship: string
+
+  PUT    /employee/preferences/:changeLanguage
+         Change current employees language to the given language
+
+  PUT    /employee/preferences/list
+         Update multiple employee preferences.
+         Body: array[EmployeePreferences]
+           - id: integer(int64)
+           - version: integer(int32)
+           - employeeId: integer(int32)
+           - companyId: integer(int32)
+           - filterOnProjectParticipant: boolean
+           - filterOnProjectManager: boolean
+           - language: string
+
+  PUT    /employee/preferences/{id}
+         Update employee preferences information.
+         Path/Query params: id
+         Body: EmployeePreferences
+           - id: integer(int64)
+           - version: integer(int32)
+           - employeeId: integer(int32)
+           - companyId: integer(int32)
+           - filterOnProjectParticipant: boolean
+           - filterOnProjectManager: boolean
+           - language: string
+
+  POST   /employee/standardTime
+         Create standard time.
+         Body: StandardTime
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - fromDate: string
+           - hoursPerDay: number
+
+  PUT    /employee/standardTime/{id}
+         Update standard time. 
+         Path/Query params: id
+         Body: StandardTime
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - fromDate: string
+           - hoursPerDay: number
+
+  PUT    /employee/{id}
+         Update employee.
+         Path/Query params: id
+         Body: Employee
+           - id: integer(int64)
+           - version: integer(int32)
+           - firstName: string
+           - lastName: string
+           - employeeNumber: string
+           - dateOfBirth: string
+           - email: string
+           - phoneNumberMobileCountry: Country
+           - phoneNumberMobile: string
+           - phoneNumberHome: string
+           - phoneNumberWork: string
+           - nationalIdentityNumber: string
+           - dnumber: string
+           - internationalId: InternationalId
+           - bankAccountNumber: string
+           - iban: string
+           - bic: string
+           - creditorBankCountryId: integer(int32)
+           - usesAbroadPayment: boolean
+           - userType: string
+           - isContact: boolean
+           - comments: string
+           - address: Address
+           - department: Department
+           - employments: array[Employment]
+           - holidayAllowanceEarned: HolidayAllowanceEarned
+           - employeeCategory: EmployeeCategory
+
+====================================================================================================
+  EVENT (6 endpoints)
+====================================================================================================
+
+  POST   /event/subscription
+         [BETA] Create a new subscription for current EmployeeToken.
+         Body: Subscription
+           - id: integer(int64)
+           - version: integer(int32)
+           - event: string
+           - targetUrl: string
+           - fields: string
+           - status: string
+           - authHeaderName: string
+           - authHeaderValue: string
+           - hmacSharedSecret: string
+
+  POST   /event/subscription/list
+         [BETA] Create multiple subscriptions for current EmployeeToken.
+         Body: array[Subscription]
+           - id: integer(int64)
+           - version: integer(int32)
+           - event: string
+           - targetUrl: string
+           - fields: string
+           - status: string
+           - authHeaderName: string
+           - authHeaderValue: string
+           - hmacSharedSecret: string
+
+  PUT    /event/subscription/list
+         [BETA] Update multiple subscription.
+         Body: array[Subscription]
+           - id: integer(int64)
+           - version: integer(int32)
+           - event: string
+           - targetUrl: string
+           - fields: string
+           - status: string
+           - authHeaderName: string
+           - authHeaderValue: string
+           - hmacSharedSecret: string
+
+  DELETE /event/subscription/list
+         [BETA] Delete multiple subscriptions.
+         Path/Query params: ?ids
+
+  PUT    /event/subscription/{id}
+         [BETA] Change a current subscription, based on id.
+         Path/Query params: id
+         Body: Subscription
+           - id: integer(int64)
+           - version: integer(int32)
+           - event: string
+           - targetUrl: string
+           - fields: string
+           - status: string
+           - authHeaderName: string
+           - authHeaderValue: string
+           - hmacSharedSecret: string
+
+  DELETE /event/subscription/{id}
+         [BETA] Delete the given subscription.
+         Path/Query params: id
+
+====================================================================================================
+  INCOMINGINVOICE (3 endpoints)
+====================================================================================================
+
+  POST   /incomingInvoice
+         [BETA] create an invoice
+         Body: IncomingInvoiceAggregateExternalWrite
+           - version: integer(int32)
+           - invoiceHeader: IncomingInvoiceHeaderExternalWrite
+           - orderLines: array[IncomingOrderLineExternalWrite]
+
+  PUT    /incomingInvoice/{voucherId}
+         [BETA] update an invoice by voucherId
+         Path/Query params: voucherId
+         Body: IncomingInvoiceAggregateExternalWrite
+           - version: integer(int32)
+           - invoiceHeader: IncomingInvoiceHeaderExternalWrite
+           - orderLines: array[IncomingOrderLineExternalWrite]
+
+  POST   /incomingInvoice/{voucherId}/addPayment
+         [BETA] create a payment for voucher/invoice
+         Path/Query params: voucherId
+         Body: IncomingInvoicePaymentExternalWrite
+           - paymentTypeClientUUId: string
+           - amountCurrency: number
+           - paymentDate: string
+           - creditorIbanOrBban: string
+           - kidOrReceiverReference: string
+           - useDefaultPaymentType: boolean
+           - partialPayment: boolean
+
+====================================================================================================
+  INTERNAL (2 endpoints)
+====================================================================================================
+
+  DELETE /internal/debtCollector/deactivate
+         Deactivate debt collector relation
+
+  PUT    /internal/nhoAdmin/:abort
+         Aborts all scheduled NHO membership events
+
+====================================================================================================
+  INVENTORY (16 endpoints)
+====================================================================================================
+
+  POST   /inventory
+         Create new inventory.
+         Body: Inventory
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - isMainInventory: boolean
+           - isInactive: boolean
+           - description: string
+           - email: string
+           - phone: string
+           - deletable: boolean
+           - address: Address
+           - lastStocking: string
+           - status: string
+           - hasLocations: boolean
+
+  POST   /inventory/location
+         Create new inventory location. Only available for Logistics Basic.
+         Body: InventoryLocation
+           - id: integer(int64)
+           - version: integer(int32)
+           - inventory: Inventory
+           - name: string
+           - isInactive: boolean
+
+  POST   /inventory/location/list
+         Add multiple inventory locations. Only available for Logistics Basic.
+         Body: array[InventoryLocation]
+           - id: integer(int64)
+           - version: integer(int32)
+           - inventory: Inventory
+           - name: string
+           - isInactive: boolean
+
+  PUT    /inventory/location/list
+         Update multiple inventory locations. Only available for Logistics Basic.
+         Body: array[InventoryLocation]
+           - id: integer(int64)
+           - version: integer(int32)
+           - inventory: Inventory
+           - name: string
+           - isInactive: boolean
+
+  DELETE /inventory/location/list
+         Delete inventory location. Only available for Logistics Basic.
+         Path/Query params: ?ids
+
+  PUT    /inventory/location/{id}
+         Update inventory location. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: InventoryLocation
+           - id: integer(int64)
+           - version: integer(int32)
+           - inventory: Inventory
+           - name: string
+           - isInactive: boolean
+
+  DELETE /inventory/location/{id}
+         Delete inventory location. Only available for Logistics Basic.
+         Path/Query params: id
+
+  POST   /inventory/stocktaking
+         Create new stocktaking.
+         Body: Stocktaking
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - comment: string
+           - typeOfStocktaking: string
+           - inventory: Inventory
+           - isCompleted: boolean
+
+  POST   /inventory/stocktaking/productline
+         Create order line. When creating several order lines, use /list for better performance.
+         Body: ProductLine
+           - id: integer(int64)
+           - version: integer(int32)
+           - stocktaking: Stocktaking
+           - product: Product
+           - count: number
+           - unitCostCurrency: number
+           - comment: string
+           - counter: Employee
+           - location: InventoryLocation
+
+  PUT    /inventory/stocktaking/productline/{id}
+         Update order line.
+         Path/Query params: id
+         Body: ProductLine
+           - id: integer(int64)
+           - version: integer(int32)
+           - stocktaking: Stocktaking
+           - product: Product
+           - count: number
+           - unitCostCurrency: number
+           - comment: string
+           - counter: Employee
+           - location: InventoryLocation
+
+  DELETE /inventory/stocktaking/productline/{id}
+         Delete order line.
+         Path/Query params: id
+
+  PUT    /inventory/stocktaking/productline/{id}/:changeLocation
+         [Beta] Change location on order line.
+         Path/Query params: id, ?warehouseLocationId
+
+  PUT    /inventory/stocktaking/{id}
+         Update stocktaking.
+         Path/Query params: id
+         Body: Stocktaking
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - comment: string
+           - typeOfStocktaking: string
+           - inventory: Inventory
+           - isCompleted: boolean
+
+  DELETE /inventory/stocktaking/{id}
+         Delete stocktaking.
+         Path/Query params: id
+
+  PUT    /inventory/{id}
+         Update inventory.
+         Path/Query params: id
+         Body: Inventory
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - isMainInventory: boolean
+           - isInactive: boolean
+           - description: string
+           - email: string
+           - phone: string
+           - deletable: boolean
+           - address: Address
+           - lastStocking: string
+           - status: string
+           - hasLocations: boolean
+
+  DELETE /inventory/{id}
+         Delete inventory.
+         Path/Query params: id
+
+====================================================================================================
+  INVOICE (6 endpoints)
+====================================================================================================
+
+  POST   /invoice
+         Create invoice. Related Order and OrderLines can be created first, or included as new objects inside the Invoice.
+         Body: Invoice
+           - id: integer(int64)
+           - version: integer(int32)
+           - invoiceNumber: integer(int32)
+           - invoiceDate: string
+           - customer: Customer
+           - invoiceDueDate: string
+           - kid: string
+           - comment: string
+           - orders: array[Order]
+           - voucher: Voucher
+           - currency: Currency
+           - invoiceRemarks: string
+           - invoiceRemark: InvoiceRemark
+           - paymentTypeId: integer(int32)
+           - paidAmount: number
+           - ehfSendStatus: string
+
+  POST   /invoice/list
+         [BETA] Create multiple invoices. Max 100 at a time.
+         Body: array[Invoice]
+           - id: integer(int64)
+           - version: integer(int32)
+           - invoiceNumber: integer(int32)
+           - invoiceDate: string
+           - customer: Customer
+           - invoiceDueDate: string
+           - kid: string
+           - comment: string
+           - orders: array[Order]
+           - voucher: Voucher
+           - currency: Currency
+           - invoiceRemarks: string
+           - invoiceRemark: InvoiceRemark
+           - paymentTypeId: integer(int32)
+           - paidAmount: number
+           - ehfSendStatus: string
+
+  PUT    /invoice/{id}/:createCreditNote
+         Creates a new Invoice representing a credit memo that nullifies the given invoice. Updates this invoice and any pre-existing inverse invoice.
+         Path/Query params: id, ?date
+
+  PUT    /invoice/{id}/:createReminder
+         Create invoice reminder and sends it by the given dispatch type. Supports the reminder types SOFT_REMINDER, REMINDER and NOTICE_OF_DEBT_COLLECTION. DispatchType NETS_PRINT must have type NOTICE_OF_DEBT_COLLECTION. SMS and NETS_PRINT must be activated prior to usage in the API.
+         Path/Query params: id, ?type, ?date
+
+  PUT    /invoice/{id}/:payment
+         Update invoice. The invoice is updated with payment information. The amount is in the invoiceâ€™s currency.
+         Path/Query params: id, ?paymentDate, ?paymentTypeId, ?paidAmount
+
+  PUT    /invoice/{id}/:send
+         Send invoice by ID and sendType. Optionally override email recipient.
+         Path/Query params: id, ?sendType
+
+====================================================================================================
+  LEDGER (39 endpoints)
+====================================================================================================
+
+  POST   /ledger/account
+         Create a new account.
+         Body: Account
+           - id: integer(int64)
+           - version: integer(int32)
+           - number: integer(int32)
+           - name: string
+           - description: string
+           - ledgerType: string
+           - vatType: VatType
+           - vatLocked: boolean
+           - currency: Currency
+           - isCloseable: boolean
+           - isApplicableForSupplierInvoice: boolean
+           - requireReconciliation: boolean
+           - isInactive: boolean
+           - isBankAccount: boolean
+           - isInvoiceAccount: boolean
+           - bankAccountNumber: string
+           - bankAccountCountry: Country
+           - bankName: string
+           - bankAccountIBAN: string
+           - bankAccountSWIFT: string
+           - saftCode: string
+           - groupingCode: string
+           - displayName: string
+           - requiresDepartment: boolean
+           - requiresProject: boolean
+           - invoicingDepartment: Department
+           - isPostingsExist: boolean
+           - quantityType1: ProductUnit
+           - quantityType2: ProductUnit
+           - department: Department
+
+  POST   /ledger/account/list
+         Create several accounts.
+         Body: array[Account]
+           - id: integer(int64)
+           - version: integer(int32)
+           - number: integer(int32)
+           - name: string
+           - description: string
+           - ledgerType: string
+           - vatType: VatType
+           - vatLocked: boolean
+           - currency: Currency
+           - isCloseable: boolean
+           - isApplicableForSupplierInvoice: boolean
+           - requireReconciliation: boolean
+           - isInactive: boolean
+           - isBankAccount: boolean
+           - isInvoiceAccount: boolean
+           - bankAccountNumber: string
+           - bankAccountCountry: Country
+           - bankName: string
+           - bankAccountIBAN: string
+           - bankAccountSWIFT: string
+           - saftCode: string
+           - groupingCode: string
+           - displayName: string
+           - requiresDepartment: boolean
+           - requiresProject: boolean
+           - invoicingDepartment: Department
+           - isPostingsExist: boolean
+           - quantityType1: ProductUnit
+           - quantityType2: ProductUnit
+           - department: Department
+
+  PUT    /ledger/account/list
+         Update multiple accounts.
+         Body: array[Account]
+           - id: integer(int64)
+           - version: integer(int32)
+           - number: integer(int32)
+           - name: string
+           - description: string
+           - ledgerType: string
+           - vatType: VatType
+           - vatLocked: boolean
+           - currency: Currency
+           - isCloseable: boolean
+           - isApplicableForSupplierInvoice: boolean
+           - requireReconciliation: boolean
+           - isInactive: boolean
+           - isBankAccount: boolean
+           - isInvoiceAccount: boolean
+           - bankAccountNumber: string
+           - bankAccountCountry: Country
+           - bankName: string
+           - bankAccountIBAN: string
+           - bankAccountSWIFT: string
+           - saftCode: string
+           - groupingCode: string
+           - displayName: string
+           - requiresDepartment: boolean
+           - requiresProject: boolean
+           - invoicingDepartment: Department
+           - isPostingsExist: boolean
+           - quantityType1: ProductUnit
+           - quantityType2: ProductUnit
+           - department: Department
+
+  DELETE /ledger/account/list
+         Delete multiple accounts.
+         Path/Query params: ?ids
+
+  PUT    /ledger/account/{id}
+         Update account.
+         Path/Query params: id
+         Body: Account
+           - id: integer(int64)
+           - version: integer(int32)
+           - number: integer(int32)
+           - name: string
+           - description: string
+           - ledgerType: string
+           - vatType: VatType
+           - vatLocked: boolean
+           - currency: Currency
+           - isCloseable: boolean
+           - isApplicableForSupplierInvoice: boolean
+           - requireReconciliation: boolean
+           - isInactive: boolean
+           - isBankAccount: boolean
+           - isInvoiceAccount: boolean
+           - bankAccountNumber: string
+           - bankAccountCountry: Country
+           - bankName: string
+           - bankAccountIBAN: string
+           - bankAccountSWIFT: string
+           - saftCode: string
+           - groupingCode: string
+           - displayName: string
+           - requiresDepartment: boolean
+           - requiresProject: boolean
+           - invoicingDepartment: Department
+           - isPostingsExist: boolean
+           - quantityType1: ProductUnit
+           - quantityType2: ProductUnit
+           - department: Department
+
+  DELETE /ledger/account/{id}
+         Delete account.
+         Path/Query params: id
+
+  POST   /ledger/accountingDimensionName
+         Create a new free (aka 'user defined') accounting dimension
+         Body: AccountingDimensionName
+           - id: integer(int64)
+           - version: integer(int32)
+           - dimensionName: string
+           - description: string
+           - active: boolean
+
+  PUT    /ledger/accountingDimensionName/{id}
+         Update an accounting dimension
+         Path/Query params: id
+         Body: AccountingDimensionName
+           - id: integer(int64)
+           - version: integer(int32)
+           - dimensionName: string
+           - description: string
+           - active: boolean
+
+  DELETE /ledger/accountingDimensionName/{id}
+         Delete an accounting dimension name by ID
+         Path/Query params: id
+
+  POST   /ledger/accountingDimensionValue
+         Create a new value for one of the free (aka 'user defined') accounting dimensions
+         Body: AccountingDimensionValue
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - dimensionIndex: integer(int32)
+           - active: boolean
+           - number: string
+           - showInVoucherRegistration: boolean
+           - position: integer(int32)
+
+  PUT    /ledger/accountingDimensionValue/list
+         Update accounting dimension values
+         Body: array[AccountingDimensionValue]
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - dimensionIndex: integer(int32)
+           - active: boolean
+           - number: string
+           - showInVoucherRegistration: boolean
+           - position: integer(int32)
+
+  DELETE /ledger/accountingDimensionValue/{id}
+         Delete an accounting dimension value.  Values that have been used in postings can not be deleted.
+         Path/Query params: id
+
+  POST   /ledger/paymentTypeOut
+         [BETA] Create new payment type for outgoing payments
+         Body: PaymentTypeOut
+           - id: integer(int64)
+           - version: integer(int32)
+           - description: string
+           - isBruttoWageDeduction: boolean
+           - creditAccount: Account
+           - showIncomingInvoice: boolean
+           - showWagePayment: boolean
+           - showVatReturns: boolean
+           - showWagePeriodTransaction: boolean
+           - requiresSeparateVoucher: boolean
+           - sequence: integer(int32)
+           - isInactive: boolean
+           - displayName: string
+           - currencyId: integer(int32)
+           - currencyCode: string
+
+  POST   /ledger/paymentTypeOut/list
+         [BETA] Create multiple payment types for outgoing payments at once
+         Body: array[PaymentTypeOut]
+           - id: integer(int64)
+           - version: integer(int32)
+           - description: string
+           - isBruttoWageDeduction: boolean
+           - creditAccount: Account
+           - showIncomingInvoice: boolean
+           - showWagePayment: boolean
+           - showVatReturns: boolean
+           - showWagePeriodTransaction: boolean
+           - requiresSeparateVoucher: boolean
+           - sequence: integer(int32)
+           - isInactive: boolean
+           - displayName: string
+           - currencyId: integer(int32)
+           - currencyCode: string
+
+  PUT    /ledger/paymentTypeOut/list
+         [BETA] Update multiple payment types for outgoing payments at once
+         Body: array[PaymentTypeOut]
+           - id: integer(int64)
+           - version: integer(int32)
+           - description: string
+           - isBruttoWageDeduction: boolean
+           - creditAccount: Account
+           - showIncomingInvoice: boolean
+           - showWagePayment: boolean
+           - showVatReturns: boolean
+           - showWagePeriodTransaction: boolean
+           - requiresSeparateVoucher: boolean
+           - sequence: integer(int32)
+           - isInactive: boolean
+           - displayName: string
+           - currencyId: integer(int32)
+           - currencyCode: string
+
+  PUT    /ledger/paymentTypeOut/{id}
+         [BETA] Update existing payment type for outgoing payments
+         Path/Query params: id
+         Body: PaymentTypeOut
+           - id: integer(int64)
+           - version: integer(int32)
+           - description: string
+           - isBruttoWageDeduction: boolean
+           - creditAccount: Account
+           - showIncomingInvoice: boolean
+           - showWagePayment: boolean
+           - showVatReturns: boolean
+           - showWagePeriodTransaction: boolean
+           - requiresSeparateVoucher: boolean
+           - sequence: integer(int32)
+           - isInactive: boolean
+           - displayName: string
+           - currencyId: integer(int32)
+           - currencyCode: string
+
+  DELETE /ledger/paymentTypeOut/{id}
+         [BETA] Delete payment type for outgoing payments by ID.
+         Path/Query params: id
+
+  PUT    /ledger/posting/:closePostings
+         Close postings.
+         Body: array[integer]
+
+  PUT    /ledger/vatSettings
+         Update VAT settings for the logged in company.
+         Body: VatSettings
+           - id: integer(int64)
+           - version: integer(int32)
+           - vatRegistrationStatus: string
+
+  PUT    /ledger/vatType/createRelativeVatType
+         Create a new relative VAT Type. These are used if the company has 'forholdsmessig fradrag for inngÃ¥ende MVA'.
+         Path/Query params: ?name, ?vatTypeId, ?percentage
+
+  POST   /ledger/voucher
+         Add new voucher. IMPORTANT: Also creates postings. Only the gross amounts will be used. Amounts should be rounded to 2 decimals.
+         Body: Voucher
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - description: string
+           - voucherType: VoucherType
+           - reverseVoucher: Voucher
+           - postings: array[Posting]
+           - document: Document
+           - attachment: Document
+           - externalVoucherNumber: string
+           - ediDocument: Document
+           - vendorInvoiceNumber: string
+
+  PUT    /ledger/voucher/historical/:closePostings
+         [BETA] Close postings.
+         Body: string
+
+  PUT    /ledger/voucher/historical/:reverseHistoricalVouchers
+         [BETA] Deletes all historical vouchers. Requires the "All vouchers" and "Advanced Voucher" permissions.
+
+  POST   /ledger/voucher/historical/employee
+         [BETA] Create one employee, based on import from external system. Validation is less strict, ie. employee department isn't required.
+         Body: Employee
+           - id: integer(int64)
+           - version: integer(int32)
+           - firstName: string
+           - lastName: string
+           - employeeNumber: string
+           - dateOfBirth: string
+           - email: string
+           - phoneNumberMobileCountry: Country
+           - phoneNumberMobile: string
+           - phoneNumberHome: string
+           - phoneNumberWork: string
+           - nationalIdentityNumber: string
+           - dnumber: string
+           - internationalId: InternationalId
+           - bankAccountNumber: string
+           - iban: string
+           - bic: string
+           - creditorBankCountryId: integer(int32)
+           - usesAbroadPayment: boolean
+           - userType: string
+           - isContact: boolean
+           - comments: string
+           - address: Address
+           - department: Department
+           - employments: array[Employment]
+           - holidayAllowanceEarned: HolidayAllowanceEarned
+           - employeeCategory: EmployeeCategory
+
+  POST   /ledger/voucher/historical/historical
+         API endpoint for creating historical vouchers. These are vouchers created outside Tripletex, and should be from closed accounting years. The intended usage is to get access to historical transcations in Tripletex. Also creates postings. All amount fields in postings will be used. VAT postings must be included, these are not generated automatically like they are for normal vouchers in Tripletex. Requires the \"All vouchers\" and \"Advanced Voucher\" permissions.
+         Body: array[HistoricalVoucher]
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - externalVoucherNumber: string
+           - description: string
+           - voucherType: VoucherType
+           - postings: array[HistoricalPosting]
+
+  POST   /ledger/voucher/historical/{voucherId}/attachment
+         Upload attachment to voucher. If the voucher already has an attachment the content will be appended to the existing attachment as new PDF page(s). Valid document formats are PDF, PNG, JPEG and TIFF. Non PDF formats will be converted to PDF. Send as multipart form.
+         Path/Query params: voucherId
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /ledger/voucher/importDocument
+         Upload a document to create one or more vouchers. Valid document formats are PDF, PNG, JPEG and TIFF. EHF/XML is possible with agreement with Tripletex. Send as multipart form.
+         Body: object
+           - file: string(binary) *REQ*
+           - description: string
+
+  POST   /ledger/voucher/importGbat10
+         Import GBAT10. Send as multipart form.
+         Body: object
+           - generateVatPostings: boolean *REQ*
+           - file: string(binary) *REQ*
+           - encoding: string
+
+  PUT    /ledger/voucher/list
+         Update multiple vouchers. Postings with guiRow==0 will be deleted and regenerated.
+         Body: array[Voucher]
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - description: string
+           - voucherType: VoucherType
+           - reverseVoucher: Voucher
+           - postings: array[Posting]
+           - document: Document
+           - attachment: Document
+           - externalVoucherNumber: string
+           - ediDocument: Document
+           - vendorInvoiceNumber: string
+
+  POST   /ledger/voucher/openingBalance
+         [BETA] Add an opening balance on the given date.  All movements before this date will be 'zeroed out' in a separate correction voucher. The opening balance must have the first day of a month as the date, and it's also recommended to have the first day of the year as the date. If the postings provided don't balance the voucher, the difference will automatically be posted to a help account
+         Body: OpeningBalance
+           - voucherDate: string
+           - balancePostings: array[OpeningBalanceBalancePosting]
+           - customerPostings: array[OpeningBalanceCustomerPosting]
+           - supplierPostings: array[OpeningBalanceSupplierPosting]
+           - employeePostings: array[OpeningBalanceEmployeePosting]
+
+  DELETE /ledger/voucher/openingBalance
+         [BETA] Delete the opening balance. The correction voucher will also be deleted
+
+  PUT    /ledger/voucher/{id}
+         Update voucher. Postings with guiRow==0 will be deleted and regenerated.
+         Path/Query params: id
+         Body: Voucher
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - description: string
+           - voucherType: VoucherType
+           - reverseVoucher: Voucher
+           - postings: array[Posting]
+           - document: Document
+           - attachment: Document
+           - externalVoucherNumber: string
+           - ediDocument: Document
+           - vendorInvoiceNumber: string
+
+  DELETE /ledger/voucher/{id}
+         Delete voucher by ID.
+         Path/Query params: id
+
+  PUT    /ledger/voucher/{id}/:reverse
+         Reverses the voucher, and returns the reversed voucher. Supports reversing most voucher types, except salary transactions.
+         Path/Query params: id, ?date
+
+  PUT    /ledger/voucher/{id}/:sendToInbox
+         Send voucher to inbox.
+         Path/Query params: id
+
+  PUT    /ledger/voucher/{id}/:sendToLedger
+         Send voucher to ledger.
+         Path/Query params: id
+
+  POST   /ledger/voucher/{voucherId}/attachment
+         Upload attachment to voucher. If the voucher already has an attachment the content will be appended to the existing attachment as new PDF page(s). Valid document formats are PDF, PNG, JPEG and TIFF. Non PDF formats will be converted to PDF. Send as multipart form.
+         Path/Query params: voucherId
+         Body: object
+           - file: string(binary) *REQ*
+
+  DELETE /ledger/voucher/{voucherId}/attachment
+         Delete attachment.
+         Path/Query params: voucherId
+
+  POST   /ledger/voucher/{voucherId}/pdf/{fileName}
+         [DEPRECATED] Use POST ledger/voucher/{voucherId}/attachment instead.
+         Path/Query params: voucherId, fileName
+         Body: object
+           - file: string(binary) *REQ*
+
+====================================================================================================
+  ORDER (21 endpoints)
+====================================================================================================
+
+  POST   /order
+         Create order.
+         Body: Order
+           - id: integer(int64)
+           - version: integer(int32)
+           - customer: Customer
+           - contact: Contact
+           - attn: Contact
+           - receiverEmail: string
+           - overdueNoticeEmail: string
+           - number: string
+           - reference: string
+           - ourContact: Contact
+           - ourContactEmployee: Employee
+           - department: Department
+           - orderDate: string
+           - project: Project
+           - invoiceComment: string
+           - currency: Currency
+           - invoicesDueIn: integer(int32)
+           - status: string
+           - invoicesDueInType: string
+           - isShowOpenPostsOnInvoices: boolean
+           - isClosed: boolean
+           - deliveryDate: string
+           - deliveryAddress: DeliveryAddress
+           - deliveryComment: string
+           - isPrioritizeAmountsIncludingVat: boolean
+           - orderLineSorting: string
+           - orderGroups: array[OrderGroup]
+           - orderLines: array[OrderLine]
+           - isSubscription: boolean
+           - subscriptionDuration: integer(int32)
+           - subscriptionDurationType: string
+           - subscriptionPeriodsOnInvoice: integer(int32)
+           - subscriptionInvoicingTimeInAdvanceOrArrears: string
+           - subscriptionInvoicingTime: integer(int32)
+           - subscriptionInvoicingTimeType: string
+           - isSubscriptionAutoInvoicing: boolean
+           - preliminaryInvoice: Invoice
+           - sendMethodDescription: string
+           - invoiceOnAccountVatHigh: boolean
+           - invoiceSMSNotificationNumber: string
+           - markUpOrderLines: number
+           - discountPercentage: number
+
+  PUT    /order/:invoiceMultipleOrders
+         [BETA] Charges a single customer invoice from multiple orders. The orders must be to the same customer, currency, due date, receiver email, attn. and smsNotificationNumber
+         Path/Query params: ?id, ?invoiceDate
+
+  POST   /order/list
+         [BETA] Create multiple Orders with OrderLines. Max 100 at a time.
+         Body: array[Order]
+           - id: integer(int64)
+           - version: integer(int32)
+           - customer: Customer
+           - contact: Contact
+           - attn: Contact
+           - receiverEmail: string
+           - overdueNoticeEmail: string
+           - number: string
+           - reference: string
+           - ourContact: Contact
+           - ourContactEmployee: Employee
+           - department: Department
+           - orderDate: string
+           - project: Project
+           - invoiceComment: string
+           - currency: Currency
+           - invoicesDueIn: integer(int32)
+           - status: string
+           - invoicesDueInType: string
+           - isShowOpenPostsOnInvoices: boolean
+           - isClosed: boolean
+           - deliveryDate: string
+           - deliveryAddress: DeliveryAddress
+           - deliveryComment: string
+           - isPrioritizeAmountsIncludingVat: boolean
+           - orderLineSorting: string
+           - orderGroups: array[OrderGroup]
+           - orderLines: array[OrderLine]
+           - isSubscription: boolean
+           - subscriptionDuration: integer(int32)
+           - subscriptionDurationType: string
+           - subscriptionPeriodsOnInvoice: integer(int32)
+           - subscriptionInvoicingTimeInAdvanceOrArrears: string
+           - subscriptionInvoicingTime: integer(int32)
+           - subscriptionInvoicingTimeType: string
+           - isSubscriptionAutoInvoicing: boolean
+           - preliminaryInvoice: Invoice
+           - sendMethodDescription: string
+           - invoiceOnAccountVatHigh: boolean
+           - invoiceSMSNotificationNumber: string
+           - markUpOrderLines: number
+           - discountPercentage: number
+
+  POST   /order/orderGroup
+         [Beta] Post orderGroup.
+         Body: OrderGroup
+           - id: integer(int64)
+           - version: integer(int32)
+           - order: Order
+           - title: string
+           - comment: string
+           - sortIndex: integer(int32)
+           - orderLines: array[OrderLine]
+
+  PUT    /order/orderGroup
+         [Beta] Put orderGroup.
+         Body: OrderGroup
+           - id: integer(int64)
+           - version: integer(int32)
+           - order: Order
+           - title: string
+           - comment: string
+           - sortIndex: integer(int32)
+           - orderLines: array[OrderLine]
+
+  DELETE /order/orderGroup/{id}
+         Delete orderGroup by ID.
+         Path/Query params: id
+
+  POST   /order/orderline
+         Create order line. When creating several order lines, use /list for better performance.
+         Body: OrderLine
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - description: string
+           - count: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - currency: Currency
+           - markup: number
+           - discount: number
+           - vatType: VatType
+           - vendor: Company
+           - order: Order
+           - unitPriceIncludingVatCurrency: number
+           - isSubscription: boolean
+           - subscriptionPeriodStart: string
+           - subscriptionPeriodEnd: string
+           - orderGroup: OrderGroup
+           - sortIndex: integer(int32)
+           - isPicked: boolean
+           - pickedDate: string
+           - orderedQuantity: number
+           - isCharged: boolean
+
+  POST   /order/orderline/list
+         Create multiple order lines.
+         Body: array[OrderLine]
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - description: string
+           - count: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - currency: Currency
+           - markup: number
+           - discount: number
+           - vatType: VatType
+           - vendor: Company
+           - order: Order
+           - unitPriceIncludingVatCurrency: number
+           - isSubscription: boolean
+           - subscriptionPeriodStart: string
+           - subscriptionPeriodEnd: string
+           - orderGroup: OrderGroup
+           - sortIndex: integer(int32)
+           - isPicked: boolean
+           - pickedDate: string
+           - orderedQuantity: number
+           - isCharged: boolean
+
+  PUT    /order/orderline/{id}
+         [BETA] Put order line
+         Path/Query params: id
+         Body: OrderLine
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - description: string
+           - count: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - currency: Currency
+           - markup: number
+           - discount: number
+           - vatType: VatType
+           - vendor: Company
+           - order: Order
+           - unitPriceIncludingVatCurrency: number
+           - isSubscription: boolean
+           - subscriptionPeriodStart: string
+           - subscriptionPeriodEnd: string
+           - orderGroup: OrderGroup
+           - sortIndex: integer(int32)
+           - isPicked: boolean
+           - pickedDate: string
+           - orderedQuantity: number
+           - isCharged: boolean
+
+  DELETE /order/orderline/{id}
+         [BETA] Delete order line by ID.
+         Path/Query params: id
+
+  PUT    /order/orderline/{id}/:pickLine
+         [BETA] Pick order line. This is only available for customers who have Logistics and who activated the available inventory functionality.
+         Path/Query params: id
+
+  PUT    /order/orderline/{id}/:unpickLine
+         [BETA] Unpick order line.This is only available for customers who have Logistics and who activated the available inventory functionality.
+         Path/Query params: id
+
+  PUT    /order/sendInvoicePreview/{orderId}
+         Send Invoice Preview to customer by email.
+         Path/Query params: orderId
+
+  PUT    /order/sendOrderConfirmation/{orderId}
+         Send Order Confirmation to customer by email.
+         Path/Query params: orderId
+
+  PUT    /order/sendPackingNote/{orderId}
+         Send Packing Note to customer by email.
+         Path/Query params: orderId
+
+  PUT    /order/{id}
+         Update order.
+         Path/Query params: id
+         Body: Order
+           - id: integer(int64)
+           - version: integer(int32)
+           - customer: Customer
+           - contact: Contact
+           - attn: Contact
+           - receiverEmail: string
+           - overdueNoticeEmail: string
+           - number: string
+           - reference: string
+           - ourContact: Contact
+           - ourContactEmployee: Employee
+           - department: Department
+           - orderDate: string
+           - project: Project
+           - invoiceComment: string
+           - currency: Currency
+           - invoicesDueIn: integer(int32)
+           - status: string
+           - invoicesDueInType: string
+           - isShowOpenPostsOnInvoices: boolean
+           - isClosed: boolean
+           - deliveryDate: string
+           - deliveryAddress: DeliveryAddress
+           - deliveryComment: string
+           - isPrioritizeAmountsIncludingVat: boolean
+           - orderLineSorting: string
+           - orderGroups: array[OrderGroup]
+           - orderLines: array[OrderLine]
+           - isSubscription: boolean
+           - subscriptionDuration: integer(int32)
+           - subscriptionDurationType: string
+           - subscriptionPeriodsOnInvoice: integer(int32)
+           - subscriptionInvoicingTimeInAdvanceOrArrears: string
+           - subscriptionInvoicingTime: integer(int32)
+           - subscriptionInvoicingTimeType: string
+           - isSubscriptionAutoInvoicing: boolean
+           - preliminaryInvoice: Invoice
+           - sendMethodDescription: string
+           - invoiceOnAccountVatHigh: boolean
+           - invoiceSMSNotificationNumber: string
+           - markUpOrderLines: number
+           - discountPercentage: number
+
+  DELETE /order/{id}
+         Delete order.
+         Path/Query params: id
+
+  PUT    /order/{id}/:approveSubscriptionInvoice
+         To create a subscription invoice, first create a order with the subscription enabled, then approve it with this method. This approves the order for subscription invoicing.
+         Path/Query params: id, ?invoiceDate
+
+  PUT    /order/{id}/:attach
+         Attach document to specified order ID.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  PUT    /order/{id}/:invoice
+         Create new invoice or subscription invoice from order.
+         Path/Query params: id, ?invoiceDate
+
+  PUT    /order/{id}/:unApproveSubscriptionInvoice
+         Unapproves the order for subscription invoicing.
+         Path/Query params: id
+
+====================================================================================================
+  PRODUCT (34 endpoints)
+====================================================================================================
+
+  POST   /product
+         Create new product.
+         Body: Product
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - orderLineDescription: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - expenses: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - discountGroup: DiscountGroup
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - department: Department
+           - account: Account
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isDeletable: boolean
+           - hasSupplierProductConnected: boolean
+           - weight: number
+           - weightUnit: string
+           - volume: number
+           - volumeUnit: string
+           - hsnCode: string
+           - image: Document
+           - mainSupplierProduct: SupplierProduct
+           - minStockLevel: number
+
+  POST   /product/group
+         Create new product group. Only available for Logistics Basic.
+         Body: ProductGroup
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - parentGroup: ProductGroup
+
+  POST   /product/group/list
+         Add multiple products groups. Only available for Logistics Basic.
+         Body: array[ProductGroup]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - parentGroup: ProductGroup
+
+  PUT    /product/group/list
+         Update a list of product groups. Only available for Logistics Basic.
+         Body: array[ProductGroup]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - parentGroup: ProductGroup
+
+  DELETE /product/group/list
+         Delete multiple product groups. Only available for Logistics Basic.
+         Path/Query params: ?ids
+
+  PUT    /product/group/{id}
+         Update product group. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: ProductGroup
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - parentGroup: ProductGroup
+
+  DELETE /product/group/{id}
+         Delete product group. Only available for Logistics Basic.
+         Path/Query params: id
+
+  POST   /product/groupRelation
+         Create new product group relation. Only available for Logistics Basic.
+         Body: ProductGroupRelation
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - productGroup: ProductGroup
+
+  POST   /product/groupRelation/list
+         Add multiple products group relations. Only available for Logistics Basic.
+         Body: array[ProductGroupRelation]
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - productGroup: ProductGroup
+
+  DELETE /product/groupRelation/list
+         Delete multiple product group relations. Only available for Logistics Basic.
+         Body: array[integer]
+
+  DELETE /product/groupRelation/{id}
+         Delete product group relation. Only available for Logistics Basic.
+         Path/Query params: id
+
+  POST   /product/inventoryLocation
+         Create new product inventory location. Only available for Logistics Basic.
+         Body: ProductInventoryLocation
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - isMainLocation: boolean
+           - isInactive: boolean
+
+  POST   /product/inventoryLocation/list
+         Add multiple product inventory locations. Only available for Logistics Basic.
+         Body: array[ProductInventoryLocation]
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - isMainLocation: boolean
+           - isInactive: boolean
+
+  PUT    /product/inventoryLocation/list
+         Update multiple product inventory locations. Only available for Logistics Basic.
+         Body: array[ProductInventoryLocation]
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - isMainLocation: boolean
+           - isInactive: boolean
+
+  PUT    /product/inventoryLocation/{id}
+         Update product inventory location. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: ProductInventoryLocation
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - isMainLocation: boolean
+           - isInactive: boolean
+
+  DELETE /product/inventoryLocation/{id}
+         Delete product inventory location. Only available for Logistics Basic.
+         Path/Query params: id
+
+  POST   /product/list
+         Add multiple products.
+         Body: array[Product]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - orderLineDescription: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - expenses: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - discountGroup: DiscountGroup
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - department: Department
+           - account: Account
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isDeletable: boolean
+           - hasSupplierProductConnected: boolean
+           - weight: number
+           - weightUnit: string
+           - volume: number
+           - volumeUnit: string
+           - hsnCode: string
+           - image: Document
+           - mainSupplierProduct: SupplierProduct
+           - minStockLevel: number
+
+  PUT    /product/list
+         Update a list of products.
+         Body: array[Product]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - orderLineDescription: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - expenses: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - discountGroup: DiscountGroup
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - department: Department
+           - account: Account
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isDeletable: boolean
+           - hasSupplierProductConnected: boolean
+           - weight: number
+           - weightUnit: string
+           - volume: number
+           - volumeUnit: string
+           - hsnCode: string
+           - image: Document
+           - mainSupplierProduct: SupplierProduct
+           - minStockLevel: number
+
+  PUT    /product/logisticsSettings
+         Update logistics settings for the logged in company.
+         Body: LogisticsSettings
+           - id: integer(int64)
+           - version: integer(int32)
+           - hasWarehouseLocation: boolean
+           - showOnboardingWizard: boolean
+           - moduleSuggestedProductNumber: boolean
+           - suggestedProductNumber: string
+           - purchaseOrderDefaultComment: string
+           - moduleBring: boolean
+
+  POST   /product/supplierProduct
+         Create new supplierProduct.
+         Body: SupplierProduct
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - cost: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isMainSupplierProduct: boolean
+
+  POST   /product/supplierProduct/getSupplierProductsByIds
+         Find the products by ids. Method was added as a POST because GET request header has a maximum size that we can exceed with customers that a lot of products.
+         Body: array[SupplierProduct]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - cost: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isMainSupplierProduct: boolean
+
+  POST   /product/supplierProduct/list
+         Create list of new supplierProduct.
+         Body: array[SupplierProduct]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - cost: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isMainSupplierProduct: boolean
+
+  PUT    /product/supplierProduct/list
+         Update a list of supplierProduct.
+         Body: array[SupplierProduct]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - cost: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isMainSupplierProduct: boolean
+
+  PUT    /product/supplierProduct/{id}
+         Update supplierProduct.
+         Path/Query params: id
+         Body: SupplierProduct
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - cost: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isMainSupplierProduct: boolean
+
+  DELETE /product/supplierProduct/{id}
+         Delete supplierProduct.
+         Path/Query params: id
+
+  POST   /product/unit
+         Create new product unit.
+         Body: ProductUnit
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - nameEN: string
+           - nameShort: string
+           - nameShortEN: string
+           - commonCode: string
+           - isDeletable: boolean
+
+  POST   /product/unit/list
+         Create multiple product units.
+         Body: array[ProductUnit]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - nameEN: string
+           - nameShort: string
+           - nameShortEN: string
+           - commonCode: string
+           - isDeletable: boolean
+
+  PUT    /product/unit/list
+         Update list of product units.
+         Body: array[ProductUnit]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - nameEN: string
+           - nameShort: string
+           - nameShortEN: string
+           - commonCode: string
+           - isDeletable: boolean
+
+  PUT    /product/unit/{id}
+         Update product unit.
+         Path/Query params: id
+         Body: ProductUnit
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - nameEN: string
+           - nameShort: string
+           - nameShortEN: string
+           - commonCode: string
+           - isDeletable: boolean
+
+  DELETE /product/unit/{id}
+         Delete product unit by ID.
+         Path/Query params: id
+
+  PUT    /product/{id}
+         Update product.
+         Path/Query params: id
+         Body: Product
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - orderLineDescription: string
+           - ean: string
+           - costExcludingVatCurrency: number
+           - expenses: number
+           - priceExcludingVatCurrency: number
+           - priceIncludingVatCurrency: number
+           - isInactive: boolean
+           - discountGroup: DiscountGroup
+           - productUnit: ProductUnit
+           - isStockItem: boolean
+           - vatType: VatType
+           - currency: Currency
+           - department: Department
+           - account: Account
+           - supplier: Supplier
+           - resaleProduct: Product
+           - isDeletable: boolean
+           - hasSupplierProductConnected: boolean
+           - weight: number
+           - weightUnit: string
+           - volume: number
+           - volumeUnit: string
+           - hsnCode: string
+           - image: Document
+           - mainSupplierProduct: SupplierProduct
+           - minStockLevel: number
+
+  DELETE /product/{id}
+         Delete product.
+         Path/Query params: id
+
+  POST   /product/{id}/image
+         Upload image to product. Existing image on product will be replaced if exists
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  DELETE /product/{id}/image
+         Delete image.
+         Path/Query params: id
+
+====================================================================================================
+  PROJECT (40 endpoints)
+====================================================================================================
+
+  POST   /project
+         Add new project.
+         Body: Project
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - projectManager: Employee
+           - department: Department
+           - mainProject: Project
+           - startDate: string
+           - endDate: string
+           - customer: Customer
+           - isClosed: boolean
+           - isReadyForInvoicing: boolean
+           - isInternal: boolean
+           - isOffer: boolean
+           - isFixedPrice: boolean
+           - projectCategory: ProjectCategory
+           - deliveryAddress: Address
+           - boligmappaAddress: Address
+           - displayNameFormat: string
+           - reference: string
+           - externalAccountsNumber: string
+           - vatType: VatType
+           - fixedprice: number
+           - currency: Currency
+           - markUpOrderLines: number
+           - markUpFeesEarned: number
+           - isPriceCeiling: boolean
+           - priceCeilingAmount: number
+           - projectHourlyRates: array[ProjectHourlyRate]
+           - forParticipantsOnly: boolean
+           - participants: array[ProjectParticipant]
+           - contact: Contact
+           - attention: Contact
+           - invoiceComment: string
+           - preliminaryInvoice: Invoice
+           - generalProjectActivitiesPerProjectOnly: boolean
+           - projectActivities: array[ProjectActivity]
+           - invoiceDueDate: integer(int32)
+           - invoiceDueDateType: string
+           - invoiceReceiverEmail: string
+           - overdueNoticeEmail: string
+           - accessType: string
+           - useProductNetPrice: boolean
+           - ignoreCompanyProductDiscountAgreement: boolean
+           - invoiceOnAccountVatHigh: boolean
+           - accountingDimensionValues: array[AccountingDimensionValue]
+
+  DELETE /project
+         [BETA] Delete multiple projects.
+         Body: array[Project]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - projectManager: Employee
+           - department: Department
+           - mainProject: Project
+           - startDate: string
+           - endDate: string
+           - customer: Customer
+           - isClosed: boolean
+           - isReadyForInvoicing: boolean
+           - isInternal: boolean
+           - isOffer: boolean
+           - isFixedPrice: boolean
+           - projectCategory: ProjectCategory
+           - deliveryAddress: Address
+           - boligmappaAddress: Address
+           - displayNameFormat: string
+           - reference: string
+           - externalAccountsNumber: string
+           - vatType: VatType
+           - fixedprice: number
+           - currency: Currency
+           - markUpOrderLines: number
+           - markUpFeesEarned: number
+           - isPriceCeiling: boolean
+           - priceCeilingAmount: number
+           - projectHourlyRates: array[ProjectHourlyRate]
+           - forParticipantsOnly: boolean
+           - participants: array[ProjectParticipant]
+           - contact: Contact
+           - attention: Contact
+           - invoiceComment: string
+           - preliminaryInvoice: Invoice
+           - generalProjectActivitiesPerProjectOnly: boolean
+           - projectActivities: array[ProjectActivity]
+           - invoiceDueDate: integer(int32)
+           - invoiceDueDateType: string
+           - invoiceReceiverEmail: string
+           - overdueNoticeEmail: string
+           - accessType: string
+           - useProductNetPrice: boolean
+           - ignoreCompanyProductDiscountAgreement: boolean
+           - invoiceOnAccountVatHigh: boolean
+           - accountingDimensionValues: array[AccountingDimensionValue]
+
+  POST   /project/category
+         Add new project category.
+         Body: ProjectCategory
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - displayName: string
+
+  PUT    /project/category/{id}
+         Update project category.
+         Path/Query params: id
+         Body: ProjectCategory
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - displayName: string
+
+  PUT    /project/dynamicControlForm/{id}/:copyFieldValuesFromLastEditedForm
+         Into each section in the specified form that only has empty or default values, and copyFieldValuesByDefault set as true in the form's template, copy field values from the equivalent section in the most recently edited control form. Signed or completed forms will not be affected.
+         Path/Query params: id
+
+  POST   /project/hourlyRates
+         Create a project hourly rate. 
+         Body: ProjectHourlyRate
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - startDate: string
+           - showInProjectOrder: boolean
+           - hourlyRateModel: string
+           - projectSpecificRates: array[ProjectSpecificRate]
+           - fixedRate: number
+
+  DELETE /project/hourlyRates/deleteByProjectIds
+         Delete project hourly rates by project id.
+         Path/Query params: ?ids, ?date
+
+  POST   /project/hourlyRates/list
+         Create multiple project hourly rates.
+         Body: array[ProjectHourlyRate]
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - startDate: string
+           - showInProjectOrder: boolean
+           - hourlyRateModel: string
+           - projectSpecificRates: array[ProjectSpecificRate]
+           - fixedRate: number
+
+  PUT    /project/hourlyRates/list
+         Update multiple project hourly rates.
+         Body: array[ProjectHourlyRate]
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - startDate: string
+           - showInProjectOrder: boolean
+           - hourlyRateModel: string
+           - projectSpecificRates: array[ProjectSpecificRate]
+           - fixedRate: number
+
+  DELETE /project/hourlyRates/list
+         Delete project hourly rates.
+         Path/Query params: ?ids
+
+  POST   /project/hourlyRates/projectSpecificRates
+         Create new project specific rate. 
+         Body: ProjectSpecificRate
+           - id: integer(int64)
+           - version: integer(int32)
+           - hourlyRate: number
+           - hourlyCostPercentage: number
+           - projectHourlyRate: ProjectHourlyRate
+           - employee: Employee
+           - activity: Activity
+
+  POST   /project/hourlyRates/projectSpecificRates/list
+         Create multiple new project specific rates.
+         Body: array[ProjectSpecificRate]
+           - id: integer(int64)
+           - version: integer(int32)
+           - hourlyRate: number
+           - hourlyCostPercentage: number
+           - projectHourlyRate: ProjectHourlyRate
+           - employee: Employee
+           - activity: Activity
+
+  PUT    /project/hourlyRates/projectSpecificRates/list
+         Update multiple project specific rates.
+         Body: array[ProjectSpecificRate]
+           - id: integer(int64)
+           - version: integer(int32)
+           - hourlyRate: number
+           - hourlyCostPercentage: number
+           - projectHourlyRate: ProjectHourlyRate
+           - employee: Employee
+           - activity: Activity
+
+  DELETE /project/hourlyRates/projectSpecificRates/list
+         Delete project specific rates.
+         Path/Query params: ?ids
+
+  PUT    /project/hourlyRates/projectSpecificRates/{id}
+         Update a project specific rate.
+         Path/Query params: id
+         Body: ProjectSpecificRate
+           - id: integer(int64)
+           - version: integer(int32)
+           - hourlyRate: number
+           - hourlyCostPercentage: number
+           - projectHourlyRate: ProjectHourlyRate
+           - employee: Employee
+           - activity: Activity
+
+  DELETE /project/hourlyRates/projectSpecificRates/{id}
+         Delete project specific rate 
+         Path/Query params: id
+
+  PUT    /project/hourlyRates/updateOrAddHourRates
+         Update or add the same project hourly rate from project overview.
+         Path/Query params: ?ids
+         Body: HourlyRate
+           - id: integer(int64)
+           - version: integer(int32)
+           - startDate: string
+           - hourlyRateModel: string
+           - projectSpecificRates: array[ProjectSpecificRate]
+           - fixedRate: number
+
+  PUT    /project/hourlyRates/{id}
+         Update a project hourly rate.
+         Path/Query params: id
+         Body: ProjectHourlyRate
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - startDate: string
+           - showInProjectOrder: boolean
+           - hourlyRateModel: string
+           - projectSpecificRates: array[ProjectSpecificRate]
+           - fixedRate: number
+
+  DELETE /project/hourlyRates/{id}
+         Delete Project Hourly Rate 
+         Path/Query params: id
+
+  POST   /project/import
+         Upload project import file.
+         Path/Query params: ?fileFormat
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /project/list
+         [BETA] Register new projects. Multiple projects for different users can be sent in the same request.
+         Body: array[Project]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - projectManager: Employee
+           - department: Department
+           - mainProject: Project
+           - startDate: string
+           - endDate: string
+           - customer: Customer
+           - isClosed: boolean
+           - isReadyForInvoicing: boolean
+           - isInternal: boolean
+           - isOffer: boolean
+           - isFixedPrice: boolean
+           - projectCategory: ProjectCategory
+           - deliveryAddress: Address
+           - boligmappaAddress: Address
+           - displayNameFormat: string
+           - reference: string
+           - externalAccountsNumber: string
+           - vatType: VatType
+           - fixedprice: number
+           - currency: Currency
+           - markUpOrderLines: number
+           - markUpFeesEarned: number
+           - isPriceCeiling: boolean
+           - priceCeilingAmount: number
+           - projectHourlyRates: array[ProjectHourlyRate]
+           - forParticipantsOnly: boolean
+           - participants: array[ProjectParticipant]
+           - contact: Contact
+           - attention: Contact
+           - invoiceComment: string
+           - preliminaryInvoice: Invoice
+           - generalProjectActivitiesPerProjectOnly: boolean
+           - projectActivities: array[ProjectActivity]
+           - invoiceDueDate: integer(int32)
+           - invoiceDueDateType: string
+           - invoiceReceiverEmail: string
+           - overdueNoticeEmail: string
+           - accessType: string
+           - useProductNetPrice: boolean
+           - ignoreCompanyProductDiscountAgreement: boolean
+           - invoiceOnAccountVatHigh: boolean
+           - accountingDimensionValues: array[AccountingDimensionValue]
+
+  PUT    /project/list
+         [BETA] Update multiple projects.
+         Body: array[Project]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - projectManager: Employee
+           - department: Department
+           - mainProject: Project
+           - startDate: string
+           - endDate: string
+           - customer: Customer
+           - isClosed: boolean
+           - isReadyForInvoicing: boolean
+           - isInternal: boolean
+           - isOffer: boolean
+           - isFixedPrice: boolean
+           - projectCategory: ProjectCategory
+           - deliveryAddress: Address
+           - boligmappaAddress: Address
+           - displayNameFormat: string
+           - reference: string
+           - externalAccountsNumber: string
+           - vatType: VatType
+           - fixedprice: number
+           - currency: Currency
+           - markUpOrderLines: number
+           - markUpFeesEarned: number
+           - isPriceCeiling: boolean
+           - priceCeilingAmount: number
+           - projectHourlyRates: array[ProjectHourlyRate]
+           - forParticipantsOnly: boolean
+           - participants: array[ProjectParticipant]
+           - contact: Contact
+           - attention: Contact
+           - invoiceComment: string
+           - preliminaryInvoice: Invoice
+           - generalProjectActivitiesPerProjectOnly: boolean
+           - projectActivities: array[ProjectActivity]
+           - invoiceDueDate: integer(int32)
+           - invoiceDueDateType: string
+           - invoiceReceiverEmail: string
+           - overdueNoticeEmail: string
+           - accessType: string
+           - useProductNetPrice: boolean
+           - ignoreCompanyProductDiscountAgreement: boolean
+           - invoiceOnAccountVatHigh: boolean
+           - accountingDimensionValues: array[AccountingDimensionValue]
+
+  DELETE /project/list
+         [BETA] Delete projects.
+         Path/Query params: ?ids
+
+  POST   /project/orderline
+         [BETA] Create order line. When creating several order lines, use /list for better performance.
+         Body: ProjectOrderLine
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - description: string
+           - count: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - currency: Currency
+           - markup: number
+           - discount: number
+           - vatType: VatType
+           - vendor: Company
+           - project: Project
+           - date: string
+           - isChargeable: boolean
+           - invoice: Invoice
+           - customSortIndex: integer(int32)
+           - voucher: Voucher
+
+  POST   /project/orderline/list
+         [BETA] Create multiple order lines.
+         Body: array[ProjectOrderLine]
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - description: string
+           - count: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - currency: Currency
+           - markup: number
+           - discount: number
+           - vatType: VatType
+           - vendor: Company
+           - project: Project
+           - date: string
+           - isChargeable: boolean
+           - invoice: Invoice
+           - customSortIndex: integer(int32)
+           - voucher: Voucher
+
+  PUT    /project/orderline/{id}
+         [BETA] Update project orderline.
+         Path/Query params: id
+         Body: ProjectOrderLine
+           - id: integer(int64)
+           - version: integer(int32)
+           - product: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - description: string
+           - count: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - currency: Currency
+           - markup: number
+           - discount: number
+           - vatType: VatType
+           - vendor: Company
+           - project: Project
+           - date: string
+           - isChargeable: boolean
+           - invoice: Invoice
+           - customSortIndex: integer(int32)
+           - voucher: Voucher
+
+  DELETE /project/orderline/{id}
+         Delete order line by ID.
+         Path/Query params: id
+
+  POST   /project/participant
+         [BETA] Add new project participant.
+         Body: ProjectParticipant
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - employee: Employee
+           - adminAccess: boolean
+
+  POST   /project/participant/list
+         [BETA] Add new project participant. Multiple project participants can be sent in the same request.
+         Body: array[ProjectParticipant]
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - employee: Employee
+           - adminAccess: boolean
+
+  DELETE /project/participant/list
+         [BETA] Delete project participants.
+         Path/Query params: ?ids
+
+  PUT    /project/participant/{id}
+         [BETA] Update project participant.
+         Path/Query params: id
+         Body: ProjectParticipant
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - employee: Employee
+           - adminAccess: boolean
+
+  POST   /project/projectActivity
+         Add project activity.
+         Body: ProjectActivity
+           - id: integer(int64)
+           - version: integer(int32)
+           - activity: Activity
+           - project: Project
+           - startDate: string
+           - endDate: string
+           - isClosed: boolean
+           - budgetHours: number
+           - budgetHourlyRateCurrency: number
+           - budgetFeeCurrency: number
+
+  DELETE /project/projectActivity/list
+         Delete project activities
+         Path/Query params: ?ids
+
+  DELETE /project/projectActivity/{id}
+         Delete project activity
+         Path/Query params: id
+
+  PUT    /project/settings
+         Update project settings for company
+         Body: ProjectSettings
+           - approveHourLists: boolean
+           - approveInvoices: boolean
+           - markReadyForInvoicing: boolean
+           - historicalInformation: boolean
+           - projectForecast: boolean
+           - budgetOnSubcontracts: boolean
+           - projectCategories: boolean
+           - referenceFee: boolean
+           - sortOrderProjects: string
+           - autoCloseInvoicedProjects: boolean
+           - mustApproveRegisteredHours: boolean
+           - showProjectOrderLinesToAllProjectParticipants: boolean
+           - hourCostPercentage: boolean
+           - fixedPriceProjectsFeeCalcMethod: string
+           - fixedPriceProjectsInvoiceByProgress: boolean
+           - projectBudgetReferenceFee: boolean
+           - allowMultipleProjectInvoiceVat: boolean
+           - standardReinvoicing: boolean
+           - isCurrentMonthDefaultPeriod: boolean
+           - showProjectOnboarding: boolean
+           - autoConnectIncomingOrderlineToProject: boolean
+           - autoGenerateProjectNumber: boolean
+           - autoGenerateStartingNumber: integer(int32)
+           - projectNameScheme: string
+           - projectTypeOfContract: string
+           - projectOrderLinesSortOrder: string
+           - projectHourlyRateModel: string
+           - onlyProjectMembersCanRegisterInfo: boolean
+           - onlyProjectActivitiesTimesheetRegistration: boolean
+           - hourlyRateProjectsWriteUpDown: boolean
+           - showRecentlyClosedProjectsOnSupplierInvoice: boolean
+           - defaultProjectContractComment: string
+           - defaultProjectInvoicingComment: string
+           - resourcePlanning: boolean
+           - resourceGroups: boolean
+           - holidayPlan: boolean
+           - resourcePlanPeriod: string
+           - customControlForms: boolean
+           - controlFormsRequiredForInvoicing: array[ProjectControlFormType]
+           - controlFormsRequiredForHourTracking: array[ProjectControlFormType]
+           - dynamicControlFormIdsRequiredForInvoicing: array[integer]
+           - dynamicControlFormIdsRequiredForHourTracking: array[integer]
+           - useLoggedInUserEmailOnProjectBudget: boolean
+           - emailOnProjectBudget: string
+           - useLoggedInUserEmailOnProjectContract: boolean
+           - emailOnProjectContract: string
+           - useLoggedInUserEmailOnDocuments: boolean
+           - emailOnDocuments: string
+           - useProductNetPrice: boolean
+           - isNHOMember: boolean
+
+  POST   /project/subcontract
+         Add new project sub-contract.
+         Body: ProjectSubContract
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - company: Company
+           - budgetFeeCurrency: number
+           - budgetExpensesCurrency: number
+           - budgetIncomeCurrency: number
+           - budgetNetAmountCurrency: number
+           - displayName: string
+           - name: string
+           - description: string
+
+  PUT    /project/subcontract/{id}
+         Update project sub-contract.
+         Path/Query params: id
+         Body: ProjectSubContract
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - company: Company
+           - budgetFeeCurrency: number
+           - budgetExpensesCurrency: number
+           - budgetIncomeCurrency: number
+           - budgetNetAmountCurrency: number
+           - displayName: string
+           - name: string
+           - description: string
+
+  DELETE /project/subcontract/{id}
+         Delete project sub-contract by ID.
+         Path/Query params: id
+
+  PUT    /project/{id}
+         [BETA] Update project.
+         Path/Query params: id
+         Body: Project
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - number: string
+           - description: string
+           - projectManager: Employee
+           - department: Department
+           - mainProject: Project
+           - startDate: string
+           - endDate: string
+           - customer: Customer
+           - isClosed: boolean
+           - isReadyForInvoicing: boolean
+           - isInternal: boolean
+           - isOffer: boolean
+           - isFixedPrice: boolean
+           - projectCategory: ProjectCategory
+           - deliveryAddress: Address
+           - boligmappaAddress: Address
+           - displayNameFormat: string
+           - reference: string
+           - externalAccountsNumber: string
+           - vatType: VatType
+           - fixedprice: number
+           - currency: Currency
+           - markUpOrderLines: number
+           - markUpFeesEarned: number
+           - isPriceCeiling: boolean
+           - priceCeilingAmount: number
+           - projectHourlyRates: array[ProjectHourlyRate]
+           - forParticipantsOnly: boolean
+           - participants: array[ProjectParticipant]
+           - contact: Contact
+           - attention: Contact
+           - invoiceComment: string
+           - preliminaryInvoice: Invoice
+           - generalProjectActivitiesPerProjectOnly: boolean
+           - projectActivities: array[ProjectActivity]
+           - invoiceDueDate: integer(int32)
+           - invoiceDueDateType: string
+           - invoiceReceiverEmail: string
+           - overdueNoticeEmail: string
+           - accessType: string
+           - useProductNetPrice: boolean
+           - ignoreCompanyProductDiscountAgreement: boolean
+           - invoiceOnAccountVatHigh: boolean
+           - accountingDimensionValues: array[AccountingDimensionValue]
+
+  DELETE /project/{id}
+         [BETA] Delete project.
+         Path/Query params: id
+
+====================================================================================================
+  PURCHASEORDER (40 endpoints)
+====================================================================================================
+
+  POST   /purchaseOrder
+         Creates a new purchase order. Only available for Logistics Basic.
+         Body: PurchaseOrder
+           - id: integer(int64)
+           - version: integer(int32)
+           - number: string
+           - receiverEmail: string
+           - discount: number
+           - internalComment: string
+           - packingNoteMessage: string
+           - transporterMessage: string
+           - comments: string
+           - supplier: Supplier
+           - deliveryDate: string
+           - receivedDate: string
+           - project: Project
+           - department: Department
+           - deliveryAddress: Address
+           - creationDate: string
+           - isClosed: boolean
+           - ourContact: Employee
+           - supplierContact: Employee
+           - attention: Employee
+           - status: string
+           - currency: Currency
+           - restorder: PurchaseOrder
+           - transportType: TransportType
+           - pickupPoint: PickupPoint
+           - document: Document
+           - attachment: Document
+           - ediDocument: Document
+           - lastSentTimestamp: string
+           - lastSentEmployeeName: string
+           - orderLineSorting: string
+
+  POST   /purchaseOrder/deviation
+         Register deviation on goods receipt. Only available for Logistics Basic.
+         Body: Deviation
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrderLine: PurchaseOrderline
+           - date: string
+           - cause: string
+           - action: string
+           - comment: string
+
+  POST   /purchaseOrder/deviation/list
+         Register multiple deviations. Only available for Logistics Basic.
+         Body: array[Deviation]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrderLine: PurchaseOrderline
+           - date: string
+           - cause: string
+           - action: string
+           - comment: string
+
+  PUT    /purchaseOrder/deviation/list
+         Update multiple deviations. Only available for Logistics Basic.
+         Body: array[Deviation]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrderLine: PurchaseOrderline
+           - date: string
+           - cause: string
+           - action: string
+           - comment: string
+
+  PUT    /purchaseOrder/deviation/{id}
+         Update deviation. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: Deviation
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrderLine: PurchaseOrderline
+           - date: string
+           - cause: string
+           - action: string
+           - comment: string
+
+  DELETE /purchaseOrder/deviation/{id}
+         Delete goods receipt by purchase order ID. Only available for Logistics Basic.
+         Path/Query params: id
+
+  PUT    /purchaseOrder/deviation/{id}/:approve
+         Approve deviations. Only available for Logistics Basic.
+         Path/Query params: id
+
+  PUT    /purchaseOrder/deviation/{id}/:deliver
+         Send deviations to approval. Only available for Logistics Basic.
+         Path/Query params: id
+
+  PUT    /purchaseOrder/deviation/{id}/:undeliver
+         Set status to Not delivered for deviations. Only available for Logistics Basic.
+         Path/Query params: id
+
+  POST   /purchaseOrder/goodsReceipt
+         Register goods receipt without an existing purchase order. When registration of several goods receipt, use /list for better performance. Only available for Logistics Basic.
+         Body: GoodsReceipt
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - registrationDate: string
+           - receivedBy: Employee
+           - comment: string
+           - goodsReceiptLines: array[GoodsReceiptLine]
+
+  POST   /purchaseOrder/goodsReceipt/list
+         Register multiple goods receipts without an existing purchase order. Only available for Logistics Basic.
+         Body: array[GoodsReceipt]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - registrationDate: string
+           - receivedBy: Employee
+           - comment: string
+           - goodsReceiptLines: array[GoodsReceiptLine]
+
+  DELETE /purchaseOrder/goodsReceipt/list
+         Delete multiple goods receipts by ID. Only available for Logistics Basic.
+         Path/Query params: ?ids
+
+  PUT    /purchaseOrder/goodsReceipt/{id}
+         Update goods receipt. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: GoodsReceipt
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - registrationDate: string
+           - receivedBy: Employee
+           - comment: string
+           - goodsReceiptLines: array[GoodsReceiptLine]
+
+  DELETE /purchaseOrder/goodsReceipt/{id}
+         Delete goods receipt by ID. Only available for Logistics Basic.
+         Path/Query params: id
+
+  PUT    /purchaseOrder/goodsReceipt/{id}/:confirm
+         Confirm goods receipt. Only available for Logistics Basic.
+         Path/Query params: id
+
+  PUT    /purchaseOrder/goodsReceipt/{id}/:receiveAndConfirm
+          Receive all ordered products and approve goods receipt. Only available for Logistics Basic.
+         Path/Query params: id, ?receivedDate
+
+  PUT    /purchaseOrder/goodsReceipt/{id}/:registerGoodsReceipt
+         Register goods receipt. Quantity received on the products is set to the same as quantity ordered. To update the quantity received, use PUT /purchaseOrder/goodsReceiptLine/{id}. Only available for Logistics Basic.
+         Path/Query params: id, ?registrationDate
+
+  POST   /purchaseOrder/goodsReceiptLine
+         Register new goods receipt; new product on an existing purchase order. When registration of several goods receipts, use /list for better performance. Only available for Logistics Basic.
+         Body: GoodsReceiptLine
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - resaleProduct: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - quantityReceived: number
+
+  POST   /purchaseOrder/goodsReceiptLine/list
+         Register multiple new goods receipts on an existing purchase order. Only available for Logistics Basic.
+         Body: array[GoodsReceiptLine]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - resaleProduct: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - quantityReceived: number
+
+  PUT    /purchaseOrder/goodsReceiptLine/list
+         Update goods receipt lines on a goods receipt. Only available for Logistics Basic.
+         Body: array[GoodsReceiptLine]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - resaleProduct: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - quantityReceived: number
+
+  DELETE /purchaseOrder/goodsReceiptLine/list
+         Delete goods receipt lines by ID. Only available for Logistics Basic.
+         Body: array[GoodsReceiptLine]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - resaleProduct: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - quantityReceived: number
+
+  PUT    /purchaseOrder/goodsReceiptLine/{id}
+         Update a goods receipt line on a goods receipt. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: GoodsReceiptLine
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - resaleProduct: Product
+           - inventory: Inventory
+           - inventoryLocation: InventoryLocation
+           - quantityReceived: number
+
+  DELETE /purchaseOrder/goodsReceiptLine/{id}
+         Delete goods receipt line by ID. Only available for Logistics Basic.
+         Path/Query params: id
+
+  POST   /purchaseOrder/orderline
+         Creates purchase order line. Only available for Logistics Basic.
+         Body: PurchaseOrderline
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - supplierProduct: SupplierProduct
+           - resaleProduct: Product
+           - description: string
+           - count: number
+           - quantityReceived: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - unitListPriceCurrency: number
+           - unitPriceIncVatCurrency: number
+           - currency: Currency
+           - discount: number
+           - amountExcludingVatCurrency: number
+           - customSortIndex: integer(int32)
+
+  POST   /purchaseOrder/orderline/list
+         Create list of new purchase order lines. Only available for Logistics Basic.
+         Body: array[PurchaseOrderline]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - supplierProduct: SupplierProduct
+           - resaleProduct: Product
+           - description: string
+           - count: number
+           - quantityReceived: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - unitListPriceCurrency: number
+           - unitPriceIncVatCurrency: number
+           - currency: Currency
+           - discount: number
+           - amountExcludingVatCurrency: number
+           - customSortIndex: integer(int32)
+
+  PUT    /purchaseOrder/orderline/list
+         Update a list of purchase order lines. Only available for Logistics Basic.
+         Body: array[PurchaseOrderline]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - supplierProduct: SupplierProduct
+           - resaleProduct: Product
+           - description: string
+           - count: number
+           - quantityReceived: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - unitListPriceCurrency: number
+           - unitPriceIncVatCurrency: number
+           - currency: Currency
+           - discount: number
+           - amountExcludingVatCurrency: number
+           - customSortIndex: integer(int32)
+
+  DELETE /purchaseOrder/orderline/list
+         Delete purchase order lines by ID. Only available for Logistics Basic.
+         Body: array[PurchaseOrderline]
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - supplierProduct: SupplierProduct
+           - resaleProduct: Product
+           - description: string
+           - count: number
+           - quantityReceived: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - unitListPriceCurrency: number
+           - unitPriceIncVatCurrency: number
+           - currency: Currency
+           - discount: number
+           - amountExcludingVatCurrency: number
+           - customSortIndex: integer(int32)
+
+  PUT    /purchaseOrder/orderline/{id}
+         Updates purchase order line. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: PurchaseOrderline
+           - id: integer(int64)
+           - version: integer(int32)
+           - purchaseOrder: PurchaseOrder
+           - product: Product
+           - supplierProduct: SupplierProduct
+           - resaleProduct: Product
+           - description: string
+           - count: number
+           - quantityReceived: number
+           - unitCostCurrency: number
+           - unitPriceExcludingVatCurrency: number
+           - unitListPriceCurrency: number
+           - unitPriceIncVatCurrency: number
+           - currency: Currency
+           - discount: number
+           - amountExcludingVatCurrency: number
+           - customSortIndex: integer(int32)
+
+  DELETE /purchaseOrder/orderline/{id}
+         Delete purchase order line. Only available for Logistics Basic.
+         Path/Query params: id
+
+  POST   /purchaseOrder/purchaseOrderIncomingInvoiceRelation
+         Create new relation between purchase order and a voucher. Only available for Logistics Basic.
+         Body: PurchaseOrderIncomingInvoiceRelation
+           - id: integer(int64)
+           - version: integer(int32)
+           - orderOut: PurchaseOrder
+           - voucher: Voucher
+
+  POST   /purchaseOrder/purchaseOrderIncomingInvoiceRelation/list
+         Create a new list of relations between purchase order and voucher. Only available for Logistics Basic.
+         Body: array[PurchaseOrderIncomingInvoiceRelation]
+           - id: integer(int64)
+           - version: integer(int32)
+           - orderOut: PurchaseOrder
+           - voucher: Voucher
+
+  DELETE /purchaseOrder/purchaseOrderIncomingInvoiceRelation/list
+         Delete multiple purchase order voucher relations. Only available for Logistics Basic.
+         Path/Query params: ?ids
+
+  DELETE /purchaseOrder/purchaseOrderIncomingInvoiceRelation/{id}
+         Delete purchase order voucher relation. Only available for Logistics Basic.
+         Path/Query params: id
+
+  PUT    /purchaseOrder/{id}
+          Update purchase order. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: PurchaseOrder
+           - id: integer(int64)
+           - version: integer(int32)
+           - number: string
+           - receiverEmail: string
+           - discount: number
+           - internalComment: string
+           - packingNoteMessage: string
+           - transporterMessage: string
+           - comments: string
+           - supplier: Supplier
+           - deliveryDate: string
+           - receivedDate: string
+           - project: Project
+           - department: Department
+           - deliveryAddress: Address
+           - creationDate: string
+           - isClosed: boolean
+           - ourContact: Employee
+           - supplierContact: Employee
+           - attention: Employee
+           - status: string
+           - currency: Currency
+           - restorder: PurchaseOrder
+           - transportType: TransportType
+           - pickupPoint: PickupPoint
+           - document: Document
+           - attachment: Document
+           - ediDocument: Document
+           - lastSentTimestamp: string
+           - lastSentEmployeeName: string
+           - orderLineSorting: string
+
+  DELETE /purchaseOrder/{id}
+          Delete purchase order. Only available for Logistics Basic.
+         Path/Query params: id
+
+  PUT    /purchaseOrder/{id}/:send
+         Send purchase order by ID and sendType. Only available for Logistics Basic.
+         Path/Query params: id
+
+  PUT    /purchaseOrder/{id}/:sendByEmail
+         Send purchase order by customisable email. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: PurchaseOrderEmail
+           - id: integer(int64)
+           - version: integer(int32)
+           - email: string
+           - subject: string
+           - message: string
+
+  POST   /purchaseOrder/{id}/attachment
+         Upload attachment to purchase order. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  DELETE /purchaseOrder/{id}/attachment
+         Delete attachment. Only available for Logistics Basic.
+         Path/Query params: id
+
+  POST   /purchaseOrder/{id}/attachment/list
+         Upload multiple attachments to Purchase Order. Only available for Logistics Basic.
+         Path/Query params: id
+         Body: object
+           - file: array[string]
+
+====================================================================================================
+  SAFT (1 endpoints)
+====================================================================================================
+
+  POST   /saft/importSAFT
+         [BETA] Import SAF-T. Send XML file as multipart form.
+         Body: object
+           - saftFile: string(binary) *REQ*
+           - mappingFile: string(binary) *REQ*
+           - importCustomerVendors: boolean *REQ*
+           - createMissingAccounts: boolean *REQ*
+           - importStartBalanceFromOpening: boolean *REQ*
+           - importStartBalanceFromClosing: boolean *REQ*
+           - importVouchers: boolean *REQ*
+           - importDepartments: boolean *REQ*
+           - importProjects: boolean *REQ*
+           - tripletexGeneratesCustomerNumbers: boolean *REQ*
+           - createCustomerIB: boolean *REQ*
+           - updateAccountNames: boolean *REQ*
+           - createVendorIB: boolean *REQ*
+           - overrideVoucherDateOnDiscrepancy: boolean *REQ*
+           - overwriteCustomersContacts: boolean *REQ*
+           - onlyActiveCustomers: boolean *REQ*
+           - onlyActiveAccounts: boolean *REQ*
+           - updateStartBalance: boolean *REQ*
+
+====================================================================================================
+  SALARY (24 endpoints)
+====================================================================================================
+
+  POST   /salary/financeTax/reconciliation/context
+         Create a financeTax reconciliation context for a customer
+         Body: FinanceTaxContextRequest
+           - customerId: integer(int64)
+           - year: integer(int32)
+           - term: integer(int32)
+
+  POST   /salary/holidayAllowance/reconciliation/context
+         Create a holiday allowance reconciliation context for a customer
+         Body: HolidayAllowanceContextRequest
+           - customerId: integer(int64)
+           - year: integer(int32)
+           - term: integer(int32)
+
+  POST   /salary/mandatoryDeduction/reconciliation/context
+         Create a mandatoryDeduction reconciliation context for a customer
+         Body: MandatoryDeductionContextRequest
+           - customerId: integer(int64)
+           - year: integer(int32)
+           - term: integer(int32)
+
+  POST   /salary/payrollTax/reconciliation/context
+         Create a payroll tax reconciliation context for a customer
+         Body: PayrollTaxContextRequest
+           - customerId: integer(int64)
+           - year: integer(int32)
+           - term: integer(int32)
+
+  PUT    /salary/settings
+         Update settings of logged in company.
+         Body: SalarySettings
+           - municipality: Municipality
+           - payrollTaxCalcMethod: string
+
+  POST   /salary/settings/holiday
+         Create a holiday setting of current logged in company.
+         Body: CompanyHoliday
+           - id: integer(int64)
+           - version: integer(int32)
+           - year: integer(int32)
+           - days: number
+           - vacationPayPercentage1: number
+           - vacationPayPercentage2: number
+           - isMaxPercentage2Amount6G: boolean
+
+  POST   /salary/settings/holiday/list
+         Create multiple holiday settings of current logged in company.
+         Body: array[CompanyHoliday]
+           - id: integer(int64)
+           - version: integer(int32)
+           - year: integer(int32)
+           - days: number
+           - vacationPayPercentage1: number
+           - vacationPayPercentage2: number
+           - isMaxPercentage2Amount6G: boolean
+
+  PUT    /salary/settings/holiday/list
+         Update multiple holiday settings of current logged in company.
+         Body: array[CompanyHoliday]
+           - id: integer(int64)
+           - version: integer(int32)
+           - year: integer(int32)
+           - days: number
+           - vacationPayPercentage1: number
+           - vacationPayPercentage2: number
+           - isMaxPercentage2Amount6G: boolean
+
+  DELETE /salary/settings/holiday/list
+         Delete multiple holiday settings of current logged in company.
+         Path/Query params: ?ids
+
+  PUT    /salary/settings/holiday/{id}
+         Update a holiday setting of current logged in company.
+         Path/Query params: id
+         Body: CompanyHoliday
+           - id: integer(int64)
+           - version: integer(int32)
+           - year: integer(int32)
+           - days: number
+           - vacationPayPercentage1: number
+           - vacationPayPercentage2: number
+           - isMaxPercentage2Amount6G: boolean
+
+  POST   /salary/settings/pensionScheme
+         Create a Pension Scheme.
+         Body: PensionScheme
+           - id: integer(int64)
+           - version: integer(int32)
+           - pensionSchemeId: integer(int32)
+           - number: string
+           - startDate: string
+           - endDate: string
+
+  POST   /salary/settings/pensionScheme/list
+         Create multiple Pension Schemes.
+         Body: array[PensionScheme]
+           - id: integer(int64)
+           - version: integer(int32)
+           - pensionSchemeId: integer(int32)
+           - number: string
+           - startDate: string
+           - endDate: string
+
+  PUT    /salary/settings/pensionScheme/list
+         Update multiple Pension Schemes.
+         Body: array[PensionScheme]
+           - id: integer(int64)
+           - version: integer(int32)
+           - pensionSchemeId: integer(int32)
+           - number: string
+           - startDate: string
+           - endDate: string
+
+  DELETE /salary/settings/pensionScheme/list
+         Delete multiple Pension Schemes.
+         Path/Query params: ?ids
+
+  PUT    /salary/settings/pensionScheme/{id}
+         Update a Pension Scheme
+         Path/Query params: id
+         Body: PensionScheme
+           - id: integer(int64)
+           - version: integer(int32)
+           - pensionSchemeId: integer(int32)
+           - number: string
+           - startDate: string
+           - endDate: string
+
+  DELETE /salary/settings/pensionScheme/{id}
+         Delete a Pension Scheme
+         Path/Query params: id
+
+  POST   /salary/settings/standardTime
+         Create standard time.
+         Body: CompanyStandardTime
+           - id: integer(int64)
+           - version: integer(int32)
+           - company: Company
+           - fromDate: string
+           - hoursPerDay: number
+
+  PUT    /salary/settings/standardTime/{id}
+         Update standard time. 
+         Path/Query params: id
+         Body: CompanyStandardTime
+           - id: integer(int64)
+           - version: integer(int32)
+           - company: Company
+           - fromDate: string
+           - hoursPerDay: number
+
+  POST   /salary/taxDeduction/reconciliation/context
+         Create a taxDeduction reconciliation context for a customer
+         Body: TaxDeductionContextRequest
+           - customerId: integer(int64)
+           - year: integer(int32)
+           - term: integer(int32)
+
+  POST   /salary/transaction
+         Create a new salary transaction.
+         Body: SalaryTransaction
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - year: integer(int32)
+           - month: integer(int32)
+           - isHistorical: boolean
+           - paySlipsAvailableDate: string
+           - payslips: array[Payslip]
+
+  DELETE /salary/transaction/{id}
+         Delete salary transaction by ID.
+         Path/Query params: id
+
+  POST   /salary/transaction/{id}/attachment
+         Upload an attachment to a salary transaction
+         Path/Query params: id
+         Body: object
+           - file: string(binary) *REQ*
+
+  POST   /salary/transaction/{id}/attachment/list
+         Upload multiple attachments to a salary transaction
+         Path/Query params: id
+         Body: object
+           - file: array[string]
+
+  PUT    /salary/transaction/{id}/deleteAttachment
+         Delete attachment.
+         Path/Query params: id
+
+====================================================================================================
+  SUBSCRIPTION (2 endpoints)
+====================================================================================================
+
+  PUT    /subscription/cancel
+         Close account with/without read access
+         Body: AccountClosureInfo
+           - readAccess: boolean
+           - nbOfYears: integer(int32)
+
+  PUT    /subscription/reactivate
+         Reopen account with previous modules
+
+====================================================================================================
+  SUPPLIER (5 endpoints)
+====================================================================================================
+
+  POST   /supplier
+         Create supplier. Related supplier addresses may also be created.
+         Body: Supplier
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - organizationNumber: string
+           - supplierNumber: integer(int32)
+           - customerNumber: integer(int32)
+           - isCustomer: boolean
+           - isInactive: boolean
+           - email: string
+           - bankAccounts: array[string]
+           - invoiceEmail: string
+           - overdueNoticeEmail: string
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - description: string
+           - isPrivateIndividual: boolean
+           - showProducts: boolean
+           - accountManager: Employee
+           - postalAddress: Address
+           - physicalAddress: Address
+           - deliveryAddress: DeliveryAddress
+           - category1: CustomerCategory
+           - category2: CustomerCategory
+           - category3: CustomerCategory
+           - bankAccountPresentation: array[CompanyBankAccountPresentation]
+           - currency: Currency
+           - ledgerAccount: Account
+           - language: string
+           - website: string
+
+  POST   /supplier/list
+         Create multiple suppliers. Related supplier addresses may also be created.
+         Body: array[Supplier]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - organizationNumber: string
+           - supplierNumber: integer(int32)
+           - customerNumber: integer(int32)
+           - isCustomer: boolean
+           - isInactive: boolean
+           - email: string
+           - bankAccounts: array[string]
+           - invoiceEmail: string
+           - overdueNoticeEmail: string
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - description: string
+           - isPrivateIndividual: boolean
+           - showProducts: boolean
+           - accountManager: Employee
+           - postalAddress: Address
+           - physicalAddress: Address
+           - deliveryAddress: DeliveryAddress
+           - category1: CustomerCategory
+           - category2: CustomerCategory
+           - category3: CustomerCategory
+           - bankAccountPresentation: array[CompanyBankAccountPresentation]
+           - currency: Currency
+           - ledgerAccount: Account
+           - language: string
+           - website: string
+
+  PUT    /supplier/list
+         Update multiple suppliers. Addresses can also be updated.
+         Body: array[Supplier]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - organizationNumber: string
+           - supplierNumber: integer(int32)
+           - customerNumber: integer(int32)
+           - isCustomer: boolean
+           - isInactive: boolean
+           - email: string
+           - bankAccounts: array[string]
+           - invoiceEmail: string
+           - overdueNoticeEmail: string
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - description: string
+           - isPrivateIndividual: boolean
+           - showProducts: boolean
+           - accountManager: Employee
+           - postalAddress: Address
+           - physicalAddress: Address
+           - deliveryAddress: DeliveryAddress
+           - category1: CustomerCategory
+           - category2: CustomerCategory
+           - category3: CustomerCategory
+           - bankAccountPresentation: array[CompanyBankAccountPresentation]
+           - currency: Currency
+           - ledgerAccount: Account
+           - language: string
+           - website: string
+
+  PUT    /supplier/{id}
+         Update supplier. 
+         Path/Query params: id
+         Body: Supplier
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - organizationNumber: string
+           - supplierNumber: integer(int32)
+           - customerNumber: integer(int32)
+           - isCustomer: boolean
+           - isInactive: boolean
+           - email: string
+           - bankAccounts: array[string]
+           - invoiceEmail: string
+           - overdueNoticeEmail: string
+           - phoneNumber: string
+           - phoneNumberMobile: string
+           - description: string
+           - isPrivateIndividual: boolean
+           - showProducts: boolean
+           - accountManager: Employee
+           - postalAddress: Address
+           - physicalAddress: Address
+           - deliveryAddress: DeliveryAddress
+           - category1: CustomerCategory
+           - category2: CustomerCategory
+           - category3: CustomerCategory
+           - bankAccountPresentation: array[CompanyBankAccountPresentation]
+           - currency: Currency
+           - ledgerAccount: Account
+           - language: string
+           - website: string
+
+  DELETE /supplier/{id}
+         Delete supplier by ID
+         Path/Query params: id
+
+====================================================================================================
+  SUPPLIERINVOICE (9 endpoints)
+====================================================================================================
+
+  PUT    /supplierInvoice/:addRecipient
+         Add recipient.
+         Path/Query params: ?employeeId
+
+  PUT    /supplierInvoice/:approve
+         Approve supplier invoices.
+
+  PUT    /supplierInvoice/:reject
+         reject supplier invoices.
+         Path/Query params: ?comment
+
+  PUT    /supplierInvoice/voucher/{id}/postings
+         [BETA] Put debit postings.
+         Path/Query params: id
+         Body: array[OrderLinePosting]
+           - id: integer(int64)
+           - version: integer(int32)
+           - posting: Posting
+           - orderLine: OrderLine
+
+  POST   /supplierInvoice/{invoiceId}/:addPayment
+         Register payment, paymentType == 0 finds the last paymentType for this vendor.Use of this method requires setup done by Tripletex.
+         Path/Query params: invoiceId, ?paymentType
+
+  PUT    /supplierInvoice/{invoiceId}/:addRecipient
+         Add recipient to supplier invoices.
+         Path/Query params: invoiceId, ?employeeId
+
+  PUT    /supplierInvoice/{invoiceId}/:approve
+         Approve supplier invoice.
+         Path/Query params: invoiceId
+
+  PUT    /supplierInvoice/{invoiceId}/:changeDimension
+         Change dimension on a supplier invoice.
+         Path/Query params: invoiceId, ?debitPostingIds, ?dimension, ?dimensionId
+
+  PUT    /supplierInvoice/{invoiceId}/:reject
+         reject supplier invoice.
+         Path/Query params: invoiceId, ?comment
+
+====================================================================================================
+  TIMESHEET (34 endpoints)
+====================================================================================================
+
+  POST   /timesheet/allocated
+         Add new allocated hour entry. Only one entry per employee/date/activity/project combination is supported. Only holiday/vacation hours can receive comments. A notification will be sent to the entry's employee if the entry has a comment.
+         Body: TimesheetAllocated
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - project: Project
+           - activity: Activity
+           - date: string
+           - hours: number
+           - isApproved: boolean
+           - managerComment: string
+
+  PUT    /timesheet/allocated/:approveList
+         Only for allocated hours on the company's internal holiday/vacation activity. Mark the allocated hour entry/entries as approved. The hours will be copied to the time sheet if the relevant weeks/months are not approved, and there are no interfering time clocks that are active. Notifications will be sent to the entries' employees if the entries' approval statuses or comments have changed. If IDs are provided, the other args are ignored.
+
+  PUT    /timesheet/allocated/:unapproveList
+         Only for allocated hours on the company's internal holiday/vacation activity. Mark the allocated hour entry/entries as unapproved. Notifications will be sent to the entries' employees if the entries' approval statuses or comments have changed. If IDs are provided, the other args are ignored.
+
+  POST   /timesheet/allocated/list
+         Add new allocated hour entry. Multiple objects for several users can be sent in the same request. Only holiday/vacation hours can receive comments. Notifications will be sent to the entries' employees if the entries have comments.
+         Body: array[TimesheetAllocated]
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - project: Project
+           - activity: Activity
+           - date: string
+           - hours: number
+           - isApproved: boolean
+           - managerComment: string
+
+  PUT    /timesheet/allocated/list
+         Update allocated hour entry. Multiple objects for different users can be sent in the same request. Note: Allocated hour entry object fields which are present but not set, or set to 0, will be nulled. Only holiday/vacation hours can receive comments. Notifications will be sent to the entries' employees if the entries' comments have changed.
+         Body: array[TimesheetAllocated]
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - project: Project
+           - activity: Activity
+           - date: string
+           - hours: number
+           - isApproved: boolean
+           - managerComment: string
+
+  PUT    /timesheet/allocated/{id}
+         Update allocated hour entry by ID. Note: Allocated hour entry object fields which are present but not set, or set to 0, will be nulled. Only holiday/vacation hours can receive comments. A notification will be sent to the entry's employee if the entry's comment has changed.
+         Path/Query params: id
+         Body: TimesheetAllocated
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - project: Project
+           - activity: Activity
+           - date: string
+           - hours: number
+           - isApproved: boolean
+           - managerComment: string
+
+  DELETE /timesheet/allocated/{id}
+         Delete allocated hour entry by ID.
+         Path/Query params: id
+
+  PUT    /timesheet/allocated/{id}/:approve
+         Only for allocated hours on the company's internal holiday/vacation activity. Mark the allocated hour entry as approved. The hours will be copied to the time sheet if the relevant week/month is not approved, and there are no interfering time clocks that are active. A notification will be sent to the entry's employee if the entry's approval status or comment has changed.
+         Path/Query params: id
+
+  PUT    /timesheet/allocated/{id}/:unapprove
+         Only for allocated hours on the company's internal holiday/vacation activity. Mark the allocated hour entry as unapproved. A notification will be sent to the entry's employee if the entry's approval status or comment has changed.
+         Path/Query params: id
+
+  POST   /timesheet/companyHoliday
+         [BETA] Create a company holiday
+         Body: CompanyHolidays
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - percentage: number
+
+  PUT    /timesheet/companyHoliday/{id}
+         [BETA] Update a company holiday
+         Path/Query params: id
+         Body: CompanyHolidays
+           - id: integer(int64)
+           - version: integer(int32)
+           - date: string
+           - percentage: number
+
+  DELETE /timesheet/companyHoliday/{id}
+         [BETA] Delete a company holiday
+         Path/Query params: id
+
+  POST   /timesheet/entry
+         Add new timesheet entry. Only one entry per employee/date/activity/project combination is supported.
+         Body: TimesheetEntry
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - activity: Activity
+           - date: string
+           - hours: number
+           - employee: Employee
+           - comment: string
+           - invoice: Invoice
+           - projectChargeableHours: number
+
+  POST   /timesheet/entry/list
+         Add new timesheet entry. Multiple objects for several users can be sent in the same request.
+         Body: array[TimesheetEntry]
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - activity: Activity
+           - date: string
+           - hours: number
+           - employee: Employee
+           - comment: string
+           - invoice: Invoice
+           - projectChargeableHours: number
+
+  PUT    /timesheet/entry/list
+         Update timesheet entry. Multiple objects for different users can be sent in the same request.
+         Body: array[TimesheetEntry]
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - activity: Activity
+           - date: string
+           - hours: number
+           - employee: Employee
+           - comment: string
+           - invoice: Invoice
+           - projectChargeableHours: number
+
+  PUT    /timesheet/entry/{id}
+         Update timesheet entry by ID. Note: Timesheet entry object fields which are present but not set, or set to 0, will be nulled.
+         Path/Query params: id
+         Body: TimesheetEntry
+           - id: integer(int64)
+           - version: integer(int32)
+           - project: Project
+           - activity: Activity
+           - date: string
+           - hours: number
+           - employee: Employee
+           - comment: string
+           - invoice: Invoice
+           - projectChargeableHours: number
+
+  DELETE /timesheet/entry/{id}
+         Delete timesheet entry by ID.
+         Path/Query params: id
+
+  PUT    /timesheet/month/:approve
+         approve month(s).  If id is provided the other args are ignored
+
+  PUT    /timesheet/month/:complete
+         complete month(s).  If id is provided the other args are ignored
+
+  PUT    /timesheet/month/:reopen
+         reopen month(s).  If id is provided the other args are ignored
+
+  PUT    /timesheet/month/:unapprove
+         unapprove month(s).  If id is provided the other args are ignored
+
+  POST   /timesheet/salaryProjectTypeSpecification
+         Create a timesheet ProjectSalaryType specification
+         Body: TimesheetProjectSalaryTypeSpecification
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - project: Project
+           - activity: Activity
+           - salaryType: SalaryType
+           - description: string
+           - date: string
+           - count: number
+           - wagePayment: Payslip
+
+  PUT    /timesheet/salaryProjectTypeSpecification/{id}
+         Update a timesheet ProjectSalaryType specification
+         Path/Query params: id
+         Body: TimesheetProjectSalaryTypeSpecification
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - project: Project
+           - activity: Activity
+           - salaryType: SalaryType
+           - description: string
+           - date: string
+           - count: number
+           - wagePayment: Payslip
+
+  DELETE /timesheet/salaryProjectTypeSpecification/{id}
+         Delete a timesheet SalaryType specification
+         Path/Query params: id
+
+  POST   /timesheet/salaryTypeSpecification
+         [BETA] Create a timesheet SalaryType Specification. Only one entry per employee/date/SalaryType
+         Body: TimesheetSalaryTypeSpecification
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - salaryType: SalaryType
+           - description: string
+           - date: string
+           - count: number
+
+  PUT    /timesheet/salaryTypeSpecification/{id}
+         [BETA] Update a timesheet SalaryType Specification
+         Path/Query params: id
+         Body: TimesheetSalaryTypeSpecification
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - salaryType: SalaryType
+           - description: string
+           - date: string
+           - count: number
+
+  DELETE /timesheet/salaryTypeSpecification/{id}
+         [BETA] Delete a timesheet SalaryType Specification
+         Path/Query params: id
+
+  PUT    /timesheet/timeClock/:start
+         Start time clock.
+         Path/Query params: ?activityId
+
+  PUT    /timesheet/timeClock/{id}
+         Update time clock by ID.
+         Path/Query params: id
+         Body: TimeClock
+           - id: integer(int64)
+           - version: integer(int32)
+           - employee: Employee
+           - project: Project
+           - activity: Activity
+           - timesheetEntry: TimesheetEntry
+           - date: string
+           - timeStart: string
+           - timeStop: string
+           - hoursStart: number
+           - lunchBreakDuration: number
+
+  PUT    /timesheet/timeClock/{id}/:stop
+         Stop time clock.
+         Path/Query params: id
+
+  PUT    /timesheet/week/:approve
+         Approve week. By ID or (ISO-8601 week and employeeId combination).
+
+  PUT    /timesheet/week/:complete
+         Complete week. By ID or (ISO-8601 week and employeeId combination).
+
+  PUT    /timesheet/week/:reopen
+         Reopen week. By ID or (ISO-8601 week and employeeId combination).
+
+  PUT    /timesheet/week/:unapprove
+         Unapprove week. By ID or (ISO-8601 week and employeeId combination).
+
+====================================================================================================
+  TOKEN (4 endpoints)
+====================================================================================================
+
+  PUT    /token/employee/:create
+         Create an employee token. Only selected consumers are allowed
+         Path/Query params: ?tokenName, ?consumerName, ?employeeId, ?companyOwned, ?expirationDate
+
+  POST   /token/session/:create
+         Create session token.
+         Body: PostSessionTokenBody
+           - employeeToken: string
+           - consumerToken: string
+           - expirationDate: string
+
+  PUT    /token/session/:create
+         Create session token.
+         Path/Query params: ?consumerToken, ?employeeToken, ?expirationDate
+
+  DELETE /token/session/{token}
+         Delete session token.
+         Path/Query params: token
+
+====================================================================================================
+  TRAVELEXPENSE (38 endpoints)
+====================================================================================================
+
+  POST   /travelExpense
+         Create travel expense.
+         Body: TravelExpense
+           - id: integer(int64)
+           - version: integer(int32)
+           - attestationSteps: array[AttestationStep]
+           - attestation: Attestation
+           - project: Project
+           - employee: Employee
+           - approvedBy: Employee
+           - completedBy: Employee
+           - rejectedBy: Employee
+           - department: Department
+           - freeDimension1: AccountingDimensionValue
+           - freeDimension2: AccountingDimensionValue
+           - freeDimension3: AccountingDimensionValue
+           - payslip: Payslip
+           - vatType: VatType
+           - paymentCurrency: Currency
+           - travelDetails: TravelDetails
+           - voucher: Voucher
+           - attachment: Document
+           - isChargeable: boolean
+           - isFixedInvoicedAmount: boolean
+           - isMarkupInvoicedPercent: boolean
+           - isIncludeAttachedReceiptsWhenReinvoicing: boolean
+           - travelAdvance: number
+           - fixedInvoicedAmount: number
+           - markupInvoicedPercent: number
+           - invoice: Invoice
+           - title: string
+           - perDiemCompensations: array[PerDiemCompensation]
+           - costs: array[Cost]
+
+  PUT    /travelExpense/:approve
+         Approve travel expenses.
+
+  PUT    /travelExpense/:copy
+         Copy travel expense.
+         Path/Query params: ?id
+
+  PUT    /travelExpense/:createVouchers
+         Create vouchers
+         Path/Query params: ?date
+
+  PUT    /travelExpense/:deliver
+         Deliver travel expenses.
+
+  PUT    /travelExpense/:unapprove
+         Unapprove travel expenses.
+
+  PUT    /travelExpense/:undeliver
+         Undeliver travel expenses.
+         Body: TravelExpense
+           - id: integer(int64)
+           - version: integer(int32)
+           - attestationSteps: array[AttestationStep]
+           - attestation: Attestation
+           - project: Project
+           - employee: Employee
+           - approvedBy: Employee
+           - completedBy: Employee
+           - rejectedBy: Employee
+           - department: Department
+           - freeDimension1: AccountingDimensionValue
+           - freeDimension2: AccountingDimensionValue
+           - freeDimension3: AccountingDimensionValue
+           - payslip: Payslip
+           - vatType: VatType
+           - paymentCurrency: Currency
+           - travelDetails: TravelDetails
+           - voucher: Voucher
+           - attachment: Document
+           - isChargeable: boolean
+           - isFixedInvoicedAmount: boolean
+           - isMarkupInvoicedPercent: boolean
+           - isIncludeAttachedReceiptsWhenReinvoicing: boolean
+           - travelAdvance: number
+           - fixedInvoicedAmount: number
+           - markupInvoicedPercent: number
+           - invoice: Invoice
+           - title: string
+           - perDiemCompensations: array[PerDiemCompensation]
+           - costs: array[Cost]
+
+  POST   /travelExpense/accommodationAllowance
+         Create accommodation allowance.
+         Body: AccommodationAllowance
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - rateType: TravelExpenseRate
+           - rateCategory: TravelExpenseRateCategory
+           - zone: string
+           - location: string
+           - address: string
+           - count: integer(int32)
+           - rate: number
+           - amount: number
+
+  PUT    /travelExpense/accommodationAllowance/{id}
+         Update accommodation allowance.
+         Path/Query params: id
+         Body: AccommodationAllowance
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - rateType: TravelExpenseRate
+           - rateCategory: TravelExpenseRateCategory
+           - zone: string
+           - location: string
+           - address: string
+           - count: integer(int32)
+           - rate: number
+           - amount: number
+
+  DELETE /travelExpense/accommodationAllowance/{id}
+         Delete accommodation allowance.
+         Path/Query params: id
+
+  POST   /travelExpense/cost
+         Create cost.
+         Body: Cost
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - vatType: VatType
+           - currency: Currency
+           - costCategory: TravelCostCategory
+           - paymentType: TravelPaymentType
+           - category: string
+           - comments: string
+           - rate: number
+           - amountCurrencyIncVat: number
+           - amountNOKInclVAT: number
+           - isChargeable: boolean
+           - date: string
+           - participants: array[CostParticipant]
+           - predictions: object
+
+  PUT    /travelExpense/cost/list
+         Update costs.
+         Body: array[Cost]
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - vatType: VatType
+           - currency: Currency
+           - costCategory: TravelCostCategory
+           - paymentType: TravelPaymentType
+           - category: string
+           - comments: string
+           - rate: number
+           - amountCurrencyIncVat: number
+           - amountNOKInclVAT: number
+           - isChargeable: boolean
+           - date: string
+           - participants: array[CostParticipant]
+           - predictions: object
+
+  PUT    /travelExpense/cost/{id}
+         Update cost.
+         Path/Query params: id
+         Body: Cost
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - vatType: VatType
+           - currency: Currency
+           - costCategory: TravelCostCategory
+           - paymentType: TravelPaymentType
+           - category: string
+           - comments: string
+           - rate: number
+           - amountCurrencyIncVat: number
+           - amountNOKInclVAT: number
+           - isChargeable: boolean
+           - date: string
+           - participants: array[CostParticipant]
+           - predictions: object
+
+  DELETE /travelExpense/cost/{id}
+         Delete cost.
+         Path/Query params: id
+
+  POST   /travelExpense/costParticipant
+         Create participant on cost.
+         Body: CostParticipant
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - employeeId: integer(int32)
+           - cost: Cost
+
+  POST   /travelExpense/costParticipant/createCostParticipantAdvanced
+         Create participant on cost using explicit parameters
+         Path/Query params: ?costId, ?employeeId
+
+  POST   /travelExpense/costParticipant/list
+         Create participants on cost.
+         Body: array[CostParticipant]
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - employeeId: integer(int32)
+           - cost: Cost
+
+  DELETE /travelExpense/costParticipant/list
+         Delete cost participants.
+         Body: array[CostParticipant]
+           - id: integer(int64)
+           - version: integer(int32)
+           - displayName: string
+           - employeeId: integer(int32)
+           - cost: Cost
+
+  DELETE /travelExpense/costParticipant/{id}
+         Delete cost participant.
+         Path/Query params: id
+
+  POST   /travelExpense/drivingStop
+         Create mileage allowance driving stop.
+         Body: DrivingStop
+           - id: integer(int64)
+           - version: integer(int32)
+           - locationName: string
+           - latitude: number
+           - longitude: number
+           - sortIndex: integer(int32)
+           - type: integer(int32)
+           - mileageAllowance: MileageAllowance
+
+  DELETE /travelExpense/drivingStop/{id}
+         Delete mileage allowance stops.
+         Path/Query params: id
+
+  POST   /travelExpense/mileageAllowance
+         Create mileage allowance.
+         Body: MileageAllowance
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - rateType: TravelExpenseRate
+           - rateCategory: TravelExpenseRateCategory
+           - date: string
+           - departureLocation: string
+           - destination: string
+           - km: number
+           - rate: number
+           - amount: number
+           - isCompanyCar: boolean
+           - vehicleType: integer(int32)
+           - passengerSupplement: MileageAllowance
+           - trailerSupplement: MileageAllowance
+           - tollCost: Cost
+
+  PUT    /travelExpense/mileageAllowance/{id}
+         Update mileage allowance.
+         Path/Query params: id
+         Body: MileageAllowance
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - rateType: TravelExpenseRate
+           - rateCategory: TravelExpenseRateCategory
+           - date: string
+           - departureLocation: string
+           - destination: string
+           - km: number
+           - rate: number
+           - amount: number
+           - isCompanyCar: boolean
+           - vehicleType: integer(int32)
+           - passengerSupplement: MileageAllowance
+           - trailerSupplement: MileageAllowance
+           - tollCost: Cost
+
+  DELETE /travelExpense/mileageAllowance/{id}
+         Delete mileage allowance.
+         Path/Query params: id
+
+  POST   /travelExpense/passenger
+         Create passenger.
+         Body: Passenger
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - mileageAllowance: MileageAllowance
+
+  POST   /travelExpense/passenger/list
+         Create passengers.
+         Body: array[Passenger]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - mileageAllowance: MileageAllowance
+
+  DELETE /travelExpense/passenger/list
+         Delete passengers.
+         Body: array[Passenger]
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - mileageAllowance: MileageAllowance
+
+  PUT    /travelExpense/passenger/{id}
+         Update passenger.
+         Path/Query params: id
+         Body: Passenger
+           - id: integer(int64)
+           - version: integer(int32)
+           - name: string
+           - mileageAllowance: MileageAllowance
+
+  DELETE /travelExpense/passenger/{id}
+         Delete passenger.
+         Path/Query params: id
+
+  POST   /travelExpense/perDiemCompensation
+         Create per diem compensation.
+         Body: PerDiemCompensation
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - rateType: TravelExpenseRate
+           - rateCategory: TravelExpenseRateCategory
+           - countryCode: string
+           - travelExpenseZoneId: integer(int32)
+           - overnightAccommodation: string
+           - location: string
+           - address: string
+           - count: integer(int32)
+           - rate: number
+           - amount: number
+           - isDeductionForBreakfast: boolean
+           - isDeductionForLunch: boolean
+           - isDeductionForDinner: boolean
+
+  PUT    /travelExpense/perDiemCompensation/{id}
+         Update per diem compensation.
+         Path/Query params: id
+         Body: PerDiemCompensation
+           - id: integer(int64)
+           - version: integer(int32)
+           - travelExpense: TravelExpense
+           - rateType: TravelExpenseRate
+           - rateCategory: TravelExpenseRateCategory
+           - countryCode: string
+           - travelExpenseZoneId: integer(int32)
+           - overnightAccommodation: string
+           - location: string
+           - address: string
+           - count: integer(int32)
+           - rate: number
+           - amount: number
+           - isDeductionForBreakfast: boolean
+           - isDeductionForLunch: boolean
+           - isDeductionForDinner: boolean
+
+  DELETE /travelExpense/perDiemCompensation/{id}
+         Delete per diem compensation.
+         Path/Query params: id
+
+  PUT    /travelExpense/{id}
+         Update travel expense.
+         Path/Query params: id
+         Body: TravelExpense
+           - id: integer(int64)
+           - version: integer(int32)
+           - attestationSteps: array[AttestationStep]
+           - attestation: Attestation
+           - project: Project
+           - employee: Employee
+           - approvedBy: Employee
+           - completedBy: Employee
+           - rejectedBy: Employee
+           - department: Department
+           - freeDimension1: AccountingDimensionValue
+           - freeDimension2: AccountingDimensionValue
+           - freeDimension3: AccountingDimensionValue
+           - payslip: Payslip
+           - vatType: VatType
+           - paymentCurrency: Currency
+           - travelDetails: TravelDetails
+           - voucher: Voucher
+           - attachment: Document
+           - isChargeable: boolean
+           - isFixedInvoicedAmount: boolean
+           - isMarkupInvoicedPercent: boolean
+           - isIncludeAttachedReceiptsWhenReinvoicing: boolean
+           - travelAdvance: number
+           - fixedInvoicedAmount: number
+           - markupInvoicedPercent: number
+           - invoice: Invoice
+           - title: string
+           - perDiemCompensations: array[PerDiemCompensation]
+           - costs: array[Cost]
+
+  DELETE /travelExpense/{id}
+         Delete travel expense.
+         Path/Query params: id
+
+  PUT    /travelExpense/{id}/convert
+         Convert travel to/from employee expense.
+         Path/Query params: id
+
+  POST   /travelExpense/{travelExpenseId}/attachment
+         Upload attachment to travel expense.
+         Path/Query params: travelExpenseId
+         Body: object
+           - file: string(binary) *REQ*
+
+  DELETE /travelExpense/{travelExpenseId}/attachment
+         Delete attachment.
+         Path/Query params: travelExpenseId
+
+  POST   /travelExpense/{travelExpenseId}/attachment/list
+         Upload multiple attachments to travel expense.
+         Path/Query params: travelExpenseId
+         Body: object
+           - file: array[string]
+
+====================================================================================================
+  USERLICENSE (1 endpoints)
+====================================================================================================
+
+  POST   /userLicense/export
+         Export the user licenses table to a specific format
+         Body: UserLicenseExport
+           - zeroDaysExcluded: boolean
+           - exportType: string
+           - priceDate: string
+           - status: string
+           - userType: string
+           - endDate: string
+           - startDate: string
+           - userLicenseType: array[string]
+           - sorting: string
+
+====================================================================================================
+  VATTERMSIZESETTINGS (3 endpoints)
+====================================================================================================
+
+  POST   /vatTermSizeSettings
+         Create VatTermSizeSettings
+         Body: VatTermSizeSettings
+           - id: integer(int64)
+           - version: integer(int32)
+           - reportType: string
+           - fromDate: string
+           - termSize: string
+
+  PUT    /vatTermSizeSettings/{id}
+         Update VatTermSizeSettings.
+         Path/Query params: id
+         Body: VatTermSizeSettings
+           - id: integer(int64)
+           - version: integer(int32)
+           - reportType: string
+           - fromDate: string
+           - termSize: string
+
+  DELETE /vatTermSizeSettings/{id}
+         Delete VatTermSizeSettings
+         Path/Query params: id
+
+====================================================================================================
+  VOUCHERMESSAGE (1 endpoints)
+====================================================================================================
+
+  POST   /voucherMessage
+         [BETA] Post new voucherMessage.
+         Body: VoucherMessage
+           - id: integer(int64)
+           - version: integer(int32)
+           - voucherId: integer(int64)
+           - content: string
+           - sender: Employee
+           - sendTime: string
+
+====================================================================================================
+  VOUCHERSTATUS (1 endpoints)
+====================================================================================================
+
+  POST   /voucherStatus
+         Post new voucherStatus.
+         Body: VoucherStatus
+           - id: integer(int64)
+           - version: integer(int32)
+           - voucher: Voucher
+           - status: string
+           - message: string
+           - externalObjectUrl: string
+           - comment: string
+           - referenceNumber: string
+
+====================================================================================================
+  YEAREND (17 endpoints)
+====================================================================================================
+
+  POST   /yearEnd/penneo/casefiles
+         Create a new case file in Penneo
+         Body: CaseFileRequest
+           - title: string
+           - year: integer(int32)
+
+  DELETE /yearEnd/penneo/casefiles/{caseFileId}
+         Delete a case file from Penneo
+         Path/Query params: caseFileId
+
+  POST   /yearEnd/penneo/casefiles/{caseFileId}/activate
+         Fully activate a case file for signing (links signers, configures emails, and activates)
+         Path/Query params: caseFileId
+
+  DELETE /yearEnd/penneo/casefiles/{caseFileId}/signers/{signerId}
+         Delete a signer from a case file
+         Path/Query params: caseFileId, signerId
+
+  POST   /yearEnd/penneo/casefiles/{caseFileId}/signers/{signerId}/reactivate
+         Reactivate a signer in a case file
+         Path/Query params: caseFileId, signerId
+
+  POST   /yearEnd/penneo/casefiles/{caseFileId}/signers/{signerId}/resend
+         Resend a sign link to a specific signer
+         Path/Query params: caseFileId, signerId
+
+  POST   /yearEnd/penneo/documents
+         Add a document to an existing case file
+         Body: AddDocumentRequest
+           - caseFileId: integer(int64)
+           - title: string
+           - pdfBase64: string
+
+  PUT    /yearEnd/penneo/documents/{documentId}
+         Update an existing document in a case file
+         Path/Query params: documentId
+         Body: UpdateDocumentRequest
+           - documentId: integer(int64)
+           - title: string
+           - pdfBase64: string
+
+  DELETE /yearEnd/penneo/documents/{documentId}
+         Delete a document from a case file
+         Path/Query params: documentId
+
+  POST   /yearEnd/penneo/recipients
+         Add a copy recipient to a case file
+         Body: AddRecipientRequest
+           - caseFileId: integer(int64)
+           - name: string
+           - email: string
+           - storeAsContact: boolean
+
+  DELETE /yearEnd/penneo/recipients/{id}
+         Delete a recipient from a case file
+         Path/Query params: id, ?caseFileId
+
+  POST   /yearEnd/penneo/signature-lines
+         Create signature line, link signer, and configure email in one operation
+         Body: CreateAndLinkSignatureLineRequest
+           - documentId: integer(int64)
+           - role: string
+           - signerId: integer(int64)
+           - year: integer(int32)
+
+  POST   /yearEnd/penneo/sync
+         Synchronize database with current Penneo casefile state
+
+  POST   /yearEnd/penneo/updateCompletedStatus
+         Update completed status for current company's casefiles from global API
+
+  POST   /yearEnd/researchAndDevelopment2024
+         Create ResearchAndDevelopment 2024
+         Body: ResearchAndDevelopment2024
+           - yearEndReport: YearEndReport
+           - groupId: integer(int32)
+           - subGroupId: integer(int32)
+           - posts: array[GenericData]
+           - projectNumber: string
+           - projectTitle: string
+           - projectStatus: string
+           - approvedRndIncentiveStartYear: integer(int32)
+           - approvedRndIncentiveEndYear: integer(int32)
+           - businessCategory: string
+           - collaborativeProjectWithOtherEnterprises: string
+           - stakeInCollaborativeProject: number
+           - hasExtensiveDisseminationThroughConferencesPublicationsEtc: string
+           - appliedForOtherPublicAidInNorway: string
+           - collaborativeBusinesses: array[ResearchAndDevelopmentCollaborativeBusiness]
+           - workPackages: array[ResearchAndDevelopmentWorkPackage]
+           - totalCostForProjectPeriod: number
+           - totalGrossTaxDeductionFromPreviousYears: number
+           - otherPublicSupportList: array[ResearchAndDevelopmentOtherPublicSupport]
+           - publicSupportAsReducedWorkerFee: number
+           - taxDeductionForProject: number
+           - addedTaxForProject: number
+           - maxApprovedGrossAmountOfPublicSupport: number
+           - grossAmountTaxExemptionForYear: number
+           - grossAmountTaxExemptionForPreviousYear: number
+           - amountOfSupportExceedingApprovedAmount: number
+           - amountOfSupportExceedingApprovedAmountThisYear: number
+           - remainingAidGrossValue: number
+           - taxDeductionForReductionAgainstOtherStateAid: number
+           - wasInEconomicDifficultiesAtApplicationTime: string
+           - underlyingDocumentsUsedForAssessment: string
+           - underlyingDocumentationDate: string
+           - projectToBeSignedByAuditor: string
+           - netAmountAidAwarded: number
+
+  PUT    /yearEnd/researchAndDevelopment2024
+         Update ResearchAndDevelopment 2024
+         Body: ResearchAndDevelopment2024
+           - yearEndReport: YearEndReport
+           - groupId: integer(int32)
+           - subGroupId: integer(int32)
+           - posts: array[GenericData]
+           - projectNumber: string
+           - projectTitle: string
+           - projectStatus: string
+           - approvedRndIncentiveStartYear: integer(int32)
+           - approvedRndIncentiveEndYear: integer(int32)
+           - businessCategory: string
+           - collaborativeProjectWithOtherEnterprises: string
+           - stakeInCollaborativeProject: number
+           - hasExtensiveDisseminationThroughConferencesPublicationsEtc: string
+           - appliedForOtherPublicAidInNorway: string
+           - collaborativeBusinesses: array[ResearchAndDevelopmentCollaborativeBusiness]
+           - workPackages: array[ResearchAndDevelopmentWorkPackage]
+           - totalCostForProjectPeriod: number
+           - totalGrossTaxDeductionFromPreviousYears: number
+           - otherPublicSupportList: array[ResearchAndDevelopmentOtherPublicSupport]
+           - publicSupportAsReducedWorkerFee: number
+           - taxDeductionForProject: number
+           - addedTaxForProject: number
+           - maxApprovedGrossAmountOfPublicSupport: number
+           - grossAmountTaxExemptionForYear: number
+           - grossAmountTaxExemptionForPreviousYear: number
+           - amountOfSupportExceedingApprovedAmount: number
+           - amountOfSupportExceedingApprovedAmountThisYear: number
+           - remainingAidGrossValue: number
+           - taxDeductionForReductionAgainstOtherStateAid: number
+           - wasInEconomicDifficultiesAtApplicationTime: string
+           - underlyingDocumentsUsedForAssessment: string
+           - underlyingDocumentationDate: string
+           - projectToBeSignedByAuditor: string
+           - netAmountAidAwarded: number
+
+  DELETE /yearEnd/researchAndDevelopment2024
+         Delete ResearchAndDevelopment 2024
+         Body: ResearchAndDevelopment2024
+           - yearEndReport: YearEndReport
+           - groupId: integer(int32)
+           - subGroupId: integer(int32)
+           - posts: array[GenericData]
+           - projectNumber: string
+           - projectTitle: string
+           - projectStatus: string
+           - approvedRndIncentiveStartYear: integer(int32)
+           - approvedRndIncentiveEndYear: integer(int32)
+           - businessCategory: string
+           - collaborativeProjectWithOtherEnterprises: string
+           - stakeInCollaborativeProject: number
+           - hasExtensiveDisseminationThroughConferencesPublicationsEtc: string
+           - appliedForOtherPublicAidInNorway: string
+           - collaborativeBusinesses: array[ResearchAndDevelopmentCollaborativeBusiness]
+           - workPackages: array[ResearchAndDevelopmentWorkPackage]
+           - totalCostForProjectPeriod: number
+           - totalGrossTaxDeductionFromPreviousYears: number
+           - otherPublicSupportList: array[ResearchAndDevelopmentOtherPublicSupport]
+           - publicSupportAsReducedWorkerFee: number
+           - taxDeductionForProject: number
+           - addedTaxForProject: number
+           - maxApprovedGrossAmountOfPublicSupport: number
+           - grossAmountTaxExemptionForYear: number
+           - grossAmountTaxExemptionForPreviousYear: number
+           - amountOfSupportExceedingApprovedAmount: number
+           - amountOfSupportExceedingApprovedAmountThisYear: number
+           - remainingAidGrossValue: number
+           - taxDeductionForReductionAgainstOtherStateAid: number
+           - wasInEconomicDifficultiesAtApplicationTime: string
+           - underlyingDocumentsUsedForAssessment: string
+           - underlyingDocumentationDate: string
+           - projectToBeSignedByAuditor: string
+           - netAmountAidAwarded: number

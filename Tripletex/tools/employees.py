@@ -27,12 +27,21 @@ def build_employee_tools(client: TripletexClient) -> dict:
         Returns:
             The created employee with id and fields, or an error message.
         """
-        # Tripletex requires a department — auto-resolve if not given
+        # Tripletex requires a department — auto-resolve or create if not given
         if not department_id:
             dept_result = client.get("/department", params={"fields": "id", "count": 1})
             depts = dept_result.get("values", [])
             if depts:
                 department_id = depts[0]["id"]
+            else:
+                # Fresh sandbox with no departments — create a default one
+                new_dept = client.post("/department", json={
+                    "name": "Avdeling",
+                    "departmentNumber": "1",
+                })
+                dept_val = new_dept.get("value", {})
+                if dept_val.get("id"):
+                    department_id = dept_val["id"]
 
         body = {
             "firstName": firstName,
