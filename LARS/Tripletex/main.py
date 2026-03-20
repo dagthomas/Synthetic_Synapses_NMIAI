@@ -122,9 +122,13 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False) -> dict:
 
     # Build per-request client and tools
     client = TripletexClient(creds.base_url, creds.session_token)
+
+    # Pre-warm caches (department, division) before counting API calls
+    client._prewarm_caches()
+
     all_tools_dict = build_tools_dict(client, files_dir=files_dir if files else "")
     task_type = classify_task(prompt)
-    tools = select_tools(task_type, all_tools_dict, has_files=bool(files))
+    tools = select_tools(task_type, all_tools_dict, has_files=bool(files), prompt=prompt)
     log.info(f"[REQ {request_id[:8]}] Task type: {task_type or 'UNKNOWN'}, tools: {len(tools)}/{len(all_tools_dict)}")
 
     # Build agent and runner

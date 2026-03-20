@@ -24,6 +24,9 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "update_employee":    ["create_employee", "update_employee", "search_employees"],
     "update_customer":    ["create_customer", "update_customer"],
     "update_product":     ["create_product", "update_product"],
+    "update_supplier":    ["create_supplier", "update_supplier"],
+    "update_department":  ["create_department", "update_department"],
+    "update_contact":     ["create_customer", "create_contact", "update_contact"],
     # Tier 2 — multi-step workflows
     "create_invoice":              ["create_customer", "create_product", "create_order", "create_invoice"],
     "create_multi_line_invoice":   ["create_customer", "create_product", "create_order", "create_invoice"],
@@ -43,6 +46,9 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "delete_customer":        ["search_customers", "delete_customer"],
     "delete_supplier":        ["search_suppliers", "delete_supplier"],
     "delete_product":         ["search_products", "delete_product"],
+    "delete_department":      ["search_departments", "delete_department"],
+    "delete_contact":         ["search_contacts", "delete_contact", "update_contact"],
+    "delete_employee":        ["search_employees", "update_employee"],
     "create_ledger_voucher":  ["create_voucher", "get_ledger_accounts"],
     "reverse_voucher":        ["search_vouchers", "reverse_voucher"],
     "delete_invoice":         ["create_customer", "create_product", "create_order", "create_invoice",
@@ -77,6 +83,17 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
     ("delete_product", ["slett produkt", "delete product", "fjern produkt",
                         "slett produktet", "eliminar producto", "supprimer produit",
                         "produkt löschen", "eliminar o produto"], [], 10),
+    ("delete_department", ["slett avdeling", "delete department", "fjern avdeling",
+                           "slett avdelingen", "eliminar departamento", "supprimer département",
+                           "abteilung löschen", "eliminar o departamento"], [], 10),
+    ("delete_contact", ["slett kontakt", "delete contact", "fjern kontakt",
+                        "slett kontaktperson", "slett kontaktpersonen",
+                        "eliminar contacto", "supprimer contact",
+                        "kontakt löschen", "eliminar o contato"], [], 10),
+    ("delete_employee", ["slett ansatt", "delete employee", "fjern ansatt",
+                         "slett den ansatte", "deaktiver ansatt", "deactivate employee",
+                         "eliminar empleado", "supprimer employé",
+                         "mitarbeiter löschen", "eliminar o funcionário"], [], 10),
 
     # ── Reverse voucher ──
     ("reverse_voucher", ["tilbakeføre bilag", "reversere bilag", "reverse voucher",
@@ -184,17 +201,39 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
     ("update_employee", ["oppdater ansatt", "update employee", "endre ansatt",
                          "oppdatere ansatt", "actualizar empleado",
                          "mettre à jour employé", "mitarbeiter aktualisieren",
-                         "atualizar funcionário"],
+                         "atualizar funcionário",
+                         "oppdatere mobilnummer", "oppdater mobilnummer",
+                         "endre mobilnummer", "oppdatere telefon", "endre telefon",
+                         "nytt mobilnummer", "bytte telefon"],
      ["slett", "delete"], 8),
     ("update_customer", ["oppdater kunde", "update customer", "endre kunde",
                          "oppdatere kunde", "actualizar cliente",
                          "mettre à jour client", "kunde aktualisieren",
-                         "atualizar cliente"],
-     ["slett", "delete"], 8),
+                         "atualizar cliente",
+                         "oppdatere telefon", "endre telefonnummer",
+                         "nytt telefonnummer", "oppdatere e-post", "endre e-post"],
+     ["slett", "delete", "ansatt", "employee"], 8),
     ("update_product", ["oppdater produkt", "update product", "endre produkt",
                         "oppdatere produkt", "endre pris", "update price",
                         "actualizar producto", "mettre à jour produit",
-                        "produkt aktualisieren", "atualizar produto"],
+                        "produkt aktualisieren", "atualizar produto",
+                        "oppdatere prisen", "endre prisen", "oppdater pris",
+                        "ny pris", "justere pris", "øke prisen", "senke prisen"],
+     ["slett", "delete"], 8),
+    ("update_supplier", ["oppdater leverandør", "update supplier", "endre leverandør",
+                         "oppdatere leverandør", "actualizar proveedor",
+                         "mettre à jour fournisseur", "lieferant aktualisieren",
+                         "atualizar fornecedor"],
+     ["slett", "delete"], 8),
+    ("update_department", ["oppdater avdeling", "update department", "endre avdeling",
+                           "oppdatere avdeling", "actualizar departamento",
+                           "mettre à jour département", "abteilung aktualisieren",
+                           "atualizar departamento"],
+     ["slett", "delete"], 8),
+    ("update_contact", ["oppdater kontaktperson", "update contact", "endre kontaktperson",
+                         "oppdatere kontakt", "actualizar contacto",
+                         "mettre à jour contact", "kontakt aktualisieren",
+                         "atualizar contato"],
      ["slett", "delete"], 8),
 
     # ── Ledger voucher ──
@@ -213,10 +252,11 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                            "abteilung", "departamento"],
      ["slett", "delete"], 4),
     ("create_employee", ["ansatt", "employee", "empleado", "employé",
-                         "mitarbeiter", "funcionário", "tilsett"],
+                         "mitarbeiter", "funcionário", "tilsett",
+                         "kollega", "medarbeider", "ny kollega", "new colleague"],
      ["slett", "delete", "oppdater", "update", "endre", "reise", "travel",
       "prosjekt", "project", "ansettelse", "employment", "permisjon", "leave",
-      "arbeidstid", "lønn", "salary"], 3),
+      "arbeidstid", "lønn", "salary", "deaktiver", "deactivate"], 3),
     ("create_customer", ["kunde", "customer", "cliente", "client", "klient",
                          "kunden"],
      ["slett", "delete", "oppdater", "update", "endre", "faktura", "invoice",
@@ -233,6 +273,8 @@ def classify_task(prompt: str) -> str | None:
     Returns task type string if confident, None for fallback to all tools.
     """
     text = prompt.lower().strip()
+    # Strip email addresses to prevent false positives (e.g. "faktura@firma.no" → "invoice")
+    text = re.sub(r'\S+@\S+\.\S+', '', text)
 
     best_type: str | None = None
     best_score: int = 0
@@ -267,18 +309,100 @@ def classify_task(prompt: str) -> str | None:
     return None
 
 
-def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = False) -> list:
+# ── Category-level fallback (between exact classification and all-tools) ──
+# When classify_task() returns None, detect broad categories to narrow from 118 to ~10-25 tools.
+
+CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "employee": ["ansatt", "employee", "kollega", "medarbeider", "empleado", "employé",
+                 "mitarbeiter", "funcionário", "tilsett", "deaktiver ansatt"],
+    "customer": ["kunde", "customer", "klient", "cliente", "client", "kunden"],
+    "invoice":  ["faktura", "invoice", "kreditnota", "credit note", "factura", "rechnung",
+                 "fatura", "facture"],
+    "supplier": ["leverandør", "supplier", "proveedor", "fournisseur", "lieferant", "fornecedor"],
+    "product":  ["produkt", "product", "producto", "produit", "produto", "vare"],
+    "travel":   ["reiseregning", "travel expense", "reise", "diett", "kjøregodtgjørelse",
+                 "mileage", "per diem"],
+    "project":  ["prosjekt", "project", "proyecto", "projet", "projekt", "projeto"],
+    "ledger":   ["bilag", "voucher", "postering", "korreksjon", "correction",
+                 "åpningsbalanse", "opening balance"],
+    "department": ["avdeling", "department", "departamento", "département", "abteilung"],
+    "salary":   ["lønn", "salary", "lønnskjøring", "payroll", "nómina", "gehaltsabrechnung"],
+    "contact":  ["kontaktperson", "contact person", "kontakt", "ansprechpartner"],
+}
+
+CATEGORY_TOOLS: dict[str, list[str]] = {
+    "employee": ["create_employee", "update_employee", "search_employees",
+                 "create_employment", "create_employment_details",
+                 "create_standard_time", "create_leave_of_absence"],
+    "customer": ["create_customer", "update_customer", "search_customers",
+                 "delete_customer"],
+    "invoice":  ["create_customer", "create_product", "create_order", "create_invoice",
+                 "create_credit_note", "register_payment", "search_invoices"],
+    "supplier": ["create_supplier", "update_supplier", "search_suppliers",
+                 "delete_supplier", "create_incoming_invoice"],
+    "product":  ["create_product", "update_product", "search_products",
+                 "delete_product"],
+    "travel":   ["create_employee", "create_travel_expense", "search_travel_expenses",
+                 "delete_travel_expense", "create_travel_expense_cost",
+                 "create_mileage_allowance", "create_per_diem_compensation",
+                 "update_travel_expense"],
+    "project":  ["create_customer", "create_employee", "create_project"],
+    "ledger":   ["create_voucher", "get_ledger_accounts", "search_vouchers",
+                 "reverse_voucher", "create_opening_balance"],
+    "department": ["create_department", "update_department", "search_departments",
+                   "delete_department"],
+    "salary":   ["search_salary_types", "create_salary_transaction", "create_employee"],
+    "contact":  ["create_customer", "create_contact", "update_contact",
+                 "search_contacts", "delete_contact"],
+}
+
+
+def detect_categories(prompt: str) -> list[str]:
+    """Detect broad entity categories mentioned in a prompt.
+
+    Returns list of matching category names (e.g. ["employee", "customer"]).
+    """
+    text = prompt.lower().strip()
+    text = re.sub(r'\S+@\S+\.\S+', '', text)  # strip emails
+    matched = []
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text:
+                matched.append(category)
+                break
+    return matched
+
+
+def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = False,
+                 prompt: str = "") -> list:
     """Select tools for a given task type.
 
     Args:
         task_type: Classified task type, or None for all tools.
         all_tools_dict: Dict of {tool_name: tool_function}.
         has_files: Whether the request has file attachments.
+        prompt: Original prompt text (used for category fallback when task_type is None).
 
     Returns:
         List of tool functions to pass to the agent.
     """
     if task_type is None:
+        # Try category-level fallback before returning all tools
+        if prompt:
+            categories = detect_categories(prompt)
+            if categories:
+                required_names = set()
+                for cat in categories:
+                    required_names.update(CATEGORY_TOOLS.get(cat, []))
+                # Add universal tools
+                for name in _UNIVERSAL_TOOLS:
+                    required_names.add(name)
+                if has_files:
+                    required_names.add("extract_file_content")
+                selected = [all_tools_dict[n] for n in required_names if n in all_tools_dict]
+                if selected:
+                    log.info(f"Category fallback: {categories} -> {len(selected)} tools")
+                    return selected
         return list(all_tools_dict.values())
 
     # Get required tool names for this task type

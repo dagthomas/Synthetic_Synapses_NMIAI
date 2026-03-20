@@ -11,7 +11,8 @@ COMMON_PREAMBLE = """You are an expert accounting assistant for Tripletex, Norwa
 PROCESS — for every task:
 1. PLAN: Read the prompt. Identify the EXACT sequence of tool calls needed. Count them.
 2. EXTRACT: Pull out every name, email, amount, date, org number from the prompt verbatim. Never invent values.
-3. EXECUTE: Run your planned calls. Use IDs from create-responses directly — never search for something you just created.
+3. EXECUTE: Run your planned calls. Use IDs AND version numbers from create-responses directly — never search for something you just created.
+   - CRITICAL: When updating an entity you just created, pass version=<version from create response> to the update tool. This saves 1 API call.
 4. STOP: When the final create/update/delete call succeeds, STOP IMMEDIATELY.
    - NEVER call get_entity_by_id to verify your work — the create response already confirmed success.
    - NEVER summarize what you did in a long paragraph. Just say "Done." and stop.
@@ -77,7 +78,19 @@ Update customer (2 calls):
   → create_customer(name, email) → update_customer(customer_id, email=newEmail OR phoneNumber=newPhone)
 
 Update product (2 calls):
-  → create_product(name, price) → update_product(product_id, name=newName OR priceExcludingVatCurrency=newPrice)
+  → create_product(name, price) → update_product(product_id, name=newName OR priceExcludingVatCurrency=newPrice, version=<version>)
+
+Update supplier (2 calls):
+  → create_supplier(name, email) → update_supplier(supplier_id, email=newEmail OR phoneNumber=newPhone, version=<version>)
+  → "leverandør" = supplier
+
+Update department (2 calls):
+  → create_department(name) → update_department(department_id, name=newName OR departmentNumber=newNumber, version=<version>)
+  → "avdeling" = department
+
+Update contact (3 calls):
+  → create_customer → create_contact(firstName, lastName, email, customer_id) → update_contact(contact_id, email=newEmail OR phoneNumberMobile=newPhone, version=<version>, customer_id=<customer_id>)
+  → "kontaktperson" = contact person
 
 ═══════════════════════════════════════════════════════
 TIER 2 — MULTI-STEP WORKFLOWS (target: fewest calls)
@@ -251,20 +264,41 @@ TASK: Create contact for customer (2 calls)
 
     "update_employee": """
 TASK: Update employee (2 calls)
--> create_employee(firstName, lastName, email) -> update_employee(employee_id, phoneNumberMobile=newPhone)
+-> create_employee(firstName, lastName, email) -> update_employee(employee_id, phoneNumberMobile=newPhone, version=<version from create response>)
+- CRITICAL: Pass version from create_employee response to update_employee to skip GET (saves 1 call).
 - Tripletex does NOT allow changing email after creation — only phone, name, etc.""",
 
     "update_customer": """
 TASK: Update customer (2 calls)
--> create_customer(name, email) -> update_customer(customer_id, email=newEmail OR phoneNumber=newPhone)""",
+-> create_customer(name, email) -> update_customer(customer_id, email=newEmail OR phoneNumber=newPhone, version=<version from create response>)
+- CRITICAL: Pass version from create_customer response to update_customer to skip GET (saves 1 call).""",
 
     "update_product": """
 TASK: Update product (2 calls)
--> create_product(name, price) -> update_product(product_id, name=newName OR priceExcludingVatCurrency=newPrice)""",
+-> create_product(name, price) -> update_product(product_id, name=newName OR priceExcludingVatCurrency=newPrice, version=<version from create response>)
+- CRITICAL: Pass version from create_product response to update_product to skip GET (saves 1 call).""",
+
+    "update_supplier": """
+TASK: Update supplier (2 calls)
+-> create_supplier(name, email) -> update_supplier(supplier_id, email=newEmail OR phoneNumber=newPhone, version=<version from create response>)
+- CRITICAL: Pass version from create_supplier response to update_supplier to skip GET (saves 1 call).
+- "leverandør" = supplier""",
+
+    "update_department": """
+TASK: Update department (2 calls)
+-> create_department(name, departmentNumber if given) -> update_department(department_id, name=newName OR departmentNumber=newNumber, version=<version from create response>)
+- CRITICAL: Pass version from create_department response to update_department to skip GET (saves 1 call).
+- "avdeling" = department""",
+
+    "update_contact": """
+TASK: Update contact person (3 calls)
+-> create_customer(name, email) -> create_contact(firstName, lastName, email, customer_id) -> update_contact(contact_id, email=newEmail OR phoneNumberMobile=newPhone, version=<version from create response>, customer_id=<customer_id>)
+- CRITICAL: Pass version AND customer_id to update_contact to skip GET (saves 1 call).
+- "kontaktperson" = contact person""",
 
     "create_invoice": """
 TASK: Create invoice (4 calls)
--> create_customer -> create_product -> create_order(customer_id, date, orderLines=[{product_id, count}]) -> create_invoice(date, dueDate, order_id)
+-> create_customer -> create_product -> create_order(customer_id, date, orderLines=[{{product_id, count}}]) -> create_invoice(date, dueDate, order_id)
 - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.""",
 
     "create_multi_line_invoice": """
@@ -338,9 +372,29 @@ TASK: Delete product (2 calls)
 -> search_products(name) -> delete_product(product_id)
 - This task references EXISTING entities. Use search tools.""",
 
+    "delete_department": """
+TASK: Delete department (2 calls)
+-> search_departments(name) -> delete_department(department_id)
+- This task references EXISTING entities. Use search tools.
+- "slett avdeling" / "delete department" """,
+
+    "delete_contact": """
+TASK: Delete contact (2-3 calls)
+-> search_contacts(firstName, lastName) -> delete_contact(contact_id)
+- If DELETE returns 403/error: update_contact(contact_id, isInactive=True) to deactivate instead
+- This task references EXISTING entities. Use search tools.
+- "slett kontakt" / "delete contact" """,
+
+    "delete_employee": """
+TASK: Deactivate employee (2-3 calls)
+-> search_employees(firstName, lastName) -> update_employee(employee_id, isInactive=True)
+- Tripletex does NOT allow deleting employees — always deactivate with isInactive=True
+- "slett ansatt" / "deaktiver ansatt" / "delete employee" = deactivate employee
+- This task references EXISTING entities. Use search tools.""",
+
     "create_ledger_voucher": """
 TASK: Ledger correction voucher (1 call)
--> create_voucher(date, description, postings=[{accountNumber, amount}])
+-> create_voucher(date, description, postings=[{{accountNumber, amount}}])
 - Postings MUST balance: sum of all amounts = 0
 - Positive = debit, negative = credit
 - Common accounts: 1920=bank, 1500=receivables, 2400=payables, 3000=revenue, 4000=cost of goods, 6300=leie, 7100=lonn, 2700=skattetrekk, 2770=arbeidsgiveravgift, 2900=gjeld""",
