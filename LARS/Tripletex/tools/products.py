@@ -4,11 +4,16 @@ from tripletex_client import TripletexClient
 def build_product_tools(client: TripletexClient) -> dict:
     """Build product-related tools."""
 
+    # Output VAT type mapping: percentage → Tripletex vatType ID
+    # 3 = Utgående mva høy sats (25%), 31 = middels (15%), 33 = lav (12%), 6 = utenfor mva-loven (0%)
+    _OUTPUT_VAT_MAP = {25: 3, 15: 31, 12: 33, 0: 6}
+
     def create_product(
         name: str,
         priceExcludingVatCurrency: float = 0.0,
         priceIncludingVatCurrency: float = 0.0,
         productNumber: str = "",
+        vatPercentage: int = -1,
     ) -> dict:
         """Create a new product in Tripletex.
 
@@ -17,6 +22,7 @@ def build_product_tools(client: TripletexClient) -> dict:
             priceExcludingVatCurrency: Price excluding VAT in NOK. Preferred — Tripletex auto-calculates incl VAT.
             priceIncludingVatCurrency: Price including VAT in NOK. Only send this if you do NOT send priceExcludingVatCurrency.
             productNumber: Optional product number/SKU.
+            vatPercentage: VAT rate for this product: 25 (standard), 15 (food/mat), 12 (transport), 0 (exempt). Default -1 = Tripletex default (25%).
 
         Returns:
             The created product with id and fields, or an error message.
@@ -29,11 +35,16 @@ def build_product_tools(client: TripletexClient) -> dict:
             body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
         if productNumber:
             body["number"] = productNumber
+        if vatPercentage >= 0:
+            vat_id = _OUTPUT_VAT_MAP.get(vatPercentage)
+            if vat_id is None:
+                return {"error": True, "message": f"Unsupported VAT rate {vatPercentage}%. Use 25, 15, 12, or 0."}
+            body["vatType"] = {"id": vat_id}
+
         result = client.post("/product", json=body)
 
-        # Auto-recover: if product number already exists, find and return the existing product
-        if (result.get("error") and result.get("status_code") == 422
-                and productNumber and "er i bruk" in str(result.get("message", "")).lower()):
+        # If product number already exists, fetch and return the existing product
+        if result.get("error") and result.get("status_code") == 422 and productNumber:
             existing = client.get("/product", params={
                 "number": productNumber,
                 "fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency",

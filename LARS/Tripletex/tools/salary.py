@@ -29,8 +29,8 @@ def build_salary_tools(client: TripletexClient) -> dict:
             month: The month (1-12).
             employee_ids: JSON string of employee IDs, e.g. '[1, 2, 3]'. If empty, tries to include all employees.
             payslip_lines: JSON string of salary specifications per employee.
-                Format: '[{"employee_id": 123, "lines": [{"salary_type_number": 10, "rate": 58350, "count": 1}]}]'
-                Each line needs: salary_type_number (from search_salary_types), rate (amount in NOK), count (usually 1).
+                Format: '[{"employee_id": 123, "lines": [{"salary_type_number": "2000", "rate": 58350, "count": 1}]}]'
+                Each line needs: salary_type_number (string, from search_salary_types) OR salary_type_id (int), rate (amount in NOK), count (usually 1).
 
         Returns:
             Created salary transaction or error.
@@ -38,19 +38,38 @@ def build_salary_tools(client: TripletexClient) -> dict:
         payslips = []
         if payslip_lines:
             specs = _json.loads(payslip_lines) if isinstance(payslip_lines, str) else payslip_lines
+            # Resolve salary type numbers to IDs (Tripletex requires id, not number)
+            _num_to_id = {}
+            needs_lookup = any(
+                "salary_type_number" in line
+                for spec in specs
+                for line in spec.get("lines", [])
+            )
+            if needs_lookup:
+                st_resp = client.get("/salary/type", params={"fields": "id,number"})
+                for st in st_resp.get("values", []):
+                    _num_to_id[str(st["number"])] = st["id"]
             for spec in specs:
                 eid = spec["employee_id"]
                 lines = spec.get("lines", [])
                 payslip = {"employee": {"id": eid}}
                 if lines:
-                    payslip["specifications"] = [
-                        {
-                            "salaryType": {"number": line["salary_type_number"]},
+                    formatted = []
+                    for line in lines:
+                        if "salary_type_id" in line:
+                            st_ref = {"id": line["salary_type_id"]}
+                        else:
+                            num = str(line["salary_type_number"])
+                            st_id = _num_to_id.get(num)
+                            if not st_id:
+                                return {"error": True, "message": f"Unknown salary type number: {num}"}
+                            st_ref = {"id": st_id}
+                        formatted.append({
+                            "salaryType": st_ref,
                             "rate": line["rate"],
                             "count": line.get("count", 1),
-                        }
-                        for line in lines
-                    ]
+                        })
+                    payslip["specifications"] = formatted
                 payslips.append(payslip)
         elif employee_ids:
             ids = _json.loads(employee_ids) if isinstance(employee_ids, str) else employee_ids

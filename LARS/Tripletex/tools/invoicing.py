@@ -10,6 +10,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         customer_id: int,
         deliveryDate: str,
         orderLines: str,
+        project_id: int = 0,
     ) -> dict:
         """Create a sales order for a customer. Required before creating an invoice.
 
@@ -17,6 +18,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
             customer_id: The ID of the customer (must exist).
             deliveryDate: Delivery date in YYYY-MM-DD format.
             orderLines: JSON string of order lines, each with 'product_id', 'count', and optionally 'unitPriceExcludingVat'. Example: '[{"product_id": 1, "count": 2}]'
+            project_id: Optional project ID to link this order to (0 if none).
 
         Returns:
             The created order with id, or an error message.
@@ -48,7 +50,38 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
             "deliveryDate": deliveryDate,
             "orderLines": formatted_lines,
         }
+        if project_id:
+            body["project"] = {"id": project_id}
         return client.post("/order", json=body)
+
+    _bank_ensured = [False]
+
+    def _ensure_bank_account(client: TripletexClient) -> None:
+        """Ensure ledger account 1920 has a bank account number set (once per session)."""
+        if _bank_ensured[0]:
+            return
+        try:
+            r = client.get("/ledger/account", params={
+                "number": "1920", "fields": "id,name,isBankAccount,bankAccountNumber"
+            })
+            accounts = r.get("values", [])
+            if not accounts:
+                _bank_ensured[0] = True
+                return
+            acct = accounts[0]
+            if acct.get("bankAccountNumber"):
+                _bank_ensured[0] = True
+                return
+            client.put(f"/ledger/account/{acct['id']}", json={
+                "id": acct["id"],
+                "number": 1920,
+                "name": acct["name"],
+                "isBankAccount": True,
+                "bankAccountNumber": "12345678903",
+            })
+            _bank_ensured[0] = True
+        except Exception:
+            pass  # best-effort; invoice POST will give clear error if still missing
 
     def create_invoice(
         invoiceDate: str,
@@ -65,6 +98,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         Returns:
             The created invoice with id, or an error message.
         """
+        _ensure_bank_account(client)
         body = {
             "invoiceDate": invoiceDate,
             "invoiceDueDate": invoiceDueDate,

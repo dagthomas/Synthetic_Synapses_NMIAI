@@ -1,4 +1,5 @@
 import json as _json
+from datetime import date as _date
 
 from tripletex_client import TripletexClient
 
@@ -154,10 +155,9 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Returns:
             The reversed voucher or error.
         """
-        params = {}
-        if date:
-            params["date"] = date
-        return client.put(f"/ledger/voucher/{voucher_id}/:reverse", params=params if params else None)
+        if not date:
+            date = _date.today().isoformat()
+        return client.put(f"/ledger/voucher/{voucher_id}/:reverse", params={"date": date})
 
     def create_opening_balance(voucherDate: str, balancePostings: str) -> dict:
         """Create an opening balance. Zeroes out all movements before this date.
@@ -203,17 +203,19 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         """Search for vouchers within a date range.
 
         Args:
-            dateFrom: Start date YYYY-MM-DD.
-            dateTo: End date YYYY-MM-DD.
+            dateFrom: Start date YYYY-MM-DD (defaults to Jan 1 of current year).
+            dateTo: End date YYYY-MM-DD (defaults to today).
 
         Returns:
             A list of vouchers.
         """
-        params = {"fields": "id,date,description,voucherType,number"}
-        if dateFrom:
-            params["dateFrom"] = dateFrom
-        if dateTo:
-            params["dateTo"] = dateTo
+        today = _date.today()
+        if not dateFrom:
+            dateFrom = f"{today.year}-01-01"
+        if not dateTo:
+            dateTo = today.isoformat()
+        params = {"fields": "id,date,description,voucherType,number",
+                  "dateFrom": dateFrom, "dateTo": dateTo}
         return client.get("/ledger/voucher", params=params)
 
     def update_voucher(voucher_id: int, date: str = "", description: str = "") -> dict:

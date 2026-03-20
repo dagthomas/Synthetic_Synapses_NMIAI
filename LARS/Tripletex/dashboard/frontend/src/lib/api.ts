@@ -171,6 +171,54 @@ export function streamAutoFix(
 export const applyFixes = (fixes: import("@/types/api").AutoFixParsedFix[]) =>
   post<{ ok: boolean; results: import("@/types/api").AutoFixApplyResult[] }>("/api/auto-fix/apply", fixes)
 
+// Batch Auto Fix (real logs)
+export function streamBatchAutoFix(
+  logIds: number[],
+  limit: number,
+  maxIterations: number,
+  onEvent: (event: import("@/types/api").BatchAutoFixEvent) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+): AbortController {
+  const controller = new AbortController()
+  fetch("/api/auto-fix/batch-loop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ log_ids: logIds, limit, max_iterations: maxIterations }),
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }))
+        onError(body.error || res.statusText)
+        return
+      }
+      const reader = res.body?.getReader()
+      if (!reader) { onError("No response body"); return }
+      const decoder = new TextDecoder()
+      let buffer = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data === "[DONE]") { onDone(); return }
+            try { onEvent(JSON.parse(data)) } catch { /* skip malformed */ }
+          }
+        }
+      }
+      onDone()
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError(String(err))
+    })
+  return controller
+}
+
 // Live Activity Events (SSE)
 export function subscribeLiveEvents(
   onEvent: (event: import("@/types/api").LiveEvent) => void,

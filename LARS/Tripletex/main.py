@@ -292,7 +292,7 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                                      "turn": turn_count, "tool": fr.name,
                                      "ok": not is_err,
                                      "error": resp_data.get("message", "") if is_err else ""})
-                        for tc in reversed(tool_calls):
+                        for tc in tool_calls:
                             if tc["tool"] == fr.name and tc["result"] is None:
                                 tc["result"] = {
                                     "ok": not is_err,

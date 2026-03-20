@@ -209,10 +209,14 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                               "faktura og betaling", "invoice and payment",
                               "registrere betaling", "registrere innbetaling",
                               "registrer innbetaling", "innbetalingen", "innbetaling",
+                              "registrer full betaling", "full betaling", "betaling",
                               "registrar pago", "factura y pago",
                               "registrar pagamento", "fatura e pagamento",
-                              "enregistrer paiement", "facture et paiement",
-                              "zahlung registrieren", "rechnung und zahlung"], [], 9),
+                              "enregistrer paiement", "enregistrez paiement",
+                              "enregistrez le paiement", "paiement intégral",
+                              "paiement complet", "facture et paiement",
+                              "zahlung registrieren", "rechnung und zahlung",
+                              "paiement"], [], 9),
 
     # ── Multi-line invoice ──
     ("create_multi_line_invoice", ["flere produkter", "multiple products", "flere linjer",
@@ -286,7 +290,13 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                    "despesas de viagem com custos",
                                    "note de frais avec coûts", "note de frais avec dépenses",
                                    "reisekosten mit kosten", "reisekosten mit ausgaben",
-                                   "reiserekning med utlegg"], [], 9),
+                                   "reiserekning med utlegg",
+                                   "tagegeld", "tagessatz", "auslagen",
+                                   "flugticket", "taxi", "taxikosten",
+                                   "verpflegungspauschale", "spesen",
+                                   "ajuda de custo", "diária", "diárias",
+                                   "indemnité journalière", "frais de taxi",
+                                   "viáticos", "gastos diarios"], [], 9),
 
     # ── Supplier invoice ──
     ("create_supplier_invoice", ["leverandørfaktura", "supplier invoice", "inngående faktura",
@@ -322,12 +332,18 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
     # ── Project + invoice (before pure project — matches project + invoice keywords) ──
     ("project_invoice", ["prosjekt faktura", "project invoice", "proyecto factura",
                          "projet facture", "projekt rechnung", "projeto fatura",
+                         "factura de proyecto", "factura del proyecto",
+                         "fatura de projeto", "fatura do projeto",
+                         "facture de projet", "facture du projet",
+                         "projektrechnung", "rechnung für projekt",
                          "fastpris", "fast pris", "fixed price", "precio fijo", "preço fixo",
                          "prix fixe", "festpreis",
                          "delbetaling", "partial payment", "pago parcial", "pagamento parcial",
                          "paiement partiel", "teilzahlung",
                          "fakturere prosjekt", "invoice project", "facturar proyecto",
-                         "facturar projeto", "facturer projet"], [], 10),
+                         "facturar projeto", "facturer projet",
+                         "facturar el proyecto", "faturar o projeto",
+                         "facturer le projet"], [], 10),
 
     # ── Create project with PM ──
     ("create_project_with_pm", ["prosjektleder", "project manager",
@@ -347,6 +363,11 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                "reiserekning"],
      ["slett", "delete", "fjern", "utlegg", "kjøregodtgjørelse", "diett",
       "kostnadslinje", "mileage", "per diem",
+      "tagegeld", "tagessatz", "auslagen", "flugticket", "spesen",
+      "taxi", "taxikosten", "verpflegungspauschale",
+      "ajuda de custo", "diária", "diárias",
+      "indemnité journalière", "frais de taxi",
+      "viáticos", "gastos diarios",
       "eliminar", "excluir", "supprimer", "löschen"], 5),
 
     # ── Simple invoice (after all invoice variants checked) ──
@@ -505,6 +526,8 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
       "mettre a jour", "mettre à jour"], 3),
     ("create_product", ["produkt", "product", "producto", "produit", "produto", "vare"],
      ["slett", "delete", "oppdater", "update", "endre", "faktura", "invoice",
+      "factura", "facture", "rechnung", "fatura",
+      "betaling", "payment", "paiement", "pago", "pagamento", "zahlung",
       "eliminar", "excluir", "supprimer", "löschen",
       "actualizar", "atualizar", "modifier", "ändern", "aktualisieren",
       "mettre a jour", "mettre à jour"], 3),

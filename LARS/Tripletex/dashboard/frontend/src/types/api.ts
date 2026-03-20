@@ -244,6 +244,24 @@ export type LiveEvent =
   | { type: "request_error"; request_id: string; error: string; ts: string }
   | { type: "error"; message: string; ts?: string }
 
+// Batch auto-fix types (real logs)
+export type BatchAutoFixEvent =
+  | { type: "batch_start"; total_logs: number; log_ids: number[]; log_summaries: { id: number; prompt: string; task_type: string }[]; max_iterations: number }
+  | { type: "iteration_start"; iteration: number; logs_remaining: number; total_logs: number }
+  | { type: "replaying"; iteration: number; index: number; total: number; log_id: number; task_type: string; prompt_preview: string }
+  | { type: "eval_result"; iteration: number; index: number; total: number; log_id: number; task_type: string; passed: boolean; reasoning: string; issues: string[]; api_calls: number; api_errors: number }
+  | { type: "replay_error"; iteration: number; log_id: number; task_type: string; error: string }
+  | { type: "iteration_summary"; iteration: number; passed: number; failed: number; total: number; total_passed_overall: number; total_remaining: number }
+  | { type: "analyzing"; iteration: number; task_type: string; failed_count: number; message: string }
+  | { type: "analyze_error"; iteration: number; task_type: string; error: string }
+  | { type: "no_fixes"; iteration: number; task_type: string; message: string }
+  | { type: "applying_fixes"; iteration: number; task_type: string; fix_count: number; fixes: AutoFixParsedFix[] }
+  | { type: "fixes_applied"; iteration: number; task_type: string; results: AutoFixApplyResult[]; applied: number; total: number }
+  | { type: "apply_error"; iteration: number; task_type: string; error: string }
+  | { type: "iteration_fixes_done"; iteration: number; fixes_applied: number; message: string }
+  | { type: "batch_done"; iterations: number; total_passed: number; total_failed: number; total_logs: number; message: string; failed_logs?: { log_id: number; task_type: string }[] }
+  | { type: "error"; message: string }
+
 // Log evaluation types
 export type LogEvalEvent =
   | { type: "phase"; phase: string; message: string }

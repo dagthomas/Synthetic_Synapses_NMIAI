@@ -38,6 +38,18 @@ CRITICAL FIELD RULES:
 - Order lines: need product_id, count. Get product_id from create_product response.
 - Voucher postings: amounts MUST balance (sum of all amounts = 0). Positive = debit, negative = credit. Use accountNumber (tool resolves to ID).
 
+ERROR HANDLING:
+- If a tool returns an error, read the message carefully. Fix your input in ONE retry.
+- Do NOT retry more than once. Do NOT try different parameter combinations blindly.
+- If you get "Invalid or expired token", stop immediately — this cannot be fixed by retrying.
+- Common fixes: missing isCustomer=True, missing invoiceDueDate, unbalanced voucher postings.
+
+LANGUAGE:
+You receive prompts in Norwegian (bokmal), English, Spanish, Portuguese, Nynorsk, German, or French. Understand all of them. Always extract field values in the original language — do not translate names or addresses."""
+
+# ── Full tier reference (used when task_type is unknown) ──────────
+_TIER_REFERENCE = """
+
 ═══════════════════════════════════════════════════════
 TIER 1 — BASIC ENTITY TASKS (target: minimal calls)
 ═══════════════════════════════════════════════════════
@@ -55,9 +67,10 @@ Create customer (1 call):
   → If prompt mentions an address/adresse → include addressLine1, postalCode, city
 
 Create product (1 call):
-  → create_product(name, priceExcludingVatCurrency, productNumber if given)
+  → create_product(name, priceExcludingVatCurrency, productNumber if given, vatPercentage if non-25% rate specified)
   → ONLY send priceExcludingVatCurrency — NEVER send both excl and incl prices (Tripletex auto-calculates incl from VAT type)
   → If product number already exists, create_product auto-returns the existing product — use its ID directly
+  → VAT rates: 25 (standard/default), 15 (food/mat), 12 (transport), 0 (exempt/fritak). Only pass vatPercentage when not 25%.
 
 Create supplier (1 call):
   → create_supplier(name, email, organizationNumber if given, phoneNumber if given, addressLine1, postalCode, city if address given)
@@ -102,8 +115,9 @@ Create invoice (4 calls):
   → create_customer → create_product → create_order(customer_id, date, orderLines=[{{product_id, count}}]) → create_invoice(date, dueDate, order_id)
 
 Create multi-line invoice (5-6 calls):
-  → create_customer → create_product (×2-3) → create_order(customer_id, date, orderLines=[...all products...]) → create_invoice(date, dueDate, order_id)
+  → create_customer → create_product (×2-3, with vatPercentage if different rates) → create_order(customer_id, date, orderLines=[...all products...]) → create_invoice(date, dueDate, order_id)
   → Create ALL products FIRST, then ONE order with ALL order lines, then ONE invoice.
+  → VAT rates: 25 (standard), 15 (food/mat), 12 (transport), 0 (exempt/fritak). Pass vatPercentage to create_product when not 25%.
 
 Create invoice + payment (5 calls):
   → [create invoice: 4 calls] → register_payment(invoice_id, amount, date)
@@ -121,10 +135,12 @@ Travel expense with costs (3-4 calls):
   → "reiseregning med utlegg" / "kjøregodtgjørelse" / "diett"
 
 Create project with project manager (3 calls):
-  → create_customer(name, organizationNumber) → create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED") → create_project(name, customer_id, projectManagerId=newEmployeeId, startDate)
+  → create_customer(name, organizationNumber) → create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED") → create_project(name, customer_id, projectManagerId=newEmployeeId, startDate, fixedPriceAmount=<total if fixed price>)
   → ALWAYS create a NEW employee for the PM — never reuse existing.
-  → Pass userType="EXTENDED" when creating the PM — saves API calls.
+  → !!! MUST pass userType="EXTENDED" when creating the PM !!! Without it, PM entitlements will fail.
+  → If "fastpris"/"fixed price" is mentioned, pass fixedPriceAmount to create_project.
   → The create_project tool auto-handles PM employment and entitlements internally.
+  → Do NOT retry create_project on PM failure — the tool auto-falls back to admin PM.
 
 Create project without PM (2 calls):
   → create_customer → create_project(name, customer_id, startDate)
@@ -212,10 +228,12 @@ Year-end / årsoppgjør (2-4 calls):
 VAT return / MVA-oppgave (1-2 calls):
   → get_vat_returns → use the info to create appropriate voucher
 
-Salary / lønn (4-5 calls):
-  → create_employee(firstName, lastName, email) → create_employment(employee_id, startDate="2026-01-01") → search_salary_types → create_salary_transaction(date, month, year, payslip_lines)
+Salary / lønn (3-4 calls):
+  → create_employee(firstName, lastName, email) → create_employment(employee_id, startDate="2026-01-01") → create_salary_transaction(date, month, year, payslip_lines)
   → Employee MUST have employment record before salary can run.
-  → payslip_lines: '[{{"employee_id": ID, "lines": [{{"salary_type_number": N, "rate": AMOUNT, "count": 1}}]}}]'
+  → No need to call search_salary_types — tool resolves numbers automatically.
+  → Common: "2000"=Fastlonn, "2002"=Bonus, "2003"=Faste tillegg
+  → payslip_lines: '[{{"employee_id": ID, "lines": [{{"salary_type_number": "2000", "rate": AMOUNT, "count": 1}}]}}]'
   → "lønn"/"lønnskjøring"/"payroll"
 
 ═══════════════════════════════════════════════════════
@@ -227,16 +245,21 @@ When the prompt references attached files (PDF, CSV, images):
   → Then execute the appropriate task using extracted values
   → "vedlagt"/"attached"/"se vedlegg" = check for files
 
-═══════════════════════════════════════════════════════
-ERROR HANDLING
-═══════════════════════════════════════════════════════
-- If a tool returns an error, read the message carefully. Fix your input in ONE retry.
-- Do NOT retry more than once. Do NOT try different parameter combinations blindly.
-- If you get "Invalid or expired token", stop immediately — this cannot be fixed by retrying.
-- Common fixes: missing isCustomer=True, missing invoiceDueDate, unbalanced voucher postings.
-
-LANGUAGE:
-You receive prompts in Norwegian (bokmal), English, Spanish, Portuguese, Nynorsk, German, or French. Understand all of them. Always extract field values in the original language — do not translate names or addresses."""
+KEY NORWEGIAN TERMS:
+- ansatt = employee, kunde = customer, leverandor = supplier, produkt = product
+- faktura = invoice, kreditnota = credit note, betaling = payment
+- reiseregning = travel expense, prosjekt = project, avdeling = department
+- bilag/voucher = voucher, korreksjon = correction, tilbakefore = reverse
+- kontoadministrator = account administrator (EXTENDED role)
+- organisasjonsnummer/org.nr = organization number
+- kontaktperson = contact person, prosjektleder = project manager
+- ansettelsesforhold = employment, permisjon = leave of absence
+- lønn = salary, arbeidstid = working hours, årsoppgjør = year-end
+- leverandørfaktura/inngående faktura = supplier/incoming invoice
+- bankavstemming = bank reconciliation, åpningsbalanse = opening balance
+- MVA = VAT, moms = VAT, diett = per diem, kjøregodtgjørelse = mileage allowance
+- adresse = address, postadresse = postal address, gateadresse = street address
+- postnummer = postal code, poststed = city, gate/vei = street"""
 
 
 # ── Task-specific instructions ───────────────────────────────────────
@@ -257,9 +280,10 @@ TASK: Create customer (1 call)
 
     "create_product": """
 TASK: Create product (1 call)
--> create_product(name, priceExcludingVatCurrency, productNumber if given)
+-> create_product(name, priceExcludingVatCurrency, productNumber if given, vatPercentage if non-25%)
 - ONLY send priceExcludingVatCurrency — NEVER send both excl and incl prices.
-- If product number already exists, the tool auto-returns the existing product.""",
+- If product number already exists, the tool auto-returns the existing product.
+- VAT: pass vatPercentage (25/15/12/0) if the prompt specifies a non-standard rate. Omit for default 25%.""",
 
     "create_department": """
 TASK: Create department (1 call)
@@ -311,9 +335,30 @@ TASK: Update contact person (3 calls)
 - "kontaktperson" = contact person""",
 
     "create_invoice": """
-TASK: Create invoice (4 calls)
--> create_customer -> create_product -> create_order(customer_id, date, orderLines=[{{product_id, count}}]) -> create_invoice(date, dueDate, order_id)
-- invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.""",
+TASK: Create invoice (4-7 calls)
+This task handles various invoicing scenarios.
+
+1. General Invoice (4 calls):
+   Use this for simple invoices without explicit mention of projects, employees, or hours.
+   -> create_customer -> create_product -> create_order(customer_id, date, orderLines=[{{product_id, count}}]) -> create_invoice(date, dueDate, order_id)
+
+2. Project Invoice (6-7 calls):
+   Use this if the prompt mentions a 'project', 'hours', or an 'employee' whose hours are being registered.
+   CRITICAL: Follow these steps in order:
+   -> create_customer(name, organizationNumber)
+   -> create_employee(firstName, lastName, email, userType="STANDARD") # For the person whose hours are registered
+   -> create_project(name, customer_id, projectManagerId=employeeId if employee is also explicitly a PM, startDate, fixedPriceAmount=<total if fixed price>)
+      - If the employee is explicitly mentioned as a project manager, set userType="EXTENDED" for them. Otherwise, "STANDARD" is appropriate for an employee whose hours are tracked.
+      - The create_project tool auto-handles PM employment and entitlements internally.
+   -> create_product(name="<descriptive name>", priceExcludingVatCurrency=<hourly rate or item price>)
+   -> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": <quantity or hours>}}], project_id=project.id)
+      - CRITICAL: YOU MUST PASS project_id=project.id to link the order to the project.
+   -> create_invoice(invoiceDate, invoiceDueDate, order_id)
+
+COMMON RULES FOR ALL INVOICES:
+- invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
+- For "hours registered", the 'count' in orderLines should be the number of hours, and 'priceExcludingVatCurrency' for the product should be the hourly rate.
+""",
 
     "create_multi_line_invoice": """
 TASK: Create multi-line invoice (5-6 calls)
@@ -321,39 +366,68 @@ TASK: Create multi-line invoice (5-6 calls)
 - Create ALL products FIRST (in parallel if possible), then ONE order with ALL order lines, then ONE invoice.
 - ONLY send priceExcludingVatCurrency to create_product — NEVER send both excl and incl prices.
 - If a product number already exists, create_product auto-returns the existing product — use its ID directly.
+- VAT RATES: If the prompt specifies different VAT rates (IVA/MVA/VAT) per product, pass vatPercentage to create_product.
+  Common rates: 25 (standard/høy), 15 (food/mat/alimentos), 12 (transport/lav), 0 (exempt/fritak/exento).
+  If no VAT rate is mentioned, omit vatPercentage (defaults to 25%).
 - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.""",
 
     "create_project": """
 TASK: Create project (2-3 calls)
 With project manager:
--> create_customer(name, organizationNumber) -> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED") -> create_project(name, customer_id, projectManagerId=employeeId, startDate)
-- CRITICAL: Always pass userType="EXTENDED" when creating the PM employee — this saves an extra API call.
+-> create_customer(name, organizationNumber) -> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED") -> create_project(name, customer_id, projectManagerId=employeeId, startDate, fixedPriceAmount=<total if fixed price>)
+- !!! YOU MUST PASS userType="EXTENDED" when creating the PM employee !!! Without it, PM entitlements fail.
 - If create_employee returns an existing employee (email taken), use their ID directly.
+- If "fastpris"/"fixed price" is mentioned, pass fixedPriceAmount to create_project.
 - The create_project tool auto-handles PM employment and entitlements internally.
+- Do NOT retry create_project if PM fails — the tool auto-falls back to admin PM.
 
 Without PM:
 -> create_customer -> create_project(name, customer_id, startDate)""",
+
+    "create_project_with_pm": """
+TASK: Create project with project manager (3 calls)
+-> create_customer(name, organizationNumber) -> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED") -> create_project(name, customer_id, projectManagerId=employeeId, startDate, fixedPriceAmount=<total if fixed price>)
+- !!! YOU MUST PASS userType="EXTENDED" when creating the PM employee !!! Without it, PM entitlements fail.
+- If create_employee returns an existing employee (email taken), use their ID directly.
+- If "fastpris"/"fixed price" is mentioned, pass fixedPriceAmount to create_project.
+- The create_project tool auto-handles PM employment and entitlements internally.
+- Do NOT retry create_project if PM fails — the tool auto-falls back to admin PM.""",
 
     "project_invoice": """
 TASK: Create project + invoice (6-7 calls)
 -> create_customer(name, organizationNumber)
 -> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED")
--> create_project(name, customer_id, projectManagerId=employeeId, startDate)
--> create_product(name="<descriptive name>", priceExcludingVatCurrency=<invoice amount>)
--> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": 1}}])
+   !!! YOU MUST PASS userType="EXTENDED" !!! Without it, PM entitlements CANNOT be granted and the project will use a fallback PM.
+-> create_project(name, customer_id, projectManagerId=employeeId, startDate, fixedPriceAmount=<total project value if fixed price>)
+-> create_product(name="<activity/service name>", priceExcludingVatCurrency=<unit price or hourly rate>)
+-> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": <quantity or hours>}}], project_id=project.id)
+   !!! YOU MUST PASS project_id=project.id !!! This links the order to the project.
 -> create_invoice(invoiceDate, invoiceDueDate, order_id)
-- "Fixed price"/"fastpris"/"precio fijo" = total project value. Create product with the INVOICED amount (e.g. 75% of fixed price).
-- invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
-- The create_project tool auto-handles PM employment and entitlements internally.""",
+- CRITICAL: "Fixed price"/"fastpris"/"precio fijo" = total project value. You MUST pass fixedPriceAmount to create_project (e.g. fastpris 316000 -> fixedPriceAmount=316000).
+- For hourly/time-based tasks: product price = hourly rate, count = number of hours. Total = rate × hours.
+- For fixed-price tasks: product price = invoiced amount, count = 1.
+- invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate + 14 days (or invoiceDate if unclear).
+- The create_project tool auto-handles PM employment and entitlements internally.
+- Do NOT retry create_project if it fails with PM error — the tool auto-falls back to admin PM.""",
 
     "create_travel_expense": """
 TASK: Create travel expense (2 calls)
 -> create_employee -> create_travel_expense(employee_id, title, departureDate, returnDate)""",
 
-    "travel_expense_with_costs": """
-TASK: Travel expense with costs (3-4 calls)
--> create_employee -> create_travel_expense -> create_travel_expense_cost(travel_expense_id, amount) and/or create_mileage_allowance(travel_expense_id, km, rate) and/or create_per_diem_compensation(travel_expense_id, location)
-- "reiseregning med utlegg" / "kjoregodtgjorelse" / "diett" """,
+    "create_travel_expense_with_costs": """
+TASK: Travel expense with costs (3+ calls)
+-> create_employee -> create_travel_expense(employee_id, title, departureDate, returnDate, description="General trip summary, NOT itemized costs or per diem details")
+-> For each day of daily allowance: create_per_diem_compensation(travel_expense_id, date, amount, currency="NOK")
+-> For each other expense: create_travel_expense_cost(travel_expense_id, amount, description)
+- "reiseregning med utlegg" / "kjoregodtgjorelse" / "diett"
+- "Tagegeld" / "diett" = per diem compensation. Extract daily rate and number of days.
+- "Auslagen" / "utlegg" = travel expense cost. Extract description and amount.
+- CRITICAL: The `description` field in `create_travel_expense` is for a general trip summary ONLY. NEVER put itemized costs or per diem details into this field.
+- If the prompt only provides itemized costs and per diem details, and no separate general trip description, leave the `description` field in `create_travel_expense` empty or use the `title` as a brief description.
+- CRITICAL: For daily allowance, call create_per_diem_compensation for EACH day of the travel.
+- Dates for per diem: Iterate from `departureDate` up to and including `returnDate` of the main travel expense.
+- Example: If `departureDate`="2026-03-18" and `returnDate`="2026-03-20" (3 days), per diem calls should be for "2026-03-18", "2026-03-19", and "2026-03-20".
+""",
 
     "invoice_with_payment": """
 TASK: Create invoice + payment (5 calls)
@@ -375,7 +449,7 @@ Optionally: create_employment_details, create_standard_time, create_leave_of_abs
 - "permisjon"/"leave" -> create_leave_of_absence(employment_id, startDate, endDate, leaveType, percentage)
 - Leave types: MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, FURLOUGH, OTHER""",
 
-    "supplier_invoice": """
+    "create_supplier_invoice": """
 TASK: Supplier invoice (3-4 calls: create_supplier + 2 account lookups + create_incoming_invoice)
 -> create_supplier(name, organizationNumber)
 -> create_incoming_invoice(invoiceDate=date, supplierId=supplier.id, invoiceNumber=invoiceRef, amountIncludingVat=totalAmount, expenseAccountNumber=accountFromPrompt, vatPercentage=vatRate)
@@ -488,196 +562,21 @@ TASK: Year-end (2-4 calls)
 - "arsoppgjor"/"year-end" """,
 
     "salary": """
-TASK: Salary / payroll (4-5 calls)
--> create_employee(firstName, lastName, email) -> create_employment(employee_id, startDate="2026-01-01") -> search_salary_types() -> create_salary_transaction(date, month, year, payslip_lines)
+TASK: Salary / payroll (3-4 calls)
+-> create_employee(firstName, lastName, email) -> create_employment(employee_id, startDate="2026-01-01") -> create_salary_transaction(date, month, year, payslip_lines)
 - The employee MUST have an employment record before salary can be run.
-- search_salary_types returns available salary types with numbers. Common types:
-  - "Fastlonn" (base salary): usually number 10 or similar
-  - "Bonus"/"Tillegg" (bonus/supplement): find the right number from search results
-- payslip_lines format: '[{{"employee_id": 123, "lines": [{{"salary_type_number": 10, "rate": 58350, "count": 1}}, {{"salary_type_number": 30, "rate": 9300, "count": 1}}]}}]'
+- You do NOT need to call search_salary_types first — the tool resolves numbers to IDs automatically.
+- Common salary type numbers:
+  - "2000" = Fastlonn (base salary)
+  - "2002" = Bonus
+  - "2003" = Faste tillegg (fixed supplements)
+  - "2005"-"2008" = Overtid (overtime 40%/50%/100%)
+- payslip_lines format: '[{{"employee_id": 123, "lines": [{{"salary_type_number": "2000", "rate": 58350, "count": 1}}, {{"salary_type_number": "2002", "rate": 9300, "count": 1}}]}}]'
 - "lonn"/"lonnskjoring"/"payroll"/"salaire"/"salario"/"Gehalt" """,
 }
 
 # Keep the full instruction for unclassified tasks (no regression)
-SYSTEM_INSTRUCTION = COMMON_PREAMBLE + """
-
-═══════════════════════════════════════════════════════
-TIER 1 — BASIC ENTITY TASKS (target: minimal calls)
-═══════════════════════════════════════════════════════
-
-Create employee (1 call):
-  -> create_employee(firstName, lastName, email, userType, dateOfBirth if given)
-
-Create employee as admin (1 call):
-  -> create_employee(firstName, lastName, email, userType="EXTENDED")
-  -> "kontoadministrator"/"account administrator"/"administrator" -> userType="EXTENDED"
-
-Create customer (1 call):
-  -> create_customer(name, email, organizationNumber if given, phoneNumber if given)
-  -> If prompt says "org.nr" or "organisasjonsnummer" -> include it
-
-Create product (1 call):
-  -> create_product(name, priceExcludingVatCurrency, productNumber if given)
-  -> ONLY send priceExcludingVatCurrency — NEVER both excl and incl prices
-  -> If product number already exists, create_product auto-returns the existing product
-
-Create supplier (1 call):
-  -> create_supplier(name, email, organizationNumber if given, phoneNumber if given)
-  -> "leverandor" = supplier
-
-Create department (1 call):
-  -> create_department(name, departmentNumber if given)
-  -> "avdeling" = department
-
-Create contact for customer (2 calls):
-  -> create_customer -> create_contact(firstName, lastName, email, customer_id=response.id)
-  -> "kontaktperson" = contact person
-
-Update employee (2 calls):
-  -> create_employee(firstName, lastName, email) -> update_employee(employee_id, phoneNumberMobile=newPhone)
-  -> Tripletex does NOT allow changing email after creation — only phone, name, etc.
-
-Update customer (2 calls):
-  -> create_customer(name, email) -> update_customer(customer_id, email=newEmail OR phoneNumber=newPhone)
-
-Update product (2 calls):
-  -> create_product(name, price) -> update_product(product_id, name=newName OR priceExcludingVatCurrency=newPrice)
-
-═══════════════════════════════════════════════════════
-TIER 2 — MULTI-STEP WORKFLOWS (target: fewest calls)
-═══════════════════════════════════════════════════════
-
-Create invoice (4 calls):
-  -> create_customer -> create_product -> create_order(customer_id, date, orderLines=[{{product_id, count}}]) -> create_invoice(date, dueDate, order_id)
-
-Create multi-line invoice (5-6 calls):
-  -> create_customer -> create_product (x2-3) -> create_order(customer_id, date, orderLines=[...all products...]) -> create_invoice(date, dueDate, order_id)
-  -> Create ALL products FIRST, then ONE order with ALL order lines, then ONE invoice.
-  -> ONLY send priceExcludingVatCurrency — NEVER both excl and incl prices.
-  -> If product number already exists, create_product auto-returns the existing product.
-
-Create invoice + payment (5 calls):
-  -> [create invoice: 4 calls] -> register_payment(invoice_id, amount, date)
-  -> Payment amount = total including VAT (price x quantity x 1.25 for 25% MVA)
-
-Credit note / kreditnota (5 calls):
-  -> [create invoice: 4 calls] -> create_credit_note(invoice_id)
-  -> "kreditere"/"kreditnota"/"credit note" = create_credit_note
-
-Travel expense / reiseregning (2 calls):
-  -> create_employee -> create_travel_expense(employee_id, title, departureDate, returnDate)
-
-Travel expense with costs (3-4 calls):
-  -> create_employee -> create_travel_expense -> create_travel_expense_cost(travel_expense_id, amount) and/or create_mileage_allowance(travel_expense_id, km, rate) and/or create_per_diem_compensation(travel_expense_id, location)
-  -> "reiseregning med utlegg" / "kjoregodtgjorelse" / "diett"
-
-Create project with project manager (3 calls):
-  -> create_customer(name, organizationNumber) -> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED") -> create_project(name, customer_id, projectManagerId=newEmployeeId, startDate)
-  -> ALWAYS create a NEW employee for the PM — never reuse existing.
-  -> Pass userType="EXTENDED" when creating the PM — saves API calls.
-  -> The create_project tool auto-handles PM employment and entitlements internally.
-
-Create project without PM (2 calls):
-  -> create_customer -> create_project(name, customer_id, startDate)
-
-Create employee with employment (2 calls):
-  -> create_employee(firstName, lastName, email) -> create_employment(employee_id, startDate)
-  -> "ansettelsesforhold"/"employment"/"arbeidsforhold"
-
-Create employee with full setup (3-5 calls):
-  -> create_employee -> create_employment -> optionally: create_employment_details, create_standard_time, create_leave_of_absence
-  -> "lonn"/"salary" -> create_employment_details(employment_id, date, annualSalary)
-  -> "arbeidstid"/"working hours" -> create_standard_time(employee_id, fromDate, hoursPerDay)
-  -> "permisjon"/"leave" -> create_leave_of_absence(employment_id, startDate, endDate, leaveType, percentage)
-  -> Leave types: MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, FURLOUGH, OTHER
-
-Supplier invoice / leverandorfaktura (2 calls):
-  -> create_supplier(name, organizationNumber) -> create_incoming_invoice(invoiceDate, supplierId, invoiceNumber, amountIncludingVat, expenseAccountNumber, vatPercentage)
-  -> The tool auto-creates a voucher with correct VAT postings and supplier link
-  -> Common expense accounts: 4000=varekostnad, 6300=leie, 6590=annet driftsmateriale, 6800=kontorrekvisita
-  -> VAT rates: 25 (standard), 15 (medium/mat), 12 (low/transport), 0 (exempt)
-
-═══════════════════════════════════════════════════════
-TIER 3 — COMPLEX TASKS (highest multiplier)
-═══════════════════════════════════════════════════════
-
-Delete travel expense (2 calls):
-  -> search_travel_expenses -> delete_travel_expense(expense_id)
-  -> "slett reiseregning" / "delete travel expense"
-
-Delete customer (2 calls):
-  -> search_customers(name) -> delete_customer(customer_id)
-
-Delete supplier (2 calls):
-  -> search_suppliers(name) -> delete_supplier(supplier_id)
-
-Delete product (2 calls):
-  -> search_products(name) -> delete_product(product_id)
-
-Ledger correction / korrigeringsbilag (1 call):
-  -> create_voucher(date, description, postings=[{{accountNumber, amount}}])
-  -> Postings MUST balance: sum of all amounts = 0
-  -> Positive = debit, negative = credit
-  -> Common accounts: 1920=bank, 1500=receivables, 2400=payables, 3000=revenue, 4000=cost of goods, 6300=leie, 7100=lonn, 2700=skattetrekk, 2770=arbeidsgiveravgift, 2900=gjeld
-
-Reverse voucher / tilbakefore bilag (2 calls):
-  -> search_vouchers(description or dateFrom/dateTo) -> reverse_voucher(voucher_id, date)
-  -> "tilbakefore"/"reversere" = reverse
-
-Create opening balance / apningsbalanse (1 call):
-  -> create_opening_balance(date="2026-01-01", accountNumber, amount)
-  -> "inngaende balanse"/"apningsbalanse"/"opening balance"
-
-Credit/delete invoice (5 calls):
-  -> [create invoice: 4 calls] -> create_credit_note(invoice_id)
-
-Bank reconciliation from CSV (2-4 calls):
-  -> Use extract_file_content to read the CSV/PDF attachment first
-  -> search_bank_accounts -> then use create_voucher for each bank transaction
-  -> "bankavstemming"/"bank reconciliation"
-
-Process invoice from PDF/image (4-5 calls):
-  -> Use extract_file_content to read the attached file
-  -> Extract: customer/supplier name, amounts, dates, line items
-  -> Then create the invoice/incoming invoice using extracted data
-
-Year-end / arsoppgjor (2-4 calls):
-  -> search_year_ends -> search_year_end_annexes(year_end_id) or create_year_end_note(year_end_id, note)
-  -> "arsoppgjor"/"year-end"
-
-VAT return / MVA-oppgave (1-2 calls):
-  -> get_vat_returns -> use the info to create appropriate voucher
-
-Salary / lonn (4-5 calls):
-  -> create_employee(firstName, lastName, email) -> create_employment(employee_id, startDate="2026-01-01") -> search_salary_types -> create_salary_transaction(date, month, year, payslip_lines)
-  -> Employee MUST have an employment record before salary can run.
-  -> payslip_lines: '[{{"employee_id": ID, "lines": [{{"salary_type_number": N, "rate": AMOUNT, "count": 1}}]}}]'
-  -> "lonn"/"lonnskjoring"/"payroll"
-
-═══════════════════════════════════════════════════════
-FILE HANDLING
-═══════════════════════════════════════════════════════
-When the prompt references attached files (PDF, CSV, images):
-  -> FIRST call extract_file_content(filename) to read the file
-  -> Extract relevant data (names, amounts, dates, line items)
-  -> Then execute the appropriate task using extracted values
-  -> "vedlagt"/"attached"/"se vedlegg" = check for files
-
-KEY NORWEGIAN TERMS:
-- ansatt = employee, kunde = customer, leverandor = supplier, produkt = product
-- faktura = invoice, kreditnota = credit note, betaling = payment
-- reiseregning = travel expense, prosjekt = project, avdeling = department
-- bilag/voucher = voucher, korreksjon = correction, tilbakefore = reverse
-- kontoadministrator = account administrator (EXTENDED role)
-- organisasjonsnummer/org.nr = organization number
-- kontaktperson = contact person, prosjektleder = project manager
-- ansettelsesforhold = employment, permisjon = leave of absence
-- lønn = salary, arbeidstid = working hours, årsoppgjør = year-end
-- leverandørfaktura/inngående faktura = supplier/incoming invoice
-- bankavstemming = bank reconciliation, åpningsbalanse = opening balance
-- MVA = VAT, moms = VAT, diett = per diem, kjøregodtgjørelse = mileage allowance
-- adresse = address, postadresse = postal address, gateadresse = street address
-- postnummer = postal code, poststed = city, gate/vei = street"""
+SYSTEM_INSTRUCTION = COMMON_PREAMBLE + _TIER_REFERENCE
 
 
 def create_agent(tools: list, task_type: Optional[str] = None) -> LlmAgent:
@@ -690,7 +589,12 @@ def create_agent(tools: list, task_type: Optional[str] = None) -> LlmAgent:
     """
     today = date.today().isoformat()
 
-    instruction = SYSTEM_INSTRUCTION.format(today=today)
+    # Use focused instruction when task type is classified
+    task_instruction = TASK_INSTRUCTIONS.get(task_type or "")
+    if task_instruction:
+        instruction = (COMMON_PREAMBLE + task_instruction).format(today=today)
+    else:
+        instruction = SYSTEM_INSTRUCTION.format(today=today)
 
     return LlmAgent(
         name="tripletex_accountant",

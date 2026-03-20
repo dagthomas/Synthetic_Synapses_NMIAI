@@ -434,6 +434,337 @@ async def auto_fix_apply(fixes: list[dict]):
     return {"ok": True, "results": results}
 
 
+class BatchAutoFixRequest(BaseModel):
+    log_ids: list[int] = []  # empty = all recent logs with DB ids
+    limit: int = Field(50, ge=1, le=200)
+    max_iterations: int = Field(5, ge=1, le=20)
+
+
+@app.post("/api/auto-fix/batch-loop")
+async def auto_fix_batch_loop(req: BatchAutoFixRequest):
+    """SSE stream: replay real solve logs, LLM-evaluate, auto-fix failures, loop until clean."""
+    base_url, token, agent_url = _get_credentials()
+    if not base_url or not token:
+        return JSONResponse(
+            {"error": "Set TRIPLETEX_BASE_URL and TRIPLETEX_SESSION_TOKEN env vars"},
+            status_code=400,
+        )
+
+    # Fetch solve logs
+    if req.log_ids:
+        logs = [db.get_solve_log_by_id(lid) for lid in req.log_ids]
+        logs = [l for l in logs if l is not None]
+    else:
+        logs = db.get_solve_logs(limit=req.limit)
+        # Only logs with a DB id (not file-only)
+        logs = [l for l in logs if l.get("id")]
+
+    if not logs:
+        return JSONResponse({"error": "No solve logs found"}, 400)
+
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, default=str)}\n\n"
+
+    def _generate():
+        import time as _time
+        import requests as _requests
+        from auto_fixer import (
+            llm_evaluate_logs, get_fix_suggestions,
+            parse_fixes, apply_fixes, _find_relevant_sources,
+        )
+
+        total_logs = len(logs)
+        # Track which logs still need to pass: dict of log_id -> log dict
+        remaining = {l["id"]: l for l in logs}
+
+        yield _sse({
+            "type": "batch_start",
+            "total_logs": total_logs,
+            "log_ids": [l["id"] for l in logs],
+            "log_summaries": [
+                {"id": l["id"], "prompt": (l.get("prompt") or "")[:120], "task_type": l.get("task_type", "unknown")}
+                for l in logs
+            ],
+            "max_iterations": req.max_iterations,
+        })
+
+        for iteration in range(1, req.max_iterations + 1):
+            logs_this_round = sorted(remaining.values(), key=lambda x: x["id"])
+            yield _sse({
+                "type": "iteration_start",
+                "iteration": iteration,
+                "logs_remaining": len(logs_this_round),
+                "total_logs": total_logs,
+            })
+
+            # Replay and evaluate all remaining logs
+            failures: list[dict] = []  # list of {log, verdict, tool_calls, api_log, agent_response}
+            for idx, log_entry in enumerate(logs_this_round, 1):
+                log_id = log_entry["id"]
+                prompt = log_entry.get("prompt", "")
+                task_type = log_entry.get("task_type", "unknown")
+
+                yield _sse({
+                    "type": "replaying",
+                    "iteration": iteration,
+                    "index": idx,
+                    "total": len(logs_this_round),
+                    "log_id": log_id,
+                    "task_type": task_type,
+                    "prompt_preview": prompt[:100],
+                })
+
+                try:
+                    # Replay the prompt through /solve-debug
+                    payload = {
+                        "prompt": prompt,
+                        "files": json.loads(log_entry.get("files_json") or "[]"),
+                        "tripletex_credentials": {
+                            "base_url": base_url,
+                            "session_token": token,
+                        },
+                    }
+                    headers = {"Content-Type": "application/json"}
+                    api_key = os.environ.get("AGENT_API_KEY", "")
+                    if api_key:
+                        headers["Authorization"] = f"Bearer {api_key}"
+
+                    resp = _requests.post(
+                        f"{agent_url}/solve-debug",
+                        params={"source": "batch_log_eval"},
+                        json=payload, headers=headers, timeout=300,
+                    )
+
+                    if resp.status_code != 200:
+                        yield _sse({
+                            "type": "replay_error",
+                            "iteration": iteration,
+                            "log_id": log_id,
+                            "task_type": task_type,
+                            "error": f"Agent returned {resp.status_code}: {resp.text[:200]}",
+                        })
+                        failures.append({
+                            "log": log_entry, "verdict": {"passed": False, "reasoning": f"Agent HTTP {resp.status_code}", "issues": ["agent_error"]},
+                            "tool_calls": [], "api_log": [], "agent_response": "",
+                        })
+                        continue
+
+                    result = resp.json()
+                    tool_calls = result.get("tool_calls", [])
+                    api_log = result.get("api_log", [])
+                    agent_response = result.get("agent_response", "")
+                    api_calls = result.get("api_calls", 0)
+                    api_errors = result.get("api_errors", 0)
+
+                    # LLM-evaluate the result
+                    verdict = llm_evaluate_logs(prompt, tool_calls, api_log, agent_response)
+                    passed = verdict["passed"]
+
+                    yield _sse({
+                        "type": "eval_result",
+                        "iteration": iteration,
+                        "index": idx,
+                        "total": len(logs_this_round),
+                        "log_id": log_id,
+                        "task_type": task_type,
+                        "passed": passed,
+                        "reasoning": verdict["reasoning"],
+                        "issues": verdict["issues"],
+                        "api_calls": api_calls,
+                        "api_errors": api_errors,
+                    })
+
+                    if passed:
+                        remaining.pop(log_id, None)
+                    else:
+                        failures.append({
+                            "log": log_entry,
+                            "verdict": verdict,
+                            "tool_calls": tool_calls,
+                            "api_log": api_log,
+                            "agent_response": agent_response,
+                        })
+
+                except Exception as e:
+                    yield _sse({
+                        "type": "replay_error",
+                        "iteration": iteration,
+                        "log_id": log_id,
+                        "task_type": task_type,
+                        "error": str(e),
+                    })
+                    failures.append({
+                        "log": log_entry,
+                        "verdict": {"passed": False, "reasoning": str(e), "issues": ["exception"]},
+                        "tool_calls": [], "api_log": [], "agent_response": "",
+                    })
+
+            # Iteration summary
+            passed_this_round = len(logs_this_round) - len(failures)
+            yield _sse({
+                "type": "iteration_summary",
+                "iteration": iteration,
+                "passed": passed_this_round,
+                "failed": len(failures),
+                "total": len(logs_this_round),
+                "total_passed_overall": total_logs - len(remaining),
+                "total_remaining": len(remaining),
+            })
+
+            # All done?
+            if not remaining:
+                yield _sse({
+                    "type": "batch_done",
+                    "iterations": iteration,
+                    "total_passed": total_logs,
+                    "total_failed": 0,
+                    "total_logs": total_logs,
+                    "message": f"All {total_logs} logs passed after {iteration} iteration(s)!",
+                })
+                yield "data: [DONE]\n\n"
+                return
+
+            # Last iteration — no more fixing
+            if iteration == req.max_iterations:
+                break
+
+            # Group failures by task_type (same fix likely applies across logs of same type)
+            failed_by_type: dict[str, list[dict]] = {}
+            for f in failures:
+                tt = f["log"].get("task_type", "unknown")
+                if tt not in failed_by_type:
+                    failed_by_type[tt] = []
+                failed_by_type[tt].append(f)
+
+            # Analyze & fix each failing task_type
+            total_fixes_this_iteration = 0
+            for task_type, type_failures in failed_by_type.items():
+                example = type_failures[0]
+                yield _sse({
+                    "type": "analyzing",
+                    "iteration": iteration,
+                    "task_type": task_type,
+                    "failed_count": len(type_failures),
+                    "message": f"Analyzing {task_type} ({len(type_failures)} log(s) failed)...",
+                })
+
+                try:
+                    # Build error report from LLM verdict + tool calls
+                    verdict = example["verdict"]
+                    tc = example["tool_calls"]
+                    prompt = example["log"].get("prompt", "")
+                    agent_resp = example["agent_response"]
+
+                    report_lines = [
+                        f"=== BATCH LOG EVAL REPORT: {task_type} (iteration {iteration}) ===",
+                        f"VERDICT: FAIL",
+                        f"REASONING: {verdict['reasoning']}",
+                        f"ISSUES: {'; '.join(verdict['issues'])}",
+                        "",
+                        f"PROMPT: {prompt}",
+                        "",
+                        "=== TOOL CALLS ===",
+                    ]
+                    for i, t in enumerate(tc, 1):
+                        ok = t.get("result", {}).get("ok", "?")
+                        report_lines.append(f"  #{i} [{'OK' if ok else 'ERROR'}] {t.get('tool', '?')}({json.dumps(t.get('args', {}), ensure_ascii=False)[:200]})")
+                        if t.get("result") and not t.get("result", {}).get("ok"):
+                            report_lines.append(f"       Error: {t.get('result', {}).get('error', '')[:300]}")
+                    report_lines.append("")
+                    report_lines.append(f"AGENT RESPONSE: {agent_resp[:500]}")
+                    report = "\n".join(report_lines)
+
+                    sources = _find_relevant_sources(tc, task_type)
+                    fix_text = get_fix_suggestions(report, sources)
+                    fixes = parse_fixes(fix_text)
+                except Exception as e:
+                    yield _sse({
+                        "type": "analyze_error",
+                        "iteration": iteration,
+                        "task_type": task_type,
+                        "error": str(e),
+                    })
+                    continue
+
+                if not fixes:
+                    yield _sse({
+                        "type": "no_fixes",
+                        "iteration": iteration,
+                        "task_type": task_type,
+                        "message": f"No actionable fixes found for {task_type}.",
+                    })
+                    continue
+
+                # Apply fixes
+                yield _sse({
+                    "type": "applying_fixes",
+                    "iteration": iteration,
+                    "task_type": task_type,
+                    "fix_count": len(fixes),
+                    "fixes": fixes,
+                })
+
+                try:
+                    import os as _os
+                    base_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+                    apply_results = apply_fixes(fixes, base_dir)
+                    applied_count = sum(1 for r in apply_results if r["applied"])
+                    total_fixes_this_iteration += applied_count
+
+                    yield _sse({
+                        "type": "fixes_applied",
+                        "iteration": iteration,
+                        "task_type": task_type,
+                        "results": apply_results,
+                        "applied": applied_count,
+                        "total": len(fixes),
+                    })
+                except Exception as e:
+                    yield _sse({
+                        "type": "apply_error",
+                        "iteration": iteration,
+                        "task_type": task_type,
+                        "error": str(e),
+                    })
+
+            if total_fixes_this_iteration == 0:
+                yield _sse({
+                    "type": "batch_done",
+                    "iterations": iteration,
+                    "total_passed": total_logs - len(remaining),
+                    "total_failed": len(remaining),
+                    "total_logs": total_logs,
+                    "message": f"No fixes could be applied. {len(remaining)} log(s) still failing.",
+                })
+                yield "data: [DONE]\n\n"
+                return
+
+            yield _sse({
+                "type": "iteration_fixes_done",
+                "iteration": iteration,
+                "fixes_applied": total_fixes_this_iteration,
+                "message": f"Applied {total_fixes_this_iteration} fix(es). Re-running {len(remaining)} failed log(s)...",
+            })
+
+            # Brief pause for module reload
+            _time.sleep(1)
+
+        # Max iterations reached
+        failed_list = [{"log_id": lid, "task_type": remaining[lid].get("task_type", "unknown")} for lid in sorted(remaining)]
+        yield _sse({
+            "type": "batch_done",
+            "iterations": req.max_iterations,
+            "total_passed": total_logs - len(remaining),
+            "total_failed": len(remaining),
+            "total_logs": total_logs,
+            "failed_logs": failed_list,
+            "message": f"Completed {req.max_iterations} iterations. {total_logs - len(remaining)}/{total_logs} passed.",
+        })
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
 # ── API: Log Evaluation ───────────────────────────────────────────
 
 class LogEvalRequest(BaseModel):

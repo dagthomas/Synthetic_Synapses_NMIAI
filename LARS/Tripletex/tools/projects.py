@@ -6,10 +6,11 @@ from tripletex_client import TripletexClient
 def build_project_tools(client: TripletexClient) -> dict:
     """Build project tools."""
 
-    def _ensure_employee_ready(employee_id: int):
+    def _ensure_employee_ready(employee_id: int) -> bool:
         """Ensure employee has dateOfBirth, employment, and project manager access.
 
-        Optimized: checks current state first and only makes calls that are needed.
+        Returns True if PM entitlements were granted, False if not possible
+        (e.g. userType cannot be set to EXTENDED).
         """
         import logging
         _log = logging.getLogger("projects")
@@ -73,7 +74,7 @@ def build_project_tools(client: TripletexClient) -> dict:
                 client.set_cached("company_id", company_id)
         if not company_id:
             _log.warning(f"Could not get companyId from whoAmI for entitlements")
-            return
+            return False
 
         _PM_ENTITLEMENTS = [45, 10, 8]  # AUTH_CREATE_PROJECT → AUTH_PROJECT_MANAGER → AUTH_PROJECT_MANAGER_DEPARTMENT
         for eid in _PM_ENTITLEMENTS:
@@ -83,7 +84,13 @@ def build_project_tools(client: TripletexClient) -> dict:
                 "customer": {"id": company_id},
             })
             if r.get("error"):
-                _log.warning(f"Entitlement {eid} failed for employee {employee_id}: {r.get('message', '')}")
+                msg = str(r.get("message", ""))
+                # If employee lacks EXTENDED userType, all entitlements will fail — stop immediately
+                if "utvidet tilgang" in msg.lower():
+                    _log.warning(f"Cannot grant PM entitlements to {employee_id} — needs EXTENDED userType (not settable via PUT)")
+                    return False
+                _log.warning(f"Entitlement {eid} failed for employee {employee_id}: {msg}")
+        return True
 
     def create_project(
         name: str,
@@ -91,6 +98,7 @@ def build_project_tools(client: TripletexClient) -> dict:
         projectManagerId: int = 0,
         startDate: str = "",
         description: str = "",
+        fixedPriceAmount: float = 0.0,
     ) -> dict:
         """Create a project in Tripletex.
 
@@ -100,6 +108,7 @@ def build_project_tools(client: TripletexClient) -> dict:
             projectManagerId: ID of the employee managing the project (0 to auto-assign).
             startDate: Project start date in YYYY-MM-DD format (defaults to today).
             description: Optional project description.
+            fixedPriceAmount: The fixed price for the project (0.0 if not a fixed price project).
 
         Returns:
             The created project with id, or an error message.
@@ -111,33 +120,44 @@ def build_project_tools(client: TripletexClient) -> dict:
         if customer_id:
             body["customer"] = {"id": customer_id}
 
-        # Tripletex requires a projectManager with valid employment
-        if projectManagerId:
-            _ensure_employee_ready(projectManagerId)
-            body["projectManager"] = {"id": projectManagerId}
-        else:
+        # Resolve project manager
+        pm_id = projectManagerId
+        if pm_id:
+            pm_ready = _ensure_employee_ready(pm_id)
+            if not pm_ready:
+                # PM entitlements failed (e.g. userType not EXTENDED) — fall back to admin
+                import logging
+                logging.getLogger("projects").warning(
+                    f"PM {pm_id} entitlements failed, falling back to admin employee")
+                pm_id = 0
+
+        if not pm_id:
+            emp_result = client.get("/employee", params={"fields": "id", "count": 1})
+            emps = emp_result.get("values", [])
+            if emps:
+                pm_id = emps[0]["id"]
+
+        if pm_id:
+            body["projectManager"] = {"id": pm_id}
+
+        if description:
+            body["description"] = description
+        if fixedPriceAmount > 0:
+            body["isFixedPrice"] = True
+            body["fixedprice"] = fixedPriceAmount
+
+        result = client.post("/project", json=body)
+
+        # If PM access still denied, fall back to admin employee (single retry, no re-entitlement)
+        if (result.get("error")
+                and "prosjektleder" in str(result.get("message", "")).lower()):
+            import logging
+            logging.getLogger("projects").warning("PM access denied, retrying with admin employee")
             emp_result = client.get("/employee", params={"fields": "id", "count": 1})
             emps = emp_result.get("values", [])
             if emps:
                 body["projectManager"] = {"id": emps[0]["id"]}
-
-        if description:
-            body["description"] = description
-
-        result = client.post("/project", json=body)
-
-        # If project manager access denied, retry entitlement granting
-        if (result.get("error") and projectManagerId
-                and "prosjektleder" in str(result.get("message", "")).lower()):
-            import logging
-            _log = logging.getLogger("projects")
-            _log.warning(f"PM access denied for {projectManagerId}, retrying entitlements...")
-
-            # Re-run entitlement granting (handles its own whoAmI call)
-            _ensure_employee_ready(projectManagerId)
-
-            # Retry project creation with the CORRECT PM (never substitute wrong PM)
-            result = client.post("/project", json=body)
+                result = client.post("/project", json=body)
 
         return result
 

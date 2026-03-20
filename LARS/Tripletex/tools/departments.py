@@ -28,8 +28,10 @@ def build_department_tools(client: TripletexClient) -> dict:
             params["name"] = name
             existing = client.get("/department", params=params)
             vals = existing.get("values", [])
-            if vals:
-                return {"value": vals[0], "_note": "Department already existed, returning existing."}
+            # Filter for exact match, as API's 'name' parameter might be a partial match or return results in arbitrary order.
+            exact_match = next((d for d in vals if d.get("name") == name), None)
+            if exact_match:
+                return {"value": exact_match, "_note": "Department already existed, returning existing."}
 
         return result
 

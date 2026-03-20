@@ -29,6 +29,7 @@ import {
   Play,
   Square,
   CheckSquare,
+  Download,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -111,6 +112,37 @@ export function TasksPanel({ onRunEval }: TasksPanelProps) {
     }
     onRunEval?.([...selectedForEval])
   }, [selectedForEval, onRunEval])
+
+  const handleExport = useCallback(() => {
+    if (!tasks || tasks.length === 0) {
+      toast.error("No tasks data to export")
+      return
+    }
+    const data = filtered.map((t) => ({
+      name: t.name,
+      tier: t.tier,
+      description: t.description,
+      baseline_calls: t.baseline_calls,
+      field_count: t.field_count,
+      max_points: t.max_points,
+      live_runs: t.live_runs,
+      avg_api_calls: t.avg_api_calls,
+      avg_api_errors: t.avg_api_errors,
+      avg_elapsed: t.avg_elapsed,
+      min_api_calls: t.min_api_calls,
+      max_api_calls: t.max_api_calls,
+      last_run: t.last_run,
+      sample_prompt: t.sample_prompt,
+    }))
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `tasks-export-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success(`Exported ${data.length} tasks`)
+  }, [tasks, filtered])
 
   const handleRunAllReal = useCallback(async () => {
     if (realTasks.length === 0) {
@@ -324,6 +356,13 @@ export function TasksPanel({ onRunEval }: TasksPanelProps) {
               )}
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={handleExport}
+                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+              >
+                <Download className="h-3 w-3" />
+                Export
+              </button>
               <button
                 onClick={selectedForEval.size === filtered.length ? clearSelection : selectAllFiltered}
                 className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
