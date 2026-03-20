@@ -27,21 +27,27 @@ def build_employee_tools(client: TripletexClient) -> dict:
         Returns:
             The created employee with id and fields, or an error message.
         """
-        # Tripletex requires a department — auto-resolve or create if not given
+        # Tripletex requires a department — use cache or auto-resolve
         if not department_id:
-            dept_result = client.get("/department", params={"fields": "id", "count": 1})
-            depts = dept_result.get("values", [])
-            if depts:
-                department_id = depts[0]["id"]
+            cached = client.get_cached("default_department")
+            if cached:
+                department_id = cached
             else:
-                # Fresh sandbox with no departments — create a default one
-                new_dept = client.post("/department", json={
-                    "name": "Avdeling",
-                    "departmentNumber": "1",
-                })
-                dept_val = new_dept.get("value", {})
-                if dept_val.get("id"):
-                    department_id = dept_val["id"]
+                dept_result = client.get("/department", params={"fields": "id", "count": 1})
+                depts = dept_result.get("values", [])
+                if depts:
+                    department_id = depts[0]["id"]
+                else:
+                    # Fresh sandbox with no departments — create a default one
+                    new_dept = client.post("/department", json={
+                        "name": "Avdeling",
+                        "departmentNumber": "1",
+                    })
+                    dept_val = new_dept.get("value", {})
+                    if dept_val.get("id"):
+                        department_id = dept_val["id"]
+                if department_id:
+                    client.set_cached("default_department", department_id)
 
         body = {
             "firstName": firstName,
@@ -55,7 +61,17 @@ def build_employee_tools(client: TripletexClient) -> dict:
             body["phoneNumberMobile"] = phoneNumberMobile
         if dateOfBirth:
             body["dateOfBirth"] = dateOfBirth
-        return client.post("/employee", json=body)
+        result = client.post("/employee", json=body)
+
+        # Auto-recover: if email already exists, find and return the existing employee
+        if (result.get("error") and result.get("status_code") == 422
+                and "e-postadress" in str(result.get("message", "")).lower()):
+            existing = client.get("/employee", params={"email": email, "fields": "id,firstName,lastName,email"})
+            vals = existing.get("values", [])
+            if vals:
+                return {"value": vals[0], "_note": "Employee already existed, returning existing."}
+
+        return result
 
     def update_employee(employee_id: int, firstName: str = "", lastName: str = "", email: str = "", phoneNumberMobile: str = "", isInactive: bool = False) -> dict:
         """Update an existing employee's fields. Set isInactive=True to deactivate.

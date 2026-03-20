@@ -14,6 +14,8 @@ class TripletexClient:
         self._call_count = 0
         self._error_count = 0
         self._call_log: list[dict] = []
+        # Per-request cache for frequently-accessed IDs (avoids redundant GETs)
+        self._cache: dict[str, int] = {}
 
     def get(self, endpoint: str, params: dict | None = None) -> dict:
         url = f"{self.base_url}{endpoint}"
@@ -51,12 +53,28 @@ class TripletexClient:
         elapsed = time.time() - t0
         return self._handle_response(resp, "DELETE", url, elapsed)
 
+    def get_cached(self, key: str) -> int | None:
+        """Get a cached ID value (e.g., 'default_department', 'default_division')."""
+        return self._cache.get(key)
+
+    def set_cached(self, key: str, value: int):
+        """Cache an ID value for reuse within this request."""
+        self._cache[key] = value
+
     def _do_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """Execute request with single retry on 401 (transient token errors)."""
         resp = requests.request(method, url, auth=self.auth, **kwargs)
         if resp.status_code == 401:
-            log.warning(f"[API] {method} {url} -> 401, retrying once after 1s...")
-            time.sleep(1)
+            # Check if token is expired/invalid — don't retry those
+            try:
+                body_text = resp.text.lower()
+            except Exception:
+                body_text = ""
+            if "expired" in body_text or "invalid" in body_text:
+                log.error(f"[API] {method} {url} -> 401 (token expired/invalid, not retrying)")
+                return resp
+            log.warning(f"[API] {method} {url} -> 401, retrying once after 0.5s...")
+            time.sleep(0.5)
             resp = requests.request(method, url, auth=self.auth, **kwargs)
         return resp
 

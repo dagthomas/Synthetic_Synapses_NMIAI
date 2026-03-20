@@ -17,7 +17,8 @@ from pydantic import BaseModel
 from agent import create_agent
 from config import AGENT_API_KEY, GOOGLE_API_KEY, MAX_AGENT_TURNS
 from tripletex_client import TripletexClient
-from tools import build_all_tools
+from tools import build_tools_dict
+from tool_router import classify_task, select_tools
 
 # Dashboard solve_log integration (lazy init on first use)
 _has_dashboard = False
@@ -121,10 +122,13 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False) -> dict:
 
     # Build per-request client and tools
     client = TripletexClient(creds.base_url, creds.session_token)
-    tools = build_all_tools(client, files_dir=files_dir if files else "")
+    all_tools_dict = build_tools_dict(client, files_dir=files_dir if files else "")
+    task_type = classify_task(prompt)
+    tools = select_tools(task_type, all_tools_dict, has_files=bool(files))
+    log.info(f"[REQ {request_id[:8]}] Task type: {task_type or 'UNKNOWN'}, tools: {len(tools)}/{len(all_tools_dict)}")
 
     # Build agent and runner
-    agent = create_agent(tools)
+    agent = create_agent(tools, task_type=task_type)
     runner = InMemoryRunner(agent=agent, app_name="tripletex_agent")
 
     # Create session for this request
@@ -228,6 +232,8 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False) -> dict:
                 agent_response=final_text[:2000] if final_text else "",
                 tool_calls_json=json.dumps(tool_calls[:50], default=str)[:10000],
                 api_log_json=json.dumps(client._call_log[:200], default=str)[:50000],
+                task_type=task_type or "",
+                tool_count=len(tools),
             )
         except Exception as e:
             log.warning(f"Failed to save solve_log: {e}")

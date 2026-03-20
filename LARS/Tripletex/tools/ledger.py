@@ -54,21 +54,43 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Returns:
             The created voucher with id, or an error message.
         """
-        posting_list = _json.loads(postings) if isinstance(postings, str) else postings
+        try:
+            posting_list = _json.loads(postings) if isinstance(postings, str) else postings
+        except (_json.JSONDecodeError, TypeError) as e:
+            return {"error": True, "message": f"Invalid JSON in postings: {e}. Expected: '[{{\"accountNumber\": 1920, \"amount\": 1000}}, ...]'"}
+        if not posting_list or not isinstance(posting_list, list):
+            return {"error": True, "message": "postings must be a non-empty JSON array of objects with 'accountNumber'/'accountId' and 'amount'"}
+
+        # Pre-validate: postings must balance (sum to 0)
+        total = 0
+        for p in posting_list:
+            amt = p.get("amount", 0)
+            if not amt:
+                amt = p.get("debitAmount", 0) - p.get("creditAmount", 0)
+            total += amt
+        if abs(total) > 0.01:
+            return {"error": True, "message": f"Postings do not balance: sum={total}. Debit (positive) and credit (negative) amounts must sum to 0. Adjust your amounts."}
+
+        # Cache account lookups within this call
+        acct_cache = {}
         formatted = []
         for i, p in enumerate(posting_list):
             entry = {"row": i + 1}
             if "accountId" in p:
                 entry["account"] = {"id": p["accountId"]}
             elif "accountNumber" in p:
-                # Look up account by number
-                acct_result = client.get("/ledger/account", params={"number": str(p["accountNumber"]), "fields": "id", "count": 1})
-                accts = acct_result.get("values", [])
-                if accts:
-                    entry["account"] = {"id": accts[0]["id"]}
+                acct_num = str(p["accountNumber"])
+                if acct_num in acct_cache:
+                    entry["account"] = {"id": acct_cache[acct_num]}
                 else:
-                    return {"error": True, "message": f"Account {p['accountNumber']} not found"}
-            # Tripletex requires 'amountGross' (positive=debit, negative=credit)
+                    acct_result = client.get("/ledger/account", params={"number": acct_num, "fields": "id", "count": 1})
+                    accts = acct_result.get("values", [])
+                    if accts:
+                        acct_cache[acct_num] = accts[0]["id"]
+                        entry["account"] = {"id": accts[0]["id"]}
+                    else:
+                        return {"error": True, "message": f"Account {p['accountNumber']} not found"}
+            # Tripletex uses 'amount' (positive=debit, negative=credit)
             amount = p.get("amount", 0)
             if not amount:
                 # Support legacy debit/credit format
@@ -142,19 +164,31 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Returns:
             Created opening balance or error.
         """
-        posting_list = _json.loads(balancePostings) if isinstance(balancePostings, str) else balancePostings
+        try:
+            posting_list = _json.loads(balancePostings) if isinstance(balancePostings, str) else balancePostings
+        except (_json.JSONDecodeError, TypeError) as e:
+            return {"error": True, "message": f"Invalid JSON in balancePostings: {e}. Expected: '[{{\"accountNumber\": 1920, \"amount\": 50000}}]'"}
+        if not posting_list or not isinstance(posting_list, list):
+            return {"error": True, "message": "balancePostings must be a non-empty JSON array"}
+
+        acct_cache = {}
         formatted = []
         for p in posting_list:
             entry = {}
             if "accountId" in p:
                 entry["account"] = {"id": p["accountId"]}
             elif "accountNumber" in p:
-                acct = client.get("/ledger/account", params={"number": str(p["accountNumber"]), "fields": "id", "count": 1})
-                accts = acct.get("values", [])
-                if accts:
-                    entry["account"] = {"id": accts[0]["id"]}
+                acct_num = str(p["accountNumber"])
+                if acct_num in acct_cache:
+                    entry["account"] = {"id": acct_cache[acct_num]}
                 else:
-                    return {"error": True, "message": f"Account {p['accountNumber']} not found"}
+                    acct = client.get("/ledger/account", params={"number": acct_num, "fields": "id", "count": 1})
+                    accts = acct.get("values", [])
+                    if accts:
+                        acct_cache[acct_num] = accts[0]["id"]
+                        entry["account"] = {"id": accts[0]["id"]}
+                    else:
+                        return {"error": True, "message": f"Account {p['accountNumber']} not found"}
             entry["amount"] = p.get("amount", 0)
             formatted.append(entry)
         body = {"voucherDate": voucherDate, "balancePostings": formatted}

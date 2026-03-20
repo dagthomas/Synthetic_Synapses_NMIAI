@@ -28,8 +28,8 @@ from tools.travel_extras import build_travel_extras_tools
 from tools.incoming_invoice import build_incoming_invoice_tools
 
 
-def build_all_tools(client: TripletexClient, files_dir: str = "") -> list:
-    """Build all tool functions as closures over the given client."""
+def build_tools_dict(client: TripletexClient, files_dir: str = "") -> dict:
+    """Build all tools, return as {name: function} dict."""
     all_tools = {}
     all_tools.update(build_employee_tools(client))
     all_tools.update(build_customer_tools(client))
@@ -59,4 +59,9 @@ def build_all_tools(client: TripletexClient, files_dir: str = "") -> list:
     all_tools.update(build_incoming_invoice_tools(client))
     if files_dir:
         all_tools.update(build_file_tools(files_dir))
-    return list(all_tools.values())
+    return all_tools
+
+
+def build_all_tools(client: TripletexClient, files_dir: str = "") -> list:
+    """Build all tool functions as closures over the given client."""
+    return list(build_tools_dict(client, files_dir).values())

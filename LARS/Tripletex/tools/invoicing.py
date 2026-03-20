@@ -21,7 +21,17 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         Returns:
             The created order with id, or an error message.
         """
-        lines = _json.loads(orderLines) if isinstance(orderLines, str) else orderLines
+        try:
+            lines = _json.loads(orderLines) if isinstance(orderLines, str) else orderLines
+        except (_json.JSONDecodeError, TypeError) as e:
+            return {"error": True, "message": f"Invalid JSON in orderLines: {e}. Expected: '[{{\"product_id\": 1, \"count\": 2}}]'"}
+        if not lines or not isinstance(lines, list):
+            return {"error": True, "message": "orderLines must be a non-empty JSON array of objects with 'product_id' and 'count'"}
+        for i, line in enumerate(lines):
+            if "product_id" not in line:
+                return {"error": True, "message": f"Order line {i} missing 'product_id'. Each line needs: {{\"product_id\": <id>, \"count\": <qty>}}"}
+            if "count" not in line:
+                return {"error": True, "message": f"Order line {i} missing 'count'. Each line needs: {{\"product_id\": <id>, \"count\": <qty>}}"}
         formatted_lines = []
         for line in lines:
             entry = {

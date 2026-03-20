@@ -45,10 +45,14 @@ def build_project_tools(client: TripletexClient) -> dict:
         today = date.today().isoformat()
         emp_result = client.get("/employee/employment", params={"employeeId": employee_id, "fields": "id", "count": 1})
         if not emp_result.get("values"):
-            # Need division for employment
-            div_result = client.get("/company/divisions", params={"fields": "id", "count": 1})
-            divs = div_result.get("values", [])
-            division_id = divs[0]["id"] if divs else None
+            # Need division for employment — use cache or fetch
+            division_id = client.get_cached("default_division")
+            if division_id is None:
+                div_result = client.get("/company/divisions", params={"fields": "id", "count": 1})
+                divs = div_result.get("values", [])
+                division_id = divs[0]["id"] if divs else 0
+                client.set_cached("default_division", division_id)
+            division_id = division_id or None
 
             emp_body = {
                 "employee": {"id": employee_id},
@@ -61,8 +65,12 @@ def build_project_tools(client: TripletexClient) -> dict:
 
         # Grant PM entitlements via POST /employee/entitlement
         # Must be granted in dependency order: 45 → 10 → 8
-        who = client.get("/token/session/>whoAmI", params={"fields": "companyId"})
-        company_id = who.get("value", {}).get("companyId")
+        company_id = client.get_cached("company_id")
+        if not company_id:
+            who = client.get("/token/session/>whoAmI", params={"fields": "companyId"})
+            company_id = who.get("value", {}).get("companyId")
+            if company_id:
+                client.set_cached("company_id", company_id)
         if not company_id:
             _log.warning(f"Could not get companyId from whoAmI for entitlements")
             return

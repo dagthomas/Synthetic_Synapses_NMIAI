@@ -29,7 +29,7 @@ def init_db():
     with closing(get_conn()) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         # Migrate: add columns if missing
-        for col, ctype in [("tool_calls_json", "TEXT"), ("api_log_json", "TEXT")]:
+        for col, ctype in [("tool_calls_json", "TEXT"), ("api_log_json", "TEXT"), ("task_type", "TEXT"), ("tool_count", "INTEGER")]:
             try:
                 conn.execute(f"ALTER TABLE solve_logs ADD COLUMN {col} {ctype}")
             except Exception:
@@ -182,17 +182,18 @@ def get_stats():
 
 def create_solve_log(*, request_id, prompt, files_json, base_url,
                      api_calls=0, api_errors=0, elapsed_seconds=0,
-                     agent_response="", tool_calls_json="", api_log_json=""):
+                     agent_response="", tool_calls_json="", api_log_json="",
+                     task_type="", tool_count=0):
     with closing(get_conn()) as conn:
         conn.execute(
             """INSERT INTO solve_logs
                (request_id, prompt, files_json, base_url,
                 api_calls, api_errors, elapsed_seconds, agent_response,
-                tool_calls_json, api_log_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tool_calls_json, api_log_json, task_type, tool_count, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (request_id, prompt, files_json, base_url,
              api_calls, api_errors, elapsed_seconds, agent_response,
-             tool_calls_json, api_log_json, _now()),
+             tool_calls_json, api_log_json, task_type or "", tool_count, _now()),
         )
         conn.commit()
 
