@@ -462,6 +462,37 @@ def delete_all_logs():
     return {"ok": True, "deleted_db": deleted_db, "deleted_files": deleted_files}
 
 
+# ── API: Seed Data (export/import) ─────────────────────────────────
+
+@app.post("/api/seed/export")
+async def seed_export():
+    """Export dashboard DB to seed_data.json."""
+    from dashboard.seed import export_data, SEED_PATH
+    await asyncio.to_thread(export_data)
+    # Count rows
+    import json as _json
+    with open(SEED_PATH, "r", encoding="utf-8") as f:
+        data = _json.load(f)
+    total = sum(len(v) for v in data.values())
+    breakdown = {k: len(v) for k, v in data.items()}
+    return {"ok": True, "total": total, "tables": breakdown}
+
+
+@app.post("/api/seed/import")
+async def seed_import(reset: bool = False):
+    """Import seed_data.json into dashboard DB."""
+    from dashboard.seed import import_data, SEED_PATH
+    if not os.path.isfile(SEED_PATH):
+        return JSONResponse({"error": "No seed_data.json found"}, status_code=404)
+    await asyncio.to_thread(import_data, SEED_PATH, reset)
+    import json as _json
+    with open(SEED_PATH, "r", encoding="utf-8") as f:
+        data = _json.load(f)
+    total = sum(len(v) for v in data.values())
+    breakdown = {k: len(v) for k, v in data.items()}
+    return {"ok": True, "total": total, "tables": breakdown, "reset": reset}
+
+
 # ── API: Sandbox ───────────────────────────────────────────────────
 
 def _get_sandbox_client():

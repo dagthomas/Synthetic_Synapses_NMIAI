@@ -100,6 +100,15 @@ export const fetchCoverage = () =>
 export const fetchTasksLiveSummary = () =>
   request<TaskLiveSummary[]>("/api/tasks/live-summary")
 
+// Seed Data (export/import)
+export const exportSeedData = () =>
+  post<{ ok: boolean; total: number; tables: Record<string, number> }>("/api/seed/export", {})
+
+export const importSeedData = (reset = false) =>
+  post<{ ok: boolean; total: number; tables: Record<string, number>; reset: boolean }>(
+    `/api/seed/import?reset=${reset}`, {}
+  )
+
 // Solve Logs
 export const fetchLogs = (limit = 100) =>
   request<SolveLog[]>(`/api/logs?limit=${limit}`)

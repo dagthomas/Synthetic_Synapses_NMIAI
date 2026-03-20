@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react"
 import { useSandboxHealth } from "@/hooks/use-api"
-import { seedSandbox, cleanSandbox as apiClean } from "@/lib/api"
+import { seedSandbox, cleanSandbox as apiClean, exportSeedData, importSeedData } from "@/lib/api"
 import type { SandboxHealth } from "@/types/api"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent } from "@/components/ui/card"
@@ -29,6 +29,8 @@ import {
   CheckCircle2,
   AlertCircle,
   XCircle,
+  Download,
+  Upload,
 } from "lucide-react"
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -74,6 +76,8 @@ export function SandboxPanel() {
   const [logs, setLogs] = useState<LogLine[]>([])
   const [busy, setBusy] = useState(false)
   const [seedingType, setSeedingType] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   const addLog = useCallback((text: string, type: LogLine["type"] = "info") => {
     setLogs((prev) => [...prev, { text, type }])
@@ -159,6 +163,33 @@ export function SandboxPanel() {
       setBusy(false)
       setSeedingType(null)
       mutate()
+    }
+  }
+
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const result = await exportSeedData()
+      const parts = Object.entries(result.tables).map(([t, n]) => `${t}: ${n}`).join(", ")
+      toast.success(`Exported ${result.total} rows (${parts})`)
+    } catch (err) {
+      toast.error(`Export failed: ${(err as Error).message}`)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function handleImport(reset = false) {
+    setImporting(true)
+    try {
+      const result = await importSeedData(reset)
+      const parts = Object.entries(result.tables).map(([t, n]) => `${t}: ${n}`).join(", ")
+      toast.success(`Imported ${result.total} rows${reset ? " (reset)" : ""} (${parts})`)
+      mutate()
+    } catch (err) {
+      toast.error(`Import failed: ${(err as Error).message}`)
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -385,6 +416,35 @@ export function SandboxPanel() {
           )}
           Clean Only
         </Button>
+
+        <div className="ml-auto flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleExport}
+            disabled={exporting || importing}
+          >
+            {exporting ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            Export Data
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleImport(false)}
+            disabled={exporting || importing}
+          >
+            {importing ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Upload className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            Import Data
+          </Button>
+        </div>
       </div>
 
       {/* Terminal log */}
