@@ -54,6 +54,8 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "create_employee_with_employment": ["create_employee", "create_employment", "create_employment_details",
                                        "create_standard_time", "create_leave_of_absence"],
     "supplier_invoice":            ["create_supplier", "create_incoming_invoice"],
+    "project_invoice":             ["create_customer", "create_employee", "create_project",
+                                    "create_product", "create_order", "create_invoice"],
     # Tier 3 — complex
     "delete_travel_expense":  ["search_travel_expenses", "delete_travel_expense"],
     "delete_customer":        ["search_customers", "delete_customer"],
@@ -64,6 +66,7 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "delete_employee":        ["search_employees", "update_employee"],
     "create_ledger_voucher":  ["create_voucher", "get_ledger_accounts"],
     "reverse_voucher":        ["search_vouchers", "reverse_voucher"],
+    "reverse_payment":        ["search_invoices", "register_payment"],
     "delete_invoice":         ["create_customer", "create_product", "create_order", "create_invoice",
                                "create_credit_note"],
     "create_opening_balance": ["create_opening_balance", "get_ledger_accounts"],
@@ -131,6 +134,20 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "revertir comprobante", "reverter comprovante", "estornar",
                          "contrepasser", "extourner", "stornieren",
                          "tilbakeføre bilaget"], [], 8),
+
+    # ── Reverse payment (returned/bounced payment) ──
+    ("reverse_payment", ["tilbakeføre betaling", "reversere betaling", "reverser betaling",
+                          "reverse payment", "revert payment", "payment returned", "payment bounced",
+                          "betaling returnert", "betaling avvist", "betaling retur",
+                          "reverter pagamento", "pagamento devolvido", "estornar pagamento",
+                          "devolvido pelo banco", "pagamento retornado",
+                          "revertir pago", "pago devuelto", "anular pago",
+                          "pago rechazado", "pago retornado",
+                          "contrepasser paiement", "paiement retourné", "annuler paiement",
+                          "paiement rejeté",
+                          "zahlung zurückbuchen", "zahlung stornieren", "rücklastschrift",
+                          "zahlung zurückgewiesen",
+                          "reverta o pagamento", "reverter o pagamento"], [], 10),
 
     # ── Credit note (before invoice — "kreditnota" overrides "faktura") ──
     ("create_credit_note", ["kreditnota", "kreditere", "credit note", "kreditér",
@@ -252,6 +269,16 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                          "stillingsprosent", "stillingstittel",
                                          "job title", "position title",
                                          "occupation code", "yrkeskode"], [], 7),
+
+    # ── Project + invoice (before pure project — matches project + invoice keywords) ──
+    ("project_invoice", ["prosjekt faktura", "project invoice", "proyecto factura",
+                         "projet facture", "projekt rechnung", "projeto fatura",
+                         "fastpris", "fast pris", "fixed price", "precio fijo", "preço fixo",
+                         "prix fixe", "festpreis",
+                         "delbetaling", "partial payment", "pago parcial", "pagamento parcial",
+                         "paiement partiel", "teilzahlung",
+                         "fakturere prosjekt", "invoice project", "facturar proyecto",
+                         "facturar projeto", "facturer projet"], [], 10),
 
     # ── Create project ──
     ("create_project", ["prosjekt", "project", "proyecto", "projet", "projekt", "projeto",

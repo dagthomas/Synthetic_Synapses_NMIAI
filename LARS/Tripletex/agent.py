@@ -328,6 +328,18 @@ With project manager:
 Without PM:
 -> create_customer -> create_project(name, customer_id, startDate)""",
 
+    "project_invoice": """
+TASK: Create project + invoice (6-7 calls)
+-> create_customer(name, organizationNumber)
+-> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED")
+-> create_project(name, customer_id, projectManagerId=employeeId, startDate)
+-> create_product(name="<descriptive name>", priceExcludingVatCurrency=<invoice amount>)
+-> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": 1}}])
+-> create_invoice(invoiceDate, invoiceDueDate, order_id)
+- "Fixed price"/"fastpris"/"precio fijo" = total project value. Create product with the INVOICED amount (e.g. 75% of fixed price).
+- invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
+- The create_project tool auto-handles PM employment and entitlements internally.""",
+
     "create_travel_expense": """
 TASK: Create travel expense (2 calls)
 -> create_employee -> create_travel_expense(employee_id, title, departureDate, returnDate)""",
@@ -420,6 +432,15 @@ TASK: Reverse voucher (2 calls)
 -> search_vouchers(description or dateFrom/dateTo) -> reverse_voucher(voucher_id, date)
 - "tilbakefore"/"reversere" = reverse
 - This task references EXISTING entities. Use search tools.""",
+
+    "reverse_payment": """
+TASK: Reverse/revert a payment on an existing invoice (2 calls)
+-> search_invoices(invoiceDateFrom, invoiceDateTo) -> register_payment(invoice_id, amount=NEGATIVE_AMOUNT, paymentDate)
+- This task references EXISTING entities. NEVER create a customer or product — use search tools ONLY.
+- Find the invoice by searching with a wide date range (e.g. 2000-01-01 to 2030-01-01).
+- To reverse a payment, register a NEGATIVE amount (e.g. -51687.50 to undo a 51687.50 payment).
+- The negative amount = the original payment amount with VAT, negated.
+- "devolvido pelo banco"/"payment returned"/"betaling returnert" = reverse payment""",
 
     "delete_invoice": """
 TASK: Credit/delete invoice (5 calls)
