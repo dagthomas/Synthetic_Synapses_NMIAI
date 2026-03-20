@@ -11,6 +11,9 @@ import {
   Shield,
   ScrollText,
   ListChecks,
+  Wrench,
+  Radio,
+  FlaskConical,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -24,12 +27,15 @@ export type PanelId =
   | "sandbox"
   | "replay"
   | "explorer"
+  | "autofix"
   | "tasks"
   | "logs"
   | "report"
   | "errors"
   | "coverage"
   | "results"
+
+export type TabId = "live" | "eval"
 
 interface NavItem {
   id: PanelId
@@ -38,20 +44,25 @@ interface NavItem {
   shortcut?: string
 }
 
-const NAV_MAIN: NavItem[] = [
-  { id: "run", label: "Run", icon: Play, shortcut: "1" },
-  { id: "sandbox", label: "Sandbox", icon: Database, shortcut: "2" },
-  { id: "replay", label: "Replay", icon: RotateCcw, shortcut: "3" },
-  { id: "explorer", label: "Tool Explorer", icon: Compass, shortcut: "4" },
+const LIVE_NAV: NavItem[] = [
+  { id: "logs", label: "Solve Logs", icon: ScrollText, shortcut: "1" },
+  { id: "tasks", label: "Tasks", icon: ListChecks, shortcut: "2" },
+  { id: "coverage", label: "API Coverage", icon: Shield, shortcut: "3" },
+  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "4" },
 ]
 
-const NAV_DATA: NavItem[] = [
-  { id: "tasks", label: "Tasks", icon: ListChecks, shortcut: "5" },
-  { id: "logs", label: "Solve Logs", icon: ScrollText, shortcut: "6" },
-  { id: "report", label: "Report", icon: FileText, shortcut: "7" },
-  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "8" },
-  { id: "coverage", label: "API Coverage", icon: Shield, shortcut: "9" },
-  { id: "results", label: "Results", icon: Table2 },
+const EVAL_NAV: NavItem[] = [
+  { id: "run", label: "Run Evals", icon: Play, shortcut: "1" },
+  { id: "results", label: "Results", icon: Table2, shortcut: "2" },
+  { id: "report", label: "Report", icon: FileText, shortcut: "3" },
+  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "4" },
+  { id: "autofix", label: "Auto Fix", icon: Wrench, shortcut: "5" },
+  { id: "replay", label: "Replay", icon: RotateCcw, shortcut: "6" },
+]
+
+const SHARED_NAV: NavItem[] = [
+  { id: "sandbox", label: "Sandbox", icon: Database, shortcut: "8" },
+  { id: "explorer", label: "Tool Explorer", icon: Compass, shortcut: "9" },
 ]
 
 interface SidebarProps {
@@ -59,6 +70,8 @@ interface SidebarProps {
   onNavigate: (id: PanelId) => void
   errorCount: number
   connected: boolean
+  activeTab: TabId
+  onTabChange: (tab: TabId) => void
 }
 
 export function Sidebar({
@@ -66,7 +79,11 @@ export function Sidebar({
   onNavigate,
   errorCount,
   connected,
+  activeTab,
+  onTabChange,
 }: SidebarProps) {
+  const tabNav = activeTab === "live" ? LIVE_NAV : EVAL_NAV
+
   return (
     <aside
       className="w-[232px] shrink-0 flex flex-col h-screen sticky top-0"
@@ -97,42 +114,74 @@ export function Sidebar({
         </div>
       </div>
 
+      {/* Tab toggle */}
+      <div className="px-3 pb-3">
+        <div className="flex rounded-lg bg-white/[0.06] p-0.5">
+          <button
+            onClick={() => onTabChange("live")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold transition-all duration-150",
+              activeTab === "live"
+                ? "bg-emerald-500/20 text-emerald-400 shadow-sm"
+                : "text-white/40 hover:text-white/60"
+            )}
+          >
+            <Radio className="h-3.5 w-3.5" />
+            Live
+          </button>
+          <button
+            onClick={() => onTabChange("eval")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold transition-all duration-150",
+              activeTab === "eval"
+                ? "bg-blue-500/20 text-blue-400 shadow-sm"
+                : "text-white/40 hover:text-white/60"
+            )}
+          >
+            <FlaskConical className="h-3.5 w-3.5" />
+            Eval
+          </button>
+        </div>
+      </div>
+
       {/* Divider */}
       <div className="mx-4 h-px bg-white/[0.06]" />
 
       {/* Navigation */}
       <nav className="flex-1 px-3 pt-4 space-y-5 overflow-y-auto">
-        {/* Main section */}
+        {/* Tab-specific section */}
         <div>
           <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-white/25">
-            Actions
+            {activeTab === "live" ? "Competition" : "Testing"}
           </p>
           <div className="space-y-0.5">
-            {NAV_MAIN.map((item) => (
+            {tabNav.map((item) => (
               <NavButton
                 key={item.id}
                 item={item}
                 active={activePanel === item.id}
                 onClick={() => onNavigate(item.id)}
                 errorCount={item.id === "errors" ? errorCount : 0}
+                accentColor={activeTab === "live" ? "emerald" : "blue"}
               />
             ))}
           </div>
         </div>
 
-        {/* Data section */}
+        {/* Shared section */}
         <div>
           <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-white/25">
-            Data
+            Tools
           </p>
           <div className="space-y-0.5">
-            {NAV_DATA.map((item) => (
+            {SHARED_NAV.map((item) => (
               <NavButton
                 key={item.id}
                 item={item}
                 active={activePanel === item.id}
                 onClick={() => onNavigate(item.id)}
-                errorCount={item.id === "errors" ? errorCount : 0}
+                errorCount={0}
+                accentColor={activeTab === "live" ? "emerald" : "blue"}
               />
             ))}
           </div>
@@ -179,12 +228,16 @@ function NavButton({
   active,
   onClick,
   errorCount,
+  accentColor = "blue",
 }: {
   item: NavItem
   active: boolean
   onClick: () => void
   errorCount: number
+  accentColor?: "blue" | "emerald"
 }) {
+  const iconActiveClass = accentColor === "emerald" ? "text-emerald-400" : "text-blue-400"
+
   return (
     <button
       onClick={onClick}
@@ -198,7 +251,7 @@ function NavButton({
       <item.icon
         className={cn(
           "h-4 w-4 shrink-0 transition-colors duration-150",
-          active ? "text-blue-400" : "text-white/40 group-hover:text-white/60"
+          active ? iconActiveClass : "text-white/40 group-hover:text-white/60"
         )}
       />
       <span className="truncate">{item.label}</span>

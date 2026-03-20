@@ -37,9 +37,10 @@ export const fetchTasks = () => request<TaskDef[]>("/api/tasks")
 export const fetchLanguages = () => request<Languages>("/api/languages")
 
 // Runs
-export const fetchRuns = (params?: { status?: string; limit?: number }) => {
+export const fetchRuns = (params?: { status?: string; source?: string; limit?: number }) => {
   const sp = new URLSearchParams()
   if (params?.status && params.status !== "all") sp.set("status", params.status)
+  if (params?.source && params.source !== "all") sp.set("source", params.source)
   sp.set("limit", String(params?.limit ?? 200))
   return request<EvalRun[]>(`/api/runs?${sp}`)
 }
@@ -115,3 +116,137 @@ export const fetchLogs = (limit = 100) =>
 
 export const deleteAllLogs = () =>
   request<{ ok: boolean; deleted_db: number; deleted_files: number }>("/api/logs", { method: "DELETE" })
+
+export const fetchLogJson = (logId: number) =>
+  request<Record<string, unknown>>(`/api/logs/${logId}/json`)
+
+// Auto Fix
+export function streamAutoFix(
+  taskName: string,
+  language: string,
+  autoApply: boolean,
+  onEvent: (event: import("@/types/api").AutoFixEvent) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+): AbortController {
+  const controller = new AbortController()
+  fetch("/api/auto-fix/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_name: taskName, language, auto_apply: autoApply }),
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }))
+        onError(body.error || res.statusText)
+        return
+      }
+      const reader = res.body?.getReader()
+      if (!reader) { onError("No response body"); return }
+      const decoder = new TextDecoder()
+      let buffer = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data === "[DONE]") { onDone(); return }
+            try { onEvent(JSON.parse(data)) } catch { /* skip malformed */ }
+          }
+        }
+      }
+      onDone()
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError(String(err))
+    })
+  return controller
+}
+
+export const applyFixes = (fixes: import("@/types/api").AutoFixParsedFix[]) =>
+  post<{ ok: boolean; results: import("@/types/api").AutoFixApplyResult[] }>("/api/auto-fix/apply", fixes)
+
+// Live Activity Events (SSE)
+export function subscribeLiveEvents(
+  onEvent: (event: import("@/types/api").LiveEvent) => void,
+  onConnect: () => void,
+  onDisconnect: () => void,
+): { close: () => void } {
+  let source: EventSource | null = null
+  let closed = false
+
+  const connect = () => {
+    if (closed) return
+    source = new EventSource("/api/agent/events")
+    source.onopen = () => onConnect()
+    source.onmessage = (e) => {
+      try { onEvent(JSON.parse(e.data)) } catch { /* skip malformed */ }
+    }
+    source.onerror = () => {
+      onDisconnect()
+      source?.close()
+      // Reconnect after 3s
+      if (!closed) setTimeout(connect, 3000)
+    }
+  }
+
+  connect()
+  return {
+    close: () => {
+      closed = true
+      source?.close()
+    },
+  }
+}
+
+// Log Evaluation
+export function streamLogEval(
+  solveLogId: number,
+  maxIterations: number,
+  onEvent: (event: import("@/types/api").LogEvalEvent) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+): AbortController {
+  const controller = new AbortController()
+  fetch("/api/logs/evaluate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ solve_log_id: solveLogId, max_iterations: maxIterations, auto_apply: true }),
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }))
+        onError(body.error || res.statusText)
+        return
+      }
+      const reader = res.body?.getReader()
+      if (!reader) { onError("No response body"); return }
+      const decoder = new TextDecoder()
+      let buffer = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data === "[DONE]") { onDone(); return }
+            try { onEvent(JSON.parse(data)) } catch { /* skip malformed */ }
+          }
+        }
+      }
+      onDone()
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError(String(err))
+    })
+  return controller
+}

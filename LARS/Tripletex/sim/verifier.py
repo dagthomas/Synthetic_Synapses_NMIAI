@@ -1277,6 +1277,240 @@ def verify_project_with_pm(
     return result
 
 
+def verify_salary(
+    client: TripletexClient,
+    task_def: TaskDef,
+    expected: dict,
+) -> dict:
+    """Verify a salary transaction task."""
+    checks = []
+    entity_ids = []
+
+    # Find employee
+    search_params = {}
+    for sf in task_def.search_fields:
+        if sf in expected:
+            search_params[sf] = expected[sf]
+    employees = _search_entity(client, "employee", search_params)
+    if not employees and "email" in search_params:
+        search_params.pop("email")
+        employees = _search_entity(client, "employee", search_params)
+    employee = _best_match(employees, expected, task_def.search_fields)
+
+    for fc in task_def.field_checks:
+        if fc.field == "_found":
+            passed = employee is not None
+            checks.append(_make_check(
+                "Employee found", fc.points if passed else 0, fc.points, passed,
+                f"Found {len(employees)} match(es)" if passed else "Not found",
+            ))
+            if employee:
+                entity_ids.append(("employee", employee["id"]))
+            continue
+
+        if fc.field in ("firstName", "lastName") and fc.field in expected:
+            if employee is None:
+                checks.append(_make_check(fc.field, 0, fc.points, False, "Employee not found"))
+                continue
+            actual = employee.get(fc.field)
+            passed = _fields_match(actual, expected[fc.field])
+            checks.append(_make_check(
+                fc.field, fc.points if passed else 0, fc.points, passed,
+                f"expected={expected[fc.field]}, actual={actual}",
+            ))
+            continue
+
+        if fc.field == "_salary_found":
+            passed = False
+            if employee:
+                year = expected.get("year", 2026)
+                month = expected.get("month", 3)
+                sal_txns = client.get("/salary/transaction", params={
+                    "employeeId": employee["id"],
+                    "yearFrom": year, "yearTo": year,
+                    "monthFrom": month, "monthTo": month,
+                    "fields": "id,year,month",
+                    "count": 10,
+                })
+                txns = sal_txns.get("values", [])
+                if txns:
+                    passed = True
+            checks.append(_make_check(
+                "Salary transaction found", fc.points if passed else 0, fc.points, passed,
+                f"year={expected.get('year')}, month={expected.get('month')}" + (" found" if passed else " not found"),
+            ))
+            continue
+
+    total = sum(c["points"] for c in checks)
+    max_pts = sum(c["max"] for c in checks)
+    return {"checks": checks, "entity_ids": entity_ids, "total_points": total, "max_points": max_pts}
+
+
+def verify_project_invoice(
+    client: TripletexClient,
+    task_def: TaskDef,
+    expected: dict,
+) -> dict:
+    """Verify a project + invoice task."""
+    checks = []
+    entity_ids = []
+
+    # Check customer
+    customer_name = expected.get("customer_name", "")
+    customer_email = expected.get("customer_email", "")
+    cust_search = {"name": customer_name}
+    if customer_email:
+        cust_search["email"] = customer_email
+    customers = _search_entity(client, "customer", cust_search)
+    if not customers and customer_email:
+        customers = _search_entity(client, "customer", {"name": customer_name})
+    customer = _best_match(customers, {"name": customer_name, "email": customer_email}, ["name"])
+
+    # Check project
+    project_name = expected.get("project_name", "")
+    projects = _search_entity(client, "project", {"name": project_name})
+    project = projects[0] if projects else None
+
+    # Check invoice
+    inv_date = expected.get("invoice_date", "")
+    if inv_date:
+        from datetime import date, timedelta
+        d = date.fromisoformat(inv_date)
+        inv_search_params = {
+            "invoiceDateFrom": (d - timedelta(days=1)).isoformat(),
+            "invoiceDateTo": (d + timedelta(days=30)).isoformat(),
+        }
+    else:
+        inv_search_params = {"invoiceDateFrom": "2026-01-01", "invoiceDateTo": "2026-12-31"}
+    invoices = _search_entity(client, "invoice", inv_search_params)
+    invoice = None
+    if customer:
+        matching = [inv for inv in invoices
+                    if isinstance(inv.get("customer", {}), dict)
+                    and inv["customer"].get("id") == customer["id"]]
+        if matching:
+            date_matches = [inv for inv in matching if inv.get("invoiceDate") == inv_date]
+            invoice = max(date_matches or matching, key=lambda x: x.get("id", 0))
+
+    for fc in task_def.field_checks:
+        if fc.field == "_customer_found":
+            passed = customer is not None
+            checks.append(_make_check(
+                "Customer found", fc.points if passed else 0, fc.points, passed,
+                f"'{customer_name}'" + (" found" if passed else " not found"),
+            ))
+            if customer:
+                entity_ids.append(("customer", customer["id"]))
+            continue
+
+        if fc.field == "_project_found":
+            passed = project is not None
+            checks.append(_make_check(
+                "Project found", fc.points if passed else 0, fc.points, passed,
+                f"'{project_name}'" + (" found" if passed else " not found"),
+            ))
+            if project:
+                entity_ids.append(("project", project["id"]))
+            continue
+
+        if fc.field == "_invoice_found":
+            passed = invoice is not None
+            checks.append(_make_check(
+                "Invoice found", fc.points if passed else 0, fc.points, passed,
+                "Invoice found for customer" if passed else "No invoice found",
+            ))
+            if invoice:
+                entity_ids.append(("invoice", invoice["id"]))
+            continue
+
+        if fc.field == "customer_name":
+            passed = customer is not None and _fields_match(customer.get("name"), customer_name)
+            checks.append(_make_check(
+                "customer_name", fc.points if passed else 0, fc.points, passed,
+                f"expected={customer_name}",
+            ))
+            continue
+
+        if fc.field in ("invoice_date", "due_date") and fc.field in expected:
+            api_field = "invoiceDate" if fc.field == "invoice_date" else "invoiceDueDate"
+            actual = invoice.get(api_field, "N/A") if invoice else "N/A"
+            passed = invoice is not None and _fields_match(actual, expected[fc.field])
+            checks.append(_make_check(
+                fc.field, fc.points if passed else 0, fc.points, passed,
+                f"expected={expected[fc.field]}, actual={actual}",
+            ))
+            continue
+
+    total = sum(c["points"] for c in checks)
+    max_pts = sum(c["max"] for c in checks)
+    return {"checks": checks, "entity_ids": entity_ids, "total_points": total, "max_points": max_pts}
+
+
+def verify_reverse_payment(
+    client: TripletexClient,
+    task_def: TaskDef,
+    expected: dict,
+    pre_created_id: int,
+) -> dict:
+    """Verify that a payment was reversed on an invoice."""
+    checks = []
+
+    if not pre_created_id:
+        for fc in task_def.field_checks:
+            checks.append(_make_check(
+                fc.field, 0, fc.points, False, "Pre-create failed, cannot verify",
+            ))
+        total = sum(c["points"] for c in checks)
+        max_pts = sum(c["max"] for c in checks)
+        return {"checks": checks, "total_points": total, "max_points": max_pts}
+
+    # Get invoice and check if outstanding increased (payment reversed)
+    inv_detail = client.get(f"/invoice/{pre_created_id}", params={"fields": "*"})
+    inv = inv_detail.get("value", inv_detail)
+    amount = float(inv.get("amount", 0) or 0)
+    outstanding = float(inv.get("amountOutstanding", 0) or 0)
+
+    # If payment was reversed, outstanding should be close to amount (not zero)
+    payment_reversed = abs(outstanding) > 0.01 and abs(outstanding - amount) < 1.0
+
+    customer_name = expected.get("customer_name", "")
+    inv_customer = inv.get("customer", {})
+    cust_name_match = False
+    if isinstance(inv_customer, dict) and inv_customer.get("id"):
+        cust_detail = client.get(f"/customer/{inv_customer['id']}", params={"fields": "id,name"})
+        actual_name = cust_detail.get("value", {}).get("name", "")
+        cust_name_match = _fields_match(actual_name, customer_name)
+
+    for fc in task_def.field_checks:
+        if fc.field == "_invoice_found":
+            passed = "error" not in inv_detail
+            checks.append(_make_check(
+                "Invoice found", fc.points if passed else 0, fc.points, passed,
+                f"Invoice {pre_created_id}" + (" found" if passed else " not found"),
+            ))
+            continue
+
+        if fc.field == "_payment_reversed":
+            checks.append(_make_check(
+                "Payment reversed", fc.points if payment_reversed else 0, fc.points,
+                payment_reversed,
+                f"outstanding={outstanding}, amount={amount}" + (" (reversed)" if payment_reversed else " (still paid)"),
+            ))
+            continue
+
+        if fc.field == "customer_name":
+            checks.append(_make_check(
+                "customer_name", fc.points if cust_name_match else 0, fc.points,
+                cust_name_match,
+                f"expected={customer_name}",
+            ))
+            continue
+
+    total = sum(c["points"] for c in checks)
+    max_pts = sum(c["max"] for c in checks)
+    return {"checks": checks, "total_points": total, "max_points": max_pts}
+
+
 def verify_task(
     client: TripletexClient,
     task_def: TaskDef,
@@ -1345,6 +1579,18 @@ def verify_task(
     # Reverse voucher (Tier 3)
     if name == "reverse_voucher":
         return verify_reverse_voucher(client, task_def, expected, pre_created_id)
+
+    # Salary (Tier 3)
+    if name == "salary":
+        return verify_salary(client, task_def, expected)
+
+    # Project invoice (Tier 2)
+    if name == "project_invoice":
+        return verify_project_invoice(client, task_def, expected)
+
+    # Reverse payment (Tier 3)
+    if name == "reverse_payment":
+        return verify_reverse_payment(client, task_def, expected, pre_created_id)
 
     log.warning(f"No verifier for task type: {name}")
     return {"checks": [], "total_points": 0, "max_points": 0}

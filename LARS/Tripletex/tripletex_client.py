@@ -8,12 +8,13 @@ log = logging.getLogger(__name__)
 class TripletexClient:
     """Thin wrapper around Tripletex REST API with auth and logging."""
 
-    def __init__(self, base_url: str, session_token: str):
+    def __init__(self, base_url: str, session_token: str, on_api_call=None):
         self.base_url = base_url.rstrip("/")
         self.auth = ("0", session_token)
         self._call_count = 0
         self._error_count = 0
         self._call_log: list[dict] = []
+        self._on_api_call = on_api_call
         # Per-request cache for frequently-accessed IDs (avoids redundant GETs)
         self._cache: dict[str, int] = {}
 
@@ -24,7 +25,7 @@ class TripletexClient:
         t0 = time.time()
         resp = self._do_request("GET", url, params=params)
         elapsed = time.time() - t0
-        return self._handle_response(resp, "GET", url, elapsed)
+        return self._handle_response(resp, "GET", url, elapsed, request_params=params)
 
     def post(self, endpoint: str, json: dict | None = None) -> dict:
         url = f"{self.base_url}{endpoint}"
@@ -33,7 +34,7 @@ class TripletexClient:
         t0 = time.time()
         resp = self._do_request("POST", url, json=json)
         elapsed = time.time() - t0
-        return self._handle_response(resp, "POST", url, elapsed)
+        return self._handle_response(resp, "POST", url, elapsed, request_body=json)
 
     def put(self, endpoint: str, json: dict | None = None, params: dict | None = None) -> dict:
         url = f"{self.base_url}{endpoint}"
@@ -42,7 +43,7 @@ class TripletexClient:
         t0 = time.time()
         resp = self._do_request("PUT", url, json=json, params=params)
         elapsed = time.time() - t0
-        return self._handle_response(resp, "PUT", url, elapsed)
+        return self._handle_response(resp, "PUT", url, elapsed, request_body=json)
 
     def delete(self, endpoint: str) -> dict:
         url = f"{self.base_url}{endpoint}"
@@ -128,17 +129,30 @@ class TripletexClient:
             resp = requests.request(method, url, auth=self.auth, **kwargs)
         return resp
 
-    def _handle_response(self, resp: requests.Response, method: str, url: str, elapsed: float) -> dict:
+    def _handle_response(self, resp: requests.Response, method: str, url: str, elapsed: float,
+                         request_body: dict | None = None, request_params: dict | None = None) -> dict:
+        log_entry: dict = {
+            "method": method, "url": url, "status": resp.status_code,
+            "elapsed": round(elapsed, 3),
+        }
+        if request_body is not None:
+            log_entry["request_body"] = request_body
+        if request_params is not None:
+            log_entry["request_params"] = request_params
+
         try:
             resp.raise_for_status()
             result = resp.json() if resp.text else {"ok": True}
             # Log success with response summary
             summary = str(result)[:300]
             log.info(f"[API] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {summary}")
-            self._call_log.append({
-                "method": method, "url": url, "status": resp.status_code,
-                "elapsed": round(elapsed, 3), "ok": True,
-            })
+            log.debug(f"[API DETAIL] {method} {url} request_body={request_body} response_body={result}")
+            log_entry["ok"] = True
+            log_entry["response_body"] = result
+            self._call_log.append(log_entry)
+            if self._on_api_call:
+                try: self._on_api_call(log_entry)
+                except Exception: pass
             return result
         except Exception:
             self._error_count += 1
@@ -154,10 +168,15 @@ class TripletexClient:
                 ) if validation else ""
                 full_msg = f"{msg} [{details}]" if details else str(msg)
             except Exception:
+                body = None
                 full_msg = resp.text[:500] if resp.text else "(empty response body)"
             log.error(f"[API ERROR] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {full_msg}")
-            self._call_log.append({
-                "method": method, "url": url, "status": resp.status_code,
-                "elapsed": round(elapsed, 3), "ok": False, "error": full_msg,
-            })
+            log.debug(f"[API ERROR DETAIL] {method} {url} request_body={request_body} response_body={body or resp.text}")
+            log_entry["ok"] = False
+            log_entry["error"] = full_msg
+            log_entry["response_body"] = body if body else resp.text[:2000]
+            self._call_log.append(log_entry)
+            if self._on_api_call:
+                try: self._on_api_call(log_entry)
+                except Exception: pass
             return {"error": True, "status_code": resp.status_code, "message": full_msg}

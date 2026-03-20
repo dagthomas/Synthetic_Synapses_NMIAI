@@ -26,6 +26,9 @@ import {
   CheckCircle2,
   FlaskConical,
   Globe,
+  Play,
+  Square,
+  CheckSquare,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -33,18 +36,24 @@ type TypeFilter = "all" | "real" | "synthetic"
 type TierFilter = "all" | 1 | 2 | 3
 
 const TIER_COLORS: Record<number, string> = {
+  0: "bg-amber-50 text-amber-700 border-amber-200",
   1: "bg-emerald-50 text-emerald-700 border-emerald-200",
   2: "bg-blue-50 text-blue-700 border-blue-200",
   3: "bg-purple-50 text-purple-700 border-purple-200",
 }
 
-export function TasksPanel() {
+interface TasksPanelProps {
+  onRunEval?: (taskNames: string[]) => void
+}
+
+export function TasksPanel({ onRunEval }: TasksPanelProps) {
   const { data: tasks, isLoading } = useTasksLiveSummary()
   const { data: languages } = useLanguages()
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all")
   const [tierFilter, setTierFilter] = useState<TierFilter>("all")
   const [runningReal, setRunningReal] = useState(false)
   const [realCount, setRealCount] = useState(1)
+  const [selectedForEval, setSelectedForEval] = useState<Set<string>>(new Set())
 
   const { realTasks, syntheticTasks } = useMemo(() => {
     if (!tasks) return { realTasks: [], syntheticTasks: [] }
@@ -77,6 +86,31 @@ export function TasksPanel() {
       totalRuns: tasks.reduce((s, t) => s + t.live_runs, 0),
     }
   }, [tasks, realTasks, syntheticTasks])
+
+  const toggleEvalTask = useCallback((name: string) => {
+    setSelectedForEval(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }, [])
+
+  const selectAllFiltered = useCallback(() => {
+    setSelectedForEval(new Set(filtered.map(t => t.name)))
+  }, [filtered])
+
+  const clearSelection = useCallback(() => {
+    setSelectedForEval(new Set())
+  }, [])
+
+  const handleRunSelectedAsEval = useCallback(() => {
+    if (selectedForEval.size === 0) {
+      toast.error("Select at least one task")
+      return
+    }
+    onRunEval?.([...selectedForEval])
+  }, [selectedForEval, onRunEval])
 
   const handleRunAllReal = useCallback(async () => {
     if (realTasks.length === 0) {
@@ -279,13 +313,50 @@ export function TasksPanel() {
       <Card className="shadow-premium overflow-hidden">
         <CardContent className="p-0">
           <div className="px-4 py-2.5 border-b bg-muted/20 flex items-center justify-between">
-            <span className="text-[12px] text-muted-foreground font-medium">
-              {filtered.length} tasks shown
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[12px] text-muted-foreground font-medium">
+                {filtered.length} tasks shown
+              </span>
+              {selectedForEval.size > 0 && (
+                <Badge variant="secondary" className="text-[10px]">
+                  {selectedForEval.size} selected
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={selectedForEval.size === filtered.length ? clearSelection : selectAllFiltered}
+                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {selectedForEval.size === filtered.length ? "Deselect all" : "Select all"}
+              </button>
+              {selectedForEval.size > 0 && onRunEval && (
+                <Button
+                  onClick={handleRunSelectedAsEval}
+                  size="sm"
+                  className="h-7 px-3 text-[11px] font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <Play className="h-3 w-3 mr-1" />
+                  Run {selectedForEval.size} as Eval
+                </Button>
+              )}
+            </div>
           </div>
           <Table>
             <TableHeader>
               <TableRow className="text-[11px] bg-muted/10">
+                <TableHead className="w-10 font-semibold">
+                  <button
+                    onClick={selectedForEval.size === filtered.length ? clearSelection : selectAllFiltered}
+                    className="p-0.5 hover:bg-muted/60 rounded transition-colors"
+                  >
+                    {selectedForEval.size === filtered.length && filtered.length > 0 ? (
+                      <CheckSquare className="h-3.5 w-3.5 text-blue-600" />
+                    ) : (
+                      <Square className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
+                  </button>
+                </TableHead>
                 <TableHead className="font-semibold">Task</TableHead>
                 <TableHead className="w-20 font-semibold">Type</TableHead>
                 <TableHead className="w-16 font-semibold">Tier</TableHead>
@@ -306,7 +377,7 @@ export function TasksPanel() {
                   <>
                     {showSep && (
                       <TableRow key="separator" className="border-0">
-                        <TableCell colSpan={9} className="py-3 px-4">
+                        <TableCell colSpan={10} className="py-3 px-4">
                           <div className="flex items-center gap-2">
                             <div className="h-px flex-1 bg-border" />
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
@@ -318,7 +389,12 @@ export function TasksPanel() {
                         </TableCell>
                       </TableRow>
                     )}
-                    <TaskRow key={t.name} task={t} />
+                    <TaskRow
+                      key={t.name}
+                      task={t}
+                      selected={selectedForEval.has(t.name)}
+                      onToggle={() => toggleEvalTask(t.name)}
+                    />
                   </>
                 )
               })}
@@ -330,7 +406,8 @@ export function TasksPanel() {
   )
 }
 
-function TaskRow({ task: t }: { task: TaskLiveSummary }) {
+function TaskRow({ task: t, selected, onToggle }: { task: TaskLiveSummary; selected: boolean; onToggle: () => void }) {
+  const [expanded, setExpanded] = useState(false)
   const isReal = t.live_runs > 0
   const avgCalls = t.avg_api_calls != null ? t.avg_api_calls.toFixed(1) : "-"
   const efficiency =
@@ -343,14 +420,29 @@ function TaskRow({ task: t }: { task: TaskLiveSummary }) {
       : ""
 
   return (
+    <>
     <TableRow
+      onClick={() => t.sample_prompt && setExpanded(!expanded)}
       className={cn(
         "text-[12px] transition-colors",
+        t.sample_prompt && "cursor-pointer",
         isReal
           ? "bg-emerald-50/30 hover:bg-emerald-50/60"
           : "opacity-50 hover:opacity-75"
       )}
     >
+      <TableCell className="py-2.5 w-10">
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggle() }}
+          className="p-0.5 hover:bg-muted/60 rounded transition-colors"
+        >
+          {selected ? (
+            <CheckSquare className="h-3.5 w-3.5 text-blue-600" />
+          ) : (
+            <Square className="h-3.5 w-3.5 text-muted-foreground/40" />
+          )}
+        </button>
+      </TableCell>
       <TableCell className="py-2.5">
         <div>
           <span className="font-medium">{t.name}</span>
@@ -378,9 +470,9 @@ function TaskRow({ task: t }: { task: TaskLiveSummary }) {
       <TableCell className="py-2.5">
         <Badge
           variant="outline"
-          className={cn("text-[10px] font-semibold", TIER_COLORS[t.tier])}
+          className={cn("text-[10px] font-semibold", TIER_COLORS[t.tier] || TIER_COLORS[0])}
         >
-          T{t.tier}
+          {t.tier === 0 ? "?" : `T${t.tier}`}
         </Badge>
       </TableCell>
       <TableCell className="py-2.5 text-center">
@@ -399,7 +491,7 @@ function TaskRow({ task: t }: { task: TaskLiveSummary }) {
         {avgCalls}
       </TableCell>
       <TableCell className="py-2.5 text-right tabular-nums text-muted-foreground">
-        {t.baseline_calls}
+        {t.baseline_calls || "-"}
       </TableCell>
       <TableCell className="py-2.5 text-right tabular-nums">
         {isReal && t.avg_api_errors != null ? (
@@ -430,6 +522,21 @@ function TaskRow({ task: t }: { task: TaskLiveSummary }) {
         {t.last_run ? formatRelative(t.last_run) : "-"}
       </TableCell>
     </TableRow>
+    {expanded && t.sample_prompt && (
+      <TableRow className="bg-muted/30">
+        <TableCell colSpan={10} className="py-3 px-6">
+          <div className="text-[11px]">
+            <span className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">
+              Sample prompt from competition:
+            </span>
+            <pre className="mt-1.5 whitespace-pre-wrap text-foreground/80 font-mono text-[11px] leading-relaxed max-h-40 overflow-y-auto">
+              {t.sample_prompt}
+            </pre>
+          </div>
+        </TableCell>
+      </TableRow>
+    )}
+    </>
   )
 }
 

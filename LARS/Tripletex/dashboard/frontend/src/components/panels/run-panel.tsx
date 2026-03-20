@@ -23,9 +23,11 @@ import { Play, Rocket, Layers, Globe, AlertCircle, Loader2, CheckCircle2 } from 
 interface RunPanelProps {
   onBatchDone: (runs: EvalRun[]) => void
   onNavigate: (panel: string) => void
+  preSelectedTasks?: string[]
+  onPreSelectedConsumed?: () => void
 }
 
-export function RunPanel({ onBatchDone, onNavigate }: RunPanelProps) {
+export function RunPanel({ onBatchDone, onNavigate, preSelectedTasks, onPreSelectedConsumed }: RunPanelProps) {
   const { data: tasks, isLoading: tasksLoading } = useTasks()
   const { data: languages } = useLanguages()
   const { data: liveSummary } = useTasksLiveSummary()
@@ -56,6 +58,15 @@ export function RunPanel({ onBatchDone, onNavigate }: RunPanelProps) {
       if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [])
+
+  // Apply pre-selected tasks from Tasks panel navigation
+  useEffect(() => {
+    if (preSelectedTasks && preSelectedTasks.length > 0) {
+      setSelectedTasks(new Set(preSelectedTasks))
+      setSelectedTier(null)
+      onPreSelectedConsumed?.()
+    }
+  }, [preSelectedTasks, onPreSelectedConsumed])
 
   const ENTITY_LABELS: Record<string, string> = {
     department: "Departments",

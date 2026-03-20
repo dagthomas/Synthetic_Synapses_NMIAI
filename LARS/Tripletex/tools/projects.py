@@ -253,6 +253,34 @@ def build_project_tools(client: TripletexClient) -> dict:
         }
         return client.post("/project/participant", json=body)
 
+    def create_voucher(date: str, description: str, postings: list[dict]) -> dict:
+        """Create a general ledger voucher.
+
+        Args:
+            date: The date of the voucher in YYYY-MM-DD format.
+            description: A description for the voucher.
+            postings: A list of dictionaries, each with 'accountNumber' (int) and 'amount' (float).
+                      Amounts must balance (sum to 0). Positive = debit, negative = credit.
+
+        Returns:
+            The created voucher with id and fields, or an error message.
+        """
+        voucher_lines = []
+        for p in postings:
+            # Tripletex API expects account ID, not number directly in voucherLines
+            account_id_result = client.get("/account", params={"number": p["accountNumber"], "fields": "id", "count": 1})
+            account_id = account_id_result.get("values", [{}])[0].get("id")
+            if not account_id:
+                return {"error": f"Account with number {p['accountNumber']} not found."}
+            voucher_lines.append({"account": {"id": account_id}, "amount": p["amount"]})
+
+        body = {
+            "date": date,
+            "description": description,
+            "voucherLines": voucher_lines
+        }
+        return client.post("/voucher", json=body)
+
     return {
         "create_project": create_project,
         "search_projects": search_projects,
@@ -261,4 +289,5 @@ def build_project_tools(client: TripletexClient) -> dict:
         "create_project_category": create_project_category,
         "search_project_categories": search_project_categories,
         "create_project_participant": create_project_participant,
+        "create_voucher": create_voucher, # Added
     }

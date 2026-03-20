@@ -1056,7 +1056,7 @@ DELETE_EMPLOYEE = TaskDef(
     name="delete_employee",
     tier=3,
     description="Deactivate an employee",
-    sandbox_broken=True,  # DELETE returns 403, employee model has no isInactive
+    sandbox_broken=False,  # Agent deactivates via update_employee(isInactive=True)
     gen_instruction="""\
 Generate a task to deactivate/remove an employee from Tripletex.
 NOTE: Tripletex does not allow deleting employees with employments.
@@ -1078,6 +1078,187 @@ Expected fields:
     ],
     baseline_calls=2,
     pre_create={"type": "employee", "fields": ["firstName", "lastName"]},
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TIER 3 — Task types from router but missing from eval framework
+# ═══════════════════════════════════════════════════════════════════════
+
+SALARY = TaskDef(
+    name="salary",
+    tier=3,
+    description="Run a salary transaction for an employee",
+    gen_instruction="""\
+Generate a task to process a salary/payroll transaction for an employee in Tripletex.
+Include ALL:
+- firstName: employee's first name
+- lastName: employee's last name
+- email: employee's email
+- salary_type: type of salary (e.g. "Fastlønn", "Timelønn", "Bonus")
+- year: salary year (2026)
+- month: salary month (1-12)
+- amount: salary amount (10000-80000 NOK)
+
+The prompt should instruct to create the employee (with employment), then register a salary transaction.
+
+Expected fields:
+- firstName (string)
+- lastName (string)
+- email (string)
+- year (integer)
+- month (integer)""",
+    entity_type="employee",
+    search_fields=["firstName", "lastName", "email"],
+    field_checks=[
+        FieldCheck("_found", 2),
+        FieldCheck("firstName", 1),
+        FieldCheck("lastName", 1),
+        FieldCheck("_salary_found", 4),
+    ],
+    baseline_calls=4,  # employee + employment + search_salary_types + salary_transaction
+)
+
+PROJECT_INVOICE = TaskDef(
+    name="project_invoice",
+    tier=2,
+    description="Create a fixed-price project and invoice for it",
+    gen_instruction="""\
+Generate a task to create a project linked to a customer and then invoice it.
+Include ALL:
+- customer_name: company name ending in AS
+- customer_email: email for the customer
+- project_name: realistic project name (e.g. "Nettsideutvikling", "IT-konsulentprosjekt")
+- product_name: product/service name for the invoice line
+- product_price: price excluding VAT (5000-50000)
+- invoice_date: March 2026 (YYYY-MM-DD)
+- due_date: 14-30 days after invoice_date (YYYY-MM-DD)
+
+The prompt should instruct to create customer, employee (project manager), project,
+product, then create an invoice for the project.
+
+Expected fields:
+- customer_name (string)
+- customer_email (string)
+- project_name (string)
+- product_name (string)
+- invoice_date (string, YYYY-MM-DD)
+- due_date (string, YYYY-MM-DD)""",
+    entity_type="invoice",
+    search_fields=[],
+    field_checks=[
+        FieldCheck("_customer_found", 1),
+        FieldCheck("_project_found", 2),
+        FieldCheck("_invoice_found", 2),
+        FieldCheck("customer_name", 1),
+        FieldCheck("invoice_date", 2),
+        FieldCheck("due_date", 2),
+    ],
+    baseline_calls=6,  # customer + employee + project + product + order + invoice
+)
+
+REVERSE_PAYMENT = TaskDef(
+    name="reverse_payment",
+    tier=3,
+    description="Reverse a payment on an invoice",
+    gen_instruction="""\
+Generate a task to reverse (tilbakeføre) a payment that was registered on an invoice.
+The prompt should say the payment was returned by the bank or needs to be reversed.
+
+Include:
+- customer_name: company name ending in AS
+- reverse_reason: reason for reversal (e.g. "Betaling returnert fra bank")
+
+Expected fields:
+- customer_name (string)
+- reverse_reason (string)""",
+    entity_type="invoice",
+    search_fields=[],
+    field_checks=[
+        FieldCheck("_invoice_found", 2),
+        FieldCheck("_payment_reversed", 4),
+        FieldCheck("customer_name", 2),
+    ],
+    baseline_calls=2,  # search_invoices + register_payment(negative)
+    pre_create={"type": "paid_invoice", "fields": ["customer_name"]},
+)
+
+BANK_RECONCILIATION = TaskDef(
+    name="bank_reconciliation",
+    tier=3,
+    description="Perform bank reconciliation from a file",
+    sandbox_broken=True,  # Requires file attachment
+    gen_instruction="""\
+Generate a task to perform bank reconciliation (bankavstemming) from an attached bank statement.
+Include:
+- bank_account: bank account number (e.g. "1920")
+- date: reconciliation date in March 2026 (YYYY-MM-DD)
+- description: description of the reconciliation
+
+Expected fields:
+- bank_account (string)
+- date (string, YYYY-MM-DD)
+- description (string)""",
+    entity_type="ledger/voucher",
+    search_fields=[],
+    field_checks=[
+        FieldCheck("_found", 3),
+        FieldCheck("date", 3),
+        FieldCheck("description", 2),
+    ],
+    baseline_calls=3,
+)
+
+PROCESS_INVOICE_FILE = TaskDef(
+    name="process_invoice_file",
+    tier=3,
+    description="Create an invoice from an attached file",
+    sandbox_broken=True,  # Requires file attachment
+    gen_instruction="""\
+Generate a task to create an invoice based on an attached invoice file (PDF).
+Include:
+- customer_name: company name ending in AS
+- invoice_date: March 2026 (YYYY-MM-DD)
+- due_date: 14-30 days after invoice_date
+
+Expected fields:
+- customer_name (string)
+- invoice_date (string, YYYY-MM-DD)
+- due_date (string, YYYY-MM-DD)""",
+    entity_type="invoice",
+    search_fields=[],
+    field_checks=[
+        FieldCheck("_customer_found", 1),
+        FieldCheck("_invoice_found", 2),
+        FieldCheck("customer_name", 1),
+        FieldCheck("invoice_date", 2),
+        FieldCheck("due_date", 2),
+    ],
+    baseline_calls=5,
+)
+
+YEAR_END = TaskDef(
+    name="year_end",
+    tier=3,
+    description="Perform year-end closing tasks",
+    sandbox_broken=True,  # Year-end entities may not exist in sandbox
+    gen_instruction="""\
+Generate a task to perform year-end closing (årsoppgjør) in Tripletex.
+Include:
+- year: the year to close (2025)
+- description: description of year-end notes
+
+Expected fields:
+- year (integer)
+- description (string)""",
+    entity_type="yearEnd",
+    search_fields=[],
+    field_checks=[
+        FieldCheck("_found", 4),
+        FieldCheck("year", 2),
+        FieldCheck("description", 2),
+    ],
+    baseline_calls=2,
 )
 
 
@@ -1122,6 +1303,13 @@ ALL_TASKS: dict[str, TaskDef] = {
     "delete_department": DELETE_DEPARTMENT,
     "delete_contact": DELETE_CONTACT,
     "delete_employee": DELETE_EMPLOYEE,
+    # Missing from eval framework (in router but not here)
+    "salary": SALARY,
+    "project_invoice": PROJECT_INVOICE,
+    "reverse_payment": REVERSE_PAYMENT,
+    "bank_reconciliation": BANK_RECONCILIATION,
+    "process_invoice_file": PROCESS_INVOICE_FILE,
+    "year_end": YEAR_END,
 }
 
 TIER1_TASKS = [t for t in ALL_TASKS.values() if t.tier == 1]

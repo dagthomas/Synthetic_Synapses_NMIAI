@@ -8,8 +8,15 @@ unrecognized prompts (no regression).
 import re
 import logging
 import unicodedata
+from typing import NamedTuple
 
 log = logging.getLogger(__name__)
+
+
+class ToolSelection(NamedTuple):
+    """Result of select_tools(): the tools list + how we classified."""
+    tools: list
+    classification_level: str  # "exact" | "category" | "fallback"
 
 
 def _strip_accents(s: str) -> str:
@@ -45,17 +52,18 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "create_multi_line_invoice":   ["create_customer", "create_product", "create_order", "create_invoice"],
     "create_project":              ["create_customer", "create_employee", "create_project"],
     "create_travel_expense":       ["create_employee", "create_travel_expense"],
-    "travel_expense_with_costs":   ["create_employee", "create_travel_expense", "create_travel_expense_cost",
-                                    "create_mileage_allowance", "create_per_diem_compensation", "update_travel_expense"],
+    "create_travel_expense_with_costs": ["create_employee", "create_travel_expense", "create_travel_expense_cost",
+                                        "create_mileage_allowance", "create_per_diem_compensation", "update_travel_expense"],
     "invoice_with_payment":        ["create_customer", "create_product", "create_order", "create_invoice",
                                     "register_payment"],
     "create_credit_note":          ["create_customer", "create_product", "create_order", "create_invoice",
                                     "create_credit_note"],
     "create_employee_with_employment": ["create_employee", "create_employment", "create_employment_details",
                                        "create_standard_time", "create_leave_of_absence"],
-    "supplier_invoice":            ["create_supplier", "create_incoming_invoice"],
+    "create_supplier_invoice":     ["create_supplier", "create_incoming_invoice"],
     "project_invoice":             ["create_customer", "create_employee", "create_project",
                                     "create_product", "create_order", "create_invoice"],
+    "create_project_with_pm":      ["create_customer", "create_employee", "create_project"],
     # Tier 3 — complex
     "delete_travel_expense":  ["search_travel_expenses", "delete_travel_expense"],
     "delete_customer":        ["search_customers", "delete_customer"],
@@ -70,6 +78,8 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "delete_invoice":         ["create_customer", "create_product", "create_order", "create_invoice",
                                "create_credit_note"],
     "create_opening_balance": ["create_opening_balance", "get_ledger_accounts"],
+    "create_dimension":       ["create_project_category", "search_project_categories",
+                               "create_voucher", "get_ledger_accounts"],
     "bank_reconciliation":    ["extract_file_content", "search_bank_accounts", "create_voucher"],
     "process_invoice_file":   ["extract_file_content", "create_customer", "create_product", "create_order",
                                "create_invoice"],
@@ -91,36 +101,68 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
     # no/nn + en + es + pt + de + fr
     ("delete_travel_expense", ["slett reiseregning", "delete travel expense", "fjern reiseregning",
                                "slett reise", "slett reiserekning",
+                               "slette reiseregning", "slette reiserekning",
+                               "slette denne reiseregningen", "fjerne denne reiseregningen",
                                "eliminar gastos de viaje", "excluir despesas de viagem",
                                "supprimer note de frais", "reisekosten löschen"], [], 10),
     ("delete_customer", ["slett kunde", "delete customer", "fjern kunde", "slett kunden",
+                         "slette kunde", "slette kunden", "fjerne kunde", "fjerne kunden",
+                         "sletter kunde", "sletter kunden",
+                         "slett denne kunden", "slette denne kunden",
+                         "fjerne denne kunden", "sletter denne kunden",
                          "eliminar cliente", "eliminar el cliente", "eliminar al cliente",
                          "excluir cliente", "excluir o cliente",
                          "supprimer client", "supprimer le client",
                          "kunde löschen", "kunden löschen"], [], 10),
     ("delete_supplier", ["slett leverandør", "delete supplier", "fjern leverandør", "slett leverandøren",
+                         "slette leverandør", "slette leverandøren", "fjerne leverandør",
+                         "sletter leverandør", "sletter leverandøren",
+                         "slett denne leverandøren", "slett denne leverandør",
+                         "slette denne leverandøren", "fjerne denne leverandøren",
+                         "slette denne leverandør", "fjerne denne leverandør",
+                         "sletter denne leverandøren",
                          "eliminar proveedor", "eliminar el proveedor", "eliminar al proveedor",
                          "excluir fornecedor", "excluir o fornecedor",
                          "supprimer fournisseur", "supprimer le fournisseur",
                          "lieferant löschen", "lieferanten löschen"], [], 10),
     ("delete_product", ["slett produkt", "delete product", "fjern produkt", "slett produktet",
+                        "slette produkt", "slette produktet", "fjerne produkt",
+                        "sletter produkt", "sletter produktet",
+                        "slette dette produktet", "fjerne dette produktet",
+                        "sletter dette produktet", "sletter dette produkt",
+                        "slette dette produkt", "fjerne dette produkt",
                         "eliminar producto", "eliminar el producto",
                         "excluir produto", "excluir o produto",
                         "supprimer produit", "supprimer le produit",
                         "produkt löschen"], [], 10),
     ("delete_department", ["slett avdeling", "delete department", "fjern avdeling", "slett avdelingen",
+                           "slette avdeling", "slette avdelingen", "fjerne avdeling",
+                           "slette denne avdelingen", "fjerne denne avdelingen",
                            "eliminar departamento", "eliminar el departamento",
                            "excluir departamento", "excluir o departamento",
                            "supprimer département", "supprimer le département",
                            "abteilung löschen"], [], 10),
     ("delete_contact", ["slett kontakt", "delete contact", "fjern kontakt",
                         "slett kontaktperson", "slett kontaktpersonen",
+                        "slette kontakt", "slette kontaktperson", "slette kontaktpersonen",
+                        "sletter kontaktperson", "sletter kontaktpersonen",
+                        "slettes som kontaktperson",
+                        "henne som kontaktperson", "ham som kontaktperson",
+                        "fjerne kontakt", "fjerne kontaktperson",
+                        "slette denne kontaktpersonen", "fjerne denne kontaktpersonen",
+                        "slette denne kontakten", "fjerne denne kontakten",
                         "eliminar contacto", "eliminar el contacto",
                         "excluir contato", "excluir o contato",
                         "supprimer contact", "supprimer le contact",
                         "kontakt löschen", "kontaktperson löschen"], [], 10),
     ("delete_employee", ["slett ansatt", "delete employee", "fjern ansatt",
                          "slett den ansatte", "deaktiver ansatt", "deactivate employee",
+                         "slette ansatt", "fjerne ansatt", "deaktivere ansatt",
+                         "sletter ansatt", "sletter den ansatte",
+                         "slette denne ansatte", "fjerne denne ansatte",
+                         "slette profilen", "deaktivere profilen",
+                         "fjerne ham", "fjerne henne",
+                         "deaktivere ham", "deaktivere henne",
                          "eliminar empleado", "eliminar al empleado",
                          "excluir funcionário", "excluir o funcionário",
                          "desativar funcionário", "desactivar empleado",
@@ -165,6 +207,8 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
     ("invoice_with_payment", ["faktura betaling", "invoice payment", "registrer betaling",
                               "register payment", "betal faktura",
                               "faktura og betaling", "invoice and payment",
+                              "registrere betaling", "registrere innbetaling",
+                              "registrer innbetaling", "innbetalingen", "innbetaling",
                               "registrar pago", "factura y pago",
                               "registrar pagamento", "fatura e pagamento",
                               "enregistrer paiement", "facture et paiement",
@@ -173,6 +217,8 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
     # ── Multi-line invoice ──
     ("create_multi_line_invoice", ["flere produkter", "multiple products", "flere linjer",
                                    "multiple lines", "multi-line", "multiline",
+                                   "tre produkter", "to produkter", "fire produkter",
+                                   "følgende produkter", "følgende varer",
                                    "varios productos", "múltiples productos",
                                    "vários produtos", "múltiplos produtos",
                                    "plusieurs produits", "plusieurs lignes",
@@ -231,9 +277,11 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
       "créer employé", "mitarbeiter erstellen"], 6),
 
     # ── Travel expense with costs ──
-    ("travel_expense_with_costs", ["reiseregning med utlegg", "travel expense with costs",
+    ("create_travel_expense_with_costs", ["reiseregning med utlegg", "travel expense with costs",
                                    "kjøregodtgjørelse", "mileage allowance",
                                    "diett", "per diem", "reiseutlegg",
+                                   "kostnadslinje", "cost line",
+                                   "hotellutgift", "hotellkostnad",
                                    "gastos de viaje con costos", "gastos de viaje con gastos",
                                    "despesas de viagem com custos",
                                    "note de frais avec coûts", "note de frais avec dépenses",
@@ -241,8 +289,8 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                    "reiserekning med utlegg"], [], 9),
 
     # ── Supplier invoice ──
-    ("supplier_invoice", ["leverandørfaktura", "supplier invoice", "inngående faktura",
-                          "incoming invoice",
+    ("create_supplier_invoice", ["leverandørfaktura", "supplier invoice", "inngående faktura",
+                                "incoming invoice",
                           "factura de proveedor", "factura del proveedor",
                           "fatura de fornecedor", "fatura do fornecedor",
                           "facture fournisseur", "facture du fournisseur",
@@ -268,7 +316,8 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                          "data de início", "data de inicio",
                                          "stillingsprosent", "stillingstittel",
                                          "job title", "position title",
-                                         "occupation code", "yrkeskode"], [], 7),
+                                         "occupation code", "yrkeskode"],
+     ["prosjekt", "project", "proyecto", "projeto", "projet", "projekt"], 7),
 
     # ── Project + invoice (before pure project — matches project + invoice keywords) ──
     ("project_invoice", ["prosjekt faktura", "project invoice", "proyecto factura",
@@ -280,10 +329,13 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "fakturere prosjekt", "invoice project", "facturar proyecto",
                          "facturar projeto", "facturer projet"], [], 10),
 
+    # ── Create project with PM ──
+    ("create_project_with_pm", ["prosjektleder", "project manager",
+                                "jefe de proyecto", "gerente de projeto", "chef de projet", "projektleiter"],
+     [], 10),
+
     # ── Create project ──
-    ("create_project", ["prosjekt", "project", "proyecto", "projet", "projekt", "projeto",
-                        "prosjektleder", "project manager",
-                        "jefe de proyecto", "gerente de projeto", "chef de projet", "projektleiter"],
+    ("create_project", ["prosjekt", "project", "proyecto", "projet", "projekt", "projeto"],
      ["faktura", "invoice", "factura", "fatura", "facture", "rechnung"], 5),
 
     # ── Travel expense (simple — after "with costs" check) ──
@@ -294,6 +346,7 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                "reisekosten", "reisekostenabrechnung",
                                "reiserekning"],
      ["slett", "delete", "fjern", "utlegg", "kjøregodtgjørelse", "diett",
+      "kostnadslinje", "mileage", "per diem",
       "eliminar", "excluir", "supprimer", "löschen"], 5),
 
     # ── Simple invoice (after all invoice variants checked) ──
@@ -338,11 +391,13 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "kunden aktualisieren",
                          "aktualisieren sie den kunden", "aktualisieren sie kunden",
                          "oppdatere telefon", "endre telefonnummer",
+                         "oppdatere telefonnummer", "oppdatere telefonnummeret",
                          "nytt telefonnummer", "oppdatere e-post", "endre e-post",
-                         "oppdater kunden", "endre kunden"],
+                         "oppdater kunden", "endre kunden",
+                         "oppdatere denne kunden", "endre denne kunden"],
      ["slett", "delete", "ansatt", "employee", "eliminar", "excluir", "supprimer", "löschen"], 8),
     ("update_product", ["oppdater produkt", "update product", "endre produkt", "oppdatere produkt",
-                        "endre pris", "update price",
+                        "endre pris", "update price", "prisendring", "price change",
                         "actualizar producto", "modificar producto", "cambiar precio",
                         "atualizar produto", "modificar produto", "alterar preço",
                         "mettre à jour produit", "modifier produit", "changer prix",
@@ -354,6 +409,7 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                         "oppdater produktet", "endre produktet"],
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen"], 8),
     ("update_supplier", ["oppdater leverandør", "update supplier", "endre leverandør", "oppdatere leverandør",
+                         "oppdatere leverandøren",
                          "actualizar proveedor", "modificar proveedor",
                          "atualizar fornecedor", "modificar fornecedor",
                          "mettre à jour fournisseur", "modifier fournisseur",
@@ -370,9 +426,12 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                            "abteilung aktualisieren", "abteilung ändern",
                            "aktualisieren sie die abteilung", "aktualisieren sie abteilung",
                            "oppdater avdelingen", "endre avdelingen",
+                           "oppdatere denne avdelingen", "endre denne avdelingen",
                            "gi nytt navn", "endre navn"],
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen"], 8),
     ("update_contact", ["oppdater kontaktperson", "update contact", "endre kontaktperson", "oppdatere kontakt",
+                         "oppdatere kontaktperson", "oppdatere kontaktpersonen",
+                         "endre kontaktpersonen",
                          "actualizar contacto", "modificar contacto",
                          "actualizar persona de contacto",
                          "atualizar contato", "modificar contato",
@@ -385,6 +444,15 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "aktualisieren sie kontakt",
                          "oppdater kontakten", "endre kontakten"],
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen"], 8),
+
+    # ── Custom accounting dimension ──
+    ("create_dimension", ["buchhaltungsdimension", "regnskapsdimensjon", "accounting dimension",
+                          "custom dimension", "benutzerdefinierte dimension",
+                          "prosjekttype", "project type", "projekttyp",
+                          "dimensjonsverdier", "dimensionswert", "dimension value",
+                          "dimensjonsverdi", "type de projet", "tipo de proyecto",
+                          "tipo de projeto", "kontodimensjon",
+                          "egendefinert dimensjon", "tilpasset dimensjon"], [], 12),
 
     # ── Ledger voucher ──
     ("create_ledger_voucher", ["bilag", "voucher", "korrigeringsbilag", "correction voucher",
@@ -399,8 +467,10 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
 
     # ── Basic entity creation (lowest priority) ──
     ("create_supplier", ["leverandør", "supplier", "proveedor", "fournisseur",
-                         "lieferant", "fornecedor", "leverandøren"],
-     ["slett", "delete", "faktura", "invoice", "inngående",
+                         "lieferant", "fornecedor", "leverandøren",
+                         "ny leverandør", "registrere leverandør", "opprett leverandør"],
+     ["slett", "delete", "leverandørfaktura", "inngående faktura",
+      "supplier invoice", "incoming invoice", "inngående",
       "eliminar", "excluir", "supprimer", "löschen", "oppdater", "update", "endre",
       "actualizar", "atualizar", "modifier", "ändern", "aktualisieren",
       "mettre a jour", "mettre à jour"], 4),
@@ -408,7 +478,8 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                            "abteilung", "avdelinga"],
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen",
       "oppdater", "update", "endre", "actualizar", "atualizar", "modifier", "ändern",
-      "aktualisieren", "mettre a jour", "mettre à jour"], 4),
+      "aktualisieren", "mettre a jour", "mettre à jour",
+      "ansatt", "employee", "empleado", "funcionário", "mitarbeiter"], 4),
     ("create_employee", ["ansatt", "employee", "empleado", "employé",
                          "mitarbeiter", "funcionário", "tilsett",
                          "kollega", "medarbeider", "ny kollega", "new colleague",
@@ -523,6 +594,9 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "contact":  ["kontaktperson", "contact person", "kontakt",
                  "persona de contacto", "pessoa de contato", "contato",
                  "personne de contact", "ansprechpartner"],
+    "dimension": ["dimensjon", "dimension", "prosjekttype", "project type",
+                  "buchhaltungsdimension", "kontodimensjon",
+                  "accounting dimension", "custom dimension"],
 }
 
 # Normalize CATEGORY_KEYWORDS for accent-insensitive matching
@@ -555,6 +629,8 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
     "salary":   ["search_salary_types", "create_salary_transaction", "create_employee"],
     "contact":  ["create_customer", "create_contact", "update_contact",
                  "search_contacts", "delete_contact"],
+    "dimension": ["create_project_category", "search_project_categories",
+                  "create_voucher", "get_ledger_accounts"],
 }
 
 
@@ -575,7 +651,7 @@ def detect_categories(prompt: str) -> list[str]:
 
 
 def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = False,
-                 prompt: str = "") -> list:
+                 prompt: str = "") -> ToolSelection:
     """Select tools for a given task type.
 
     Args:
@@ -585,7 +661,7 @@ def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = 
         prompt: Original prompt text (used for category fallback when task_type is None).
 
     Returns:
-        List of tool functions to pass to the agent.
+        ToolSelection(tools, classification_level).
     """
     if task_type is None:
         # Try category-level fallback before returning all tools
@@ -603,8 +679,8 @@ def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = 
                 selected = [all_tools_dict[n] for n in required_names if n in all_tools_dict]
                 if selected:
                     log.info(f"Category fallback: {categories} -> {len(selected)} tools")
-                    return selected
-        return list(all_tools_dict.values())
+                    return ToolSelection(selected, "category")
+        return ToolSelection(list(all_tools_dict.values()), "fallback")
 
     # Get required tool names for this task type
     required_names = set(TASK_TOOL_MAP.get(task_type, []))
@@ -628,6 +704,6 @@ def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = 
     # Safety: if we resolved very few tools, fall back to all
     if len(selected) < 1:
         log.warning(f"No tools resolved for task_type='{task_type}', falling back to all")
-        return list(all_tools_dict.values())
+        return ToolSelection(list(all_tools_dict.values()), "fallback")
 
-    return selected
+    return ToolSelection(selected, "exact")

@@ -20,7 +20,18 @@ def build_department_tools(client: TripletexClient) -> dict:
         body = {"name": name}
         if departmentNumber:
             body["departmentNumber"] = departmentNumber
-        return client.post("/department", json=body)
+        result = client.post("/department", json=body)
+
+        # Auto-recover: if duplicate (422), search by name and return existing
+        if result.get("error") and result.get("status_code") == 422:
+            params = {"fields": "id,name,departmentNumber,departmentManager"}
+            params["name"] = name
+            existing = client.get("/department", params=params)
+            vals = existing.get("values", [])
+            if vals:
+                return {"value": vals[0], "_note": "Department already existed, returning existing."}
+
+        return result
 
     def search_departments(name: str = "") -> dict:
         """Search for departments.

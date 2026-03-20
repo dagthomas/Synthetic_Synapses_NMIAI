@@ -178,6 +178,12 @@ Ledger correction / korrigeringsbilag (1 call):
   → Positive = debit, negative = credit
   → Common accounts: 1920=bank, 1500=receivables, 2400=payables, 3000=revenue, 4000=cost of goods, 6300=leie, 7100=lønn, 2700=skattetrekk, 2770=arbeidsgiveravgift, 2900=gjeld
 
+Custom accounting dimensions / Benutzerdefinierte Buchhaltungsdimensionen (2-4 calls):
+  → To create a custom accounting dimension (e.g., "Prosjekttype"), use create_project_category for each value.
+  → create_project_category(name="<value1>") → create_project_category(name="<value2>")
+  → If the task also asks to book a voucher linked to a dimension value, create the voucher with balanced postings.
+  → "Dimensionswert"/"dimensjonsverdi" = dimension value = project category name
+
 Reverse voucher / tilbakeføre bilag (2 calls):
   → search_vouchers(description or dateFrom/dateTo) → reverse_voucher(voucher_id, date)
   → "tilbakeføre"/"reversere" = reverse
@@ -378,7 +384,8 @@ TASK: Supplier invoice (3-4 calls: create_supplier + 2 account lookups + create_
 - Common expense accounts: 4000=varekostnad, 6300=leie, 6590=annet driftsmateriale, 6800=kontorrekvisita, 7100=lonn
 - VAT rates: 25 (standard/hoey), 15 (medium/mat), 12 (low/transport), 0 (exempt)
 - amountIncludingVat is the TOTAL amount (including VAT) from the prompt
-- CRITICAL: Extract the expense account number from the prompt (e.g. "account 6590" -> expenseAccountNumber=6590)""",
+- CRITICAL: Extract the expense account number from the prompt (e.g. "account 6590" -> expenseAccountNumber=6590)
+- CRITICAL: invoiceDate MUST be explicitly provided in the prompt. DO NOT infer today's date if not specified.""",
 
     "delete_travel_expense": """
 TASK: Delete travel expense (2 calls)
@@ -420,9 +427,21 @@ TASK: Deactivate employee (2-3 calls)
 - "slett ansatt" / "deaktiver ansatt" / "delete employee" = deactivate employee
 - This task references EXISTING entities. Use search tools.""",
 
+    "create_dimension": """
+TASK: Create custom accounting dimension with values + optional voucher (2-4 calls)
+-> create_project_category(name="<value1>") -> create_project_category(name="<value2>") -> optionally create_voucher(date, description, postings)
+- "Prosjekttype"/"project type"/"Buchhaltungsdimension" = project category dimension
+- Create each dimension value as a project category using create_project_category
+- If the task also asks to book a voucher/Beleg:
+  - Postings MUST balance: sum of all amounts = 0. Positive = debit, negative = credit.
+  - Use accountNumber in postings (the tool resolves to ID).
+  - Common counter-accounts: 1920=bank, 2400=payables, 2900=other debt
+  - Example: account 6340 debit 44500, account 1920 credit -44500
+- "verknüpft mit Dimensionswert"/"linked to dimension value" = for now just create the voucher with the correct postings (dimension linking is implicit via project categories)""",
+
     "create_ledger_voucher": """
-TASK: Ledger correction voucher (1 call)
--> create_voucher(date, description, postings=[{{accountNumber, amount}}])
+TASK: Ledger correction voucher / Book voucher (1 call)
+-> create_voucher(date, description, postings=[{{accountNumber, amount, projectCategoryName if applicable}}])
 - Postings MUST balance: sum of all amounts = 0
 - Positive = debit, negative = credit
 - Common accounts: 1920=bank, 1500=receivables, 2400=payables, 3000=revenue, 4000=cost of goods, 6300=leie, 7100=lonn, 2700=skattetrekk, 2770=arbeidsgiveravgift, 2900=gjeld""",
@@ -671,10 +690,7 @@ def create_agent(tools: list, task_type: Optional[str] = None) -> LlmAgent:
     """
     today = date.today().isoformat()
 
-    if task_type and task_type in TASK_INSTRUCTIONS:
-        instruction = (COMMON_PREAMBLE + TASK_INSTRUCTIONS[task_type]).format(today=today)
-    else:
-        instruction = SYSTEM_INSTRUCTION.format(today=today)
+    instruction = SYSTEM_INSTRUCTION.format(today=today)
 
     return LlmAgent(
         name="tripletex_accountant",

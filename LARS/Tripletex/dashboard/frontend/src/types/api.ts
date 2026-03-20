@@ -26,6 +26,7 @@ export interface EvalRun {
   max_possible: number | null
   checks_json: string | null
   error_message: string | null
+  source: string | null
   created_at: string
   completed_at: string | null
 }
@@ -89,6 +90,9 @@ export interface ApiLogEntry {
   status: number
   ok: boolean
   error?: string
+  request_body?: Record<string, unknown>
+  request_params?: Record<string, unknown>
+  response_body?: unknown
 }
 
 export interface ReplayResult {
@@ -165,6 +169,7 @@ export interface TaskLiveSummary {
   min_api_calls: number | null
   max_api_calls: number | null
   last_run: string | null
+  sample_prompt: string | null
 }
 
 export type Languages = Record<string, string>
@@ -176,6 +181,37 @@ export interface CoverageCategory {
   covered: string[]
   uncovered: string[]
 }
+
+// Auto-fix types
+export interface AutoFixScore {
+  correctness: number
+  tier_multiplier: number
+  base_score: number
+  efficiency_bonus: number
+  final_score: number
+  max_possible: number
+}
+
+export interface AutoFixParsedFix {
+  file: string
+  old: string
+  new: string
+  reason: string
+}
+
+export interface AutoFixApplyResult {
+  file: string
+  applied: boolean
+  reason?: string
+  error?: string
+}
+
+export type AutoFixEvent =
+  | { type: "phase"; phase: string; message: string }
+  | { type: "eval_result"; score: AutoFixScore; prompt: string; expected: Record<string, unknown>; language: string; api_calls: number; api_errors: number; elapsed: number; checks: FieldCheck[]; tool_calls: ToolCall[]; agent_response: string }
+  | { type: "fixes"; raw_text: string; parsed_fixes: AutoFixParsedFix[]; report: string }
+  | { type: "applied"; results: AutoFixApplyResult[] }
+  | { type: "error"; message: string }
 
 export interface SolveLog {
   id: number | null
@@ -194,3 +230,25 @@ export interface SolveLog {
   created_at: string
   source?: string
 }
+
+// Live activity event types (SSE from agent)
+export type LiveEvent =
+  | { type: "request_start"; request_id: string; prompt: string; files: string[]; source: string; ts: string }
+  | { type: "classify"; request_id: string; task_type: string; classification_level: string; tool_count: number; total_tools: number; tools: string[]; ts: string }
+  | { type: "agent_start"; request_id: string; ts: string }
+  | { type: "tool_call"; request_id: string; turn: number; tool: string; args: Record<string, unknown>; ts: string }
+  | { type: "tool_result"; request_id: string; turn: number; tool: string; ok: boolean; error?: string; ts: string }
+  | { type: "api_call"; request_id: string; method: string; url: string; status: number; ok: boolean; elapsed: number; error?: string; ts: string }
+  | { type: "text"; request_id: string; text: string; ts: string }
+  | { type: "request_done"; request_id: string; elapsed: number; api_calls: number; api_errors: number; response: string; task_type: string; turns: number; ts: string }
+  | { type: "request_error"; request_id: string; error: string; ts: string }
+  | { type: "error"; message: string; ts?: string }
+
+// Log evaluation types
+export type LogEvalEvent =
+  | { type: "phase"; phase: string; message: string }
+  | { type: "eval_verdict"; iteration: number; passed: boolean; reasoning: string; issues: string[]; tool_calls: ToolCall[]; api_log_summary: { method: string; status: number; url: string }[]; agent_response: string }
+  | { type: "fixes"; iteration: number; raw_text: string; parsed_fixes: AutoFixParsedFix[]; report: string }
+  | { type: "applied"; iteration: number; results: AutoFixApplyResult[] }
+  | { type: "rerun_result"; iteration: number; api_calls: number; api_errors: number; tool_count: number; agent_response: string }
+  | { type: "error"; message: string }

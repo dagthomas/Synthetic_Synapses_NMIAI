@@ -172,6 +172,59 @@ def pre_create_for_deletion(client: TripletexClient, task_def, expected: dict) -
             return 0
         return result.get("value", {}).get("id", 0)
 
+    if task_def.name == "reverse_payment":
+        import uuid as _uuid
+        # Create customer + product + order + invoice + payment, return invoice_id
+        cust_name = expected.get("customer_name", "Reversering Kunde AS")
+        cust = client.post("/customer", json={
+            "name": cust_name,
+            "email": f"rev-{_uuid.uuid4().hex[:8]}@example.com",
+            "isCustomer": True,
+        })
+        cust_id = cust.get("value", {}).get("id", 0)
+        if not cust_id:
+            log.error(f"Failed to pre-create customer for reverse_payment: {cust}")
+            return 0
+        prod = client.post("/product", json={
+            "name": "Reverseringsprodukt",
+            "priceExcludingVatCurrency": 1000,
+        })
+        prod_id = prod.get("value", {}).get("id", 0)
+        if not prod_id:
+            log.error(f"Failed to pre-create product for reverse_payment: {prod}")
+            return 0
+        order = client.post("/order", json={
+            "customer": {"id": cust_id},
+            "orderDate": "2026-03-01",
+            "deliveryDate": "2026-03-01",
+            "orderLines": [{"product": {"id": prod_id}, "count": 1}],
+        })
+        order_id = order.get("value", {}).get("id", 0)
+        if not order_id:
+            log.error(f"Failed to pre-create order for reverse_payment: {order}")
+            return 0
+        inv = client.post("/invoice", json={
+            "invoiceDate": "2026-03-01",
+            "invoiceDueDate": "2026-03-15",
+            "orders": [{"id": order_id}],
+        })
+        inv_id = inv.get("value", {}).get("id", 0)
+        if not inv_id:
+            log.error(f"Failed to pre-create invoice for reverse_payment: {inv}")
+            return 0
+        # Register payment to make it fully paid
+        inv_detail = client.get(f"/invoice/{inv_id}", params={"fields": "id,amount"})
+        amount = float(inv_detail.get("value", {}).get("amount", 1000))
+        pay = client.post("/invoice/payment", json={
+            "invoice": {"id": inv_id},
+            "amount": amount,
+            "paymentDate": "2026-03-02",
+        })
+        if "error" in pay:
+            log.error(f"Failed to register payment for reverse_payment: {pay}")
+            return 0
+        return inv_id
+
     if task_def.name == "delete_employee":
         import uuid as _uuid
         first = expected.get("firstName", "Temp")

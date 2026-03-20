@@ -50,7 +50,21 @@ def build_customer_tools(client: TripletexClient) -> dict:
                 addr["city"] = city
             body["postalAddress"] = addr
             body["physicalAddress"] = addr
-        return client.post("/customer", json=body)
+        result = client.post("/customer", json=body)
+
+        # Auto-recover: if duplicate (422), search by name and return existing
+        if result.get("error") and result.get("status_code") == 422:
+            params = {"fields": "id,name,email,organizationNumber,isCustomer,isSupplier"}
+            if organizationNumber:
+                params["organizationNumber"] = organizationNumber
+            else:
+                params["name"] = name
+            existing = client.get("/customer", params=params)
+            vals = existing.get("values", [])
+            if vals:
+                return {"value": vals[0], "_note": "Customer already existed, returning existing."}
+
+        return result
 
     def update_customer(customer_id: int, name: str = "", email: str = "", phoneNumber: str = "", version: int = -1) -> dict:
         """Update an existing customer's fields.

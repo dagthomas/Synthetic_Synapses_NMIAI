@@ -26,15 +26,15 @@ def _get_semaphore():
 
 
 async def run_eval(task_name: str, language: str, agent_url: str,
-                   base_url: str, session_token: str) -> int:
+                   base_url: str, session_token: str, source: str = "simulator") -> int:
     """Run a single eval (with concurrency limit). Returns run_id."""
     async with _get_semaphore():
         return await asyncio.to_thread(
-            _run_eval_sync, task_name, language, agent_url, base_url, session_token
+            _run_eval_sync, task_name, language, agent_url, base_url, session_token, source
         )
 
 
-def _run_eval_sync(task_name, language, agent_url, base_url, session_token) -> int:
+def _run_eval_sync(task_name, language, agent_url, base_url, session_token, source="simulator") -> int:
     """Synchronous eval — runs in thread pool."""
     import requests
     from tripletex_client import TripletexClient
@@ -62,6 +62,7 @@ def _run_eval_sync(task_name, language, agent_url, base_url, session_token) -> i
         prompt=generated["prompt"],
         expected_json=json.dumps(generated["expected"], ensure_ascii=False),
         agent_url=agent_url,
+        source=source,
     )
 
     try:

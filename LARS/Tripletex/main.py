@@ -3,7 +3,9 @@ import base64
 import json
 import logging
 import os
+import queue as _queue_mod
 import shutil
+import threading
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -14,6 +16,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from google.adk.runners import InMemoryRunner
 from google.genai import types as genai_types
 from pydantic import BaseModel
+from starlette.responses import StreamingResponse
 
 from agent import create_agent
 from config import AGENT_API_KEY, GOOGLE_API_KEY, MAX_AGENT_TURNS
@@ -47,10 +50,34 @@ def _ensure_dashboard():
     except Exception:
         _has_dashboard = False
 
+# ── Live Event Broadcasting ────────────────────────────────────────
+# Thread-safe pub/sub for SSE live activity streaming.
+# Each SSE subscriber gets its own queue; events are broadcast to all.
+_sse_subscribers: dict[str, _queue_mod.Queue] = {}
+_sse_lock = threading.Lock()
+
+
+def _emit_event(event: dict):
+    """Broadcast an event to all SSE subscribers (thread-safe)."""
+    event.setdefault("ts", datetime.now().isoformat())
+    with _sse_lock:
+        dead = []
+        for sub_id, q in _sse_subscribers.items():
+            try:
+                q.put_nowait(event)
+            except _queue_mod.Full:
+                dead.append(sub_id)
+        for d in dead:
+            del _sse_subscribers[d]
+
+
 # Set Google API key for ADK
 os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# Suppress noisy third-party loggers
+for _noisy in ("httpx", "httpcore", "urllib3", "google", "grpc", "asyncio"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)
@@ -91,6 +118,34 @@ class SolveRequest(BaseModel):
     }
 
 
+@app.get("/events")
+async def live_events():
+    """SSE endpoint: streams live agent activity events to subscribers."""
+    sub_id = str(uuid.uuid4())
+    q = _queue_mod.Queue(maxsize=500)
+    with _sse_lock:
+        _sse_subscribers[sub_id] = q
+
+    async def generate():
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                try:
+                    event = await loop.run_in_executor(
+                        None, lambda: q.get(timeout=15)
+                    )
+                    yield f"data: {json.dumps(event, default=str)}\n\n"
+                except _queue_mod.Empty:
+                    yield ": keepalive\n\n"
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
+        finally:
+            with _sse_lock:
+                _sse_subscribers.pop(sub_id, None)
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str = "") -> dict:
     """Shared agent execution logic. Returns full details dict."""
     import time as _time
@@ -101,6 +156,10 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
 
     # Per-request isolation
     request_id = str(uuid.uuid4())
+
+    # Emit: request started
+    _emit_event({"type": "request_start", "request_id": request_id,
+                 "prompt": prompt[:300], "files": [f.filename for f in files], "source": source})
 
     # Save payload only for live competition runs
     if save_payload:
@@ -129,16 +188,31 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
             file_names.append(f.filename)
             log.info(f"Saved attachment: {f.filename} ({len(data)} bytes)")
 
-    # Build per-request client and tools
-    client = TripletexClient(creds.base_url, creds.session_token)
+    # Build per-request client and tools (with live event callback for API calls)
+    def _on_api_call(entry):
+        _emit_event({"type": "api_call", "request_id": request_id,
+                     "method": entry.get("method", ""), "url": entry.get("url", ""),
+                     "status": entry.get("status", 0), "ok": entry.get("ok", False),
+                     "elapsed": entry.get("elapsed", 0),
+                     "error": entry.get("error", "")})
+
+    client = TripletexClient(creds.base_url, creds.session_token, on_api_call=_on_api_call)
 
     # Pre-warm caches in thread pool to avoid blocking the event loop
     await asyncio.get_running_loop().run_in_executor(None, client._prewarm_caches)
 
     all_tools_dict = build_tools_dict(client, files_dir=files_dir if files else "")
     task_type = classify_task(prompt)
-    tools = select_tools(task_type, all_tools_dict, has_files=bool(files), prompt=prompt)
-    log.info(f"[REQ {request_id[:8]}] Task type: {task_type or 'UNKNOWN'}, tools: {len(tools)}/{len(all_tools_dict)}")
+    tool_selection = select_tools(task_type, all_tools_dict, has_files=bool(files), prompt=prompt)
+    tools = tool_selection.tools
+    classification_level = tool_selection.classification_level
+    log.info(f"[REQ {request_id[:8]}] Task type: {task_type or 'UNKNOWN'}, classification: {classification_level}, tools: {len(tools)}/{len(all_tools_dict)}")
+
+    # Emit: classification result
+    _emit_event({"type": "classify", "request_id": request_id,
+                 "task_type": task_type or "", "classification_level": classification_level,
+                 "tool_count": len(tools), "total_tools": len(all_tools_dict),
+                 "tools": [t.__name__ if hasattr(t, '__name__') else str(t) for t in tools[:20]]})
 
     # Build agent and runner
     agent = create_agent(tools, task_type=task_type)
@@ -175,6 +249,10 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
     turn_count = 0
     tool_calls = []
     t_start = _time.time()
+
+    # Emit: agent starting
+    _emit_event({"type": "agent_start", "request_id": request_id})
+
     try:
         async for event in runner.run_async(
             user_id="tripletex",
@@ -186,6 +264,8 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                     if hasattr(part, "text") and part.text:
                         final_text = part.text
                         log.info(f"[AGENT] Text: {part.text[:500]}")
+                        _emit_event({"type": "text", "request_id": request_id,
+                                     "text": part.text[:500]})
                     if hasattr(part, "function_call") and part.function_call:
                         turn_count += 1
                         fc = part.function_call
@@ -195,6 +275,9 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                             "args": dict(fc.args) if fc.args else {},
                             "result": None,
                         })
+                        _emit_event({"type": "tool_call", "request_id": request_id,
+                                     "turn": turn_count, "tool": fc.name,
+                                     "args": dict(fc.args) if fc.args else {}})
                         if turn_count >= MAX_AGENT_TURNS:
                             log.warning(f"[AGENT] Turn limit reached ({MAX_AGENT_TURNS}), stopping")
                             break
@@ -203,20 +286,26 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                         resp_data = fr.response if fr.response else {}
                         resp_str = str(resp_data)[:500]
                         log.info(f"[AGENT] Tool result: {fr.name} -> {resp_str}")
+                        log.debug(f"[AGENT] Tool result FULL: {fr.name} -> {resp_data}")
+                        is_err = isinstance(resp_data, dict) and resp_data.get("error")
+                        _emit_event({"type": "tool_result", "request_id": request_id,
+                                     "turn": turn_count, "tool": fr.name,
+                                     "ok": not is_err,
+                                     "error": resp_data.get("message", "") if is_err else ""})
                         for tc in reversed(tool_calls):
                             if tc["tool"] == fr.name and tc["result"] is None:
-                                is_err = isinstance(resp_data, dict) and resp_data.get("error")
                                 tc["result"] = {
                                     "ok": not is_err,
-                                    "data": str(resp_data)[:1000],
+                                    "data": str(resp_data),
                                 }
                                 if is_err:
-                                    tc["result"]["error"] = resp_data.get("message", str(resp_data))[:500]
+                                    tc["result"]["error"] = resp_data.get("message", str(resp_data))
                                 break
             if turn_count >= MAX_AGENT_TURNS:
                 break
     except Exception as e:
         log.error(f"[AGENT] Error: {e}", exc_info=True)
+        _emit_event({"type": "request_error", "request_id": request_id, "error": str(e)})
 
     elapsed = _time.time() - t_start
     log.info(f"{'='*60}")
@@ -225,6 +314,12 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
     log.info(f"[REQ {request_id[:8]}] Agent turns: {turn_count}")
     log.info(f"[REQ {request_id[:8]}] Final response: {final_text}")
     log.info(f"{'='*60}")
+
+    # Emit: request done
+    _emit_event({"type": "request_done", "request_id": request_id,
+                 "elapsed": round(elapsed, 2), "api_calls": client._call_count,
+                 "api_errors": client._error_count, "response": (final_text or "")[:300],
+                 "task_type": task_type or "", "turns": turn_count})
 
     # Cleanup temp files
     if files_dir and os.path.exists(files_dir):
@@ -242,18 +337,19 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                 api_calls=client._call_count,
                 api_errors=client._error_count,
                 elapsed_seconds=elapsed,
-                agent_response=final_text[:2000] if final_text else "",
-                tool_calls_json=json.dumps(tool_calls[:50], default=str)[:10000],
-                api_log_json=json.dumps(client._call_log[:200], default=str)[:50000],
+                agent_response=final_text or "",
+                tool_calls_json=json.dumps(tool_calls, default=str),
+                api_log_json=json.dumps(client._call_log, default=str),
                 task_type=task_type or "",
                 tool_count=len(tools),
                 source=source,
+                classification_level=classification_level,
             )
         except Exception as e:
             log.warning(f"Failed to save solve_log: {e}")
 
     return {
-        "agent_response": final_text[:2000] if final_text else "",
+        "agent_response": final_text or "",
         "tool_calls": tool_calls,
         "api_calls": client._call_count,
         "api_errors": client._error_count,

@@ -25,13 +25,33 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  Radio,
+  FlaskConical,
 } from "lucide-react"
 
 type StatusFilter = "all" | "completed" | "failed" | "running"
+type SourceFilter = "all" | "simulator" | "competition"
 
-export function ResultsPanel() {
+function formatDateTime(iso: string | null): string {
+  if (!iso) return "-"
+  try {
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return "-"
+    return d.toLocaleString("nb-NO", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  } catch {
+    return "-"
+  }
+}
+
+export function ResultsPanel({ defaultSource = "all" }: { defaultSource?: SourceFilter }) {
   const [filter, setFilter] = useState<StatusFilter>("all")
-  const { data: runs, isLoading, mutate } = useRuns(filter, 5000)
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>(defaultSource)
+  const { data: runs, isLoading, mutate } = useRuns(filter, sourceFilter, 5000)
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
   const sortedRuns = useMemo(() => runs ?? [], [runs])
@@ -59,6 +79,12 @@ export function ResultsPanel() {
     { label: "Running", value: "running" },
   ]
 
+  const sourceFilters: { label: string; value: SourceFilter }[] = [
+    { label: "All", value: "all" },
+    { label: "Live", value: "competition" },
+    { label: "Simulator", value: "simulator" },
+  ]
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -72,6 +98,24 @@ export function ResultsPanel() {
     <div>
       <PageHeader title="Results">
         <div className="flex items-center gap-1.5">
+          {/* Source filter */}
+          <div className="flex items-center bg-muted/60 rounded-lg p-0.5">
+            {sourceFilters.map((f) => (
+              <button
+                key={f.value}
+                onClick={() => setSourceFilter(f.value)}
+                className={cn(
+                  "h-7 px-3 rounded-md text-[12px] font-medium transition-all duration-150",
+                  sourceFilter === f.value
+                    ? "bg-white text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          {/* Status filter */}
           <div className="flex items-center bg-muted/60 rounded-lg p-0.5">
             {filters.map((f) => (
               <button
@@ -120,11 +164,13 @@ export function ResultsPanel() {
                 <TableRow className="text-[11px] bg-muted/10">
                   <TableHead className="w-10 font-semibold">#</TableHead>
                   <TableHead className="font-semibold">Task</TableHead>
+                  <TableHead className="w-16 font-semibold">Source</TableHead>
                   <TableHead className="w-12 font-semibold">Lang</TableHead>
                   <TableHead className="w-24 font-semibold">Correct</TableHead>
                   <TableHead className="w-20 font-semibold">Score</TableHead>
                   <TableHead className="w-16 font-semibold">API</TableHead>
                   <TableHead className="w-16 font-semibold">Time</TableHead>
+                  <TableHead className="w-28 font-semibold">Date</TableHead>
                   <TableHead className="w-24 font-semibold">Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -204,6 +250,9 @@ function RunRow({
         </TableCell>
         <TableCell className="py-2.5 font-medium">{r.task_name}</TableCell>
         <TableCell className="py-2.5">
+          <SourceBadge source={r.source} />
+        </TableCell>
+        <TableCell className="py-2.5">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             {r.language || "-"}
           </span>
@@ -228,13 +277,16 @@ function RunRow({
         <TableCell className="py-2.5 tabular-nums text-muted-foreground">
           {r.elapsed_seconds ? `${r.elapsed_seconds.toFixed(1)}s` : "-"}
         </TableCell>
+        <TableCell className="py-2.5 tabular-nums text-muted-foreground text-[11px]">
+          {formatDateTime(r.created_at)}
+        </TableCell>
         <TableCell className="py-2.5">
           <StatusBadge status={r.status} />
         </TableCell>
       </TableRow>
       {expanded && (
         <TableRow>
-          <TableCell colSpan={8} className="bg-muted/20 p-0">
+          <TableCell colSpan={10} className="bg-muted/20 p-0">
             <div className="p-4 animate-fade-in-up">
               <RunDetail run={r} />
             </div>
@@ -242,6 +294,24 @@ function RunRow({
         </TableRow>
       )}
     </>
+  )
+}
+
+function SourceBadge({ source }: { source: string | null }) {
+  const s = source || "simulator"
+  if (s === "competition") {
+    return (
+      <Badge variant="outline" className="text-[10px] font-semibold bg-violet-50 text-violet-700 border-violet-200">
+        <Radio className="h-2.5 w-2.5 mr-1" />
+        live
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="outline" className="text-[10px] font-semibold bg-slate-50 text-slate-600 border-slate-200">
+      <FlaskConical className="h-2.5 w-2.5 mr-1" />
+      sim
+    </Badge>
   )
 }
 
@@ -282,7 +352,9 @@ function RunDetail({ run: r }: { run: EvalRun }) {
         <span className="h-2 w-2 rounded-full bg-red-500/80" />
         <span className="h-2 w-2 rounded-full bg-amber-500/80" />
         <span className="h-2 w-2 rounded-full bg-green-500/80" />
-        <span className="ml-3 text-[10px] text-white/25 font-mono">run #{r.id}</span>
+        <span className="ml-3 text-[10px] text-white/25 font-mono">
+          run #{r.id} | {r.source || "simulator"} | {r.created_at ? new Date(r.created_at).toLocaleString("nb-NO") : ""}
+        </span>
       </div>
       <pre className="p-4 text-[11px] font-mono whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto text-slate-300">
         {r.error_message && (

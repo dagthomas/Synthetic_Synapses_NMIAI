@@ -44,7 +44,21 @@ def build_supplier_tools(client: TripletexClient) -> dict:
                 addr["city"] = city
             body["postalAddress"] = addr
             body["physicalAddress"] = addr
-        return client.post("/supplier", json=body)
+        result = client.post("/supplier", json=body)
+
+        # Auto-recover: if duplicate (422), search by name and return existing
+        if result.get("error") and result.get("status_code") == 422:
+            params = {"fields": "id,name,email,organizationNumber,phoneNumber"}
+            if organizationNumber:
+                params["organizationNumber"] = organizationNumber
+            else:
+                params["name"] = name
+            existing = client.get("/supplier", params=params)
+            vals = existing.get("values", [])
+            if vals:
+                return {"value": vals[0], "_note": "Supplier already existed, returning existing."}
+
+        return result
 
     def search_suppliers(name: str = "", organizationNumber: str = "") -> dict:
         """Search for suppliers by name or org number.

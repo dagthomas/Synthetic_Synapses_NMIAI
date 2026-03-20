@@ -23,8 +23,8 @@ import {
   ChevronRight,
 } from "lucide-react"
 
-export function ErrorsPanel() {
-  const { data: runs, isLoading, mutate } = useRuns("all", 5000)
+export function ErrorsPanel({ source = "all" }: { source?: "simulator" | "competition" | "all" }) {
+  const { data: runs, isLoading, mutate } = useRuns("all", source, 5000)
   const [copied, setCopied] = useState(false)
 
   const problems = (runs ?? []).filter(

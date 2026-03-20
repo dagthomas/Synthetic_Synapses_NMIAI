@@ -90,8 +90,21 @@ def list_languages():
 
 @app.get("/api/runs")
 def list_runs(task: str = "", status: str = "", language: str = "",
-              limit: int = Query(100, le=500)):
-    return db.get_runs(task=task, status=status, language=language, limit=limit)
+              source: str = "", limit: int = Query(100, le=500)):
+    # If filtering to simulator only, just return eval_runs
+    if source == "simulator":
+        return db.get_runs(task=task, status=status, language=language, source=source, limit=limit)
+
+    # If filtering to competition only, return solve_logs mapped to EvalRun shape
+    if source == "competition":
+        return db.get_solve_logs_as_runs(source="competition", limit=limit)
+
+    # "all" or empty: merge both tables, sorted by created_at desc
+    eval_runs = db.get_runs(task=task, status=status, language=language, limit=limit)
+    live_runs = db.get_solve_logs_as_runs(source="competition", limit=limit)
+    merged = eval_runs + live_runs
+    merged.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return merged[:limit]
 
 
 @app.get("/api/eval/status/{run_id}")
@@ -144,7 +157,7 @@ class BatchRequest(BaseModel):
 def _get_credentials():
     base_url = os.environ.get("TRIPLETEX_BASE_URL", "")
     token = os.environ.get("TRIPLETEX_SESSION_TOKEN", "")
-    agent_url = os.environ.get("EVAL_AGENT_URL", "http://localhost:8000")
+    agent_url = os.environ.get("EVAL_AGENT_URL", "http://localhost:8005")
     return base_url, token, agent_url
 
 
@@ -327,6 +340,259 @@ async def replay_payloads(req: ReplayRequest):
     return results
 
 
+# ── API: Auto Fix ──────────────────────────────────────────────────
+
+class AutoFixRequest(BaseModel):
+    task_name: str
+    language: str = ""
+    auto_apply: bool = False
+
+
+@app.post("/api/auto-fix/run")
+async def auto_fix_run(req: AutoFixRequest):
+    """SSE stream: run eval, analyze errors, suggest fixes."""
+    base_url, token, agent_url = _get_credentials()
+    if not base_url or not token:
+        return JSONResponse(
+            {"error": "Set TRIPLETEX_BASE_URL and TRIPLETEX_SESSION_TOKEN env vars"},
+            status_code=400,
+        )
+    if req.task_name not in ALL_TASKS:
+        return JSONResponse({"error": f"Unknown task: {req.task_name}"}, 400)
+
+    def _generate():
+        import time as _time
+        from auto_fixer import (
+            run_eval_with_logs, build_error_report,
+            get_fix_suggestions, parse_fixes, apply_fixes,
+            _find_relevant_sources,
+        )
+
+        # Phase 1: Generating task
+        yield f"data: {json.dumps({'type': 'phase', 'phase': 'generating', 'message': 'Generating task prompt...'})}\n\n"
+
+        try:
+            result = run_eval_with_logs(req.task_name, req.language, agent_url)
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        score = result["score"]
+        verification = result["verification"]
+        checks = verification.get("checks", [])
+        failed_checks = [c for c in checks if not c["passed"]]
+
+        # Phase 2: Eval result
+        yield f"data: {json.dumps({'type': 'eval_result', 'score': score, 'prompt': result['prompt'], 'expected': result['expected'], 'language': result['language'], 'api_calls': result['api_calls'], 'api_errors': result['api_errors'], 'elapsed': round(result['elapsed'], 1), 'checks': checks, 'tool_calls': result.get('tool_calls', [])[:20], 'agent_response': result.get('agent_result', {}).get('agent_response', '')[:500]}, default=str)}\n\n"
+
+        # If perfect, no fixes needed
+        if score["correctness"] == 1.0:
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'done', 'message': 'All checks passed! No fixes needed.'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        # Phase 3: Analyzing errors
+        yield f"data: {json.dumps({'type': 'phase', 'phase': 'analyzing', 'message': f'Analyzing {len(failed_checks)} failed checks...'})}\n\n"
+
+        try:
+            report = build_error_report(result)
+            sources = _find_relevant_sources(result.get("tool_calls", []), req.task_name)
+            fix_text = get_fix_suggestions(report, sources)
+            fixes = parse_fixes(fix_text)
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Analysis failed: {e}'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        # Phase 4: Fix suggestions
+        yield f"data: {json.dumps({'type': 'fixes', 'raw_text': fix_text, 'parsed_fixes': fixes, 'report': report})}\n\n"
+
+        # Phase 5: Auto-apply if requested
+        if req.auto_apply and fixes:
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'applying', 'message': f'Applying {len(fixes)} fix(es)...'})}\n\n"
+            try:
+                import os as _os
+                base_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+                apply_results = apply_fixes(fixes, base_dir)
+                yield f"data: {json.dumps({'type': 'applied', 'results': apply_results})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Apply failed: {e}'})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'phase', 'phase': 'done', 'message': 'Analysis complete.'})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
+@app.post("/api/auto-fix/apply")
+async def auto_fix_apply(fixes: list[dict]):
+    """Apply parsed fix suggestions to source files."""
+    from auto_fixer import apply_fixes
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    results = await asyncio.to_thread(apply_fixes, fixes, base_dir)
+    return {"ok": True, "results": results}
+
+
+# ── API: Log Evaluation ───────────────────────────────────────────
+
+class LogEvalRequest(BaseModel):
+    solve_log_id: int
+    max_iterations: int = Field(5, ge=1, le=10)
+    auto_apply: bool = True
+
+
+@app.post("/api/logs/evaluate")
+async def evaluate_log(req: LogEvalRequest):
+    """SSE stream: LLM-evaluate a solve log, auto-fix + rerun loop until pass."""
+    base_url, token, agent_url = _get_credentials()
+    if not base_url or not token:
+        return JSONResponse(
+            {"error": "Set TRIPLETEX_BASE_URL and TRIPLETEX_SESSION_TOKEN env vars"},
+            status_code=400,
+        )
+
+    # Fetch the solve log
+    solve_log = db.get_solve_log_by_id(req.solve_log_id)
+    if not solve_log:
+        return JSONResponse({"error": f"Solve log {req.solve_log_id} not found"}, 404)
+
+    def _generate():
+        import time as _time
+        from auto_fixer import (
+            llm_evaluate_logs, build_error_report, get_fix_suggestions,
+            parse_fixes, apply_fixes, _find_relevant_sources,
+        )
+
+        prompt = solve_log["prompt"]
+        tool_calls = json.loads(solve_log.get("tool_calls_json") or "[]")
+        api_log = json.loads(solve_log.get("api_log_json") or "[]")
+        agent_response = solve_log.get("agent_response", "")
+        task_type = solve_log.get("task_type", "unknown")
+
+        for iteration in range(1, req.max_iterations + 1):
+            # Phase: evaluating
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'evaluating', 'message': f'LLM evaluating logs (iteration {iteration}/{req.max_iterations})...'})}\n\n"
+
+            try:
+                verdict = llm_evaluate_logs(prompt, tool_calls, api_log, agent_response)
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'LLM evaluation failed: {e}'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            yield f"data: {json.dumps({'type': 'eval_verdict', 'iteration': iteration, 'passed': verdict['passed'], 'reasoning': verdict['reasoning'], 'issues': verdict['issues'], 'tool_calls': tool_calls[:20], 'api_log_summary': [{'method': e.get('method'), 'status': e.get('status'), 'url': e.get('url', '')[-80:]} for e in api_log[:30]], 'agent_response': agent_response[:500]})}\n\n"
+
+            # If passed, we're done
+            if verdict["passed"]:
+                yield f"data: {json.dumps({'type': 'phase', 'phase': 'done', 'message': f'PASS — LLM confirmed logs match prompt (iteration {iteration}).'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            # If last iteration, report failure
+            if iteration == req.max_iterations:
+                yield f"data: {json.dumps({'type': 'phase', 'phase': 'done', 'message': f'FAIL — Max iterations ({req.max_iterations}) reached. Issues remain.'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            # Phase: analyzing for fixes
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'analyzing', 'message': 'Analyzing failures and generating code fixes...'})}\n\n"
+
+            try:
+                # Build an error-report-like context from the LLM verdict
+                report_lines = [
+                    f"=== LLM EVAL REPORT: {task_type} (iteration {iteration}) ===",
+                    f"VERDICT: FAIL",
+                    f"REASONING: {verdict['reasoning']}",
+                    f"ISSUES: {'; '.join(verdict['issues'])}",
+                    "",
+                    f"PROMPT: {prompt}",
+                    "",
+                    "=== TOOL CALLS ===",
+                ]
+                for i, tc in enumerate(tool_calls, 1):
+                    ok = tc.get("result", {}).get("ok", "?")
+                    report_lines.append(f"  #{i} [{'OK' if ok else 'ERROR'}] {tc.get('tool', '?')}({json.dumps(tc.get('args', {}), ensure_ascii=False)[:200]})")
+                    if tc.get("result") and not tc.get("result", {}).get("ok"):
+                        report_lines.append(f"       Error: {tc.get('result', {}).get('error', '')[:300]}")
+                report_lines.append("")
+                report_lines.append(f"AGENT RESPONSE: {agent_response[:500]}")
+                report = "\n".join(report_lines)
+
+                sources = _find_relevant_sources(tool_calls, task_type)
+                fix_text = get_fix_suggestions(report, sources)
+                fixes = parse_fixes(fix_text)
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Analysis failed: {e}'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            yield f"data: {json.dumps({'type': 'fixes', 'iteration': iteration, 'raw_text': fix_text, 'parsed_fixes': fixes, 'report': report})}\n\n"
+
+            if not fixes:
+                yield f"data: {json.dumps({'type': 'phase', 'phase': 'done', 'message': f'No actionable fixes found. Stopping after iteration {iteration}.'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            # Phase: applying fixes
+            if req.auto_apply:
+                yield f"data: {json.dumps({'type': 'phase', 'phase': 'applying', 'message': f'Applying {len(fixes)} fix(es)...'})}\n\n"
+                try:
+                    import os as _os
+                    base_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+                    apply_results = apply_fixes(fixes, base_dir)
+                    yield f"data: {json.dumps({'type': 'applied', 'iteration': iteration, 'results': apply_results})}\n\n"
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Apply failed: {e}'})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+
+            # Phase: rerunning
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'rerunning', 'message': f'Re-running prompt via /solve-debug (iteration {iteration + 1})...'})}\n\n"
+
+            try:
+                import requests as _requests
+                payload = {
+                    "prompt": prompt,
+                    "files": [],
+                    "tripletex_credentials": {
+                        "base_url": base_url,
+                        "session_token": token,
+                    },
+                }
+                headers = {"Content-Type": "application/json"}
+                api_key = os.environ.get("AGENT_API_KEY", "")
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+
+                resp = _requests.post(
+                    f"{agent_url}/solve-debug",
+                    params={"source": "log_eval"},
+                    json=payload, headers=headers, timeout=300,
+                )
+
+                if resp.status_code == 200:
+                    result = resp.json()
+                    tool_calls = result.get("tool_calls", [])
+                    api_log = result.get("api_log", [])
+                    agent_response = result.get("agent_response", "")
+                else:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Agent returned {resp.status_code}: {resp.text[:300]}'})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+
+                yield f"data: {json.dumps({'type': 'rerun_result', 'iteration': iteration + 1, 'api_calls': result.get('api_calls', 0), 'api_errors': result.get('api_errors', 0), 'tool_count': len(tool_calls), 'agent_response': agent_response[:500]})}\n\n"
+
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Rerun failed: {e}'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
 # ── API: Test Tools ────────────────────────────────────────────────
 
 @app.post("/api/test-tools")
@@ -381,13 +647,17 @@ def list_tools():
 
 @app.get("/api/tasks/live-summary")
 def tasks_live_summary():
-    """Return all task definitions enriched with live competition solve_log stats."""
+    """Return all task definitions enriched with live competition solve_log stats.
+    Also includes task types discovered from competition that aren't in ALL_TASKS."""
     # Get live run stats from solve_logs (source='competition')
     live_stats = db.get_live_task_stats()
     live_by_type = {s["task_type"]: s for s in live_stats}
+    sample_prompts = db.get_sample_prompts_by_task()
 
     result = []
+    seen_types = set()
     for name, td in ALL_TASKS.items():
+        seen_types.add(name)
         entry = {
             "name": name,
             "tier": td.tier,
@@ -404,8 +674,38 @@ def tasks_live_summary():
         entry["min_api_calls"] = stats.get("min_api_calls")
         entry["max_api_calls"] = stats.get("max_api_calls")
         entry["last_run"] = stats.get("last_run")
+        entry["sample_prompt"] = sample_prompts.get(name)
         result.append(entry)
+
+    # Include task types discovered from competition but not in ALL_TASKS
+    for task_type, stats in live_by_type.items():
+        if task_type in seen_types:
+            continue
+        result.append({
+            "name": task_type,
+            "tier": 0,  # unknown tier
+            "description": f"Discovered from competition ({stats.get('run_count', 0)} runs)",
+            "baseline_calls": 0,
+            "field_count": 0,
+            "max_points": 0,
+            "live_runs": stats.get("run_count", 0),
+            "avg_api_calls": stats.get("avg_api_calls"),
+            "avg_api_errors": stats.get("avg_api_errors"),
+            "avg_elapsed": stats.get("avg_elapsed"),
+            "min_api_calls": stats.get("min_api_calls"),
+            "max_api_calls": stats.get("max_api_calls"),
+            "last_run": stats.get("last_run"),
+            "sample_prompt": sample_prompts.get(task_type),
+        })
     return result
+
+
+# ── API: Classification Stats ──────────────────────────────────────
+
+@app.get("/api/classification-stats")
+def classification_stats():
+    """Return classification level breakdown from solve_logs."""
+    return db.get_classification_stats()
 
 
 # ── API: Solve Logs ─────────────────────────────────────────────────
@@ -445,6 +745,53 @@ def list_logs(limit: int = Query(50, le=200), source: str = Query("", descriptio
     seen_ids = {l["request_id"] for l in db_logs if l.get("request_id")}
     merged = db_logs + [fl for fl in file_logs if fl["request_id"] not in seen_ids]
     return merged[:limit]
+
+
+@app.get("/api/logs/{log_id}/json")
+def export_log_json(log_id: int):
+    """Return full solve log as JSON for copy-paste debugging."""
+    row = db.get_solve_log_by_id(log_id)
+    if not row:
+        return JSONResponse({"error": "Not found"}, 404)
+
+    # Parse JSON fields into objects for clean output
+    tool_calls = []
+    try:
+        tool_calls = json.loads(row.get("tool_calls_json") or "[]")
+    except Exception:
+        pass
+
+    api_log = []
+    try:
+        api_log = json.loads(row.get("api_log_json") or "[]")
+    except Exception:
+        pass
+
+    files = []
+    try:
+        files = json.loads(row.get("files_json") or "[]")
+    except Exception:
+        pass
+
+    return {
+        "request_id": row.get("request_id"),
+        "created_at": row.get("created_at"),
+        "task_type": row.get("task_type"),
+        "classification_level": row.get("classification_level"),
+        "source": row.get("source"),
+        "prompt": row.get("prompt"),
+        "files": files,
+        "base_url": row.get("base_url"),
+        "agent_response": row.get("agent_response"),
+        "tool_calls": tool_calls,
+        "api_log": api_log,
+        "metrics": {
+            "api_calls": row.get("api_calls", 0),
+            "api_errors": row.get("api_errors", 0),
+            "elapsed_seconds": row.get("elapsed_seconds", 0),
+            "tool_count": row.get("tool_count", 0),
+        },
+    }
 
 
 @app.delete("/api/logs")
@@ -756,6 +1103,26 @@ def _match_any(ref_cat: str, seen: set) -> bool:
         if mapped == ref_cat:
             return True
     return False
+
+
+# ── API: Agent Live Events (SSE proxy) ────────────────────────────
+
+@app.get("/api/agent/events")
+async def proxy_agent_events():
+    """Proxy SSE stream from the agent server's /events endpoint."""
+    agent_url = os.environ.get("EVAL_AGENT_URL", "http://localhost:8005")
+
+    async def generate():
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("GET", f"{agent_url}/events") as response:
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Agent connection failed: {e}'})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # ── SPA catch-all ─────────────────────────────────────────────────

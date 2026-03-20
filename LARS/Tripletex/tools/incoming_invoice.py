@@ -5,12 +5,12 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
     """Build incoming invoice (inngaaende faktura) tools."""
 
     def create_incoming_invoice(
-        invoiceDate: str,
         supplierId: int,
         invoiceNumber: str = "",
         amountIncludingVat: float = 0.0,
         expenseAccountNumber: int = 0,
         vatPercentage: int = 25,
+        invoiceDate: str = "", # Make invoiceDate optional with a default empty string
     ) -> dict:
         """Create an incoming/supplier invoice (leverandoerfaktura) with VAT postings.
 
@@ -19,16 +19,18 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
         - Credit on account 2400 (leverandoergjeld) linked to the supplier
 
         Args:
-            invoiceDate: Invoice date YYYY-MM-DD.
             supplierId: Supplier ID (from create_supplier).
             invoiceNumber: Vendor's invoice number (e.g. INV-2026-3749).
             amountIncludingVat: Total invoice amount INCLUDING VAT.
             expenseAccountNumber: Expense account number (e.g. 6590 for office services).
             vatPercentage: VAT rate: 25 (high/hoey), 15 (medium), 12 (low), or 0 (none). Default 25.
+            invoiceDate: Invoice date YYYY-MM-DD. REQUIRED.
 
         Returns:
             Created voucher with postings, or error.
         """
+        if not invoiceDate: # Add explicit check for invoiceDate
+            return {"error": True, "message": "invoiceDate is required (YYYY-MM-DD). It must be provided in the prompt."}
         if not expenseAccountNumber:
             return {"error": True, "message": "expenseAccountNumber is required (e.g. 6590 for office services)"}
         if not amountIncludingVat:

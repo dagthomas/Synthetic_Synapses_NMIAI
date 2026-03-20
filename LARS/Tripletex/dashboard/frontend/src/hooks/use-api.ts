@@ -24,10 +24,10 @@ export function useLanguages() {
   })
 }
 
-export function useRuns(filter: string = "all", refreshInterval = 5000) {
+export function useRuns(filter: string = "all", source: string = "all", refreshInterval = 5000) {
   return useSWR(
-    ["runs", filter],
-    () => fetchRuns({ status: filter, limit: 200 }),
+    ["runs", filter, source],
+    () => fetchRuns({ status: filter, source, limit: 200 }),
     { refreshInterval, dedupingInterval: 2000 }
   )
 }
