@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Grocery Bot Replay Viewer</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <h1>Replay Viewer</h1>
+        <div class="filters">
+          <label>
+            Difficulty
+            <select id="difficulty-filter">
+              <option value="">All</option>
+              <option value="easy">easy</option>
+              <option value="medium">medium</option>
+              <option value="hard">hard</option>
+              <option value="expert">expert</option>
+              <option value="nightmare">nightmare</option>
+            </select>
+          </label>
+          <label>
+            Profile
+            <input id="profile-filter" type="text" placeholder="profile name">
+          </label>
+          <button id="refresh-runs">Refresh runs</button>
+        </div>
+        <div id="run-list" class="run-list"></div>
+      </aside>
+
+      <main class="main-panel">
+        <section class="toolbar">
+          <div id="run-header" class="run-header">Select a run</div>
+          <div class="controls">
+            <button id="play-toggle" disabled>Play</button>
+            <button id="prev-tick" disabled>Prev</button>
+            <button id="next-tick" disabled>Next</button>
+            <label>
+              Tick
+              <input id="tick-slider" type="range" min="0" max="0" value="0" disabled>
+            </label>
+            <span id="tick-label">0 / 0</span>
+          </div>
+          <div class="jump-controls">
+            <button data-jump="score">Score</button>
+            <button data-jump="pickup">Pickup</button>
+            <button data-jump="override">Override</button>
+            <button data-jump="mode">Mode</button>
+            <button data-jump="stagnation">Stall</button>
+          </div>
+          <div class="overlay-controls">
+            <label><input type="checkbox" id="zone-toggle"> Zones</label>
+            <label><input type="checkbox" id="roads-toggle"> Roads</label>
+          </div>
+        </section>
+
+        <section class="content">
+          <div class="board-panel">
+            <div id="board" class="board"></div>
+            <div class="board-insights">
+              <section class="summary-box">
+                <div class="board-section-header">
+                  <h2>Team Queue</h2>
+                  <div id="rotation-view" class="rotation-view"></div>
+                </div>
+                <div id="team-legend-view" class="team-legend-view"></div>
+                <div id="queue-view" class="queue-view"></div>
+              </section>
+            </div>
+          </div>
+
+          <div class="key-info-panel">
+            <section class="summary-box">
+              <h2>Orders</h2>
+              <div id="orders-view"></div>
+            </section>
+            <section class="summary-box">
+              <h2>Bots</h2>
+              <div id="bots-view"></div>
+            </section>
+          </div>
+
+          <div class="debug-panel">
+            <button id="debug-toggle" class="debug-toggle-btn">Show debug</button>
+            <div id="debug-content" class="debug-content" hidden>
+              <section class="summary-box">
+                <h2>Run</h2>
+                <pre id="summary-view"></pre>
+              </section>
+              <section class="summary-box">
+                <h2>Tick</h2>
+                <pre id="tick-view"></pre>
+              </section>
+              <section class="summary-box">
+                <h2>Planner</h2>
+                <pre id="planner-view"></pre>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

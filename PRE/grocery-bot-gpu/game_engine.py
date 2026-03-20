@@ -484,17 +484,21 @@ def step(state: GameState, actions: list[tuple[int, int]], all_orders: list[Orde
                                 state.orders.append(new_order)
                                 state.next_order_idx += 1
 
-                            # Auto-delivery: ALL bots' inventories are checked
-                            # against the new active order. Per official docs:
-                            # "Any items in bot inventories that match the new
-                            # active order are auto-delivered"
+                            # Auto-delivery: for each bot AT a dropoff zone,
+                            # check ALL items in their inventory against the
+                            # new active order and auto-deliver matching ones.
+                            # (Live server confirmed DZ-only, 2026-03-11 + 2026-03-13)
                             active = state.get_active_order()
                             if active:
+                                drop_set = set(tuple(dz) for dz in ms.drop_off_zones)
                                 for b2 in range(num_bots):
-                                    d = state.bot_inv_remove_matching(b2, active)
-                                    score_delta += d
-                                    state.score += d
-                                    state.items_delivered += d
+                                    b2_pos = (int(state.bot_positions[b2, 0]),
+                                              int(state.bot_positions[b2, 1]))
+                                    if b2_pos in drop_set:
+                                        d = state.bot_inv_remove_matching(b2, active)
+                                        score_delta += d
+                                        state.score += d
+                                        state.items_delivered += d
 
     state.round += 1
     return score_delta

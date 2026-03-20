@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e *)",
+      "Bash(node -e ':*)",
+      "Bash(python3 -c *)",
+      "Bash(node tools/grocery-bot/index.mjs *)",
+      "Bash(node tools/grocery-bot/extract-oracle.mjs *)",
+      "Bash(node tools/grocery-bot/generate-script.mjs *)",
+      "Bash(node tools/grocery-bot/optimize-oracle-script.mjs *)",
+      "Bash(node tools/grocery-bot/optimize-oracle-script-batch.mjs *)",
+      "Bash(node tools/grocery-bot/compress-oracle-script.mjs *)",
+      "Bash(node tools/grocery-bot/diff-replay-transition.mjs *)",
+      "Bash(node tools/grocery-bot/tune-oracle-script.mjs *)",
+      "Bash(node --test tools/grocery-bot/test/*)",
+      "Bash(npm run grocery-bot:viewer)",
+      "Bash(ls tools/grocery-bot/*)",
+      "Bash(wc *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/magnus/prog/nm-i-ai/.claude/hooks/post-edit-test.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

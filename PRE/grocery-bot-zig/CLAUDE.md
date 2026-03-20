@@ -128,12 +128,14 @@ Per-bot priority cascade each round:
 - Same `item_id` can be picked up repeatedly from the same shelf tile.
 - No scarcity — optimize purely for shortest round-trip loops.
 
-### Drop-Off Chain Reaction (CRITICAL)
+### Drop-Off Chain Reaction (DZ-ONLY — TRIPLE-CONFIRMED LIVE 2026-03-10)
 - When the active order completes via drop_off, the preview order becomes active **immediately**.
-- **Only bots AT a dropoff zone** get their inventories re-checked against the new active order. Bots elsewhere **keep their items** (DZ-only auto-delivery, empirically confirmed).
-- This can **cascade**: if auto-delivered items at DZ complete the new order, the next preview also activates, and DZ bots' inventories are re-checked again.
-- **Exploit**: Stack bots with future-order items AT the dropoff zone before triggering the cascade. When any bot completes the active order, all other DZ bots' matching items auto-deliver.
-- **MCP docs are WRONG** about "any items in bot inventories" — only DZ bots participate.
+- **ONLY bots physically AT a dropoff zone** get their inventories re-checked against the new active order. Bots elsewhere **keep their items**.
+- Each DZ bot loses inventory items matching the current AND cascading orders in sequence.
+- This can **cascade**: if auto-delivered items at DZ complete the new order, the next preview activates, and DZ bots are re-checked again.
+- **Nightmare has 3 DZ zones** → place up to 3 bots (one per DZ cell) with known future order items before triggering.
+- **MCP docs are WRONG** about "any items in bot inventories" — tested all-bots sim (1047pts) vs live (279pts, zero cascades). NEVER try all-bots again.
+- **Throughput > cascade**: Leader at 1032 achieves ~100 orders in 500 rounds (5 rnd/order) via fast delivery, not deep cascades.
 
 ### Pickup Rules
 - Bot must be **adjacent** (Manhattan distance 1) to the shelf containing the item

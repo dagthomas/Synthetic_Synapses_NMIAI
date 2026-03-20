@@ -78,10 +78,16 @@ class NightmarePathfinder:
                  urgency_order: list[int],
                  goal_types: dict[int, str] | None = None,
                  round_number: int = 0) -> dict[int, int]:
-        """Plan actions: incremental claiming + recursive push chains."""
+        """Plan actions: incremental claiming + recursive push chains.
+
+        Uses edge reservations (#2) to prevent head-on swap collisions
+        via O(1) set lookup instead of O(n) planned_dest scan.
+        """
         claims: dict[tuple[int, int], int] = {}
         actions: dict[int, int] = {}
         planned_dest: dict[int, tuple[int, int]] = {}
+        # Edge reservations (#2): set of (from, to) moves already planned
+        edge_reservations: set[tuple[tuple[int, int], tuple[int, int]]] = set()
         gt = goal_types or {}
 
         # Build priority rank from urgency_order
@@ -118,33 +124,35 @@ class NightmarePathfinder:
                     claims[dest] = bid
                     actions[bid] = act
                     planned_dest[bid] = dest
+                    edge_reservations.add((pos, dest))
                     assigned = True
                     break
                 if dest not in claims:
-                    # Swap detection
-                    swap = False
-                    for ob, od in planned_dest.items():
-                        if ob != bid and od == pos and bot_positions.get(ob) == dest:
-                            swap = True
-                            break
-                    if not swap:
-                        claims[dest] = bid
-                        actions[bid] = act
-                        planned_dest[bid] = dest
-                        assigned = True
-                        break
+                    # Edge reservation check: prevent head-on swap (A→B while B→A)
+                    if (dest, pos) in edge_reservations:
+                        continue
+                    claims[dest] = bid
+                    actions[bid] = act
+                    planned_dest[bid] = dest
+                    edge_reservations.add((pos, dest))
+                    assigned = True
+                    break
                 else:
+                    # Edge reservation check before pushing
+                    if (dest, pos) in edge_reservations:
+                        continue
                     # Dest claimed — try recursive push
                     blocker = claims[dest]
                     pushed = self._try_push(
                         blocker, dest, pos, 1, max_depth,
                         claims, actions, planned_dest,
                         bot_positions, priority_rank, goals, gt,
-                        round_number)
+                        round_number, edge_reservations)
                     if pushed:
                         claims[dest] = bid
                         actions[bid] = act
                         planned_dest[bid] = dest
+                        edge_reservations.add((pos, dest))
                         assigned = True
                         break
 
@@ -166,28 +174,29 @@ class NightmarePathfinder:
                   priority_rank: dict[int, int],
                   goals: dict[int, tuple[int, int]],
                   goal_types: dict[int, str],
-                  round_number: int) -> bool:
+                  round_number: int,
+                  edge_reservations: set[tuple[tuple[int, int], tuple[int, int]]] | None = None,
+                  ) -> bool:
         """Try to recursively push a blocker out of its position.
 
         Returns True if blocker successfully moved and freed its cell.
+        Uses edge reservations (#2) to prevent head-on swaps.
         """
         if depth > max_depth:
             return False
+        if edge_reservations is None:
+            edge_reservations = set()
 
         # Only push bots that are waiting at their current position
         if blocker not in actions:
-            # Unplanned bot — plan it now via recursive push
             actual_pos = bot_positions.get(blocker)
             if actual_pos != blocker_pos:
                 return False
         elif actions[blocker] != ACT_WAIT:
-            # Bot is moving somewhere — can't push
             return False
         elif bot_positions.get(blocker) != blocker_pos:
-            # Bot isn't actually at this position
             return False
         else:
-            # Bot is waiting — check if pushable type
             bgt = goal_types.get(blocker, 'park')
             if blocker_pos != self.spawn and bgt not in ('park', 'flee', 'stage'):
                 return False
@@ -196,35 +205,28 @@ class NightmarePathfinder:
         alt_moves = self._rank_moves(blocker, blocker_pos, blocker_goal, round_number)
 
         for alt_act, alt_dest in alt_moves:
-            # Don't push back to where the pusher came from
             if alt_dest == pusher_pos:
                 continue
+            # Edge reservation check (#2)
+            if (alt_dest, blocker_pos) in edge_reservations:
+                continue
             if alt_dest == self.spawn:
-                # Spawn always available
                 claims[alt_dest] = blocker
                 actions[blocker] = alt_act
                 planned_dest[blocker] = alt_dest
-                # Free old position
+                edge_reservations.add((blocker_pos, alt_dest))
                 if blocker_pos in claims and claims[blocker_pos] == blocker:
                     del claims[blocker_pos]
                 return True
             if alt_dest not in claims:
-                # Swap detection
-                swap = False
-                for ob, od in planned_dest.items():
-                    if ob != blocker and od == blocker_pos and bot_positions.get(ob) == alt_dest:
-                        swap = True
-                        break
-                if swap:
-                    continue
                 claims[alt_dest] = blocker
                 actions[blocker] = alt_act
                 planned_dest[blocker] = alt_dest
+                edge_reservations.add((blocker_pos, alt_dest))
                 if blocker_pos in claims and claims[blocker_pos] == blocker:
                     del claims[blocker_pos]
                 return True
             else:
-                # Recursive: try to push the next blocker
                 next_blocker = claims[alt_dest]
                 if next_blocker == blocker:
                     continue
@@ -233,11 +235,12 @@ class NightmarePathfinder:
                     depth + 1, max_depth,
                     claims, actions, planned_dest,
                     bot_positions, priority_rank, goals, goal_types,
-                    round_number)
+                    round_number, edge_reservations)
                 if pushed:
                     claims[alt_dest] = blocker
                     actions[blocker] = alt_act
                     planned_dest[blocker] = alt_dest
+                    edge_reservations.add((blocker_pos, alt_dest))
                     if blocker_pos in claims and claims[blocker_pos] == blocker:
                         del claims[blocker_pos]
                     return True

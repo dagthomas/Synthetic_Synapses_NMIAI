@@ -1,0 +1,22 @@
+{
+  "name": "nm-i-ai",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "grocery-bot": "node tools/grocery-bot/index.mjs",
+    "grocery-bot:test": "node --test tools/grocery-bot/test/*.test.mjs",
+    "grocery-bot:viewer": "node tools/grocery-bot/viewer/server.mjs",
+    "grocery-bot:generate-script": "node tools/grocery-bot/generate-script.mjs",
+    "grocery-bot:tune-script": "node tools/grocery-bot/tune-oracle-script.mjs",
+    "grocery-bot:optimize-script": "node tools/grocery-bot/optimize-oracle-script.mjs",
+    "grocery-bot:compress-script": "node tools/grocery-bot/compress-oracle-script.mjs",
+    "test": "npm run grocery-bot:test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "ws": "^8.19.0"
+  }
+}
