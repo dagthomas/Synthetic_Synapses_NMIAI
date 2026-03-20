@@ -626,7 +626,7 @@ elif emp_id:
         ts_entry_id = get_id(ts_result)
 
         run_test("search_timesheet_entries", timesheet_tools["search_timesheet_entries"],
-            employeeId=emp_id, dateFrom=today, dateTo=tomorrow)
+            employee_id=emp_id, dateFrom=today, dateTo=tomorrow)
 
         if ts_entry_id:
             run_test("update_timesheet_entry", timesheet_tools["update_timesheet_entry"],
@@ -679,9 +679,9 @@ if ye_list:
     ye_id = ye_list[0].get("id", 0)
     if ye_id:
         run_test("search_year_end_annexes", year_end_tools["search_year_end_annexes"],
-            yearEndId=ye_id)
+            year_end_id=ye_id)
         run_test("create_year_end_note", year_end_tools["create_year_end_note"],
-            yearEndId=ye_id, note="Testnotat")
+            year_end_id=ye_id, note="Testnotat")
 else:
     print("  [SKIP] Year-end tests (no year-ends found)")
 
@@ -742,20 +742,20 @@ if emp_id:
 
     if te_id:
         run_test("create_travel_expense_cost", travel_extras_tools["create_travel_expense_cost"],
-            travelExpenseId=te_id, amount=250.0)
+            travel_expense_id=te_id, amount=250.0)
 
         run_test("search_travel_expense_costs", travel_extras_tools["search_travel_expense_costs"],
-            travelExpenseId=te_id)
+            travel_expense_id=te_id)
 
         run_test("create_mileage_allowance", travel_extras_tools["create_mileage_allowance"],
-            travelExpenseId=te_id, date=today, km=150.0,
+            travel_expense_id=te_id, date=today, km=150.0,
             departureLocation="Oslo", destination="Drammen")
 
         run_test("create_per_diem_compensation", travel_extras_tools["create_per_diem_compensation"],
-            travelExpenseId=te_id, location="Oslo")
+            travel_expense_id=te_id, location="Oslo")
 
         run_test("update_travel_expense", travel_extras_tools["update_travel_expense"],
-            travelExpenseId=te_id, title="Testtur Extras Updated")
+            travel_expense_id=te_id, title="Testtur Extras Updated")
 
         # Clean up
         run_test("delete_travel_expense (extras)", travel_tools["delete_travel_expense"],

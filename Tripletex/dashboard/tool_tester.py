@@ -1,5 +1,6 @@
 """Run all Tripletex tools against the sandbox and return structured results."""
 
+import inspect
 import json
 import time
 from datetime import date, timedelta
@@ -250,8 +251,20 @@ def _run_all_tests(tools, client):
                                   invoice_id=inv2_id, date=today)
                     yield r, _strip_result(r)
 
+            # Invoice reminder needs an unpaid invoice
+            order_lines3 = json.dumps([{"product_id": prod_id, "count": 1}])
+            r = _run_tool("create_order (reminder)", tools["invoicing"]["create_order"],
+                          customer_id=cust_id, deliveryDate=today, orderLines=order_lines3)
+            yield r, _strip_result(r)
+            order3_id = _get_id(r["result"])
+            if order3_id:
+                r = _run_tool("create_invoice (reminder)", tools["invoicing"]["create_invoice"],
+                              invoiceDate=today, invoiceDueDate=today, order_id=order3_id)
+                yield r, _strip_result(r)
+                inv3_id = _get_id(r["result"])
+                if inv3_id:
                     r = _run_tool("create_invoice_reminder", tools["invoicing"]["create_invoice_reminder"],
-                                  invoice_id=inv2_id)
+                                  invoice_id=inv3_id)
                     yield r, _strip_result(r)
 
     # ── 5. ORDER EXTRAS ──
@@ -595,3 +608,90 @@ def stream_tool_tests(base_url: str, session_token: str):
 
     for raw, stripped in _run_all_tests(tools, client):
         yield stripped
+
+
+# ── Tool Catalog (no credentials needed) ─────────────────────────
+
+# Map from module name → build function
+_MODULE_BUILDERS = {
+    "employees": build_employee_tools,
+    "customers": build_customer_tools,
+    "products": build_product_tools,
+    "invoicing": build_invoicing_tools,
+    "travel": build_travel_tools,
+    "projects": build_project_tools,
+    "departments": build_department_tools,
+    "ledger": build_ledger_tools,
+    "contacts": build_contact_tools,
+    "employment": build_employment_tools,
+    "bank": build_bank_tools,
+    "supplier": build_supplier_tools,
+    "address": build_address_tools,
+    "balance": build_balance_tools,
+    "common": build_common_tools,
+    "activity": build_activity_tools,
+    "company": build_company_tools,
+    "division": build_division_tools,
+    "order": build_order_tools,
+    "timesheet": build_timesheet_tools,
+    "salary": build_salary_tools,
+    "supplier_invoice": build_supplier_invoice_tools,
+    "year_end": build_year_end_tools,
+    "employee_extras": build_employee_extras_tools,
+    "travel_extras": build_travel_extras_tools,
+    "incoming_invoice": build_incoming_invoice_tools,
+}
+
+
+def get_tool_catalog() -> list[dict]:
+    """Return tool metadata (name, module, docstring, params) without needing API credentials.
+
+    Uses a dummy client — the build functions just create closures, no API calls happen.
+    """
+
+    class _DummyClient:
+        """Minimal stand-in so build_*_tools() can create closures."""
+        def get(self, *a, **kw): return {}
+        def post(self, *a, **kw): return {}
+        def put(self, *a, **kw): return {}
+        def delete(self, *a, **kw): return {}
+
+    dummy = _DummyClient()
+    catalog = []
+
+    for module_name, builder in _MODULE_BUILDERS.items():
+        try:
+            tool_set = builder(dummy)
+        except Exception:
+            continue
+        for tool_name, func in tool_set.items():
+            if tool_name.startswith("_"):
+                continue
+            # Extract docstring
+            doc = inspect.getdoc(func) or ""
+            summary = doc.split("\n")[0] if doc else ""
+            # Extract parameters
+            sig = inspect.signature(func)
+            params = []
+            for pname, p in sig.parameters.items():
+                ptype = ""
+                if p.annotation != inspect.Parameter.empty:
+                    ptype = getattr(p.annotation, "__name__", str(p.annotation))
+                has_default = p.default != inspect.Parameter.empty
+                params.append({
+                    "name": pname,
+                    "type": ptype,
+                    "required": not has_default,
+                    "default": str(p.default) if has_default else None,
+                })
+            catalog.append({
+                "name": tool_name,
+                "module": module_name,
+                "summary": summary,
+                "docstring": doc,
+                "params": params,
+            })
+
+    # Sort by module then name
+    catalog.sort(key=lambda t: (t["module"], t["name"]))
+    return catalog

@@ -22,7 +22,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 from dashboard import db
 from dashboard.runner import run_eval
-from dashboard.tool_tester import run_all_tool_tests, stream_tool_tests
+from dashboard.tool_tester import run_all_tool_tests, stream_tool_tests, get_tool_catalog
 from dashboard import sandbox as sandbox_mod
 from sim.task_definitions import ALL_TASKS, LANGUAGES
 
@@ -359,6 +359,19 @@ async def test_tools_stream():
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
+# ── API: Tool Catalog ──────────────────────────────────────────────
+
+_tool_catalog_cache = None
+
+@app.get("/api/tools")
+def list_tools():
+    """Return tool catalog: name, module, docstring, params — no credentials needed."""
+    global _tool_catalog_cache
+    if _tool_catalog_cache is None:
+        _tool_catalog_cache = get_tool_catalog()
+    return _tool_catalog_cache
 
 
 # ── API: Solve Logs ─────────────────────────────────────────────────

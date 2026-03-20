@@ -98,6 +98,7 @@ def build_ledger_tools(client: TripletexClient) -> dict:
 
     def create_ledger_account(number: int, name: str, description: str = "") -> dict:
         """Create a new ledger account in the chart of accounts.
+        If the account number already exists, returns the existing account.
 
         Args:
             number: Account number (e.g. 1920, 7700).
@@ -105,8 +106,12 @@ def build_ledger_tools(client: TripletexClient) -> dict:
             description: Optional description.
 
         Returns:
-            Created account or error.
+            Created or existing account, or error.
         """
+        existing = client.get("/ledger/account", params={"number": str(number), "fields": "id,number,name"})
+        existing_list = existing.get("values", [])
+        if existing_list:
+            return {"value": existing_list[0]}
         body = {"number": number, "name": name}
         if description:
             body["description"] = description

@@ -97,7 +97,7 @@ Travel expense / reiseregning (2 calls):
   → create_employee → create_travel_expense(employee_id, title, departureDate, returnDate)
 
 Travel expense with costs (3-4 calls):
-  → create_employee → create_travel_expense → create_travel_expense_cost(travelExpenseId, amount) and/or create_mileage_allowance(travelExpenseId, km, rate) and/or create_per_diem_compensation(travelExpenseId, location)
+  → create_employee → create_travel_expense → create_travel_expense_cost(travel_expense_id, amount) and/or create_mileage_allowance(travel_expense_id, km, rate) and/or create_per_diem_compensation(travel_expense_id, location)
   → "reiseregning med utlegg" / "kjøregodtgjørelse" / "diett"
 
 Create project with project manager (3 calls):
@@ -169,7 +169,7 @@ Process invoice from PDF/image (4-5 calls):
   → Then create the invoice/incoming invoice using extracted data
 
 Year-end / årsoppgjør (2-4 calls):
-  → search_year_ends → search_year_end_annexes(yearEndId) or create_year_end_note(yearEndId, note)
+  → search_year_ends → search_year_end_annexes(year_end_id) or create_year_end_note(year_end_id, note)
   → "årsoppgjør"/"year-end"
 
 VAT return / MVA-oppgave (1-2 calls):

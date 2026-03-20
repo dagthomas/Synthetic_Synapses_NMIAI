@@ -132,18 +132,23 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         """Search for orders.
 
         Args:
-            orderDateFrom: Filter from date YYYY-MM-DD.
-            orderDateTo: Filter to date YYYY-MM-DD.
+            orderDateFrom: Filter from date YYYY-MM-DD (defaults to 1 year ago).
+            orderDateTo: Filter to date YYYY-MM-DD (defaults to today).
             customerId: Filter by customer ID (0 for all).
 
         Returns:
             A list of orders.
         """
-        params = {"fields": "id,number,orderDate,deliveryDate,customer,isClosed"}
-        if orderDateFrom:
-            params["orderDateFrom"] = orderDateFrom
-        if orderDateTo:
-            params["orderDateTo"] = orderDateTo
+        from datetime import date as dt_date, timedelta
+        if not orderDateFrom:
+            orderDateFrom = (dt_date.today() - timedelta(days=365)).isoformat()
+        if not orderDateTo:
+            orderDateTo = dt_date.today().isoformat()
+        params = {
+            "fields": "id,number,orderDate,deliveryDate,customer,isClosed",
+            "orderDateFrom": orderDateFrom,
+            "orderDateTo": orderDateTo,
+        }
         if customerId:
             params["customerId"] = customerId
         return client.get("/order", params=params)
@@ -194,21 +199,29 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         """
         return client.put(f"/invoice/{invoice_id}/:send", params={"sendType": sendType})
 
-    def create_invoice_reminder(invoice_id: int, reminderType: str = "SOFT_REMINDER", date: str = "") -> dict:
+    def create_invoice_reminder(invoice_id: int, reminderType: str = "SOFT_REMINDER", date: str = "", dispatchType: str = "EMAIL") -> dict:
         """Create a reminder for an overdue invoice.
 
         Args:
             invoice_id: ID of the invoice.
             reminderType: Type - 'SOFT_REMINDER', 'REMINDER', or 'NOTICE_OF_DEBT_COLLECTION'.
-            date: Reminder date YYYY-MM-DD (empty for today).
+            date: Reminder date YYYY-MM-DD (empty to auto-set after due date).
+            dispatchType: How to send - 'EMAIL', 'EHF', or 'EFAKTURA'.
 
         Returns:
             Confirmation or error.
         """
-        from datetime import date as dt_date
+        from datetime import date as dt_date, timedelta
         if not date:
-            date = dt_date.today().isoformat()
-        params = {"type": reminderType, "date": date}
+            # Reminder date must be on or after the invoice due date
+            inv = client.get(f"/invoice/{invoice_id}", params={"fields": "invoiceDueDate"})
+            due = inv.get("value", {}).get("invoiceDueDate", "") if inv.get("value") else ""
+            if due:
+                due_dt = dt_date.fromisoformat(due)
+                date = max(dt_date.today(), due_dt).isoformat()
+            else:
+                date = dt_date.today().isoformat()
+        params = {"type": reminderType, "date": date, "dispatchType": dispatchType}
         return client.put(f"/invoice/{invoice_id}/:createReminder", params=params)
 
     return {

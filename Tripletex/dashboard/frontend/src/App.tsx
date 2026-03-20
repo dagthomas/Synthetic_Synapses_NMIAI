@@ -7,7 +7,7 @@ import type { PanelId } from "@/components/layout/sidebar"
 import { RunPanel } from "@/components/panels/run-panel"
 import { SandboxPanel } from "@/components/panels/sandbox-panel"
 import { ReplayPanel } from "@/components/panels/replay-panel"
-import { ToolsPanel } from "@/components/panels/tools-panel"
+import { ToolExplorerPanel } from "@/components/panels/tool-explorer-panel"
 import { ReportPanel } from "@/components/panels/report-panel"
 import { ErrorsPanel } from "@/components/panels/errors-panel"
 import { ResultsPanel } from "@/components/panels/results-panel"
@@ -67,7 +67,7 @@ function Dashboard() {
             )}
             {activePanel === "sandbox" && <SandboxPanel />}
             {activePanel === "replay" && <ReplayPanel />}
-            {activePanel === "tools" && <ToolsPanel />}
+            {activePanel === "explorer" && <ToolExplorerPanel />}
             {activePanel === "report" && <ReportPanel batchRuns={batchRuns} />}
             {activePanel === "errors" && <ErrorsPanel />}
             {activePanel === "coverage" && <CoveragePanel />}

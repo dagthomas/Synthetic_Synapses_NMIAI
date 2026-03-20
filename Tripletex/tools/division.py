@@ -6,8 +6,8 @@ def build_division_tools(client: TripletexClient) -> dict:
 
     def create_division(
         name: str,
-        startDate: str,
-        organizationNumber: str,
+        startDate: str = "",
+        organizationNumber: str = "",
         municipalityDate: str = "",
         municipality_id: int = 0,
         endDate: str = "",
@@ -16,8 +16,8 @@ def build_division_tools(client: TripletexClient) -> dict:
 
         Args:
             name: Division name.
-            startDate: Start date YYYY-MM-DD.
-            organizationNumber: Org number for the division (required).
+            startDate: Start date YYYY-MM-DD (defaults to today).
+            organizationNumber: Org number for the division (auto-generated if empty).
             municipalityDate: Municipality date YYYY-MM-DD (defaults to startDate).
             municipality_id: Municipality ID (0 to auto-detect).
             endDate: End date YYYY-MM-DD (empty for no end).
@@ -25,6 +25,12 @@ def build_division_tools(client: TripletexClient) -> dict:
         Returns:
             Created division or error.
         """
+        from datetime import date as dt_date
+        import random
+        if not startDate:
+            startDate = dt_date.today().isoformat()
+        if not organizationNumber:
+            organizationNumber = str(900000000 + random.randint(0, 99999999))
         body = {"name": name, "startDate": startDate}
         body["organizationNumber"] = organizationNumber
         if not municipalityDate:

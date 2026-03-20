@@ -7,6 +7,7 @@ import type {
   Payload,
   ReplayResult,
   ToolTestData,
+  ToolInfo,
   RunStats,
   Languages,
   CoverageCategory,
@@ -84,6 +85,10 @@ export const replayPayloads = (filenames: string[], timeout = 180) =>
 // Tool Tests
 export const runToolTests = () =>
   post<ToolTestData>("/api/test-tools", {})
+
+// Tool Catalog
+export const fetchToolCatalog = () =>
+  request<ToolInfo[]>("/api/tools")
 
 // Coverage
 export const fetchCoverage = () =>

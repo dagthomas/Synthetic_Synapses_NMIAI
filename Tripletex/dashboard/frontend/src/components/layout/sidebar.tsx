@@ -3,7 +3,7 @@ import {
   Play,
   Database,
   RotateCcw,
-  Wrench,
+  Compass,
   FileText,
   AlertTriangle,
   Table2,
@@ -21,7 +21,7 @@ export type PanelId =
   | "run"
   | "sandbox"
   | "replay"
-  | "tools"
+  | "explorer"
   | "report"
   | "errors"
   | "coverage"
@@ -38,7 +38,7 @@ const NAV_MAIN: NavItem[] = [
   { id: "run", label: "Run", icon: Play, shortcut: "1" },
   { id: "sandbox", label: "Sandbox", icon: Database, shortcut: "2" },
   { id: "replay", label: "Replay", icon: RotateCcw, shortcut: "3" },
-  { id: "tools", label: "Test Tools", icon: Wrench, shortcut: "4" },
+  { id: "explorer", label: "Tool Explorer", icon: Compass, shortcut: "4" },
 ]
 
 const NAV_DATA: NavItem[] = [

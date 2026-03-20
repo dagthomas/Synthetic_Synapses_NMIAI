@@ -6,25 +6,39 @@ def build_timesheet_tools(client: TripletexClient) -> dict:
 
     def create_timesheet_entry(
         employee_id: int,
-        project_id: int,
-        activity_id: int,
         date: str,
         hours: float,
+        project_id: int = 0,
+        activity_id: int = 0,
         comment: str = "",
     ) -> dict:
         """Create a timesheet entry.
 
         Args:
             employee_id: Employee ID.
-            project_id: Project ID.
-            activity_id: Activity ID.
             date: Date YYYY-MM-DD.
             hours: Number of hours.
+            project_id: Project ID (0 to auto-detect first available).
+            activity_id: Activity ID (0 to auto-detect first available).
             comment: Optional comment.
 
         Returns:
             Created timesheet entry or error.
         """
+        if not project_id:
+            projs = client.get("/project", params={"fields": "id", "count": 1})
+            proj_list = projs.get("values", [])
+            project_id = proj_list[0]["id"] if proj_list else 0
+        if not activity_id:
+            # Find a project-compatible activity (isProjectActivity=True)
+            acts = client.get("/activity", params={"fields": "id", "isProjectActivity": True, "count": 1})
+            act_list = acts.get("values", [])
+            if not act_list:
+                acts = client.get("/activity", params={"fields": "id", "count": 1})
+                act_list = acts.get("values", [])
+            activity_id = act_list[0]["id"] if act_list else 0
+        if not project_id or not activity_id:
+            return {"error": True, "message": "No project or activity found for timesheet entry"}
         body = {
             "employee": {"id": employee_id},
             "project": {"id": project_id},
@@ -37,7 +51,7 @@ def build_timesheet_tools(client: TripletexClient) -> dict:
         return client.post("/timesheet/entry", json=body)
 
     def search_timesheet_entries(
-        employeeId: int = 0,
+        employee_id: int = 0,
         dateFrom: str = "",
         dateTo: str = "",
         projectId: int = 0,
@@ -45,7 +59,7 @@ def build_timesheet_tools(client: TripletexClient) -> dict:
         """Search for timesheet entries.
 
         Args:
-            employeeId: Filter by employee ID (0 for all).
+            employee_id: Filter by employee ID (0 for all).
             dateFrom: Filter from date YYYY-MM-DD.
             dateTo: Filter to date YYYY-MM-DD.
             projectId: Filter by project ID (0 for all).
@@ -54,8 +68,8 @@ def build_timesheet_tools(client: TripletexClient) -> dict:
             A list of timesheet entries.
         """
         params = {"fields": "id,employee,project,activity,date,hours,comment"}
-        if employeeId:
-            params["employeeId"] = employeeId
+        if employee_id:
+            params["employeeId"] = employee_id
         if dateFrom:
             params["dateFrom"] = dateFrom
         if dateTo:

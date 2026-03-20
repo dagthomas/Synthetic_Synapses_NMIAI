@@ -135,6 +135,21 @@ export interface RunStats {
   failed: number
 }
 
+export interface ToolParam {
+  name: string
+  type: string
+  required: boolean
+  default: string | null
+}
+
+export interface ToolInfo {
+  name: string
+  module: string
+  summary: string
+  docstring: string
+  params: ToolParam[]
+}
+
 export type Languages = Record<string, string>
 
 export interface CoverageCategory {
