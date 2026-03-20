@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tripletex Eval</title>
+<style>
+:root {
+  --bg: #f5f6fa; --card: #fff; --border: #e1e4e8; --text: #24292e;
+  --muted: #6a737d; --accent: #0366d6; --green: #28a745;
+  --yellow: #dbab09; --red: #cb2431; --orange: #e36209;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+
+.topbar { background: #24292e; color: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+.topbar h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+.topbar .agent-url { background: #1b1f23; border: 1px solid #444; color: #ccc; padding: 6px 10px; border-radius: 4px; font-size: 13px; width: 260px; }
+.topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.topbar .dot.off { background: var(--red); }
+
+.wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid var(--border); }
+.tab { padding: 10px 24px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .15s; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Runner */
+.runner { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+.runner h2 { font-size: 16px; margin-bottom: 16px; }
+
+.tier-btns { display: flex; gap: 8px; margin-bottom: 16px; }
+.tier-btn { padding: 8px 20px; border: 2px solid var(--border); border-radius: 6px; background: var(--card); cursor: pointer; font-size: 14px; font-weight: 600; transition: all .15s; }
+.tier-btn:hover { border-color: var(--accent); }
+.tier-btn.active { border-color: var(--accent); background: #e8f0fe; color: var(--accent); }
+.tier-btn .count { font-weight: 400; color: var(--muted); font-size: 12px; }
+
+.task-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; min-height: 32px; }
+.chip { display: flex; align-items: center; gap: 4px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; cursor: pointer; user-select: none; }
+.chip:hover { background: #f1f3f5; }
+.chip.on { background: #e8f0fe; border-color: var(--accent); color: var(--accent); }
+
+.run-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.run-row label { font-size: 13px; color: var(--muted); }
+.run-row select, .run-row input[type=number] { padding: 8px 12px; border: 1px solid var(--border); border-radius: 4px; font-size: 14px; }
+.run-row input[type=number] { width: 70px; }
+
+.btn-run { padding: 10px 32px; border: none; border-radius: 6px; background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+.btn-run:hover { background: #0256b9; }
+.btn-run:disabled { opacity: .5; cursor: default; }
+
+.progress { margin-top: 12px; display: none; }
+.progress-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); transition: width .3s; width: 0; }
+.progress-text { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* Report */
+.report-section { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; display: none; }
+#reportEmpty { color: var(--muted); text-align: center; padding: 60px 20px; font-size: 15px; }
+.report-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+.report-header h2 { font-size: 16px; }
+.report-header .btn-copy { margin-left: auto; padding: 6px 16px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); cursor: pointer; font-size: 13px; font-weight: 500; }
+.report-header .btn-copy:hover { background: #f1f3f5; }
+.report-header .btn-copy.copied { background: var(--green); color: #fff; border-color: var(--green); }
+.report-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.rcard { text-align: center; }
+.rcard .val { font-size: 24px; font-weight: 700; }
+.rcard .lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.sg { color: var(--green); } .sy { color: var(--orange); } .sr { color: var(--red); }
+
+.report-text { padding: 16px 20px; }
+.report-text textarea { width: 100%; min-height: 300px; border: 1px solid var(--border); border-radius: 4px; padding: 12px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; line-height: 1.6; resize: vertical; background: #fafbfc; color: var(--text); }
+
+/* Results table */
+.results { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+.results-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+.results-header h2 { font-size: 16px; }
+.results-header .summary { margin-left: auto; font-size: 13px; color: var(--muted); }
+.filter-btns { display: flex; gap: 4px; }
+.filter-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; cursor: pointer; background: var(--card); }
+.filter-btn:hover { background: #f1f3f5; }
+.filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: #f6f8fa; }
+.mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-running { background: #fff3cd; color: #856404; }
+.badge-completed { background: #d4edda; color: #155724; }
+.badge-failed { background: #f8d7da; color: #721c24; }
+
+.detail-row { display: none; }
+.detail-row.open { display: table-row; }
+.detail-row td { background: #f6f8fa; padding: 16px; }
+.detail-box { white-space: pre-wrap; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; line-height: 1.5; max-height: 400px; overflow-y: auto; }
+.detail-box .err { color: var(--red); font-weight: 600; }
+
+.empty { color: var(--muted); text-align: center; padding: 40px; }
+
+/* Error badge on tab */
+.err-badge { display: inline-block; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; }
+
+/* Error cards */
+.err-card { border: 1px solid var(--border); border-left: 4px solid var(--red); border-radius: 6px; margin: 12px 20px; padding: 16px; background: #fff; }
+.err-card.warn { border-left-color: var(--orange); }
+.err-card h3 { font-size: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.err-card h3 .task-badge { font-size: 11px; background: #f1f3f5; padding: 2px 8px; border-radius: 4px; color: var(--muted); }
+.err-card pre { background: #fafbfc; border: 1px solid var(--border); border-radius: 4px; padding: 10px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-x: auto; max-height: 300px; overflow-y: auto; }
+.err-card .check-line { padding: 2px 0; font-size: 13px; }
+.err-card .check-fail { color: var(--red); }
+.err-card .check-pass { color: var(--green); }
+.err-card .meta { font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Tripletex Eval</h1>
+  <input class="agent-url" id="agentUrl" type="text" value="http://localhost:8000" placeholder="Agent URL">
+  <span class="dot" id="connDot" title="Agent status"></span>
+</div>
+
+<div class="wrap">
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('run')">Run</div>
+    <div class="tab" onclick="switchTab('replay')">Replay</div>
+    <div class="tab" onclick="switchTab('report')">Report</div>
+    <div class="tab" onclick="switchTab('errors')">Errors <span id="errBadge" class="err-badge" style="display:none">0</span></div>
+    <div class="tab" onclick="switchTab('results')">Results</div>
+  </div>
+
+  <!-- Tab: Run -->
+  <div class="tab-panel active" id="tab-run">
+  <div class="runner">
+    <h2>Run Evaluations</h2>
+    <div class="tier-btns" id="tierBtns"></div>
+    <div class="task-chips" id="taskChips"></div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:6px">Languages:</label>
+      <div class="task-chips" id="langChips" style="min-height:28px"></div>
+    </div>
+    <div class="run-row">
+      <label>Variations per task: <input type="number" id="varCount" value="1" min="1" max="20"></label>
+      <button class="btn-run" id="runBtn" onclick="runSelected()">Run</button>
+      <span id="runStatus" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+    <div class="progress" id="progress">
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-text" id="progressText"></div>
+    </div>
+  </div>
+  </div>
+
+  <!-- Tab: Replay -->
+  <div class="tab-panel" id="tab-replay">
+  <div class="runner">
+    <h2>Replay Saved Payloads</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Select payloads to replay through /solve-debug. Uses live credentials.</p>
+    <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
+      <button class="btn-run" style="padding:8px 16px;font-size:13px" onclick="selectAllPayloads(true)">Select All</button>
+      <button class="btn-run" style="padding:8px 16px;font-size:13px;background:#6a737d" onclick="selectAllPayloads(false)">Deselect All</button>
+      <button class="btn-run" id="replayBtn" onclick="runReplay()">Replay Selected</button>
+      <span id="replayStatus" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+    <div id="payloadList" style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;margin-bottom:16px"></div>
+  </div>
+  <div class="report-section" id="replayReport" style="display:none">
+    <div class="report-header">
+      <h2>Replay Results</h2>
+      <button class="btn-copy" id="copyReplayBtn" onclick="copyReplayReport()">Copy Report</button>
+    </div>
+    <div class="report-summary" id="replaySummary"></div>
+    <div id="replayResults" style="padding:16px 20px"></div>
+    <div class="report-text">
+      <textarea id="replayText" readonly style="min-height:200px"></textarea>
+    </div>
+  </div>
+  </div>
+
+  <!-- Tab: Report -->
+  <div class="tab-panel" id="tab-report">
+  <div class="report-section" id="reportSection">
+    <div class="report-header">
+      <h2>Eval Report</h2>
+      <button class="btn-copy" id="copyBtn" onclick="copyReport()">Copy Report</button>
+    </div>
+    <div class="report-summary" id="reportSummary"></div>
+    <div class="report-text">
+      <textarea id="reportText" readonly></textarea>
+    </div>
+  </div>
+  <p class="empty" id="reportEmpty">No report yet. Run a batch first.</p>
+  </div>
+
+  <!-- Tab: Errors -->
+  <div class="tab-panel" id="tab-errors">
+  <div class="report-section" id="errorsSection" style="display:none">
+    <div class="report-header">
+      <h2>Errors &amp; Failed Checks</h2>
+      <button class="btn-copy" id="copyErrBtn" onclick="copyErrors()">Copy Errors</button>
+    </div>
+    <div class="report-summary" id="errorsSummary"></div>
+    <div id="errorsBody"></div>
+  </div>
+  <p class="empty" id="errorsEmpty">No errors yet.</p>
+  </div>
+
+  <!-- Tab: Results -->
+  <div class="tab-panel" id="tab-results">
+  <div class="results">
+    <div class="results-header">
+      <h2>Results</h2>
+      <div class="filter-btns">
+        <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+        <button class="filter-btn" onclick="setFilter('completed',this)">Completed</button>
+        <button class="filter-btn" onclick="setFilter('failed',this)">Failed</button>
+        <button class="filter-btn" onclick="setFilter('running',this)">Running</button>
+      </div>
+      <span class="summary" id="resultsSummary"></span>
+    </div>
+    <table>
+      <thead><tr>
+        <th>#</th><th>Task</th><th>Lang</th><th>Correctness</th><th>Score</th><th>API Calls</th><th>Time</th><th>Status</th>
+      </tr></thead>
+      <tbody id="runsBody"></tbody>
+    </table>
+    <p class="empty" id="runsEmpty">No eval runs yet. Select tasks above and click Run.</p>
+  </div>
+  </div>
+
+</div>
+
+<script>
+let tasks = [], languages = {}, statusFilter = 'all';
+let batchStartTime = 0, batchTotal = 0, pollTimer = null;
+let lastBatchRuns = [];
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const tabs = ['run','replay','report','errors','results'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + name)?.classList.add('active');
+  if (name === 'errors') loadErrors();
+  if (name === 'replay') loadPayloads();
+}
+
+async function api(path, opts) {
+  try { const r = await fetch(path, opts); return await r.json(); }
+  catch(e) { console.error('API:', path, e); return null; }
+}
+
+// ── Init ─────────────────────────────────────────────────────────
+async function init() {
+  tasks = await api('/api/tasks') || [];
+  languages = await api('/api/languages') || {};
+  buildTierButtons();
+  buildTaskChips();
+  buildLangChips();
+  loadRuns();
+  loadErrors();
+  checkAgent();
+  setInterval(() => { loadRuns(); checkAgent(); }, 5000);
+}
+
+function checkAgent() {
+  const url = document.getElementById('agentUrl').value;
+  fetch(url + '/docs').then(r => {
+    document.getElementById('connDot').className = r.ok ? 'dot' : 'dot off';
+  }).catch(() => { document.getElementById('connDot').className = 'dot off'; });
+}
+document.getElementById('agentUrl').addEventListener('change', checkAgent);
+
+// ── Tier buttons ─────────────────────────────────────────────────
+function buildTierButtons() {
+  const div = document.getElementById('tierBtns');
+  [1, 2, 3].forEach(tier => {
+    const n = tasks.filter(t => t.tier === tier).length;
+    const btn = document.createElement('button');
+    btn.className = 'tier-btn';
+    btn.dataset.tier = tier;
+    btn.innerHTML = `Tier ${tier} <span class="count">(${n} tasks)</span>`;
+    btn.onclick = () => toggleTier(tier, btn);
+    div.appendChild(btn);
+  });
+}
+
+function toggleTier(tier, btn) {
+  btn.classList.toggle('active');
+  const isOn = btn.classList.contains('active');
+  document.querySelectorAll('.tier-btn').forEach(b => { if (b !== btn) b.classList.remove('active'); });
+  document.querySelectorAll('.chip').forEach(chip => {
+    const t = tasks.find(t => t.name === chip.dataset.name);
+    if (!t) return;
+    if (isOn && t.tier === tier) chip.classList.add('on');
+    else chip.classList.remove('on');
+  });
+}
+
+// ── Task chips ───────────────────────────────────────────────────
+function buildTaskChips() {
+  const div = document.getElementById('taskChips');
+  tasks.forEach(t => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.dataset.name = t.name;
+    chip.dataset.tier = t.tier;
+    chip.textContent = t.name.replace(/_/g, ' ');
+    chip.onclick = () => { chip.classList.toggle('on'); syncTierButtons(); };
+    div.appendChild(chip);
+  });
+}
+
+function syncTierButtons() {
+  [1,2,3].forEach(tier => {
+    const all = tasks.filter(t => t.tier === tier).length;
+    const on = document.querySelectorAll(`.chip[data-tier="${tier}"].on`).length;
+    const btn = document.querySelector(`.tier-btn[data-tier="${tier}"]`);
+    if (btn) btn.classList.toggle('active', on === all && all > 0);
+  });
+}
+
+// ── Language chips ───────────────────────────────────────────────
+function buildLangChips() {
+  const div = document.getElementById('langChips');
+  Object.entries(languages).forEach(([code, name]) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (code === 'no' ? ' on' : '');
+    chip.dataset.lang = code;
+    chip.textContent = `${code} — ${name}`;
+    chip.onclick = () => chip.classList.toggle('on');
+    div.appendChild(chip);
+  });
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+async function runSelected() {
+  const selected = [...document.querySelectorAll('#taskChips .chip.on')].map(c => c.dataset.name);
+  const selectedLangs = [...document.querySelectorAll('#langChips .chip.on')].map(c => c.dataset.lang);
+  const count = parseInt(document.getElementById('varCount').value) || 1;
+  if (!selected.length) { alert('Velg minst en task'); return; }
+  if (!selectedLangs.length) { alert('Velg minst ett sprak'); return; }
+
+  document.getElementById('runBtn').disabled = true;
+  batchTotal = selected.length * selectedLangs.length * count;
+  batchStartTime = Date.now();
+
+  document.getElementById('progress').style.display = 'block';
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressText').textContent = `Starting ${batchTotal} evals (${selected.length} tasks x ${selectedLangs.length} langs x ${count})...`;
+
+  const result = await api('/api/eval/batch', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ task_names: selected, languages: selectedLangs, count_per_combo: count }),
+  });
+
+  if (result?.error) {
+    alert('Error: ' + result.error);
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('progress').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('progressText').textContent = `Launched ${batchTotal} evals...`;
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollProgress, 3000);
+}
+
+async function pollProgress() {
+  const runs = await api('/api/runs?limit=500');
+  if (!runs) return;
+
+  const cutoff = new Date(batchStartTime - 5000).toISOString();
+  const batch = runs.filter(r => r.created_at > cutoff);
+  const done = batch.filter(r => r.status === 'completed' || r.status === 'failed').length;
+  const running = batch.filter(r => r.status === 'running').length;
+  const pct = batchTotal > 0 ? Math.min(100, done / batchTotal * 100) : 0;
+
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = `${done}/${batchTotal} done, ${running} running`;
+
+  if (done >= batchTotal || (done > 0 && running === 0)) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('progressFill').style.width = '100%';
+
+    const elapsed = ((Date.now() - batchStartTime) / 1000).toFixed(0);
+    const failed = batch.filter(r => r.status === 'failed').length;
+    document.getElementById('progressText').textContent =
+      `Done: ${done} evals in ${elapsed}s` + (failed ? ` (${failed} failed)` : '');
+
+    lastBatchRuns = batch;
+    showReport(batch);
+  }
+  loadRuns();
+}
+
+// ── Report generation ────────────────────────────────────────────
+function showReport(runs) {
+  const completed = runs.filter(r => r.status === 'completed');
+  const crashed = runs.filter(r => r.status === 'failed');
+  const perfect = completed.filter(r => r.correctness >= 1);
+  const imperfect = completed.filter(r => r.correctness < 1);
+
+  // Summary cards
+  const avgScore = completed.length ? (completed.reduce((s,r) => s+(r.final_score||0), 0) / completed.length) : 0;
+  const avgCorr = completed.length ? (completed.reduce((s,r) => s+(r.correctness||0), 0) / completed.length) : 0;
+  const avgTime = completed.length ? (completed.reduce((s,r) => s+(r.elapsed_seconds||0), 0) / completed.length) : 0;
+
+  document.getElementById('reportSummary').innerHTML = `
+    <div class="rcard"><div class="val">${runs.length}</div><div class="lbl">Total Runs</div></div>
+    <div class="rcard"><div class="val ${avgCorr>=.8?'sg':avgCorr>=.5?'sy':'sr'}">${avgScore.toFixed(2)}</div><div class="lbl">Avg Score</div></div>
+    <div class="rcard"><div class="val ${perfect.length===completed.length?'sg':'sy'}">${perfect.length}/${completed.length}</div><div class="lbl">Perfect</div></div>
+    <div class="rcard"><div class="val ${crashed.length?'sr':'sg'}">${crashed.length}</div><div class="lbl">Crashed</div></div>
+    <div class="rcard"><div class="val">${avgTime.toFixed(1)}s</div><div class="lbl">Avg Time</div></div>
+  `;
+
+  // Generate text report
+  const report = generateReportText(runs);
+  document.getElementById('reportText').value = report;
+  document.getElementById('reportSection').style.display = 'block';
+  document.getElementById('reportEmpty').style.display = 'none';
+  document.getElementById('copyBtn').textContent = 'Copy Report';
+  document.getElementById('copyBtn').className = 'btn-copy';
+  loadErrors();
+  switchTab('report');
+}
+
+function generateReportText(runs) {
+  const completed = runs.filter(r => r.status === 'completed');
+  const crashed = runs.filter(r => r.status === 'failed');
+  // Detect tiers and languages
+  const tiers = [...new Set(runs.map(r => r.tier))].sort();
+  const tierLabel = tiers.map(t => `Tier ${t}`).join(', ');
+  const langs = [...new Set(runs.map(r => r.language))].sort();
+  const langLabel = langs.map(l => languages[l] || l).join(', ');
+
+  let out = '';
+  out += `# Tripletex Eval Report\n`;
+  out += `${tierLabel} | ${langLabel} | ${runs.length} runs\n`;
+  out += `\n`;
+
+  // Overall summary
+  const perfect = completed.filter(r => r.correctness >= 1).length;
+  const withFailures = completed.filter(r => r.correctness < 1);
+  out += `## Summary\n`;
+  out += `- ${completed.length} completed, ${crashed.length} crashed\n`;
+  out += `- ${perfect}/${completed.length} scored 100% correctness\n`;
+  if (withFailures.length) {
+    out += `- ${withFailures.length} tasks had failed field checks (details below)\n`;
+  }
+  out += `\n`;
+
+  // Group by task
+  const byTask = {};
+  runs.forEach(r => {
+    if (!byTask[r.task_name]) byTask[r.task_name] = [];
+    byTask[r.task_name].push(r);
+  });
+
+  // Tasks with failures first, then perfect, then crashed
+  const taskNames = Object.keys(byTask).sort((a, b) => {
+    const aFail = byTask[a].some(r => r.status === 'completed' && r.correctness < 1);
+    const bFail = byTask[b].some(r => r.status === 'completed' && r.correctness < 1);
+    if (aFail !== bFail) return aFail ? -1 : 1;
+    return a.localeCompare(b);
+  });
+
+  for (const taskName of taskNames) {
+    const taskRuns = byTask[taskName];
+    const taskCompleted = taskRuns.filter(r => r.status === 'completed');
+    const taskCrashed = taskRuns.filter(r => r.status === 'failed');
+    const taskPerfect = taskCompleted.filter(r => r.correctness >= 1);
+    const tier = taskRuns[0]?.tier || '?';
+
+    const allPerfect = taskPerfect.length === taskCompleted.length && !taskCrashed.length;
+    const marker = allPerfect ? 'PASS' : 'FAIL';
+
+    out += `## [${marker}] ${taskName} (tier ${tier}) — ${taskPerfect.length}/${taskRuns.length} perfect\n`;
+
+    // For each run that has failures, show details
+    const multiLang = langs.length > 1;
+    taskRuns.forEach((r, idx) => {
+      const langTag = multiLang ? ` [${r.language}]` : '';
+      if (r.status === 'failed') {
+        out += `  Run ${idx+1}${langTag}: CRASHED\n`;
+        out += `    Error: ${r.error_message || 'unknown'}\n`;
+        return;
+      }
+
+      if (r.correctness >= 1) {
+        out += `  Run ${idx+1}${langTag}: ${(r.correctness*100).toFixed(0)}% correct, score ${r.final_score}/${r.max_possible}\n`;
+        return;
+      }
+
+      // Imperfect run — show failed checks
+      out += `  Run ${idx+1}${langTag}: ${(r.correctness*100).toFixed(0)}% correct, score ${r.final_score}/${r.max_possible}\n`;
+      out += `    Prompt: ${r.prompt}\n`;
+
+      let checks = [];
+      try { checks = JSON.parse(r.checks_json || '[]'); } catch {}
+
+      const failed = checks.filter(c => !c.passed);
+      const passed = checks.filter(c => c.passed);
+
+      if (failed.length) {
+        out += `    Failed checks:\n`;
+        failed.forEach(c => {
+          out += `      FAIL ${c.field}: ${c.detail} (${c.points}/${c.max} pts)\n`;
+        });
+      }
+      if (passed.length) {
+        out += `    Passed checks:\n`;
+        passed.forEach(c => {
+          out += `      OK   ${c.field}: ${c.detail}\n`;
+        });
+      }
+
+      // Show expected values
+      if (r.expected_json) {
+        try {
+          const exp = JSON.parse(r.expected_json);
+          out += `    Expected values: ${JSON.stringify(exp)}\n`;
+        } catch {}
+      }
+    });
+
+    out += `\n`;
+  }
+
+  // Aggregate: which fields fail most?
+  const fieldFailCounts = {};
+  completed.forEach(r => {
+    let checks = [];
+    try { checks = JSON.parse(r.checks_json || '[]'); } catch {}
+    checks.filter(c => !c.passed).forEach(c => {
+      const key = `${r.task_name} > ${c.field}`;
+      fieldFailCounts[key] = (fieldFailCounts[key] || 0) + 1;
+    });
+  });
+
+  const sortedFails = Object.entries(fieldFailCounts).sort((a,b) => b[1] - a[1]);
+  if (sortedFails.length) {
+    out += `## Most common failures\n`;
+    sortedFails.forEach(([key, count]) => {
+      out += `  ${count}x  ${key}\n`;
+    });
+    out += `\n`;
+  }
+
+  return out;
+}
+
+function copyReport() {
+  const text = document.getElementById('reportText').value;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'Copied!';
+    btn.className = 'btn-copy copied';
+    setTimeout(() => { btn.textContent = 'Copy Report'; btn.className = 'btn-copy'; }, 2000);
+  });
+}
+
+// ── Errors tab ──────────────────────────────────────────────────
+async function loadErrors() {
+  const runs = await api('/api/runs?limit=500');
+  if (!runs) return;
+
+  // Collect: crashed runs + completed runs with failed checks
+  const problems = runs.filter(r =>
+    r.status === 'failed' ||
+    (r.status === 'completed' && r.correctness != null && r.correctness < 1)
+  );
+
+  // Update badge
+  const badge = document.getElementById('errBadge');
+  if (problems.length > 0) {
+    badge.textContent = problems.length;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+
+  if (!problems.length) {
+    document.getElementById('errorsSection').style.display = 'none';
+    document.getElementById('errorsEmpty').style.display = '';
+    document.getElementById('errorsEmpty').textContent = 'No errors. All runs passed!';
+    return;
+  }
+
+  document.getElementById('errorsSection').style.display = 'block';
+  document.getElementById('errorsEmpty').style.display = 'none';
+
+  // Group by task
+  const byTask = {};
+  problems.forEach(r => {
+    if (!byTask[r.task_name]) byTask[r.task_name] = [];
+    byTask[r.task_name].push(r);
+  });
+
+  // Summary
+  const crashed = problems.filter(r => r.status === 'failed').length;
+  const failedChecks = problems.filter(r => r.status === 'completed').length;
+  const taskCount = Object.keys(byTask).length;
+
+  document.getElementById('errorsSummary').innerHTML = `
+    <div class="rcard"><div class="val sr">${problems.length}</div><div class="lbl">Total Errors</div></div>
+    <div class="rcard"><div class="val sr">${crashed}</div><div class="lbl">Crashed</div></div>
+    <div class="rcard"><div class="val sy">${failedChecks}</div><div class="lbl">Failed Checks</div></div>
+    <div class="rcard"><div class="val">${taskCount}</div><div class="lbl">Tasks Affected</div></div>
+  `;
+
+  // Render error cards grouped by task
+  let html = '';
+  const sortedTasks = Object.keys(byTask).sort();
+
+  for (const taskName of sortedTasks) {
+    const taskRuns = byTask[taskName];
+    for (const r of taskRuns) {
+      const isCrash = r.status === 'failed';
+      html += `<div class="err-card ${isCrash ? '' : 'warn'}">`;
+      html += `<h3>${isCrash ? '\u274c' : '\u26a0\ufe0f'} ${escH(taskName)} <span class="task-badge">${r.language || '?'}</span> <span class="task-badge">#${r.id}</span></h3>`;
+
+      if (isCrash) {
+        html += `<pre>${escH(r.error_message || 'Unknown error')}</pre>`;
+      } else {
+        // Show failed checks
+        let checks = [];
+        try { checks = JSON.parse(r.checks_json || '[]'); } catch {}
+        const failed = checks.filter(c => !c.passed);
+        const passed = checks.filter(c => c.passed);
+
+        if (failed.length) {
+          html += `<div style="margin-bottom:8px">`;
+          failed.forEach(c => {
+            html += `<div class="check-line check-fail">\u274c <strong>${escH(c.field)}</strong>: ${escH(c.detail)} (${c.points}/${c.max} pts)</div>`;
+          });
+          html += `</div>`;
+        }
+        if (passed.length) {
+          html += `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">${passed.length} passed checks</summary>`;
+          passed.forEach(c => {
+            html += `<div class="check-line check-pass">\u2705 ${escH(c.field)}: ${escH(c.detail)}</div>`;
+          });
+          html += `</details>`;
+        }
+
+        // Show prompt + expected
+        html += `<details><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Prompt &amp; expected values</summary>`;
+        html += `<pre>${escH(r.prompt || '(none)')}</pre>`;
+        if (r.expected_json) {
+          try {
+            html += `<pre>${escH(JSON.stringify(JSON.parse(r.expected_json), null, 2))}</pre>`;
+          } catch {}
+        }
+        html += `</details>`;
+      }
+
+      html += `<div class="meta">Score: ${r.final_score ?? '-'}/${r.max_possible ?? '-'} | Correctness: ${r.correctness != null ? (r.correctness*100).toFixed(0)+'%' : '-'} | Time: ${r.elapsed_seconds ? r.elapsed_seconds.toFixed(1)+'s' : '-'}</div>`;
+      html += `</div>`;
+    }
+  }
+
+  document.getElementById('errorsBody').innerHTML = html;
+}
+
+function copyErrors() {
+  // Build plain-text version of errors for pasting
+  const cards = document.querySelectorAll('.err-card');
+  if (!cards.length) return;
+
+  // Just use the report text if available, otherwise build from runs
+  let text = '# Tripletex Error Report\n\n';
+
+  const runs = lastBatchRuns.length ? lastBatchRuns : [];
+  // If no batch runs, we need to fetch
+  if (!runs.length) {
+    // Fallback: copy the visible HTML as text
+    const body = document.getElementById('errorsBody');
+    text += body.innerText;
+  } else {
+    const problems = runs.filter(r =>
+      r.status === 'failed' ||
+      (r.status === 'completed' && r.correctness != null && r.correctness < 1)
+    );
+    const byTask = {};
+    problems.forEach(r => {
+      if (!byTask[r.task_name]) byTask[r.task_name] = [];
+      byTask[r.task_name].push(r);
+    });
+
+    for (const [taskName, taskRuns] of Object.entries(byTask).sort()) {
+      text += `## ${taskName}\n`;
+      for (const r of taskRuns) {
+        text += `  [${r.language}] #${r.id}: `;
+        if (r.status === 'failed') {
+          text += `CRASHED — ${r.error_message || 'unknown'}\n`;
+        } else {
+          text += `${(r.correctness*100).toFixed(0)}% correct\n`;
+          let checks = [];
+          try { checks = JSON.parse(r.checks_json || '[]'); } catch {}
+          checks.filter(c => !c.passed).forEach(c => {
+            text += `    FAIL ${c.field}: ${c.detail} (${c.points}/${c.max} pts)\n`;
+          });
+          text += `    Prompt: ${r.prompt}\n`;
+          if (r.expected_json) {
+            text += `    Expected: ${r.expected_json}\n`;
+          }
+        }
+      }
+      text += `\n`;
+    }
+  }
+
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyErrBtn');
+    btn.textContent = 'Copied!';
+    btn.className = 'btn-copy copied';
+    setTimeout(() => { btn.textContent = 'Copy Errors'; btn.className = 'btn-copy'; }, 2000);
+  });
+}
+
+// ── Results table ────────────────────────────────────────────────
+function setFilter(f, btn) {
+  statusFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadRuns();
+}
+
+async function loadRuns() {
+  const params = new URLSearchParams({ limit: '200' });
+  if (statusFilter !== 'all') params.set('status', statusFilter);
+
+  const runs = await api('/api/runs?' + params);
+  const body = document.getElementById('runsBody');
+  const empty = document.getElementById('runsEmpty');
+
+  if (!runs || !runs.length) {
+    body.innerHTML = '';
+    empty.style.display = 'block';
+    document.getElementById('resultsSummary').textContent = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  const failedN = runs.filter(r => r.status === 'failed').length;
+  document.getElementById('resultsSummary').textContent =
+    `${runs.length} shown` + (failedN ? `, ${failedN} failed` : '');
+
+  body.innerHTML = runs.map((r, i) => {
+    const corr = r.correctness != null ? (r.correctness * 100).toFixed(0) + '%' : '-';
+    const sc = r.correctness >= 1 ? 'sg' : r.correctness >= 0.5 ? 'sy' : r.correctness != null ? 'sr' : '';
+    const score = r.final_score != null ? r.final_score.toFixed(2) : '-';
+    const maxS = r.max_possible != null ? '/' + r.max_possible : '';
+    const badge = r.status === 'completed' ? 'badge-completed' : r.status === 'running' ? 'badge-running' : 'badge-failed';
+
+    return `<tr class="clickable" onclick="toggle('d${i}')">
+      <td class="mono">${r.id}</td>
+      <td>${escH(r.task_name)}</td>
+      <td>${r.language || '-'}</td>
+      <td class="${sc}">${corr}</td>
+      <td class="${sc}" style="font-weight:600">${score}${maxS}</td>
+      <td>${r.api_calls || '-'}</td>
+      <td>${r.elapsed_seconds ? r.elapsed_seconds.toFixed(1)+'s' : '-'}</td>
+      <td><span class="badge ${badge}">${r.status}</span></td>
+    </tr>
+    <tr class="detail-row" id="d${i}"><td colspan="8"><div class="detail-box">${renderDetail(r)}</div></td></tr>`;
+  }).join('');
+}
+
+function renderDetail(r) {
+  let h = '';
+  if (r.error_message) h += `<span class="err">ERROR: ${escH(r.error_message)}</span>\n\n`;
+  if (r.checks_json) {
+    try {
+      const checks = JSON.parse(r.checks_json);
+      h += 'Field Checks:\n';
+      checks.forEach(c => {
+        h += `  ${c.passed ? '\u2705' : '\u274c'} ${c.field.padEnd(25)} ${c.points}/${c.max}  ${escH(c.detail)}\n`;
+      });
+      h += '\n';
+    } catch {}
+  }
+  h += `Prompt:\n${escH(r.prompt || '(none)')}\n`;
+  if (r.expected_json) h += `\nExpected:\n${escH(r.expected_json)}`;
+  return h;
+}
+
+function toggle(id) { document.getElementById(id)?.classList.toggle('open'); }
+function escH(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── Replay ───────────────────────────────────────────────────────
+let payloads = [];
+let replayResults = [];
+
+async function loadPayloads() {
+  payloads = await api('/api/payloads?limit=100') || [];
+  const div = document.getElementById('payloadList');
+  if (!payloads.length) {
+    div.innerHTML = '<p class="empty">No saved payloads found in payloads/ directory.</p>';
+    return;
+  }
+  // Group by unique prompt to deduplicate
+  const seen = new Set();
+  const unique = payloads.filter(p => {
+    const key = p.prompt;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  div.innerHTML = unique.map((p, i) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px">
+      <input type="checkbox" class="payload-cb" data-filename="${escH(p.filename)}" checked>
+      <span class="mono" style="color:var(--muted);min-width:200px">${escH(p.filename)}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escH(p.prompt)}</span>
+    </div>
+  `).join('');
+}
+
+function selectAllPayloads(checked) {
+  document.querySelectorAll('.payload-cb').forEach(cb => cb.checked = checked);
+}
+
+async function runReplay() {
+  const selected = [...document.querySelectorAll('.payload-cb:checked')].map(cb => cb.dataset.filename);
+  if (!selected.length) { document.getElementById('replayStatus').textContent = 'Select at least one payload'; return; }
+
+  document.getElementById('replayBtn').disabled = true;
+  document.getElementById('replayStatus').textContent = `Replaying ${selected.length} payload(s)...`;
+
+  const result = await api('/api/replay', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ filenames: selected, timeout: 180 }),
+  });
+
+  document.getElementById('replayBtn').disabled = false;
+
+  if (!result || result.error) {
+    document.getElementById('replayStatus').textContent = 'Error: ' + (result?.error || 'unknown');
+    return;
+  }
+
+  replayResults = result;
+  showReplayResults(result);
+  document.getElementById('replayStatus').textContent = `Done: ${result.length} payload(s) replayed`;
+}
+
+function showReplayResults(results) {
+  const ok = results.filter(r => r.status === 'OK').length;
+  const fail = results.filter(r => r.status === 'FAIL').length;
+  const totalTime = results.reduce((s, r) => s + (r.elapsed || 0), 0);
+  const totalApi = results.reduce((s, r) => s + (r.api_calls || 0), 0);
+  const totalErrs = results.reduce((s, r) => s + (r.api_errors || 0), 0);
+
+  document.getElementById('replayReport').style.display = 'block';
+  document.getElementById('replaySummary').innerHTML = `
+    <div class="rcard"><div class="val">${results.length}</div><div class="lbl">Total</div></div>
+    <div class="rcard"><div class="val sg">${ok}</div><div class="lbl">Passed</div></div>
+    <div class="rcard"><div class="val ${fail?'sr':'sg'}">${fail}</div><div class="lbl">Failed</div></div>
+    <div class="rcard"><div class="val">${totalTime.toFixed(0)}s</div><div class="lbl">Total Time</div></div>
+    <div class="rcard"><div class="val">${totalApi}</div><div class="lbl">API Calls</div></div>
+    <div class="rcard"><div class="val ${totalErrs?'sr':'sg'}">${totalErrs}</div><div class="lbl">API Errors</div></div>
+  `;
+
+  // Detailed cards
+  let html = '';
+  results.forEach((r, i) => {
+    const isFail = r.status === 'FAIL';
+    html += `<div class="err-card ${isFail ? '' : 'warn'}" style="border-left-color:${isFail ? 'var(--red)' : 'var(--green)'}">`;
+    html += `<h3>${isFail ? '\u274c' : '\u2705'} ${escH(r.filename)} <span class="task-badge">${r.elapsed?.toFixed(1) || '?'}s</span> <span class="task-badge">${r.api_calls || 0} API</span></h3>`;
+    html += `<div style="font-size:13px;margin-bottom:8px;color:var(--muted)">${escH(r.prompt || '')}</div>`;
+
+    // Tool calls
+    const tcs = r.tool_calls || [];
+    if (tcs.length) {
+      tcs.forEach((tc, j) => {
+        const res = tc.result || {};
+        const tcOk = res.ok;
+        const icon = tcOk === true ? '\u2705' : tcOk === false ? '\u274c' : '\u2753';
+        const args = Object.entries(tc.args || {}).map(([k,v]) => `${k}=${JSON.stringify(v).substring(0,60)}`).join(', ');
+        html += `<div class="check-line ${tcOk === false ? 'check-fail' : 'check-pass'}">${icon} <code>${escH(tc.tool)}</code>(${escH(args)})</div>`;
+        if (tcOk === false && res.error) {
+          html += `<div style="margin-left:24px;font-size:12px;color:var(--red)">${escH(res.error)}</div>`;
+        }
+      });
+    }
+
+    // Failed APIs
+    const failedApis = (r.api_log || []).filter(a => !a.ok);
+    if (failedApis.length) {
+      html += `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--red)">${failedApis.length} failed API call(s)</summary>`;
+      failedApis.forEach(a => {
+        html += `<div style="font-size:12px;font-family:monospace;margin:4px 0">${escH(a.method)} ${escH(a.url)} -> ${a.status}: ${escH(a.error || '')}</div>`;
+      });
+      html += `</details>`;
+    }
+
+    // Agent response
+    if (r.agent_response) {
+      html += `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Agent response</summary>`;
+      html += `<pre style="font-size:12px;white-space:pre-wrap;margin-top:4px">${escH(r.agent_response)}</pre>`;
+      html += `</details>`;
+    }
+
+    html += `</div>`;
+  });
+  document.getElementById('replayResults').innerHTML = html;
+
+  // Text report for copying
+  document.getElementById('replayText').value = generateReplayText(results);
+}
+
+function generateReplayText(results) {
+  const ok = results.filter(r => r.status === 'OK').length;
+  let out = `# Replay Report\n\n`;
+  out += `**${ok}/${results.length} passed**\n\n`;
+  out += `| # | Payload | Status | Time | Tools | API Calls | API Errors |\n`;
+  out += `|---|---------|--------|------|-------|-----------|------------|\n`;
+  results.forEach((r, i) => {
+    out += `| ${i+1} | ${r.filename} | ${r.status} | ${(r.elapsed||0).toFixed(0)}s | ${(r.tool_calls||[]).length} | ${r.api_calls||0} | ${r.api_errors||0} |\n`;
+  });
+  out += `\n`;
+
+  results.forEach((r, i) => {
+    out += `## ${i+1}. ${r.filename} — ${r.status}\n\n`;
+    out += `**Prompt:** ${r.prompt || 'N/A'}\n\n`;
+    const tcs = r.tool_calls || [];
+    if (tcs.length) {
+      out += `**Tool calls:**\n`;
+      tcs.forEach((tc, j) => {
+        const res = tc.result || {};
+        const icon = res.ok === true ? 'PASS' : res.ok === false ? 'FAIL' : '?';
+        out += `${j+1}. \`${tc.tool}\` [${icon}]\n`;
+        out += `   - Args: \`${JSON.stringify(tc.args || {})}\`\n`;
+        if (res.ok === false && res.error) {
+          out += `   - **Error: ${res.error}**\n`;
+        }
+      });
+      out += `\n`;
+    }
+    const failedApis = (r.api_log || []).filter(a => !a.ok);
+    if (failedApis.length) {
+      out += `**Failed API calls:**\n`;
+      failedApis.forEach(a => {
+        out += `- \`${a.method} ${a.url}\` -> **${a.status}**: ${a.error || ''}\n`;
+      });
+      out += `\n`;
+    }
+    if (r.agent_response) {
+      out += `**Agent response:** ${r.agent_response.substring(0, 500)}\n\n`;
+    }
+  });
+
+  return out;
+}
+
+function copyReplayReport() {
+  const text = document.getElementById('replayText').value;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyReplayBtn');
+    btn.textContent = 'Copied!';
+    btn.className = 'btn-copy copied';
+    setTimeout(() => { btn.textContent = 'Copy Report'; btn.className = 'btn-copy'; }, 2000);
+  });
+}
+
+init();
+</script>
+</body>
+</html>
