@@ -354,8 +354,11 @@ async def test_tools_stream():
         )
 
     def _generate():
+        count = 0
         for result in stream_tool_tests(base_url, token):
+            count += 1
             yield f"data: {json.dumps(result)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'total': count})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(_generate(), media_type="text/event-stream")

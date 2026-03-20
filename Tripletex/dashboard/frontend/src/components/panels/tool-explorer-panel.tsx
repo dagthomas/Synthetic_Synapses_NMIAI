@@ -284,7 +284,6 @@ function ToolCatalog({
 
 // ── Test Runner Section (adapted from tools-panel) ──────────────
 
-const ESTIMATED_TOTAL = 43
 
 function generateToolTestReport(results: ToolTestResult[]): string {
   const ok = results.filter((r) => r.status === "OK").length
@@ -401,7 +400,7 @@ function TestRunner({
   const fail = results.filter((r) => r.status === "FAIL").length
   const exception = results.filter((r) => r.status === "EXCEPTION").length
   const totalTime = results.reduce((s: number, r) => s + r.elapsed, 0)
-  const progress = Math.min((results.length / ESTIMATED_TOTAL) * 100, 100)
+  const progress = done ? 100 : Math.min(results.length * 1.5, 95) // indeterminate until done
 
   // Notify when complete
   useEffect(() => {
@@ -432,7 +431,7 @@ function TestRunner({
           <div className="flex items-center gap-2">
             <Activity className="h-3.5 w-3.5 text-primary animate-pulse" />
             <span className="text-xs text-muted-foreground tabular-nums font-medium">
-              {results.length}/{ESTIMATED_TOTAL} tests...
+              {results.length} tests...
             </span>
           </div>
         )}
