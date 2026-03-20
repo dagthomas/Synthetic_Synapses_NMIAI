@@ -13,6 +13,7 @@ class TripletexClient:
         self.auth = ("0", session_token)
         self._call_count = 0
         self._error_count = 0
+        self._call_log: list[dict] = []
 
     def get(self, endpoint: str, params: dict | None = None) -> dict:
         url = f"{self.base_url}{endpoint}"
@@ -57,6 +58,10 @@ class TripletexClient:
             # Log success with response summary
             summary = str(result)[:300]
             log.info(f"[API] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {summary}")
+            self._call_log.append({
+                "method": method, "url": url, "status": resp.status_code,
+                "elapsed": round(elapsed, 3), "ok": True,
+            })
             return result
         except Exception:
             self._error_count += 1
@@ -73,4 +78,8 @@ class TripletexClient:
             except Exception:
                 full_msg = resp.text[:500]
             log.error(f"[API ERROR] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {full_msg}")
+            self._call_log.append({
+                "method": method, "url": url, "status": resp.status_code,
+                "elapsed": round(elapsed, 3), "ok": False, "error": full_msg,
+            })
             return {"error": True, "status_code": resp.status_code, "message": full_msg}

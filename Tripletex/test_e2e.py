@@ -1,28 +1,36 @@
 """
 End-to-end agent tests: send real prompts through /solve and verify via Tripletex API.
-Requires the server running on port 8001.
+Outputs a detailed diagnostic report showing every tool call and API call per task.
+
+Usage:
+    python test_e2e.py                  # run tests, print report
+    python test_e2e.py --report-file report.md  # also save markdown report
 """
+import argparse
 import json
 import os
 import sys
 import time
 import requests
+from datetime import date, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
 
-AGENT_URL = os.environ.get("AGENT_URL", "http://127.0.0.1:8003/solve")
+AGENT_URL = os.environ.get("AGENT_URL", "http://127.0.0.1:8003/solve-debug")
 BASE_URL = os.environ["TRIPLETEX_BASE_URL"]
 TOKEN = os.environ["TRIPLETEX_SESSION_TOKEN"]
 API_KEY = os.environ.get("AGENT_API_KEY", "")
 AUTH = ("0", TOKEN)
 
 ts = int(time.time())
+today = date.today().isoformat()
+tomorrow = (date.today() + timedelta(days=1)).isoformat()
 results = []
 
 
 def solve(prompt: str, timeout: int = 120) -> dict:
-    """Send a prompt to the agent and return response."""
+    """Send a prompt to the agent and return full response with tool details."""
     headers = {}
     if API_KEY:
         headers["Authorization"] = f"Bearer {API_KEY}"
@@ -37,7 +45,11 @@ def solve(prompt: str, timeout: int = 120) -> dict:
     t0 = time.time()
     resp = requests.post(AGENT_URL, json=payload, headers=headers, timeout=timeout)
     elapsed = time.time() - t0
-    return {"status_code": resp.status_code, "elapsed": elapsed, "body": resp.text}
+    try:
+        body = resp.json()
+    except Exception:
+        body = {"raw": resp.text[:500]}
+    return {"status_code": resp.status_code, "elapsed": elapsed, "body": body}
 
 
 def api_get(endpoint, params=None):
@@ -47,31 +59,73 @@ def api_get(endpoint, params=None):
 
 
 def run_e2e(name, prompt, verify_fn, timeout=120):
-    """Run an E2E test: send prompt, verify result."""
+    """Run an E2E test: send prompt, collect tool details, verify result."""
     print(f"\n{'='*60}")
     print(f"TEST: {name}")
-    print(f"PROMPT: {prompt[:100]}...")
     print(f"{'='*60}")
 
     t0 = time.time()
     resp = solve(prompt, timeout=timeout)
     elapsed = time.time() - t0
-    print(f"  Agent responded in {elapsed:.1f}s (HTTP {resp['status_code']})")
+    body = resp["body"]
+
+    tool_calls = body.get("tool_calls", [])
+    api_log = body.get("api_log", [])
+    api_calls = body.get("api_calls", 0)
+    api_errors = body.get("api_errors", 0)
+    agent_response = body.get("agent_response", "")
+
+    print(f"  Agent: {elapsed:.1f}s | {len(tool_calls)} tools | {api_calls} API calls | {api_errors} errors")
+
+    # Print tool calls
+    for i, tc in enumerate(tool_calls):
+        ok = tc.get("result", {}).get("ok", True) if tc.get("result") else "?"
+        icon = "OK" if ok is True else "FAIL" if ok is False else "?"
+        args_str = ", ".join(f"{k}={repr(v)[:60]}" for k, v in tc.get("args", {}).items())
+        print(f"    [{icon}] {tc['tool']}({args_str})")
+        if ok is False and tc.get("result", {}).get("error"):
+            print(f"           ERROR: {tc['result']['error'][:200]}")
+
+    # Print API errors
+    for api in api_log:
+        if not api.get("ok"):
+            print(f"    [API FAIL] {api['method']} {api['url']} -> {api['status']}: {api.get('error', '')[:150]}")
 
     if resp["status_code"] != 200:
         print(f"  FAIL: HTTP {resp['status_code']}")
-        results.append({"name": name, "status": "FAIL", "error": f"HTTP {resp['status_code']}", "time": elapsed})
+        results.append({
+            "name": name, "status": "FAIL",
+            "error": f"HTTP {resp['status_code']}",
+            "time": elapsed, "prompt": prompt,
+            "tool_calls": tool_calls, "api_log": api_log,
+            "api_calls": api_calls, "api_errors": api_errors,
+            "agent_response": agent_response,
+        })
         return
 
     # Run verification
     try:
         ok, detail = verify_fn()
         status = "OK" if ok else "FAIL"
-        print(f"  [{status}] {detail}")
-        results.append({"name": name, "status": status, "error": "" if ok else detail, "time": elapsed})
+        print(f"  Verify: [{status}] {detail}")
+        results.append({
+            "name": name, "status": status,
+            "error": "" if ok else detail,
+            "time": elapsed, "prompt": prompt,
+            "tool_calls": tool_calls, "api_log": api_log,
+            "api_calls": api_calls, "api_errors": api_errors,
+            "agent_response": agent_response,
+        })
     except Exception as e:
-        print(f"  [EXCP] Verification error: {e}")
-        results.append({"name": name, "status": "EXCEPTION", "error": str(e), "time": elapsed})
+        print(f"  Verify: [EXCP] {e}")
+        results.append({
+            "name": name, "status": "EXCEPTION",
+            "error": str(e),
+            "time": elapsed, "prompt": prompt,
+            "tool_calls": tool_calls, "api_log": api_log,
+            "api_calls": api_calls, "api_errors": api_errors,
+            "agent_response": agent_response,
+        })
 
 
 # ============================================================
@@ -85,8 +139,7 @@ run_e2e(
         (lambda r: (
             bool(r.get("values")),
             f"Found {len(r.get('values', []))} employees with email {emp_email}"
-            + (f", userType={r['values'][0].get('userType')}" if r.get("values") else "")
-        ))(api_get("/employee", {"email": emp_email, "fields": "id,firstName,lastName,email,userType"}))
+        ))(api_get("/employee", {"email": emp_email, "fields": "id,firstName,lastName,email"}))
     ),
 )
 
@@ -112,13 +165,13 @@ prod_name = f"Konsulenttime E2E {ts}"
 run_e2e(
     "Create invoice",
     f"Opprett en faktura for kunden {cust_name}. Produktet heter '{prod_name}' og koster 1500 kr eks. mva. "
-    f"Kunden bestiller 10 timer. Fakturadato er 2026-03-20, forfallsdato 2026-04-20.",
+    f"Kunden bestiller 10 timer. Fakturadato er {today}, forfallsdato 2026-04-20.",
     lambda: (
         (lambda r: (
             bool(r.get("values")),
-            f"Found {len(r.get('values', []))} invoices"
-        ))(api_get("/invoice", {"fields": "id,invoiceDate,invoiceDueDate", "count": 5,
-                                "invoiceDateFrom": "2026-03-20", "invoiceDateTo": "2026-03-21"}))
+            f"Found {len(r.get('values', []))} invoices dated {today}"
+        ))(api_get("/invoice", {"fields": "id,invoiceDate", "count": 5,
+                                "invoiceDateFrom": today, "invoiceDateTo": tomorrow}))
     ),
     timeout=180,
 )
@@ -144,14 +197,14 @@ run_e2e(
 # ============================================================
 run_e2e(
     "Create voucher",
-    "Opprett et korrigeringsbilag datert 2026-03-20 med beskrivelse 'Korreksjon bankinnskudd'. "
+    f"Opprett et korrigeringsbilag datert {today} med beskrivelse 'Korreksjon bankinnskudd'. "
     "Debet konto 1920 (Bankinnskudd) 5000 kr, kredit konto 7700 5000 kr.",
     lambda: (
         (lambda r: (
             bool(r.get("values")),
-            f"Found {len(r.get('values', []))} vouchers"
+            f"Found {len(r.get('values', []))} vouchers dated {today}"
         ))(api_get("/ledger/voucher", {"fields": "id,date,description", "count": 10,
-                                        "dateFrom": "2026-03-20", "dateTo": "2026-03-21"}))
+                                        "dateFrom": today, "dateTo": tomorrow}))
     ),
     timeout=120,
 )
@@ -172,24 +225,110 @@ run_e2e(
 )
 
 # ============================================================
-# SUMMARY
+# SUMMARY (terminal)
 # ============================================================
 print(f"\n{'='*60}")
 print("E2E SUMMARY")
 print(f"{'='*60}")
 
-ok = sum(1 for r in results if r["status"] == "OK")
-fail = sum(1 for r in results if r["status"] == "FAIL")
-excp = sum(1 for r in results if r["status"] == "EXCEPTION")
+ok_count = sum(1 for r in results if r["status"] == "OK")
+fail_count = sum(1 for r in results if r["status"] == "FAIL")
+excp_count = sum(1 for r in results if r["status"] == "EXCEPTION")
 total = len(results)
 total_time = sum(r["time"] for r in results)
+total_api = sum(r.get("api_calls", 0) for r in results)
+total_errors = sum(r.get("api_errors", 0) for r in results)
 
-print(f"Total: {total} | OK: {ok} | FAIL: {fail} | EXCEPTION: {excp}")
-print(f"Total time: {total_time:.0f}s")
+print(f"Total: {total} | OK: {ok_count} | FAIL: {fail_count} | EXCEPTION: {excp_count}")
+print(f"Total time: {total_time:.0f}s | API calls: {total_api} | API errors: {total_errors}")
 print()
 
 for r in results:
     icon = " OK " if r["status"] == "OK" else "FAIL" if r["status"] == "FAIL" else "EXCP"
-    print(f"  [{icon}] {r['name']} ({r['time']:.0f}s) {r['error']}")
+    tc_count = len(r.get("tool_calls", []))
+    err_count = r.get("api_errors", 0)
+    print(f"  [{icon}] {r['name']} ({r['time']:.0f}s, {tc_count} tools, {err_count} errs) {r['error']}")
 
-print(f"\nPass rate: {ok}/{total} ({100*ok/total:.0f}%)" if total else "No tests run")
+print(f"\nPass rate: {ok_count}/{total} ({100*ok_count/total:.0f}%)" if total else "No tests run")
+
+
+# ============================================================
+# MARKDOWN REPORT (for Claude debugging)
+# ============================================================
+def generate_report() -> str:
+    """Generate a markdown report with full tool/API details for debugging."""
+    lines = []
+    lines.append(f"# E2E Test Report — {today}")
+    lines.append(f"")
+    lines.append(f"**Pass rate: {ok_count}/{total} ({100*ok_count/total:.0f}%)**")
+    lines.append(f"**Total: {total_time:.0f}s | API calls: {total_api} | API errors: {total_errors}**")
+    lines.append("")
+
+    # Quick summary table
+    lines.append("| # | Test | Status | Time | Tools | API Calls | API Errors |")
+    lines.append("|---|------|--------|------|-------|-----------|------------|")
+    for i, r in enumerate(results, 1):
+        st = r["status"]
+        lines.append(f"| {i} | {r['name']} | {'PASS' if st == 'OK' else st} | {r['time']:.0f}s | {len(r.get('tool_calls', []))} | {r.get('api_calls', 0)} | {r.get('api_errors', 0)} |")
+    lines.append("")
+
+    # Detailed section for each test
+    for i, r in enumerate(results, 1):
+        lines.append(f"## {i}. {r['name']} — {'PASS' if r['status'] == 'OK' else r['status']}")
+        lines.append("")
+        lines.append(f"**Prompt:** {r.get('prompt', 'N/A')}")
+        lines.append("")
+
+        tool_calls = r.get("tool_calls", [])
+        if tool_calls:
+            lines.append("**Tool calls:**")
+            for j, tc in enumerate(tool_calls, 1):
+                result = tc.get("result", {}) or {}
+                ok = result.get("ok", "?")
+                icon = "PASS" if ok is True else "FAIL" if ok is False else "?"
+                args_str = json.dumps(tc.get("args", {}), ensure_ascii=False)
+                lines.append(f"{j}. `{tc['tool']}` [{icon}]")
+                lines.append(f"   - Args: `{args_str}`")
+                if ok is False:
+                    lines.append(f"   - **Error: {result.get('error', 'unknown')}**")
+                if result.get("data"):
+                    data_preview = result["data"][:300]
+                    lines.append(f"   - Response: `{data_preview}`")
+            lines.append("")
+
+        api_log = r.get("api_log", [])
+        failed_apis = [a for a in api_log if not a.get("ok")]
+        if failed_apis:
+            lines.append("**Failed API calls:**")
+            for a in failed_apis:
+                lines.append(f"- `{a['method']} {a['url']}` -> **{a['status']}**: {a.get('error', '')}")
+            lines.append("")
+
+        if r.get("agent_response"):
+            lines.append(f"**Agent response:** {r['agent_response'][:500]}")
+            lines.append("")
+
+        if r.get("error"):
+            lines.append(f"**Verification error:** {r['error']}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+# Save report if requested
+parser = argparse.ArgumentParser()
+parser.add_argument("--report-file", type=str, default="", help="Save markdown report to file")
+args, _ = parser.parse_known_args()
+
+report = generate_report()
+
+if args.report_file:
+    with open(args.report_file, "w", encoding="utf-8") as f:
+        f.write(report)
+    print(f"\nReport saved to {args.report_file}")
+else:
+    # Always save to default location
+    report_path = os.path.join(os.path.dirname(__file__), "e2e_report.md")
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(report)
+    print(f"\nDetailed report saved to {report_path}")

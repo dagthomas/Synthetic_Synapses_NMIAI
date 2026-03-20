@@ -81,12 +81,9 @@ class SolveRequest(BaseModel):
     }
 
 
-@app.post("/solve")
-async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
-    # Optional Bearer token auth
-    if AGENT_API_KEY:
-        if not credentials or credentials.credentials != AGENT_API_KEY:
-            raise HTTPException(status_code=401, detail="Invalid API key")
+async def _run_agent(body: SolveRequest) -> dict:
+    """Shared agent execution logic. Returns full details dict."""
+    import time as _time
 
     prompt = body.prompt
     files = body.files
@@ -158,7 +155,7 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
 
     final_text = ""
     turn_count = 0
-    import time as _time
+    tool_calls = []
     t_start = _time.time()
     try:
         async for event in runner.run_async(
@@ -173,13 +170,31 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
                         log.info(f"[AGENT] Text: {part.text[:500]}")
                     if hasattr(part, "function_call") and part.function_call:
                         turn_count += 1
-                        log.info(f"[AGENT] Tool call #{turn_count}: {part.function_call.name}({part.function_call.args})")
+                        fc = part.function_call
+                        log.info(f"[AGENT] Tool call #{turn_count}: {fc.name}({fc.args})")
+                        tool_calls.append({
+                            "tool": fc.name,
+                            "args": dict(fc.args) if fc.args else {},
+                            "result": None,
+                        })
                         if turn_count >= MAX_AGENT_TURNS:
                             log.warning(f"[AGENT] Turn limit reached ({MAX_AGENT_TURNS}), stopping")
                             break
                     if hasattr(part, "function_response") and part.function_response:
-                        resp_str = str(part.function_response.response)[:500]
-                        log.info(f"[AGENT] Tool result: {part.function_response.name} -> {resp_str}")
+                        fr = part.function_response
+                        resp_data = fr.response if fr.response else {}
+                        resp_str = str(resp_data)[:500]
+                        log.info(f"[AGENT] Tool result: {fr.name} -> {resp_str}")
+                        for tc in reversed(tool_calls):
+                            if tc["tool"] == fr.name and tc["result"] is None:
+                                is_err = isinstance(resp_data, dict) and resp_data.get("error")
+                                tc["result"] = {
+                                    "ok": not is_err,
+                                    "data": str(resp_data)[:1000],
+                                }
+                                if is_err:
+                                    tc["result"]["error"] = resp_data.get("message", str(resp_data))[:500]
+                                break
             if turn_count >= MAX_AGENT_TURNS:
                 break
     except Exception as e:
@@ -214,7 +229,36 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
         except Exception as e:
             log.warning(f"Failed to save solve_log: {e}")
 
+    return {
+        "agent_response": final_text[:2000] if final_text else "",
+        "tool_calls": tool_calls,
+        "api_calls": client._call_count,
+        "api_errors": client._error_count,
+        "api_log": client._call_log,
+        "elapsed": round(elapsed, 2),
+    }
+
+
+@app.post("/solve")
+async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Competition endpoint — returns only {"status": "completed"}."""
+    if AGENT_API_KEY:
+        if not credentials or credentials.credentials != AGENT_API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+    await _run_agent(body)
     return JSONResponse({"status": "completed"})
+
+
+@app.post("/solve-debug")
+async def solve_debug(body: SolveRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Debug endpoint — returns full tool call and API call details."""
+    if AGENT_API_KEY:
+        if not credentials or credentials.credentials != AGENT_API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+    details = await _run_agent(body)
+    return JSONResponse({"status": "completed", **details})
 
 
 if __name__ == "__main__":
