@@ -88,7 +88,7 @@ def build_employee_extras_tools(client: TripletexClient) -> dict:
         startDate: str,
         endDate: str = "",
         percentage: float = 100.0,
-        leaveType: str = "OTHER",
+        leaveType: str = "MILITARY_SERVICE",
         isWageDeduction: bool = False,
     ) -> dict:
         """Create a leave of absence for an employment.
@@ -98,7 +98,7 @@ def build_employee_extras_tools(client: TripletexClient) -> dict:
             startDate: Start date YYYY-MM-DD.
             endDate: End date YYYY-MM-DD (empty for ongoing).
             percentage: Leave percentage (default 100%).
-            leaveType: Type - 'MATERNITY_LEAVE', 'SICK_LEAVE', 'EDUCATION_LEAVE', 'COMPASSIONATE_LEAVE', 'MILITARY_SERVICE', 'OTHER'.
+            leaveType: Leave type string. Valid values: MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, LEAVE_WITH_PAY, VOLUNTARY, FURLOUGH, OTHER.
             isWageDeduction: Whether there is wage deduction.
 
         Returns:
@@ -108,7 +108,7 @@ def build_employee_extras_tools(client: TripletexClient) -> dict:
             "employment": {"id": employment_id},
             "startDate": startDate,
             "percentage": percentage,
-            "leaveOfAbsenceType": leaveType,
+            "type": leaveType,
             "isWageDeduction": isWageDeduction,
         }
         if endDate:

@@ -24,7 +24,7 @@ def build_supplier_invoice_tools(client: TripletexClient) -> dict:
             invoiceDateFrom = (dt_date.today() - timedelta(days=365)).isoformat()
         if not invoiceDateTo:
             invoiceDateTo = dt_date.today().isoformat()
-        params = {"fields": "id,invoiceNumber,invoiceDate,dueDate,amount,supplier,voucher"}
+        params = {"fields": "id,invoiceNumber,invoiceDate,amount,supplier,voucher"}
         params["invoiceDateFrom"] = invoiceDateFrom
         params["invoiceDateTo"] = invoiceDateTo
         if supplierId:

@@ -45,22 +45,37 @@ def build_project_tools(client: TripletexClient) -> dict:
         today = date.today().isoformat()
         emp_result = client.get("/employee/employment", params={"employeeId": employee_id, "fields": "id", "count": 1})
         if not emp_result.get("values"):
-            client.post("/employee/employment", json={
+            # Need division for employment
+            div_result = client.get("/company/divisions", params={"fields": "id", "count": 1})
+            divs = div_result.get("values", [])
+            division_id = divs[0]["id"] if divs else None
+
+            emp_body = {
                 "employee": {"id": employee_id},
                 "startDate": today,
                 "employmentDetails": [{"date": today, "employmentType": "ORDINARY", "workingHoursScheme": "NOT_SHIFT"}],
+            }
+            if division_id:
+                emp_body["division"] = {"id": division_id}
+            client.post("/employee/employment", json=emp_body)
+
+        # Grant PM entitlements via POST /employee/entitlement
+        # Must be granted in dependency order: 45 → 10 → 8
+        who = client.get("/token/session/>whoAmI", params={"fields": "companyId"})
+        company_id = who.get("value", {}).get("companyId")
+        if not company_id:
+            _log.warning(f"Could not get companyId from whoAmI for entitlements")
+            return
+
+        _PM_ENTITLEMENTS = [45, 10, 8]  # AUTH_CREATE_PROJECT → AUTH_PROJECT_MANAGER → AUTH_PROJECT_MANAGER_DEPARTMENT
+        for eid in _PM_ENTITLEMENTS:
+            r = client.post("/employee/entitlement", json={
+                "employee": {"id": employee_id},
+                "entitlementId": eid,
+                "customer": {"id": company_id},
             })
-
-        # Grant entitlements — try both approaches for robustness
-        r1 = client.put("/employee/entitlement/:grantClientEntitlements",
-                        params={"employeeId": employee_id})
-        if r1.get("error"):
-            _log.warning(f"grantClientEntitlements failed for {employee_id}: {r1.get('message', '')}")
-
-        r2 = client.put("/employee/entitlement/:grantEntitlementsByTemplate",
-                        params={"employeeId": employee_id, "template": "all_access"})
-        if r2.get("error"):
-            _log.warning(f"grantEntitlementsByTemplate failed for {employee_id}: {r2.get('message', '')}")
+            if r.get("error"):
+                _log.warning(f"Entitlement {eid} failed for employee {employee_id}: {r.get('message', '')}")
 
     def create_project(
         name: str,
@@ -110,11 +125,8 @@ def build_project_tools(client: TripletexClient) -> dict:
             _log = logging.getLogger("projects")
             _log.warning(f"PM access denied for {projectManagerId}, retrying entitlements...")
 
-            # Try additional entitlement approaches
-            client.put("/employee/entitlement/:grantEntitlementsByTemplate",
-                        params={"employeeId": projectManagerId, "template": "project_leader"})
-            client.put("/employee/entitlement/:grantEntitlementsByTemplate",
-                        params={"employeeId": projectManagerId, "template": "internal_accountant"})
+            # Re-run entitlement granting (handles its own whoAmI call)
+            _ensure_employee_ready(projectManagerId)
 
             # Retry project creation with the CORRECT PM (never substitute wrong PM)
             result = client.post("/project", json=body)

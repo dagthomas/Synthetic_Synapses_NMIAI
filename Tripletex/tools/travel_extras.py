@@ -6,33 +6,31 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
 
     def create_travel_expense_cost(
         travelExpenseId: int,
-        date: str,
-        description: str,
         amount: float,
+        paymentType_id: int = 0,
         vatType_id: int = 0,
         currency_id: int = 0,
-        paymentType: str = "OWN",
     ) -> dict:
         """Add a cost/expense line to a travel expense report.
 
         Args:
             travelExpenseId: ID of the travel expense report.
-            date: Cost date YYYY-MM-DD.
-            description: Description of the cost.
-            amount: Cost amount.
+            amount: Cost amount including VAT.
+            paymentType_id: Payment type ID (0 to auto-detect first available).
             vatType_id: VAT type ID (0 for default).
             currency_id: Currency ID (0 for NOK default).
-            paymentType: Payment type - 'OWN' or 'COMPANY'.
 
         Returns:
             Created cost or error.
         """
+        if not paymentType_id:
+            pt = client.get("/travelExpense/paymentType", params={"fields": "id", "count": 1})
+            pts = pt.get("values", [])
+            paymentType_id = pts[0]["id"] if pts else 0
         body = {
             "travelExpense": {"id": travelExpenseId},
-            "date": date,
-            "comment": description,
             "amountCurrencyIncVat": amount,
-            "paymentType": paymentType,
+            "paymentType": {"id": paymentType_id},
         }
         if vatType_id:
             body["vatType"] = {"id": vatType_id}
@@ -87,36 +85,29 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
 
     def create_per_diem_compensation(
         travelExpenseId: int,
-        dateFrom: str,
-        dateTo: str,
+        location: str,
         rateType_id: int = 0,
-        accommodation: str = "HOTEL",
-        location: str = "",
+        accommodation: str = "",
     ) -> dict:
         """Create a per diem compensation on a travel expense.
 
         Args:
             travelExpenseId: ID of the travel expense.
-            dateFrom: Start date YYYY-MM-DD.
-            dateTo: End date YYYY-MM-DD.
+            location: Travel location (required).
             rateType_id: Rate type ID (0 for default).
             accommodation: Accommodation type.
-            location: Travel location.
 
         Returns:
             Created per diem or error.
         """
         body = {
             "travelExpense": {"id": travelExpenseId},
-            "startDate": dateFrom,
-            "endDate": dateTo,
+            "location": location,
         }
         if rateType_id:
             body["rateType"] = {"id": rateType_id}
         if accommodation:
             body["accommodation"] = accommodation
-        if location:
-            body["location"] = location
         return client.post("/travelExpense/perDiemCompensation", json=body)
 
     def update_travel_expense(

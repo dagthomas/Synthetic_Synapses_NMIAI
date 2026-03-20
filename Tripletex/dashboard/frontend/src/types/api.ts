@@ -60,7 +60,7 @@ export interface SeedResult {
 }
 
 export interface CleanResult {
-  results: Record<string, { deleted: number; errors: string[] }>
+  results: Record<string, { deleted: number; errors: string[]; skipped?: string }>
   total_deleted: number
 }
 

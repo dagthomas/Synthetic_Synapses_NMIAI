@@ -39,7 +39,7 @@ def build_year_end_tools(client: TripletexClient) -> dict:
         Returns:
             A list of VAT types.
         """
-        return client.get("/ledger/vatType", params={"fields": "id,number,name,description,percentage"})
+        return client.get("/ledger/vatType", params={"fields": "id,number,name,percentage"})
 
     return {
         "search_year_end_annexes": search_year_end_annexes,

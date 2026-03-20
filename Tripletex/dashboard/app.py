@@ -456,570 +456,213 @@ async def sandbox_clean():
 
 # ── API: Coverage ──────────────────────────────────────────────────
 
+_coverage_cache = None
+
 @app.get("/api/coverage")
 def api_coverage():
-    """Return API coverage mapping: all Tripletex endpoints vs implemented tools."""
-    return _API_COVERAGE
+    """Return API coverage mapping: dynamically scans tools/ directory."""
+    global _coverage_cache
+    if _coverage_cache is None:
+        _coverage_cache = _build_coverage()
+    return _coverage_cache
 
 
-# Static coverage data — maps every Tripletex API category to our tools.
-# "endpoints" lists all POST/PUT/DELETE endpoints in the category.
-# "tools" lists our tools that cover endpoints in this category.
-# "covered" lists specific endpoints our tools handle.
-_API_COVERAGE = [
-    {
-        "category": "EMPLOYEE",
-        "endpoint_count": 27,
-        "tools": ["create_employee", "update_employee", "search_employees",
-                  "create_employment", "search_employments"],
-        "covered": [
-            "POST /employee",
-            "PUT /employee/{id}",
-            "GET /employee (search)",
-            "POST /employee/employment",
-            "GET /employee/employment (search)",
-        ],
-        "uncovered": [
-            "POST /employee/category", "POST /employee/category/list",
-            "PUT /employee/category/list", "DELETE /employee/category/list",
-            "PUT /employee/category/{id}", "DELETE /employee/category/{id}",
-            "POST /employee/employment/details",
-            "PUT /employee/employment/details/{id}",
-            "POST /employee/employment/leaveOfAbsence",
-            "POST /employee/employment/leaveOfAbsence/list",
-            "PUT /employee/employment/leaveOfAbsence/{id}",
-            "PUT /employee/employment/{id}",
-            "PUT /employee/entitlement/:grantClientEntitlementsByTemplate",
-            "PUT /employee/entitlement/:grantEntitlementsByTemplate",
-            "POST /employee/hourlyCostAndRate",
-            "PUT /employee/hourlyCostAndRate/{id}",
-            "POST /employee/list",
-            "POST /employee/nextOfKin", "PUT /employee/nextOfKin/{id}",
-            "PUT /employee/preferences/:changeLanguage",
-            "PUT /employee/preferences/list", "PUT /employee/preferences/{id}",
-            "POST /employee/standardTime", "PUT /employee/standardTime/{id}",
-        ],
-    },
-    {
-        "category": "CUSTOMER",
-        "endpoint_count": 7,
-        "tools": ["create_customer", "update_customer", "search_customers"],
-        "covered": [
-            "POST /customer",
-            "PUT /customer/{id}",
-            "GET /customer (search)",
-        ],
-        "uncovered": [
-            "POST /customer/category", "PUT /customer/category/{id}",
-            "POST /customer/list", "PUT /customer/list",
-            "DELETE /customer/{id}",
-        ],
-    },
-    {
-        "category": "CONTACT",
-        "endpoint_count": 4,
-        "tools": ["create_contact", "search_contacts"],
-        "covered": [
-            "POST /contact",
-            "GET /contact (search)",
-        ],
-        "uncovered": [
-            "POST /contact/list", "DELETE /contact/list",
-            "PUT /contact/{id}",
-        ],
-    },
-    {
-        "category": "PRODUCT",
-        "endpoint_count": 34,
-        "tools": ["create_product", "search_products"],
-        "covered": [
-            "POST /product",
-            "GET /product (search)",
-        ],
-        "uncovered": [
-            "POST /product/group", "POST /product/group/list",
-            "PUT /product/group/list", "DELETE /product/group/list",
-            "PUT /product/group/{id}", "DELETE /product/group/{id}",
-            "POST /product/groupRelation", "POST /product/groupRelation/list",
-            "DELETE /product/groupRelation/list",
-            "DELETE /product/groupRelation/{id}",
-            "POST /product/inventoryLocation",
-            "POST /product/inventoryLocation/list",
-            "PUT /product/inventoryLocation/list",
-            "PUT /product/inventoryLocation/{id}",
-            "DELETE /product/inventoryLocation/{id}",
-            "POST /product/list", "PUT /product/list",
-            "PUT /product/logisticsSettings",
-            "POST /product/supplierProduct",
-            "POST /product/supplierProduct/list",
-            "PUT /product/supplierProduct/list",
-            "PUT /product/supplierProduct/{id}",
-            "DELETE /product/supplierProduct/{id}",
-            "POST /product/unit", "POST /product/unit/list",
-            "PUT /product/unit/list", "PUT /product/unit/{id}",
-            "DELETE /product/unit/{id}",
-            "PUT /product/{id}", "DELETE /product/{id}",
-            "POST /product/{id}/image", "DELETE /product/{id}/image",
-        ],
-    },
-    {
-        "category": "DEPARTMENT",
-        "endpoint_count": 5,
-        "tools": ["create_department"],
-        "covered": [
-            "POST /department",
-        ],
-        "uncovered": [
-            "POST /department/list", "PUT /department/list",
-            "PUT /department/{id}", "DELETE /department/{id}",
-        ],
-    },
-    {
-        "category": "PROJECT",
-        "endpoint_count": 40,
-        "tools": ["create_project"],
-        "covered": [
-            "POST /project",
-        ],
-        "uncovered": [
-            "DELETE /project", "POST /project/category",
-            "PUT /project/category/{id}",
-            "POST /project/hourlyRates", "POST /project/hourlyRates/list",
-            "PUT /project/hourlyRates/list",
-            "DELETE /project/hourlyRates/list",
-            "POST /project/hourlyRates/projectSpecificRates",
-            "POST /project/hourlyRates/projectSpecificRates/list",
-            "PUT /project/hourlyRates/projectSpecificRates/list",
-            "DELETE /project/hourlyRates/projectSpecificRates/list",
-            "PUT /project/hourlyRates/projectSpecificRates/{id}",
-            "DELETE /project/hourlyRates/projectSpecificRates/{id}",
-            "PUT /project/hourlyRates/{id}",
-            "DELETE /project/hourlyRates/{id}",
-            "POST /project/import",
-            "POST /project/list", "PUT /project/list",
-            "DELETE /project/list",
-            "POST /project/orderline", "POST /project/orderline/list",
-            "PUT /project/orderline/{id}", "DELETE /project/orderline/{id}",
-            "POST /project/participant", "POST /project/participant/list",
-            "DELETE /project/participant/list",
-            "PUT /project/participant/{id}",
-            "POST /project/projectActivity",
-            "DELETE /project/projectActivity/list",
-            "DELETE /project/projectActivity/{id}",
-            "PUT /project/settings",
-            "POST /project/subcontract",
-            "PUT /project/subcontract/{id}",
-            "DELETE /project/subcontract/{id}",
-            "PUT /project/{id}", "DELETE /project/{id}",
-        ],
-    },
-    {
-        "category": "ORDER",
-        "endpoint_count": 21,
-        "tools": ["create_order"],
-        "covered": [
-            "POST /order",
-        ],
-        "uncovered": [
-            "PUT /order/:invoiceMultipleOrders",
-            "POST /order/list",
-            "POST /order/orderGroup", "PUT /order/orderGroup",
-            "DELETE /order/orderGroup/{id}",
-            "POST /order/orderline", "POST /order/orderline/list",
-            "PUT /order/orderline/{id}", "DELETE /order/orderline/{id}",
-            "PUT /order/orderline/{id}/:pickLine",
-            "PUT /order/orderline/{id}/:unpickLine",
-            "PUT /order/sendInvoicePreview/{orderId}",
-            "PUT /order/sendOrderConfirmation/{orderId}",
-            "PUT /order/sendPackingNote/{orderId}",
-            "PUT /order/{id}", "DELETE /order/{id}",
-            "PUT /order/{id}/:approveSubscriptionInvoice",
-            "PUT /order/{id}/:attach",
-            "PUT /order/{id}/:invoice",
-            "PUT /order/{id}/:unApproveSubscriptionInvoice",
-        ],
-    },
-    {
-        "category": "INVOICE",
-        "endpoint_count": 6,
-        "tools": ["create_invoice", "register_payment", "create_credit_note"],
-        "covered": [
-            "POST /invoice",
-            "PUT /invoice/{id}/:payment",
-            "PUT /invoice/{id}/:createCreditNote",
-        ],
-        "uncovered": [
-            "POST /invoice/list",
-            "PUT /invoice/{id}/:createReminder",
-            "PUT /invoice/{id}/:send",
-        ],
-    },
-    {
-        "category": "BANK",
-        "endpoint_count": 14,
-        "tools": ["search_bank_accounts", "search_bank_reconciliations",
-                  "get_last_bank_reconciliation",
-                  "get_last_closed_bank_reconciliation",
-                  "create_bank_reconciliation",
-                  "adjust_bank_reconciliation",
-                  "close_bank_reconciliation",
-                  "delete_bank_reconciliation",
-                  "get_bank_reconciliation_match_count",
-                  "search_bank_statements"],
-        "covered": [
-            "GET /bank (search)",
-            "GET /bank/reconciliation (search)",
-            "GET /bank/reconciliation/>last",
-            "GET /bank/reconciliation/>lastClosed",
-            "POST /bank/reconciliation",
-            "PUT /bank/reconciliation/{id}/:adjustment",
-            "PUT /bank/reconciliation/{id}",
-            "DELETE /bank/reconciliation/{id}",
-            "GET /bank/reconciliation/match/count",
-            "GET /bank/statement (search)",
-        ],
-        "uncovered": [
-            "POST /bank/reconciliation/match",
-            "PUT /bank/reconciliation/match/:suggest",
-            "PUT /bank/reconciliation/match/{id}",
-            "DELETE /bank/reconciliation/match/{id}",
-            "POST /bank/reconciliation/matches/counter",
-            "POST /bank/reconciliation/settings",
-            "PUT /bank/reconciliation/settings/{id}",
-            "POST /bank/statement/import",
-            "DELETE /bank/statement/{id}",
-        ],
-    },
-    {
-        "category": "LEDGER",
-        "endpoint_count": 39,
-        "tools": ["get_ledger_accounts", "get_ledger_postings",
-                  "create_voucher", "delete_voucher",
-                  "search_voucher_types"],
-        "covered": [
-            "GET /ledger/account (search)",
-            "GET /ledger/posting (search)",
-            "POST /ledger/voucher",
-            "DELETE /ledger/voucher/{id}",
-            "GET /ledger/voucherType (search)",
-        ],
-        "uncovered": [
-            "POST /ledger/account", "POST /ledger/account/list",
-            "PUT /ledger/account/list", "DELETE /ledger/account/list",
-            "PUT /ledger/account/{id}", "DELETE /ledger/account/{id}",
-            "POST /ledger/accountingDimensionName",
-            "PUT /ledger/accountingDimensionName/{id}",
-            "DELETE /ledger/accountingDimensionName/{id}",
-            "POST /ledger/accountingDimensionValue",
-            "PUT /ledger/accountingDimensionValue/list",
-            "DELETE /ledger/accountingDimensionValue/{id}",
-            "POST /ledger/paymentTypeOut",
-            "POST /ledger/paymentTypeOut/list",
-            "PUT /ledger/paymentTypeOut/list",
-            "PUT /ledger/paymentTypeOut/{id}",
-            "DELETE /ledger/paymentTypeOut/{id}",
-            "PUT /ledger/posting/:closePostings",
-            "PUT /ledger/vatSettings",
-            "PUT /ledger/vatType/createRelativeVatType",
-            "PUT /ledger/voucher/historical/:closePostings",
-            "PUT /ledger/voucher/historical/:reverseHistoricalVouchers",
-            "POST /ledger/voucher/historical/employee",
-            "POST /ledger/voucher/historical/historical",
-            "POST /ledger/voucher/historical/{voucherId}/attachment",
-            "POST /ledger/voucher/importDocument",
-            "POST /ledger/voucher/importGbat10",
-            "PUT /ledger/voucher/list",
-            "POST /ledger/voucher/openingBalance",
-            "DELETE /ledger/voucher/openingBalance",
-            "PUT /ledger/voucher/{id}",
-            "PUT /ledger/voucher/{id}/:reverse",
-            "PUT /ledger/voucher/{id}/:sendToInbox",
-            "PUT /ledger/voucher/{id}/:sendToLedger",
-            "POST /ledger/voucher/{voucherId}/attachment",
-            "DELETE /ledger/voucher/{voucherId}/attachment",
-            "POST /ledger/voucher/{voucherId}/pdf/{fileName}",
-        ],
-    },
-    {
-        "category": "SUPPLIER",
-        "endpoint_count": 5,
-        "tools": ["create_supplier", "search_suppliers", "update_supplier"],
-        "covered": [
-            "POST /supplier",
-            "GET /supplier (search)",
-            "PUT /supplier/{id}",
-        ],
-        "uncovered": [
-            "POST /supplier/list", "PUT /supplier/list",
-            "DELETE /supplier/{id}",
-        ],
-    },
-    {
-        "category": "TRAVELEXPENSE",
-        "endpoint_count": 38,
-        "tools": ["create_travel_expense", "delete_travel_expense",
-                  "search_travel_expenses"],
-        "covered": [
-            "POST /travelExpense",
-            "DELETE /travelExpense/{id}",
-            "GET /travelExpense (search)",
-        ],
-        "uncovered": [
-            "PUT /travelExpense/:approve", "PUT /travelExpense/:copy",
-            "PUT /travelExpense/:createVouchers",
-            "PUT /travelExpense/:deliver",
-            "PUT /travelExpense/:unapprove",
-            "PUT /travelExpense/:undeliver",
-            "POST /travelExpense/accommodationAllowance",
-            "PUT /travelExpense/accommodationAllowance/{id}",
-            "DELETE /travelExpense/accommodationAllowance/{id}",
-            "POST /travelExpense/cost",
-            "PUT /travelExpense/cost/list",
-            "PUT /travelExpense/cost/{id}",
-            "DELETE /travelExpense/cost/{id}",
-            "POST /travelExpense/costParticipant",
-            "POST /travelExpense/costParticipant/list",
-            "DELETE /travelExpense/costParticipant/list",
-            "DELETE /travelExpense/costParticipant/{id}",
-            "POST /travelExpense/drivingStop",
-            "DELETE /travelExpense/drivingStop/{id}",
-            "POST /travelExpense/mileageAllowance",
-            "PUT /travelExpense/mileageAllowance/{id}",
-            "DELETE /travelExpense/mileageAllowance/{id}",
-            "POST /travelExpense/passenger",
-            "POST /travelExpense/passenger/list",
-            "DELETE /travelExpense/passenger/list",
-            "PUT /travelExpense/passenger/{id}",
-            "DELETE /travelExpense/passenger/{id}",
-            "POST /travelExpense/perDiemCompensation",
-            "PUT /travelExpense/perDiemCompensation/{id}",
-            "DELETE /travelExpense/perDiemCompensation/{id}",
-            "PUT /travelExpense/{id}",
-            "PUT /travelExpense/{id}/convert",
-            "POST /travelExpense/{travelExpenseId}/attachment",
-            "DELETE /travelExpense/{travelExpenseId}/attachment",
-            "POST /travelExpense/{travelExpenseId}/attachment/list",
-        ],
-    },
-    {
-        "category": "DELIVERYADDRESS",
-        "endpoint_count": 1,
-        "tools": ["search_delivery_addresses", "update_delivery_address"],
-        "covered": [
-            "GET /deliveryAddress (search)",
-            "PUT /deliveryAddress/{id}",
-        ],
-        "uncovered": [],
-    },
-    {
-        "category": "BALANCE / REPORTING",
-        "endpoint_count": 1,
-        "tools": ["get_balance_sheet", "search_currencies", "get_company_info",
-                  "get_year_end", "search_year_ends"],
-        "covered": [
-            "GET /balanceSheet",
-            "GET /currency (search)",
-            "GET /company/{id}",
-            "GET /yearEnd/{id}",
-            "GET /yearEnd (search)",
-        ],
-        "uncovered": [],
-    },
-    {
-        "category": "GENERIC / UTILITY",
-        "endpoint_count": 0,
-        "tools": ["get_entity_by_id", "delete_entity", "extract_file_content"],
-        "covered": [
-            "GET /{entity_type}/{id} (any entity)",
-            "DELETE /{entity_type}/{id} (any entity)",
-            "Local file extraction (PDF/image)",
-        ],
-        "uncovered": [],
-    },
-    # ── Uncovered categories ──
-    {
-        "category": "ACCOUNTINGOFFICE",
-        "endpoint_count": 3, "tools": [], "covered": [],
-        "uncovered": [
-            "PUT /accountingOffice/reconciliations/{id}/control/:controlReconciliation",
-            "PUT /accountingOffice/reconciliations/{id}/control/:reconcile",
-            "PUT /accountingOffice/reconciliations/{id}/control/:requestControl",
-        ],
-    },
-    {
-        "category": "ACTIVITY",
-        "endpoint_count": 2, "tools": [], "covered": [],
-        "uncovered": ["POST /activity", "POST /activity/list"],
-    },
-    {
-        "category": "ASSET",
-        "endpoint_count": 8, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /asset", "DELETE /asset/deleteImport",
-            "DELETE /asset/deleteStartingBalance",
-            "POST /asset/duplicate/{id}", "POST /asset/list",
-            "POST /asset/upload", "PUT /asset/{id}",
-            "DELETE /asset/{id}",
-        ],
-    },
-    {
-        "category": "ATTESTATION",
-        "endpoint_count": 1, "tools": [], "covered": [],
-        "uncovered": ["PUT /attestation/:addApprover"],
-    },
-    {
-        "category": "DIVISION",
-        "endpoint_count": 4, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /division", "POST /division/list",
-            "PUT /division/list", "PUT /division/{id}",
-        ],
-    },
-    {
-        "category": "DOCUMENTARCHIVE",
-        "endpoint_count": 10, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /documentArchive/account/{id}",
-            "POST /documentArchive/customer/{id}",
-            "POST /documentArchive/employee/{id}",
-            "POST /documentArchive/product/{id}",
-            "POST /documentArchive/project/{id}",
-            "POST /documentArchive/reception",
-            "POST /documentArchive/supplier/{id}",
-            "PUT /documentArchive/{id}",
-            "DELETE /documentArchive/{id}",
-        ],
-    },
-    {
-        "category": "EVENT",
-        "endpoint_count": 6, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /event/subscription", "POST /event/subscription/list",
-            "PUT /event/subscription/list", "DELETE /event/subscription/list",
-            "PUT /event/subscription/{id}", "DELETE /event/subscription/{id}",
-        ],
-    },
-    {
-        "category": "INCOMINGINVOICE",
-        "endpoint_count": 3, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /incomingInvoice", "PUT /incomingInvoice/{id}",
-            "POST /incomingInvoice/{id}/addPayment",
-        ],
-    },
-    {
-        "category": "INVENTORY",
-        "endpoint_count": 16, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /inventory", "POST /inventory/location",
-            "POST /inventory/location/list", "PUT /inventory/location/list",
-            "DELETE /inventory/location/list", "PUT /inventory/location/{id}",
-            "DELETE /inventory/location/{id}",
-            "POST /inventory/stocktaking",
-            "POST /inventory/stocktaking/productline",
-            "PUT /inventory/stocktaking/productline/{id}",
-            "DELETE /inventory/stocktaking/productline/{id}",
-            "PUT /inventory/stocktaking/{id}",
-            "DELETE /inventory/stocktaking/{id}",
-            "PUT /inventory/{id}", "DELETE /inventory/{id}",
-        ],
-    },
-    {
-        "category": "PURCHASEORDER",
-        "endpoint_count": 40, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /purchaseOrder", "POST /purchaseOrder/deviation",
-            "POST /purchaseOrder/goodsReceipt",
-            "POST /purchaseOrder/orderline",
-            "PUT /purchaseOrder/{id}", "DELETE /purchaseOrder/{id}",
-            "(+34 more endpoints)",
-        ],
-    },
-    {
-        "category": "SALARY",
-        "endpoint_count": 24, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /salary/transaction", "DELETE /salary/transaction/{id}",
-            "PUT /salary/settings",
-            "POST /salary/settings/holiday",
-            "POST /salary/settings/pensionScheme",
-            "(+19 more endpoints)",
-        ],
-    },
-    {
-        "category": "SUPPLIERINVOICE",
-        "endpoint_count": 9, "tools": [], "covered": [],
-        "uncovered": [
-            "PUT /supplierInvoice/:approve",
-            "PUT /supplierInvoice/:reject",
-            "POST /supplierInvoice/{id}/:addPayment",
-            "PUT /supplierInvoice/{id}/:changeDimension",
-            "(+5 more endpoints)",
-        ],
-    },
-    {
-        "category": "TIMESHEET",
-        "endpoint_count": 34, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /timesheet/entry", "POST /timesheet/entry/list",
-            "PUT /timesheet/entry/{id}", "DELETE /timesheet/entry/{id}",
-            "POST /timesheet/allocated", "PUT /timesheet/allocated/{id}",
-            "PUT /timesheet/timeClock/:start",
-            "PUT /timesheet/timeClock/{id}/:stop",
-            "(+26 more endpoints)",
-        ],
-    },
-    {
-        "category": "SAFT",
-        "endpoint_count": 1, "tools": [], "covered": [],
-        "uncovered": ["POST /saft/importSAFT"],
-    },
-    {
-        "category": "TOKEN",
-        "endpoint_count": 4, "tools": [], "covered": [],
-        "uncovered": [
-            "PUT /token/employee/:create",
-            "POST /token/session/:create",
-            "PUT /token/session/:create",
-            "DELETE /token/session/{token}",
-        ],
-    },
-    {
-        "category": "YEAREND",
-        "endpoint_count": 17, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /yearEnd/penneo/casefiles",
-            "POST /yearEnd/penneo/documents",
-            "POST /yearEnd/researchAndDevelopment2024",
-            "(+14 more endpoints)",
-        ],
-    },
-    {
-        "category": "COMPANY",
-        "endpoint_count": 3,
-        "tools": ["get_company_info"],
-        "covered": ["GET /company/{id}"],
-        "uncovered": [
-            "PUT /company",
-            "POST /company/salesmodules",
-            "PUT /company/settings/altinn",
-        ],
-    },
-    {
-        "category": "OTHER (small)",
-        "endpoint_count": 8, "tools": [], "covered": [],
-        "uncovered": [
-            "POST /balance/reconciliation/annual/context",
-            "POST /userLicense/export",
-            "POST /vatTermSizeSettings",
-            "PUT /vatTermSizeSettings/{id}",
-            "DELETE /vatTermSizeSettings/{id}",
-            "POST /voucherMessage",
-            "POST /voucherStatus",
-            "PUT /subscription/cancel",
-        ],
-    },
-]
+@app.post("/api/coverage/refresh")
+def refresh_coverage():
+    """Force refresh the coverage cache."""
+    global _coverage_cache
+    _coverage_cache = None
+    _coverage_cache = _build_coverage()
+    return {"ok": True, "categories": len(_coverage_cache)}
+
+
+def _build_coverage():
+    """Dynamically scan tools/ and map to Tripletex API endpoints."""
+    import importlib, inspect, re
+
+    tools_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools")
+
+    # 1. Scan all tool modules → collect tool names + docstrings + source
+    tool_info = {}  # {tool_name: {module, docstring, endpoints}}
+    for py_file in sorted(glob(os.path.join(tools_dir, "*.py"))):
+        mod_name = os.path.basename(py_file).replace(".py", "")
+        if mod_name.startswith("_"):
+            continue
+        try:
+            source = open(py_file, "r", encoding="utf-8").read()
+        except Exception:
+            continue
+
+        # Find all nested function definitions (indented = tool closures)
+        # Handles multi-line params and -> return type annotations
+        for match in re.finditer(
+            r'    def\s+(\w+)\s*\(.*?\)(?:\s*->\s*\w+)?\s*:\s*(?:"""(.*?)""")?',
+            source, re.DOTALL
+        ):
+            fname = match.group(1)
+            doc = (match.group(2) or "").strip().split("\n")[0]  # first line
+            # Skip internal/helper functions
+            if fname.startswith("_") or fname.startswith("build_"):
+                continue
+            tool_info[fname] = {
+                "module": mod_name,
+                "docstring": doc,
+                "endpoints": _infer_endpoints(fname, source, match.start(), mod_name),
+            }
+
+    # 2. Map tool names → API categories
+    # Category is derived from module name
+    MODULE_TO_CATEGORY = {
+        "employees": "EMPLOYEE", "employee_extras": "EMPLOYEE",
+        "employment": "EMPLOYEE",
+        "customers": "CUSTOMER", "contacts": "CONTACT",
+        "products": "PRODUCT", "departments": "DEPARTMENT",
+        "projects": "PROJECT", "order": "ORDER", "invoicing": "INVOICE",
+        "bank": "BANK", "ledger": "LEDGER", "supplier": "SUPPLIER",
+        "supplier_invoice": "SUPPLIERINVOICE",
+        "travel": "TRAVELEXPENSE", "travel_extras": "TRAVELEXPENSE",
+        "address": "DELIVERYADDRESS", "balance": "BALANCE",
+        "company": "COMPANY", "common": "GENERIC/UTILITY",
+        "files": "GENERIC/UTILITY",
+        "activity": "ACTIVITY", "division": "DIVISION",
+        "timesheet": "TIMESHEET", "salary": "SALARY",
+        "year_end": "YEAREND", "incoming_invoice": "INCOMINGINVOICE",
+    }
+
+    # Some tools from invoicing.py belong to ORDER, not INVOICE
+    ORDER_TOOLS = {"create_order", "search_orders", "update_order", "delete_order",
+                   "send_invoice"}  # send_invoice is in invoicing.py but maps to invoice
+
+    # 3. Build per-category data
+    categories = {}
+    for tool_name, info in tool_info.items():
+        cat = MODULE_TO_CATEGORY.get(info["module"], info["module"].upper())
+        # Split invoicing tools: order-related go to ORDER
+        if info["module"] == "invoicing" and tool_name in ORDER_TOOLS:
+            cat = "ORDER"
+        if cat not in categories:
+            categories[cat] = {"tools": [], "covered": [], "modules": set()}
+        categories[cat]["tools"].append(tool_name)
+        categories[cat]["modules"].add(info["module"])
+        for ep in info["endpoints"]:
+            if ep not in categories[cat]["covered"]:
+                categories[cat]["covered"].append(ep)
+
+    # 4. Load endpoint counts from reference file (if available)
+    endpoints_file = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                   "tripletex_all_endpoints.txt")
+    all_endpoints = _parse_endpoint_file(endpoints_file) if os.path.isfile(endpoints_file) else {}
+
+    # 5. Build final output
+    result = []
+    seen_cats = set()
+    for cat_name in sorted(categories.keys()):
+        cat = categories[cat_name]
+        seen_cats.add(cat_name)
+        # Match to reference endpoints
+        ref_key = _match_ref_category(cat_name, all_endpoints)
+        ref_endpoints = all_endpoints.get(ref_key, []) if ref_key else []
+        uncovered = [ep for ep in ref_endpoints if ep not in cat["covered"]]
+        result.append({
+            "category": cat_name,
+            "endpoint_count": max(len(ref_endpoints), len(cat["covered"])),
+            "tools": sorted(cat["tools"]),
+            "covered": sorted(cat["covered"]),
+            "uncovered": uncovered,
+        })
+
+    # Add uncovered reference categories
+    for ref_cat, endpoints in sorted(all_endpoints.items()):
+        if not _match_any(ref_cat, seen_cats):
+            result.append({
+                "category": ref_cat,
+                "endpoint_count": len(endpoints),
+                "tools": [],
+                "covered": [],
+                "uncovered": endpoints,
+            })
+
+    # Sort: covered categories first, then uncovered by size
+    result.sort(key=lambda c: (-len(c["tools"]), -len(c["covered"]), c["category"]))
+    return result
+
+
+def _infer_endpoints(func_name: str, source: str, func_start: int, module: str) -> list:
+    """Infer which API endpoints a tool function covers from its source code."""
+    import re
+    # Get function body (up to next def or end)
+    next_def = source.find("\ndef ", func_start + 1)
+    body = source[func_start:next_def] if next_def > 0 else source[func_start:]
+
+    endpoints = []
+    # Look for client.post/get/put/delete calls
+    for m in re.finditer(r'client\.(post|get|put|delete)\(\s*f?"(/[^"]+)"', body):
+        method = m.group(1).upper()
+        path = m.group(2)
+        # Clean up f-string vars
+        path = re.sub(r'\{[^}]+\}', '{id}', path)
+        endpoints.append(f"{method} {path}")
+
+    # Also check for string patterns like "/employee" in the body
+    if not endpoints:
+        for m in re.finditer(r'client\.(post|get|put|delete)\(\s*(["\']|f["\'])([^"\']+)', body):
+            method = m.group(1).upper()
+            path = m.group(3)
+            path = re.sub(r'\{[^}]+\}', '{id}', path)
+            endpoints.append(f"{method} {path}")
+
+    return endpoints
+
+
+def _parse_endpoint_file(filepath: str) -> dict:
+    """Parse tripletex_all_endpoints.txt into {category: [endpoints]}."""
+    import re
+    categories = {}
+    current_cat = None
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                # Category headers: "  CATEGORY (N endpoints)"
+                cat_match = re.match(r'^([A-Z][A-Z_/\s]+?)\s*\(\d+\s*endpoint', line)
+                if cat_match:
+                    current_cat = cat_match.group(1).strip()
+                    if current_cat not in categories:
+                        categories[current_cat] = []
+                    continue
+                # Endpoint lines: "POST   /path" or "PUT    /path"
+                ep_match = re.match(r'^(GET|POST|PUT|DELETE)\s+(/\S+)', line)
+                if ep_match and current_cat:
+                    categories[current_cat].append(f"{ep_match.group(1)} {ep_match.group(2)}")
+    except Exception:
+        pass
+    return categories
+
+
+def _match_ref_category(cat_name: str, ref_cats: dict) -> str | None:
+    """Find matching reference category for a tool category."""
+    if cat_name in ref_cats:
+        return cat_name
+    # GENERIC/UTILITY has no reference category
+    if cat_name == "GENERIC/UTILITY":
+        return None
+    # Try case-insensitive match
+    for ref in ref_cats:
+        if ref.replace(" ", "").upper() == cat_name.replace(" ", "").upper():
+            return ref
+    return None
+
+
+def _match_any(ref_cat: str, seen: set) -> bool:
+    """Check if a reference category has already been covered."""
+    if ref_cat in seen:
+        return True
+    # Reverse mapping
+    for s in seen:
+        mapped = _match_ref_category(s, {ref_cat: []})
+        if mapped == ref_cat:
+            return True
+    return False
 
 
 # ── SPA catch-all ─────────────────────────────────────────────────

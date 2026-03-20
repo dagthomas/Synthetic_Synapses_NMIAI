@@ -42,11 +42,17 @@ def check_health(client: TripletexClient) -> dict:
     except Exception:
         return result
 
+    # Extra params required by certain endpoints
+    _EXTRA_PARAMS = {
+        "invoice": {"invoiceDateFrom": "2000-01-01", "invoiceDateTo": "2099-12-31"},
+    }
+
     # Count each entity type
     all_ok = True
     for entity_type in ENTITY_TYPES:
         try:
-            r = client.get(f"/{entity_type}", params={"count": 0, "fields": "id"})
+            params = {"count": 0, "fields": "id", **_EXTRA_PARAMS.get(entity_type, {})}
+            r = client.get(f"/{entity_type}", params=params)
             count = r.get("fullResultSize", 0)
             ok = count >= MIN_COUNTS.get(entity_type, 1)
             if not ok:

@@ -28,11 +28,12 @@ def get_conn():
 def init_db():
     with closing(get_conn()) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
-        # Migrate: add tool_calls_json column if missing
-        try:
-            conn.execute("ALTER TABLE solve_logs ADD COLUMN tool_calls_json TEXT")
-        except Exception:
-            pass  # Column already exists
+        # Migrate: add columns if missing
+        for col, ctype in [("tool_calls_json", "TEXT"), ("api_log_json", "TEXT")]:
+            try:
+                conn.execute(f"ALTER TABLE solve_logs ADD COLUMN {col} {ctype}")
+            except Exception:
+                pass  # Column already exists
         conn.executescript("""
         CREATE TABLE IF NOT EXISTS eval_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +69,7 @@ def init_db():
             elapsed_seconds REAL DEFAULT 0,
             agent_response TEXT,
             tool_calls_json TEXT,
+            api_log_json TEXT,
             created_at TEXT
         );
         """)
@@ -180,17 +182,17 @@ def get_stats():
 
 def create_solve_log(*, request_id, prompt, files_json, base_url,
                      api_calls=0, api_errors=0, elapsed_seconds=0,
-                     agent_response="", tool_calls_json=""):
+                     agent_response="", tool_calls_json="", api_log_json=""):
     with closing(get_conn()) as conn:
         conn.execute(
             """INSERT INTO solve_logs
                (request_id, prompt, files_json, base_url,
                 api_calls, api_errors, elapsed_seconds, agent_response,
-                tool_calls_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tool_calls_json, api_log_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (request_id, prompt, files_json, base_url,
              api_calls, api_errors, elapsed_seconds, agent_response,
-             tool_calls_json, _now()),
+             tool_calls_json, api_log_json, _now()),
         )
         conn.commit()
 

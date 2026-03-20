@@ -30,8 +30,13 @@ def build_file_tools(files_dir: str) -> dict:
             return _extract_pdf(filepath)
         elif lower.endswith((".png", ".jpg", ".jpeg", ".webp")):
             return _extract_image(filepath)
+        elif lower.endswith((".csv", ".txt", ".tsv")):
+            return _extract_text(filepath)
+        elif lower.endswith((".xlsx", ".xls")):
+            return _extract_excel(filepath)
         else:
-            return {"error": True, "message": f"Unsupported file type: {filename}. Supported: .pdf, .png, .jpg"}
+            # Try reading as plain text
+            return _extract_text(filepath)
 
     return {"extract_file_content": extract_file_content}
 
@@ -76,6 +81,42 @@ def _extract_pdf_with_vision(filepath: str) -> dict:
         return {"text": "\n\n".join(texts)}
     except Exception as e:
         return {"error": True, "message": f"Vision extraction failed: {str(e)}"}
+
+
+def _extract_text(filepath: str) -> dict:
+    """Extract content from text/CSV files."""
+    try:
+        for encoding in ("utf-8", "latin-1", "cp1252"):
+            try:
+                with open(filepath, "r", encoding=encoding) as f:
+                    text = f.read()
+                return {"text": text}
+            except UnicodeDecodeError:
+                continue
+        return {"error": True, "message": "Could not decode text file"}
+    except Exception as e:
+        return {"error": True, "message": f"Failed to read text file: {str(e)}"}
+
+
+def _extract_excel(filepath: str) -> dict:
+    """Extract content from Excel files."""
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(filepath, data_only=True)
+        texts = []
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c) if c is not None else "" for c in row]
+                rows.append("\t".join(cells))
+            texts.append(f"Sheet: {sheet_name}\n" + "\n".join(rows))
+        return {"text": "\n\n".join(texts)}
+    except ImportError:
+        # Fallback: try CSV-like reading
+        return _extract_text(filepath)
+    except Exception as e:
+        return {"error": True, "message": f"Failed to read Excel file: {str(e)}"}
 
 
 def _extract_image(filepath: str) -> dict:

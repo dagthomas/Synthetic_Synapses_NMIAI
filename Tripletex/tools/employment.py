@@ -40,6 +40,11 @@ def build_employment_tools(client: TripletexClient) -> dict:
                 }
             ],
         }
+        # Auto-detect division if any exist (required by Tripletex when divisions are present)
+        divs = client.get("/division", params={"fields": "id", "count": 1})
+        div_list = divs.get("values", [])
+        if div_list:
+            body["division"] = {"id": div_list[0]["id"]}
         return client.post("/employee/employment", json=body)
 
     def search_employments(employee_id: int = 0) -> dict:

@@ -20,7 +20,7 @@ function Dashboard() {
   const [activePanel, setActivePanel] = useState<PanelId>("run")
   const [batchRuns, setBatchRuns] = useState<EvalRun[]>([])
   const [connected, setConnected] = useState(false)
-  const { data: allRuns } = useRuns("all", 5000)
+  const { data: allRuns } = useRuns("all", 60_000)
 
   const errorCount = useMemo(() => {
     if (!allRuns) return 0

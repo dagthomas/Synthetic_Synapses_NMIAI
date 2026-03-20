@@ -6,28 +6,23 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
 
     def create_incoming_invoice(
         invoiceDate: str,
-        dueDate: str,
         supplierId: int,
         invoiceNumber: str = "",
         amount: float = 0.0,
-        accountId: int = 0,
     ) -> dict:
         """Create an incoming invoice (purchase invoice / leverandoerfaktura).
 
         Args:
             invoiceDate: Invoice date YYYY-MM-DD.
-            dueDate: Due date YYYY-MM-DD.
             supplierId: Supplier ID.
             invoiceNumber: Vendor's invoice number.
             amount: Invoice amount.
-            accountId: Debit account ID (0 for default).
 
         Returns:
             Created incoming invoice or error.
         """
         body = {
             "invoiceDate": invoiceDate,
-            "dueDate": dueDate,
             "supplier": {"id": supplierId},
         }
         if invoiceNumber:
@@ -54,7 +49,7 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
             invoiceDateFrom = (dt_date.today() - timedelta(days=365)).isoformat()
         if not invoiceDateTo:
             invoiceDateTo = dt_date.today().isoformat()
-        params = {"fields": "id,invoiceNumber,invoiceDate,dueDate,amount,supplier,voucher"}
+        params = {"fields": "id,invoiceNumber,invoiceDate,amount,supplier,voucher"}
         params["invoiceDateFrom"] = invoiceDateFrom
         params["invoiceDateTo"] = invoiceDateTo
         if supplierId:

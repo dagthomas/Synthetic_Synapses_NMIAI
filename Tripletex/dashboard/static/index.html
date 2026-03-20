@@ -168,6 +168,7 @@ tr.clickable:hover td { background: #f6f8fa; }
     <div class="tab active" onclick="switchTab('run')">Run</div>
     <div class="tab" onclick="switchTab('sandbox')">Sandbox</div>
     <div class="tab" onclick="switchTab('replay')">Replay</div>
+    <div class="tab" onclick="switchTab('live')">Live Logs <span id="liveBadge" class="err-badge" style="display:none;background:var(--accent)">0</span></div>
     <div class="tab" onclick="switchTab('tools')">Test Tools</div>
     <div class="tab" onclick="switchTab('report')">Report</div>
     <div class="tab" onclick="switchTab('errors')">Errors <span id="errBadge" class="err-badge" style="display:none">0</span></div>
@@ -241,11 +242,26 @@ tr.clickable:hover td { background: #f6f8fa; }
   </div>
   </div>
 
+  <!-- Tab: Live Logs -->
+  <div class="tab-panel" id="tab-live">
+  <div class="runner">
+    <h2>Live /solve Logs</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Every competition <code>/solve</code> call is recorded here with full details: prompt, tool calls, API calls, response, and timing.</p>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+      <button class="btn" onclick="loadLiveLogs()">Refresh</button>
+      <label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="liveAutoRefresh" checked> Auto-refresh (10s)</label>
+      <span id="liveCount" style="font-size:13px;color:var(--muted);margin-left:auto"></span>
+    </div>
+    <div id="liveLogsBody"></div>
+    <p class="empty" id="liveEmpty" style="display:none">No /solve logs yet. Logs appear when the competition server calls /solve.</p>
+  </div>
+  </div>
+
   <!-- Tab: Test Tools -->
   <div class="tab-panel" id="tab-tools">
   <div class="runner">
     <h2>Test Tripletex API Tools</h2>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Runs all 49 tools against the sandbox to verify API connectivity. Uses live credentials from env vars.</p>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Runs all tools across 26 modules against the sandbox to verify API connectivity. Uses live credentials from env vars.</p>
     <div style="display:flex;gap:8px;align-items:center">
       <button class="btn-run" id="testToolsBtn" onclick="runToolTests()">Run All Tool Tests</button>
       <span id="testToolsStatus" style="font-size:13px;color:var(--muted)"></span>
@@ -296,8 +312,11 @@ tr.clickable:hover td { background: #f6f8fa; }
   <!-- Tab: API Coverage -->
   <div class="tab-panel" id="tab-coverage">
   <div class="runner">
-    <h2>Tripletex API Coverage</h2>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Shows which Tripletex API endpoints (437 total) are covered by agent tools (57 tools).</p>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2>Tripletex API Coverage</h2>
+      <button class="btn" onclick="loadCoverage(true)">Rescan Tools</button>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Dynamically scans tools/ directory and maps to Tripletex API endpoints. Click "Rescan Tools" after adding new tools.</p>
     <div class="report-summary" id="coverageSummary"></div>
   </div>
   <div id="coverageBody" style="margin-top:12px"></div>
@@ -350,7 +369,7 @@ let lastBatchRuns = [];
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => {
-    const tabs = ['run','sandbox','replay','tools','report','errors','coverage','results'];
+    const tabs = ['run','sandbox','replay','live','tools','report','errors','coverage','results'];
     t.classList.toggle('active', tabs[i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -359,6 +378,7 @@ function switchTab(name) {
   if (name === 'replay') loadPayloads();
   if (name === 'sandbox') loadSandboxHealth();
   if (name === 'coverage') loadCoverage();
+  if (name === 'live') loadLiveLogs();
 }
 
 async function api(path, opts) {
@@ -375,6 +395,7 @@ async function init() {
   buildLangChips();
   loadRuns();
   loadErrors();
+  loadLiveLogsBadge();
   checkAgent();
   setInterval(() => {
     checkAgent();
@@ -1156,8 +1177,10 @@ async function runToolTests() {
 function showToolTestResults(data) {
   document.getElementById('toolTestReport').style.display = 'block';
 
+  const uniqueTools = data.unique_tools || '?';
   document.getElementById('toolTestSummary').innerHTML = `
-    <div class="rcard"><div class="val">${data.total}</div><div class="lbl">Total Tests</div></div>
+    <div class="rcard"><div class="val">${uniqueTools}</div><div class="lbl">Unique Tools</div></div>
+    <div class="rcard"><div class="val">${data.total}</div><div class="lbl">Tests Run</div></div>
     <div class="rcard"><div class="val sg">${data.ok}</div><div class="lbl">Passed</div></div>
     <div class="rcard"><div class="val ${data.fail?'sr':'sg'}">${data.fail}</div><div class="lbl">Failed</div></div>
     <div class="rcard"><div class="val ${data.exception?'sr':'sg'}">${data.exception}</div><div class="lbl">Exceptions</div></div>
@@ -1167,21 +1190,22 @@ function showToolTestResults(data) {
   `;
 
   let html = '';
-  (data.results || []).forEach(r => {
+  (data.results || []).forEach((r, idx) => {
     const isOk = r.status === 'OK';
     const borderColor = isOk ? 'var(--green)' : 'var(--red)';
     const icon = isOk ? '\u2705' : r.status === 'FAIL' ? '\u274c' : '\u26a0\ufe0f';
     html += `<div class="err-card" style="border-left-color:${borderColor}">`;
-    html += `<h3>${icon} ${escH(r.tool)} <span class="task-badge">${r.elapsed}s</span>`;
-    if (r.status_code) html += ` <span class="task-badge">HTTP ${r.status_code}</span>`;
-    html += `</h3>`;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center">`;
+    html += `<h3 style="margin:0">${icon} <span style="color:var(--muted);font-weight:400">#${idx+1}</span> ${escH(r.tool)}</h3>`;
+    html += `<div style="display:flex;gap:8px;font-size:12px;color:var(--muted)">`;
+    html += `<span>${r.elapsed}s</span>`;
+    if (r.status_code) html += `<span style="color:var(--red)">HTTP ${r.status_code}</span>`;
+    html += `</div></div>`;
     if (r.error) {
-      html += `<pre style="font-size:12px;color:var(--red);white-space:pre-wrap">${escH(r.error)}</pre>`;
+      html += `<pre style="font-size:12px;color:var(--red);white-space:pre-wrap;margin-top:6px">${escH(r.error)}</pre>`;
     }
-    if (r.result_preview) {
-      html += `<details><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Response preview</summary>`;
-      html += `<pre style="font-size:11px;white-space:pre-wrap;max-height:200px;overflow-y:auto">${escH(r.result_preview)}</pre>`;
-      html += `</details>`;
+    if (r.result_json) {
+      html += formatToolResult(r.result_json, isOk);
     }
     html += `</div>`;
   });
@@ -1210,12 +1234,62 @@ function generateToolTestReport(data) {
       out += `### ${r.tool} [${r.status}]\n`;
       if (r.status_code) out += `- HTTP status: ${r.status_code}\n`;
       if (r.error) out += `- Error: ${r.error}\n`;
-      if (r.result_preview) out += `- Response: \`${r.result_preview.substring(0, 300)}\`\n`;
+      if (r.result_json) out += `- Response: \`${JSON.stringify(r.result_json).substring(0, 300)}\`\n`;
       out += `\n`;
     });
   }
 
   return out;
+}
+
+function formatToolResult(resultJson, isOk) {
+  if (!resultJson) return '';
+  let html = '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--accent);font-weight:600">';
+  html += isOk ? 'Response' : 'Error Response';
+  html += '</summary><div style="margin-top:4px">';
+
+  // Extract the value object (Tripletex wraps in {value: {...}})
+  const val = resultJson.value || resultJson;
+  if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+    // Render as key-value table
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    const entries = Object.entries(val);
+    for (const [key, value] of entries) {
+      if (value === null || value === undefined || value === '') continue;
+      // Skip nested objects that are just {id: N} references
+      let displayVal;
+      if (typeof value === 'object' && value !== null) {
+        if (value.id && Object.keys(value).length <= 3) {
+          displayVal = `<span style="color:var(--accent)">→ id:${value.id}</span>`;
+        } else if (Array.isArray(value)) {
+          displayVal = `<span style="color:var(--muted)">[${value.length} items]</span>`;
+        } else {
+          displayVal = `<code style="font-size:11px">${escH(JSON.stringify(value).slice(0, 200))}</code>`;
+        }
+      } else if (typeof value === 'boolean') {
+        displayVal = value ? '<span style="color:var(--green)">true</span>' : '<span style="color:var(--red)">false</span>';
+      } else {
+        displayVal = escH(String(value));
+      }
+      const keyColor = ['id','version','url'].includes(key) ? 'var(--muted)' : 'var(--text)';
+      html += `<tr style="border-bottom:1px solid var(--border)">`;
+      html += `<td style="padding:3px 8px;font-weight:600;color:${keyColor};white-space:nowrap;vertical-align:top">${escH(key)}</td>`;
+      html += `<td style="padding:3px 8px;word-break:break-all">${displayVal}</td>`;
+      html += `</tr>`;
+    }
+    html += '</table>';
+
+    // Also add raw JSON in a nested details
+    html += '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:11px;color:var(--muted)">Raw JSON</summary>';
+    html += `<pre style="background:#f6f8fa;padding:6px;border-radius:4px;font-size:11px;white-space:pre-wrap;max-height:300px;overflow:auto">${escH(JSON.stringify(resultJson, null, 2))}</pre>`;
+    html += '</details>';
+  } else {
+    // Fallback: just show formatted JSON
+    html += `<pre style="background:#f6f8fa;padding:6px;border-radius:4px;font-size:11px;white-space:pre-wrap;max-height:300px;overflow:auto">${escH(JSON.stringify(resultJson, null, 2))}</pre>`;
+  }
+
+  html += '</div></details>';
+  return html;
 }
 
 function copyToolReport() {
@@ -1454,8 +1528,9 @@ function showPreflightModal(missing) {
 // ── API Coverage ──────────────────────────────────────────────────
 let coverageData = null;
 
-async function loadCoverage() {
-  if (coverageData) { renderCoverage(coverageData); return; }
+async function loadCoverage(forceRefresh) {
+  if (coverageData && !forceRefresh) { renderCoverage(coverageData); return; }
+  if (forceRefresh) await api('/api/coverage/refresh', {method: 'POST'});
   coverageData = await api('/api/coverage') || [];
   renderCoverage(coverageData);
 }
@@ -1546,6 +1621,147 @@ function renderCoverage(data) {
   }
 
   document.getElementById('coverageBody').innerHTML = html;
+}
+
+// ── Live Logs ─────────────────────────────────────────────────────
+let liveLogsData = [];
+let liveLogTimer = null;
+
+async function loadLiveLogsBadge() {
+  const data = await api('/api/logs?limit=100');
+  if (!data) return;
+  const badge = document.getElementById('liveBadge');
+  if (badge) { badge.textContent = data.length; badge.style.display = data.length ? '' : 'none'; }
+}
+
+async function loadLiveLogs() {
+  const data = await api('/api/logs?limit=100');
+  if (!data) return;
+  liveLogsData = data;
+  renderLiveLogs();
+  // Auto-refresh
+  if (document.getElementById('liveAutoRefresh')?.checked && !liveLogTimer) {
+    liveLogTimer = setInterval(() => {
+      const panel = document.getElementById('tab-live');
+      if (panel?.classList.contains('active')) loadLiveLogs();
+      else { clearInterval(liveLogTimer); liveLogTimer = null; }
+    }, 10000);
+  }
+}
+
+function renderLiveLogs() {
+  const logs = liveLogsData;
+  const body = document.getElementById('liveLogsBody');
+  const empty = document.getElementById('liveEmpty');
+  const count = document.getElementById('liveCount');
+
+  if (!logs.length) { body.innerHTML = ''; empty.style.display = ''; count.textContent = ''; return; }
+  empty.style.display = 'none';
+  count.textContent = `${logs.length} log(s)`;
+
+  // Update badge
+  const badge = document.getElementById('liveBadge');
+  if (badge) { badge.textContent = logs.length; badge.style.display = logs.length ? '' : 'none'; }
+
+  let html = '';
+  for (const log of logs) {
+    const ts = log.created_at ? new Date(log.created_at).toLocaleString() : '—';
+    const toolCalls = tryParse(log.tool_calls_json, []);
+    const apiLog = tryParse(log.api_log_json, []);
+    const hasErr = log.api_errors > 0;
+    const borderColor = hasErr ? 'var(--red)' : 'var(--green)';
+    const promptShort = (log.prompt || '').length > 120 ? log.prompt.slice(0, 120) + '...' : (log.prompt || '—');
+
+    html += `<div class="err-card" style="border-left-color:${borderColor};margin-bottom:10px">`;
+
+    // Header row
+    html += `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">`;
+    html += `<div style="flex:1;min-width:0">`;
+    html += `<div style="font-weight:600;font-size:14px;margin-bottom:4px">${escH(promptShort)}</div>`;
+    html += `<div style="font-size:12px;color:var(--muted)">${ts} &middot; ${log.request_id ? log.request_id.slice(0,8) : '—'}</div>`;
+    html += `</div>`;
+    html += `<div style="display:flex;gap:12px;flex-shrink:0;font-size:13px">`;
+    html += `<span title="Tool calls">\uD83D\uDEE0\uFE0F ${toolCalls.length}</span>`;
+    html += `<span title="API calls">\uD83D\uDD17 ${log.api_calls || 0}</span>`;
+    if (hasErr) html += `<span title="API errors" style="color:var(--red)">\u26A0 ${log.api_errors}</span>`;
+    html += `<span title="Elapsed">\u23F1 ${(log.elapsed_seconds || 0).toFixed(1)}s</span>`;
+    html += `</div></div>`;
+
+    // Expandable sections
+    // Full prompt
+    if (log.prompt && log.prompt.length > 120) {
+      html += `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--accent);font-weight:600">Full Prompt</summary>`;
+      html += `<pre style="background:#f6f8fa;padding:8px;border-radius:4px;font-size:12px;white-space:pre-wrap;max-height:200px;overflow:auto">${escH(log.prompt)}</pre>`;
+      html += `</details>`;
+    }
+
+    // Tool calls
+    if (toolCalls.length) {
+      html += `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--accent);font-weight:600">${toolCalls.length} Tool Calls</summary>`;
+      html += `<div style="margin-top:4px">`;
+      for (let i = 0; i < toolCalls.length; i++) {
+        const tc = toolCalls[i];
+        const ok = tc.result?.ok !== false;
+        const icon = ok ? '\u2705' : '\u274c';
+        html += `<div style="border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-bottom:4px;font-size:12px">`;
+        html += `<div style="font-weight:600">${icon} #${i+1} <code>${escH(tc.tool || '?')}</code></div>`;
+        // Args
+        if (tc.args && Object.keys(tc.args).length) {
+          html += `<details style="margin:2px 0"><summary style="cursor:pointer;color:var(--muted);font-size:11px">Arguments</summary>`;
+          html += `<pre style="background:#f6f8fa;padding:4px 6px;border-radius:3px;font-size:11px;white-space:pre-wrap;max-height:150px;overflow:auto">${escH(JSON.stringify(tc.args, null, 2))}</pre>`;
+          html += `</details>`;
+        }
+        // Result
+        if (tc.result) {
+          const resColor = ok ? 'var(--green)' : 'var(--red)';
+          html += `<details style="margin:2px 0"><summary style="cursor:pointer;color:${resColor};font-size:11px">${ok ? 'Result' : 'Error'}</summary>`;
+          html += `<pre style="background:${ok ? '#f0fff0' : '#fff0f0'};padding:4px 6px;border-radius:3px;font-size:11px;white-space:pre-wrap;max-height:150px;overflow:auto">${escH(tc.result.error || tc.result.data || '—')}</pre>`;
+          html += `</details>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div></details>`;
+    }
+
+    // API call log
+    if (apiLog.length) {
+      html += `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--accent);font-weight:600">${apiLog.length} API Calls</summary>`;
+      html += `<div style="margin-top:4px;font-family:monospace;font-size:11px">`;
+      html += `<table style="width:100%;border-collapse:collapse">`;
+      html += `<tr style="background:#f6f8fa;text-align:left"><th style="padding:3px 6px">#</th><th style="padding:3px 6px">Method</th><th style="padding:3px 6px">URL</th><th style="padding:3px 6px">Status</th><th style="padding:3px 6px">Time</th><th style="padding:3px 6px"></th></tr>`;
+      for (let i = 0; i < apiLog.length; i++) {
+        const a = apiLog[i];
+        const ok = a.ok !== false;
+        const rowBg = ok ? '' : 'background:#fff0f0';
+        const shortUrl = (a.url || '').replace(/^https?:\/\/[^\/]+\/v2/, '');
+        html += `<tr style="${rowBg}">`;
+        html += `<td style="padding:2px 6px;color:var(--muted)">${i+1}</td>`;
+        html += `<td style="padding:2px 6px;font-weight:600">${escH(a.method || '?')}</td>`;
+        html += `<td style="padding:2px 6px;max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escH(a.url || '')}">${escH(shortUrl)}</td>`;
+        html += `<td style="padding:2px 6px;color:${ok ? 'var(--green)' : 'var(--red)'}">${a.status || '?'}</td>`;
+        html += `<td style="padding:2px 6px">${(a.elapsed || 0).toFixed(2)}s</td>`;
+        html += `<td style="padding:2px 6px;color:var(--red);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escH(a.error || '')}">${a.error ? escH(a.error.slice(0, 60)) : ''}</td>`;
+        html += `</tr>`;
+      }
+      html += `</table></div></details>`;
+    }
+
+    // Agent response
+    if (log.agent_response) {
+      html += `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--accent);font-weight:600">Agent Response</summary>`;
+      html += `<pre style="background:#f6f8fa;padding:8px;border-radius:4px;font-size:12px;white-space:pre-wrap;max-height:300px;overflow:auto">${escH(log.agent_response)}</pre>`;
+      html += `</details>`;
+    }
+
+    html += `</div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+function tryParse(jsonStr, fallback) {
+  if (!jsonStr) return fallback;
+  try { return JSON.parse(jsonStr); } catch(e) { return fallback; }
 }
 
 init();

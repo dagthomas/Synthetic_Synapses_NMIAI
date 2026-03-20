@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react"
 import { useSandboxHealth } from "@/hooks/use-api"
 import { seedSandbox, cleanSandbox as apiClean } from "@/lib/api"
+import type { SandboxHealth } from "@/types/api"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -27,6 +28,7 @@ import {
   WifiOff,
   CheckCircle2,
   AlertCircle,
+  XCircle,
 } from "lucide-react"
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -62,14 +64,19 @@ const ENTITY_ORDER = [
   "travelExpense",
 ]
 
+interface LogLine {
+  text: string
+  type: "info" | "ok" | "error" | "warn" | "heading"
+}
+
 export function SandboxPanel() {
   const { data: health, isLoading, mutate } = useSandboxHealth()
-  const [logs, setLogs] = useState<string[]>([])
+  const [logs, setLogs] = useState<LogLine[]>([])
   const [busy, setBusy] = useState(false)
   const [seedingType, setSeedingType] = useState<string | null>(null)
 
-  const addLog = useCallback((msg: string) => {
-    setLogs((prev) => [...prev, msg])
+  const addLog = useCallback((text: string, type: LogLine["type"] = "info") => {
+    setLogs((prev) => [...prev, { text, type }])
   }, [])
 
   async function handleSeed(types: string[], clean = false) {
@@ -77,34 +84,36 @@ export function SandboxPanel() {
     setSeedingType(types[0] || null)
     setLogs([])
     const action = clean ? "Clean & Reseed" : types[0] === "all" ? "Seed All" : `Seed ${ENTITY_LABELS[types[0]] || types[0]}`
-    addLog(`Starting ${action}...`)
+    addLog(`Starting ${action}...`, "heading")
 
     try {
       const result = await seedSandbox(types, clean)
       for (const [type, r] of Object.entries(result.results || {})) {
         const label = ENTITY_LABELS[type] || type
-        addLog(
-          `  ${label}: ${r.created} created` +
-            (r.errors?.length ? `, ${r.errors.length} errors` : "")
-        )
-        r.errors?.forEach((e) => addLog(`    ERROR: ${e}`))
+        if (r.errors?.length) {
+          addLog(`${label}: ${r.created} created, ${r.errors.length} errors`, "warn")
+          r.errors.forEach((e) => addLog(`  ${e}`, "error"))
+        } else {
+          addLog(`${label}: ${r.created} created`, "ok")
+        }
       }
       if (result.bank_account) {
         const ba = result.bank_account
-        addLog(
-          `  Bank account: ${
-            ba.ok
-              ? ba.already_set
-                ? "already set"
-                : "configured"
-              : "FAILED: " + (ba.error || "")
-          }`
-        )
+        if (ba.ok) {
+          addLog(`Bank account: ${ba.already_set ? "already set" : "configured"}`, "ok")
+        } else {
+          addLog(`Bank account: FAILED — ${ba.error || "unknown"}`, "error")
+        }
       }
-      addLog(`\nDone: ${result.total_created} created, ${result.total_errors} errors`)
-      toast.success(`${action}: ${result.total_created} created`)
+      const doneType = result.total_errors > 0 ? "warn" : "ok"
+      addLog(`Done: ${result.total_created} created, ${result.total_errors} errors`, doneType)
+      if (result.total_errors > 0) {
+        toast.warning(`${action}: ${result.total_created} created, ${result.total_errors} errors`)
+      } else {
+        toast.success(`${action}: ${result.total_created} created`)
+      }
     } catch (err) {
-      addLog(`ERROR: ${(err as Error).message}`)
+      addLog(`FATAL: ${(err as Error).message}`, "error")
       toast.error((err as Error).message)
     } finally {
       setBusy(false)
@@ -117,18 +126,34 @@ export function SandboxPanel() {
     setBusy(true)
     setSeedingType("clean")
     setLogs([])
-    addLog("Cleaning all sandbox entities...")
+    addLog("Cleaning all sandbox entities...", "heading")
 
     try {
       const result = await apiClean()
+      let totalErrors = 0
       for (const [type, r] of Object.entries(result.results || {})) {
         const label = ENTITY_LABELS[type] || type
-        if (r.deleted > 0) addLog(`  ${label}: ${r.deleted} deleted`)
+        if (r.skipped) {
+          addLog(`${label}: skipped (${r.skipped})`, "warn")
+        } else if (r.errors?.length) {
+          totalErrors += r.errors.length
+          addLog(`${label}: ${r.deleted} deleted, ${r.errors.length} failed`, "error")
+          r.errors.forEach((e) => addLog(`  ${e}`, "error"))
+        } else if (r.deleted > 0) {
+          addLog(`${label}: ${r.deleted} deleted`, "ok")
+        } else {
+          addLog(`${label}: nothing to delete`, "info")
+        }
       }
-      addLog(`\nDone: ${result.total_deleted} deleted`)
-      toast.success(`Cleaned: ${result.total_deleted} deleted`)
+      const doneType = totalErrors > 0 ? "warn" : "ok"
+      addLog(`Done: ${result.total_deleted} deleted${totalErrors > 0 ? `, ${totalErrors} errors` : ""}`, doneType)
+      if (totalErrors > 0) {
+        toast.warning(`Cleaned: ${result.total_deleted} deleted, ${totalErrors} errors`)
+      } else {
+        toast.success(`Cleaned: ${result.total_deleted} deleted`)
+      }
     } catch (err) {
-      addLog(`ERROR: ${(err as Error).message}`)
+      addLog(`FATAL: ${(err as Error).message}`, "error")
       toast.error((err as Error).message)
     } finally {
       setBusy(false)
@@ -139,12 +164,21 @@ export function SandboxPanel() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-20 w-full rounded-xl" />
+      <div>
+        <PageHeader title="Sandbox" description="Manage Tripletex sandbox entities and data seeding" />
+        <div className="flex flex-col items-center justify-center py-16">
+          <div className="relative mb-5">
+            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Loader2 className="h-6 w-6 text-primary animate-spin" />
+            </div>
+            <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-primary animate-ping" />
+          </div>
+          <p className="text-sm font-medium text-foreground mb-1">Connecting to Tripletex</p>
+          <p className="text-xs text-muted-foreground">Checking sandbox health across 8 entity types...</p>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           {Array.from({ length: 9 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-xl" />
+            <Skeleton key={i} className="h-32 rounded-xl" />
           ))}
         </div>
       </div>
@@ -207,6 +241,11 @@ export function SandboxPanel() {
           </Badge>
         </CardContent>
       </Card>
+
+      {/* Health check API results log */}
+      {health && connected && (
+        <HealthLog health={health} />
+      )}
 
       {/* Entity grid */}
       {connected && (
@@ -356,21 +395,24 @@ export function SandboxPanel() {
             <span className="h-2.5 w-2.5 rounded-full bg-amber-500/80" />
             <span className="h-2.5 w-2.5 rounded-full bg-green-500/80" />
             <span className="ml-3 text-[11px] text-white/30 font-mono">output</span>
+            {busy && <Loader2 className="ml-auto h-3 w-3 text-white/30 animate-spin" />}
           </div>
-          <ScrollArea className="h-[200px]">
+          <ScrollArea className="h-[250px]">
             <CardContent className="p-4">
-              <pre className="text-[12px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed">
+              <pre className="text-[12px] font-mono whitespace-pre-wrap leading-relaxed">
                 {logs.map((line, i) => (
                   <span key={i}>
                     <span className="text-slate-600 select-none mr-3 text-[10px]">
                       {String(i + 1).padStart(3, " ")}
                     </span>
                     <span className={cn(
-                      line.includes("ERROR") ? "text-red-400" :
-                      line.includes("Done") ? "text-emerald-400" :
+                      line.type === "error" ? "text-red-400" :
+                      line.type === "ok" ? "text-emerald-400" :
+                      line.type === "warn" ? "text-amber-400" :
+                      line.type === "heading" ? "text-blue-400 font-semibold" :
                       "text-slate-300"
                     )}>
-                      {line}
+                      {line.text}
                     </span>
                     {"\n"}
                   </span>
@@ -381,5 +423,115 @@ export function SandboxPanel() {
         </Card>
       )}
     </div>
+  )
+}
+
+/** Shows the health check API results as a compact log */
+function HealthLog({ health }: { health: SandboxHealth }) {
+  const [expanded, setExpanded] = useState(false)
+
+  const okCount = ENTITY_ORDER.filter(
+    (t) => health.entities[t]?.ok
+  ).length + (health.bank_account_1920 ? 1 : 0)
+  const totalChecks = ENTITY_ORDER.length + 1 // +1 for bank account
+
+  return (
+    <Card className="mb-4 border-muted">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full text-left"
+      >
+        <CardContent className="p-3 flex items-center gap-2">
+          {okCount === totalChecks ? (
+            <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+          ) : (
+            <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+          )}
+          <span className="text-[12px] font-medium">
+            Health Check: {okCount}/{totalChecks} OK
+          </span>
+          <Badge variant="secondary" className="text-[10px] ml-auto">
+            {expanded ? "Hide" : "Show"} API Requests
+          </Badge>
+        </CardContent>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 space-y-1">
+          {ENTITY_ORDER.map((type) => {
+            const info = health.entities[type]
+            const ok = info?.ok ?? false
+            const Icon = ENTITY_ICONS[type] || Building2
+            return (
+              <div
+                key={type}
+                className={cn(
+                  "flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-mono",
+                  ok ? "bg-emerald-50/50" : "bg-red-50/50"
+                )}
+              >
+                {ok ? (
+                  <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+                ) : (
+                  <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                )}
+                <Icon className="h-3 w-3 text-muted-foreground shrink-0" />
+                <span className="text-muted-foreground">GET</span>
+                <span className={cn(ok ? "text-foreground" : "text-red-700")}>
+                  /{type}
+                </span>
+                <span className="ml-auto tabular-nums">
+                  {info ? (
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[9px] px-1.5 h-4",
+                        ok
+                          ? "border-emerald-200 text-emerald-600 bg-emerald-50"
+                          : "border-red-200 text-red-600 bg-red-50"
+                      )}
+                    >
+                      {ok ? `200 OK — ${info.count} found` : `${info.count} found (need ≥1)`}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[9px] px-1.5 h-4 border-red-200 text-red-600 bg-red-50">
+                      No response
+                    </Badge>
+                  )}
+                </span>
+              </div>
+            )
+          })}
+          {/* Bank account check */}
+          <div
+            className={cn(
+              "flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-mono",
+              health.bank_account_1920 ? "bg-emerald-50/50" : "bg-red-50/50"
+            )}
+          >
+            {health.bank_account_1920 ? (
+              <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+            ) : (
+              <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+            )}
+            <Landmark className="h-3 w-3 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground">GET</span>
+            <span className={cn(health.bank_account_1920 ? "text-foreground" : "text-red-700")}>
+              /ledger/account?number=1920
+            </span>
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[9px] px-1.5 h-4 ml-auto",
+                health.bank_account_1920
+                  ? "border-emerald-200 text-emerald-600 bg-emerald-50"
+                  : "border-red-200 text-red-600 bg-red-50"
+              )}
+            >
+              {health.bank_account_1920 ? "200 OK — configured" : "Missing bank number"}
+            </Badge>
+          </div>
+        </div>
+      )}
+    </Card>
   )
 }
