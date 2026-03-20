@@ -81,7 +81,7 @@ class SolveRequest(BaseModel):
     }
 
 
-async def _run_agent(body: SolveRequest) -> dict:
+async def _run_agent(body: SolveRequest, save_payload: bool = False) -> dict:
     """Shared agent execution logic. Returns full details dict."""
     import time as _time
 
@@ -92,18 +92,19 @@ async def _run_agent(body: SolveRequest) -> dict:
     # Per-request isolation
     request_id = str(uuid.uuid4())
 
-    # Save payload for replay/debugging
-    payloads_dir = os.path.join(os.path.dirname(__file__), "payloads")
-    os.makedirs(payloads_dir, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    payload_file = os.path.join(payloads_dir, f"{ts}_{request_id[:8]}.json")
-    with open(payload_file, "w", encoding="utf-8") as pf:
-        json.dump({
-            "prompt": prompt,
-            "files": [{"filename": f.filename, "mime_type": f.mime_type} for f in files],
-            "tripletex_credentials": {"base_url": creds.base_url, "session_token": creds.session_token[:8] + "..."},
-        }, pf, ensure_ascii=False, indent=2)
-    log.info(f"Payload saved to {payload_file}")
+    # Save payload only for live competition runs
+    if save_payload:
+        payloads_dir = os.path.join(os.path.dirname(__file__), "payloads")
+        os.makedirs(payloads_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        payload_file = os.path.join(payloads_dir, f"{ts}_{request_id[:8]}.json")
+        with open(payload_file, "w", encoding="utf-8") as pf:
+            json.dump({
+                "prompt": prompt,
+                "files": [{"filename": f.filename, "mime_type": f.mime_type} for f in files],
+                "tripletex_credentials": {"base_url": creds.base_url, "session_token": creds.session_token[:8] + "..."},
+            }, pf, ensure_ascii=False, indent=2)
+        log.info(f"Payload saved to {payload_file}")
     files_dir = os.path.join(os.environ.get("TEMP", "/tmp"), f"tripletex_{request_id}")
 
     # Decode attachments
@@ -246,7 +247,7 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
         if not credentials or credentials.credentials != AGENT_API_KEY:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
-    await _run_agent(body)
+    await _run_agent(body, save_payload=True)
     return JSONResponse({"status": "completed"})
 
 

@@ -53,8 +53,10 @@ Credit note (5 calls):
 Travel expense (2 calls):
   → create_employee → create_travel_expense(employee_id, title, departureDate, returnDate)
 
-Create project (2 calls):
-  → create_customer → create_project(name, customer_id, startDate)
+Create project (2-3 calls):
+  → create_customer → create_project(name, customer_id, projectManagerId, startDate)
+  → If prompt specifies a project manager: create_employee first, pass their ID to create_project.
+  → The create_project tool auto-handles project manager access. Do NOT manually retry or work around projectManager errors.
 
 Create department (1 call):
   → create_department(name, departmentNumber)

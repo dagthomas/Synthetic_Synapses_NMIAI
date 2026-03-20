@@ -133,6 +133,7 @@ tr.clickable:hover td { background: #f6f8fa; }
   <div class="tabs">
     <div class="tab active" onclick="switchTab('run')">Run</div>
     <div class="tab" onclick="switchTab('replay')">Replay</div>
+    <div class="tab" onclick="switchTab('tools')">Test Tools</div>
     <div class="tab" onclick="switchTab('report')">Report</div>
     <div class="tab" onclick="switchTab('errors')">Errors <span id="errBadge" class="err-badge" style="display:none">0</span></div>
     <div class="tab" onclick="switchTab('results')">Results</div>
@@ -186,6 +187,29 @@ tr.clickable:hover td { background: #f6f8fa; }
   </div>
   </div>
 
+  <!-- Tab: Test Tools -->
+  <div class="tab-panel" id="tab-tools">
+  <div class="runner">
+    <h2>Test Tripletex API Tools</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Runs all 49 tools against the sandbox to verify API connectivity. Uses live credentials from env vars.</p>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn-run" id="testToolsBtn" onclick="runToolTests()">Run All Tool Tests</button>
+      <span id="testToolsStatus" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+  </div>
+  <div class="report-section" id="toolTestReport" style="display:none">
+    <div class="report-header">
+      <h2>Tool Test Results</h2>
+      <button class="btn-copy" id="copyToolsBtn" onclick="copyToolReport()">Copy Report</button>
+    </div>
+    <div class="report-summary" id="toolTestSummary"></div>
+    <div id="toolTestResults" style="padding:16px 20px"></div>
+    <div class="report-text">
+      <textarea id="toolTestText" readonly style="min-height:200px"></textarea>
+    </div>
+  </div>
+  </div>
+
   <!-- Tab: Report -->
   <div class="tab-panel" id="tab-report">
   <div class="report-section" id="reportSection">
@@ -207,6 +231,7 @@ tr.clickable:hover td { background: #f6f8fa; }
     <div class="report-header">
       <h2>Errors &amp; Failed Checks</h2>
       <button class="btn-copy" id="copyErrBtn" onclick="copyErrors()">Copy Errors</button>
+      <button class="btn-copy" style="background:#cb2431;color:#fff;border-color:#cb2431" onclick="deleteAllErrors()">Delete All Errors</button>
     </div>
     <div class="report-summary" id="errorsSummary"></div>
     <div id="errorsBody"></div>
@@ -246,7 +271,7 @@ let lastBatchRuns = [];
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => {
-    const tabs = ['run','replay','report','errors','results'];
+    const tabs = ['run','replay','tools','report','errors','results'];
     t.classList.toggle('active', tabs[i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -631,7 +656,7 @@ async function loadErrors() {
     for (const r of taskRuns) {
       const isCrash = r.status === 'failed';
       html += `<div class="err-card ${isCrash ? '' : 'warn'}">`;
-      html += `<h3>${isCrash ? '\u274c' : '\u26a0\ufe0f'} ${escH(taskName)} <span class="task-badge">${r.language || '?'}</span> <span class="task-badge">#${r.id}</span></h3>`;
+      html += `<h3>${isCrash ? '\u274c' : '\u26a0\ufe0f'} ${escH(taskName)} <span class="task-badge">${r.language || '?'}</span> <span class="task-badge">#${r.id}</span> <button onclick="deleteError(${r.id})" style="margin-left:auto;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer;font-size:11px;color:var(--red)">\u2715 Delete</button></h3>`;
 
       if (isCrash) {
         html += `<pre>${escH(r.error_message || 'Unknown error')}</pre>`;
@@ -730,6 +755,28 @@ function copyErrors() {
     btn.className = 'btn-copy copied';
     setTimeout(() => { btn.textContent = 'Copy Errors'; btn.className = 'btn-copy'; }, 2000);
   });
+}
+
+async function deleteError(runId) {
+  await api('/api/runs/' + runId, { method: 'DELETE' });
+  loadErrors();
+  loadRuns();
+}
+
+async function deleteAllErrors() {
+  const runs = await api('/api/runs?limit=500');
+  if (!runs) return;
+  const ids = runs
+    .filter(r => r.status === 'failed' || (r.status === 'completed' && r.correctness != null && r.correctness < 1))
+    .map(r => r.id);
+  if (!ids.length) return;
+  await api('/api/runs/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ run_ids: ids }),
+  });
+  loadErrors();
+  loadRuns();
 }
 
 // ── Results table ────────────────────────────────────────────────
@@ -973,6 +1020,103 @@ function copyReplayReport() {
   const text = document.getElementById('replayText').value;
   navigator.clipboard.writeText(text).then(() => {
     const btn = document.getElementById('copyReplayBtn');
+    btn.textContent = 'Copied!';
+    btn.className = 'btn-copy copied';
+    setTimeout(() => { btn.textContent = 'Copy Report'; btn.className = 'btn-copy'; }, 2000);
+  });
+}
+
+// ── Tool Tests ────────────────────────────────────────────────────
+let toolTestData = null;
+
+async function runToolTests() {
+  document.getElementById('testToolsBtn').disabled = true;
+  document.getElementById('testToolsStatus').textContent = 'Running tool tests against sandbox...';
+
+  const result = await api('/api/test-tools', { method: 'POST' });
+
+  document.getElementById('testToolsBtn').disabled = false;
+
+  if (!result || result.error) {
+    document.getElementById('testToolsStatus').textContent = 'Error: ' + (result?.error || 'unknown');
+    return;
+  }
+
+  toolTestData = result;
+  showToolTestResults(result);
+  document.getElementById('testToolsStatus').textContent =
+    `Done: ${result.ok}/${result.total} passed in ${result.total_time}s (${result.api_calls} API calls, ${result.api_errors} errors)`;
+}
+
+function showToolTestResults(data) {
+  document.getElementById('toolTestReport').style.display = 'block';
+
+  document.getElementById('toolTestSummary').innerHTML = `
+    <div class="rcard"><div class="val">${data.total}</div><div class="lbl">Total Tests</div></div>
+    <div class="rcard"><div class="val sg">${data.ok}</div><div class="lbl">Passed</div></div>
+    <div class="rcard"><div class="val ${data.fail?'sr':'sg'}">${data.fail}</div><div class="lbl">Failed</div></div>
+    <div class="rcard"><div class="val ${data.exception?'sr':'sg'}">${data.exception}</div><div class="lbl">Exceptions</div></div>
+    <div class="rcard"><div class="val">${data.total_time}s</div><div class="lbl">Total Time</div></div>
+    <div class="rcard"><div class="val">${data.api_calls}</div><div class="lbl">API Calls</div></div>
+    <div class="rcard"><div class="val ${data.api_errors?'sr':'sg'}">${data.api_errors}</div><div class="lbl">API Errors</div></div>
+  `;
+
+  let html = '';
+  (data.results || []).forEach(r => {
+    const isOk = r.status === 'OK';
+    const borderColor = isOk ? 'var(--green)' : 'var(--red)';
+    const icon = isOk ? '\u2705' : r.status === 'FAIL' ? '\u274c' : '\u26a0\ufe0f';
+    html += `<div class="err-card" style="border-left-color:${borderColor}">`;
+    html += `<h3>${icon} ${escH(r.tool)} <span class="task-badge">${r.elapsed}s</span>`;
+    if (r.status_code) html += ` <span class="task-badge">HTTP ${r.status_code}</span>`;
+    html += `</h3>`;
+    if (r.error) {
+      html += `<pre style="font-size:12px;color:var(--red);white-space:pre-wrap">${escH(r.error)}</pre>`;
+    }
+    if (r.result_preview) {
+      html += `<details><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Response preview</summary>`;
+      html += `<pre style="font-size:11px;white-space:pre-wrap;max-height:200px;overflow-y:auto">${escH(r.result_preview)}</pre>`;
+      html += `</details>`;
+    }
+    html += `</div>`;
+  });
+  document.getElementById('toolTestResults').innerHTML = html;
+
+  // Generate text report
+  document.getElementById('toolTestText').value = generateToolTestReport(data);
+}
+
+function generateToolTestReport(data) {
+  let out = `# Tool Test Report\n\n`;
+  out += `**${data.ok}/${data.total} passed** | ${data.total_time}s | ${data.api_calls} API calls | ${data.api_errors} API errors\n\n`;
+  out += `| # | Tool | Status | Time | Error |\n`;
+  out += `|---|------|--------|------|-------|\n`;
+  (data.results || []).forEach((r, i) => {
+    const err = r.error ? r.error.substring(0, 100) : '';
+    out += `| ${i+1} | ${r.tool} | ${r.status} | ${r.elapsed}s | ${err} |\n`;
+  });
+  out += `\n`;
+
+  // Detail for failures
+  const failures = (data.results || []).filter(r => r.status !== 'OK');
+  if (failures.length) {
+    out += `## Failed Tools\n\n`;
+    failures.forEach(r => {
+      out += `### ${r.tool} [${r.status}]\n`;
+      if (r.status_code) out += `- HTTP status: ${r.status_code}\n`;
+      if (r.error) out += `- Error: ${r.error}\n`;
+      if (r.result_preview) out += `- Response: \`${r.result_preview.substring(0, 300)}\`\n`;
+      out += `\n`;
+    });
+  }
+
+  return out;
+}
+
+function copyToolReport() {
+  const text = document.getElementById('toolTestText').value;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyToolsBtn');
     btn.textContent = 'Copied!';
     btn.className = 'btn-copy copied';
     setTimeout(() => { btn.textContent = 'Copy Report'; btn.className = 'btn-copy'; }, 2000);

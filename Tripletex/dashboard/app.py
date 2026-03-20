@@ -21,6 +21,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 from dashboard import db
 from dashboard.runner import run_eval
+from dashboard.tool_tester import run_all_tool_tests
 from sim.task_definitions import ALL_TASKS, LANGUAGES
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -88,6 +89,24 @@ def run_status(run_id: int):
     if not row:
         return JSONResponse({"error": "Not found"}, 404)
     return row
+
+
+@app.delete("/api/runs/{run_id}")
+def delete_run(run_id: int):
+    db.delete_run(run_id)
+    return {"ok": True}
+
+
+class DeleteRunsRequest(BaseModel):
+    run_ids: list[int]
+
+
+@app.post("/api/runs/delete")
+def delete_runs(req: DeleteRunsRequest):
+    if not req.run_ids:
+        return {"ok": True, "deleted": 0}
+    db.delete_runs(req.run_ids)
+    return {"ok": True, "deleted": len(req.run_ids)}
 
 
 # ── API: Run Eval ───────────────────────────────────────────────────
@@ -272,6 +291,22 @@ async def replay_payloads(req: ReplayRequest):
         })
 
     return results
+
+
+# ── API: Test Tools ────────────────────────────────────────────────
+
+@app.post("/api/test-tools")
+async def test_tools():
+    """Run all tool tests against the Tripletex sandbox."""
+    base_url, token, _ = _get_credentials()
+    if not base_url or not token:
+        return JSONResponse(
+            {"error": "Set TRIPLETEX_BASE_URL and TRIPLETEX_SESSION_TOKEN env vars"},
+            status_code=400,
+        )
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, run_all_tool_tests, base_url, token)
+    return result
 
 
 # ── API: Solve Logs ─────────────────────────────────────────────────

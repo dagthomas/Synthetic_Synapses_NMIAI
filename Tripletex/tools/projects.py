@@ -7,13 +7,35 @@ def build_project_tools(client: TripletexClient) -> dict:
     """Build project tools."""
 
     def _ensure_employee_ready(employee_id: int):
-        """Ensure employee has dateOfBirth and employment (required for projectManager)."""
-        emp = client.get(f"/employee/{employee_id}", params={"fields": "id,dateOfBirth"})
-        emp_val = emp.get("value", emp)
+        """Ensure employee has dateOfBirth, employment, and project manager access."""
+        _WRITABLE = {
+            "id", "version", "firstName", "lastName", "email",
+            "phoneNumberMobile", "phoneNumberHome", "phoneNumberWork",
+            "dateOfBirth", "department", "employeeNumber", "address",
+            "userType", "nationalIdentityNumber", "bankAccountNumber",
+            "comments", "employeeCategory",
+        }
+        emp = client.get(f"/employee/{employee_id}", params={"fields": "*"})
+        emp_val = emp.get("value", {})
 
-        # Set dateOfBirth if missing (required for employment)
-        if not emp_val.get("dateOfBirth"):
-            client.put(f"/employee/{employee_id}", json={"dateOfBirth": "1990-01-01"})
+        # Build writable body for PUT
+        needs_update = False
+        body = {k: v for k, v in emp_val.items() if k in _WRITABLE and v is not None}
+        if isinstance(body.get("department"), dict):
+            body["department"] = {"id": body["department"]["id"]}
+
+        # Set dateOfBirth if missing
+        if not body.get("dateOfBirth"):
+            body["dateOfBirth"] = "1990-01-01"
+            needs_update = True
+
+        # Upgrade to EXTENDED so they can be project manager
+        if body.get("userType") not in ("EXTENDED",):
+            body["userType"] = "EXTENDED"
+            needs_update = True
+
+        if needs_update:
+            client.put(f"/employee/{employee_id}", json=body)
 
         # Check if employment exists
         emp_result = client.get("/employee/employment", params={"employeeId": employee_id, "fields": "id", "count": 1})
@@ -24,6 +46,10 @@ def build_project_tools(client: TripletexClient) -> dict:
                 "startDate": today,
                 "employmentDetails": [{"date": today, "employmentType": "ORDINARY", "workingHoursScheme": "NOT_SHIFT"}],
             })
+
+        # Also try granting entitlements via template (project manager access)
+        client.put("/employee/entitlement/:grantEntitlementsByTemplate",
+                   params={"employeeId": employee_id, "template": "all_access"})
 
     def create_project(
         name: str,
@@ -63,6 +89,19 @@ def build_project_tools(client: TripletexClient) -> dict:
 
         if description:
             body["description"] = description
-        return client.post("/project", json=body)
+
+        result = client.post("/project", json=body)
+
+        # If project manager access denied, retry with account owner as fallback
+        if (result.get("error") and projectManagerId
+                and "prosjektleder" in str(result.get("message", "")).lower()):
+            # Try falling back to account owner (first employee)
+            emp_result = client.get("/employee", params={"fields": "id", "count": 1})
+            emps = emp_result.get("values", [])
+            if emps and emps[0]["id"] != projectManagerId:
+                body["projectManager"] = {"id": emps[0]["id"]}
+                result = client.post("/project", json=body)
+
+        return result
 
     return {"create_project": create_project}
