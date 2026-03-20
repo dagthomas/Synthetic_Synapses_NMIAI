@@ -137,6 +137,21 @@ def get_runs(*, task="", status="", language="", limit=100):
         return [dict(r) for r in rows]
 
 
+def fail_stale_runs(max_age_minutes=30):
+    """Mark runs stuck in 'running' for too long as failed."""
+    with closing(get_conn()) as conn:
+        cur = conn.execute(
+            """UPDATE eval_runs SET status = 'failed',
+                      error_message = 'Timed out (stuck in running)',
+                      completed_at = ?
+               WHERE status = 'running'
+                 AND created_at < datetime('now', ? || ' minutes')""",
+            (_now(), f"-{max_age_minutes}"),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
 def get_stats():
     with closing(get_conn()) as conn:
         rows = conn.execute("""

@@ -109,6 +109,13 @@ def delete_runs(req: DeleteRunsRequest):
     return {"ok": True, "deleted": len(req.run_ids)}
 
 
+@app.post("/api/runs/cleanup-stale")
+def cleanup_stale_runs():
+    """Mark runs stuck in 'running' for >10 min as failed."""
+    count = db.fail_stale_runs(max_age_minutes=10)
+    return {"ok": True, "cleaned": count}
+
+
 # ── API: Run Eval ───────────────────────────────────────────────────
 
 class EvalRequest(BaseModel):

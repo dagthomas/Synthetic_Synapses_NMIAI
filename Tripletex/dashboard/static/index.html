@@ -249,6 +249,7 @@ tr.clickable:hover td { background: #f6f8fa; }
         <button class="filter-btn" onclick="setFilter('completed',this)">Completed</button>
         <button class="filter-btn" onclick="setFilter('failed',this)">Failed</button>
         <button class="filter-btn" onclick="setFilter('running',this)">Running</button>
+        <button class="filter-btn" style="background:var(--orange);color:#fff;border-color:var(--orange)" onclick="cleanupStale()">Clean Up Stale</button>
       </div>
       <span class="summary" id="resultsSummary"></span>
     </div>
@@ -785,6 +786,15 @@ function setFilter(f, btn) {
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   loadRuns();
+}
+
+async function cleanupStale() {
+  const result = await api('/api/runs/cleanup-stale', { method: 'POST' });
+  if (result?.cleaned > 0) {
+    loadRuns();
+    loadErrors();
+  }
+  alert(result?.cleaned ? `Cleaned up ${result.cleaned} stale run(s)` : 'No stale runs found');
 }
 
 async function loadRuns() {
