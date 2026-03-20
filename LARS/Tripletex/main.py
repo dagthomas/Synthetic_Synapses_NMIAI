@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -19,6 +20,14 @@ from config import AGENT_API_KEY, GOOGLE_API_KEY, MAX_AGENT_TURNS
 from tripletex_client import TripletexClient
 from tools import build_tools_dict
 from tool_router import classify_task, select_tools
+
+# Concurrency limiter — prevent Gemini API rate-limiting when competition
+# sends many tasks at once.  Allow up to 10 agents running in parallel.
+_AGENT_SEMAPHORE = asyncio.Semaphore(10)
+
+# Hard timeout for agent execution (seconds).  Competition requires
+# response within 300s; leave 30s margin for HTTP overhead.
+_AGENT_TIMEOUT = 270
 
 # Dashboard solve_log integration (lazy init on first use)
 _has_dashboard = False
@@ -82,7 +91,7 @@ class SolveRequest(BaseModel):
     }
 
 
-async def _run_agent(body: SolveRequest, save_payload: bool = False) -> dict:
+async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str = "") -> dict:
     """Shared agent execution logic. Returns full details dict."""
     import time as _time
 
@@ -123,8 +132,8 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False) -> dict:
     # Build per-request client and tools
     client = TripletexClient(creds.base_url, creds.session_token)
 
-    # Pre-warm caches (department, division) before counting API calls
-    client._prewarm_caches()
+    # Pre-warm caches in thread pool to avoid blocking the event loop
+    await asyncio.get_running_loop().run_in_executor(None, client._prewarm_caches)
 
     all_tools_dict = build_tools_dict(client, files_dir=files_dir if files else "")
     task_type = classify_task(prompt)
@@ -238,6 +247,7 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False) -> dict:
                 api_log_json=json.dumps(client._call_log[:200], default=str)[:50000],
                 task_type=task_type or "",
                 tool_count=len(tools),
+                source=source,
             )
         except Exception as e:
             log.warning(f"Failed to save solve_log: {e}")
@@ -259,18 +269,37 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
         if not credentials or credentials.credentials != AGENT_API_KEY:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
-    await _run_agent(body, save_payload=True)
+    async def _guarded():
+        async with _AGENT_SEMAPHORE:
+            await _run_agent(body, save_payload=True, source="competition")
+    try:
+        await asyncio.wait_for(_guarded(), timeout=_AGENT_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.error(f"[SOLVE] Agent timed out after {_AGENT_TIMEOUT}s")
+    except Exception as e:
+        log.error(f"[SOLVE] Agent error: {e}", exc_info=True)
     return JSONResponse({"status": "completed"})
 
 
 @app.post("/solve-debug")
-async def solve_debug(body: SolveRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def solve_debug(body: SolveRequest, source: str = "debug",
+                      credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Debug endpoint — returns full tool call and API call details."""
     if AGENT_API_KEY:
         if not credentials or credentials.credentials != AGENT_API_KEY:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
-    details = await _run_agent(body)
+    async def _guarded():
+        async with _AGENT_SEMAPHORE:
+            return await _run_agent(body, source=source)
+    try:
+        details = await asyncio.wait_for(_guarded(), timeout=_AGENT_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.error(f"[SOLVE-DEBUG] Agent timed out after {_AGENT_TIMEOUT}s")
+        details = {"agent_response": "TIMEOUT", "tool_calls": [], "api_calls": 0, "api_errors": 0, "api_log": [], "elapsed": _AGENT_TIMEOUT}
+    except Exception as e:
+        log.error(f"[SOLVE-DEBUG] Agent error: {e}", exc_info=True)
+        details = {"agent_response": f"ERROR: {e}", "tool_calls": [], "api_calls": 0, "api_errors": 0, "api_log": [], "elapsed": 0}
     return JSONResponse({"status": "completed", **details})
 
 

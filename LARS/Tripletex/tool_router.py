@@ -7,8 +7,21 @@ unrecognized prompts (no regression).
 
 import re
 import logging
+import unicodedata
 
 log = logging.getLogger(__name__)
+
+
+def _strip_accents(s: str) -> str:
+    """Strip diacritical marks (é→e, ü→u, ñ→n, à→a) but preserve Nordic ø/æ.
+
+    Uses NFKD decomposition which splits accented chars into base + combining mark,
+    then removes combining marks. Nordic ø and æ have no NFKD decomposition so they
+    are preserved. Norwegian å decomposes to a + ring, but since we normalize BOTH
+    patterns and text, matching still works.
+    """
+    nfkd = unicodedata.normalize('NFKD', s)
+    return ''.join(c for c in nfkd if not unicodedata.combining(c))
 
 # ── Task type → required tool names ──────────────────────────────────
 # Every set also gets get_entity_by_id as a universal safety net.
@@ -58,7 +71,7 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "process_invoice_file":   ["extract_file_content", "create_customer", "create_product", "create_order",
                                "create_invoice"],
     "year_end":               ["search_year_ends", "search_year_end_annexes", "create_year_end_note"],
-    "salary":                 ["search_salary_types", "create_salary_transaction"],
+    "salary":                 ["create_employee", "create_employment", "search_salary_types", "create_salary_transaction"],
 }
 
 # Universal tool always included
@@ -147,7 +160,16 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                    "vários produtos", "múltiplos produtos",
                                    "plusieurs produits", "plusieurs lignes",
                                    "mehrere produkte", "mehrere positionen",
-                                   "fleire produkt"], [], 9),
+                                   "fleire produkt",
+                                   # Count-based patterns (três/tres/three/two/zwei/deux/dos/duas lines)
+                                   "linhas de produto", "líneas de producto", "lignes de produit",
+                                   "produktlinjer", "produktzeilen",
+                                   "três linhas", "tres linhas", "tres líneas", "três líneas",
+                                   "three lines", "three products",
+                                   "two lines", "two products",
+                                   "zwei produkte", "deux produits",
+                                   "dos productos", "duas linhas", "dos líneas",
+                                   "deux lignes", "zwei positionen"], [], 9),
 
     # ── Process invoice from file ──
     ("process_invoice_file", ["vedlagt faktura", "attached invoice", "se vedlegg",
@@ -219,7 +241,17 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                          "arbeitsverhältnis", "arbeitsvertrag",
                                          "tilsetjingsforhold",
                                          "permisjon", "leave of absence",
-                                         "arbeidstid", "working hours"], [], 7),
+                                         "arbeidstid", "working hours",
+                                         # Start date / tiltredelse keywords (critical for competition)
+                                         "start date", "startdato", "start dato",
+                                         "tiltredelse", "tiltredelsesdato", "tiltrer",
+                                         "startdatum", "eintrittsdatum", "arbeitsbeginn",
+                                         "date d'embauche", "date de début", "date de debut",
+                                         "fecha de inicio", "fecha de incorporación", "fecha de incorporacion",
+                                         "data de início", "data de inicio",
+                                         "stillingsprosent", "stillingstittel",
+                                         "job title", "position title",
+                                         "occupation code", "yrkeskode"], [], 7),
 
     # ── Create project ──
     ("create_project", ["prosjekt", "project", "proyecto", "projet", "projekt", "projeto",
@@ -250,7 +282,10 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                         "persona de contacto", "contacto",
                         "pessoa de contato", "contato",
                         "personne de contact",
-                        "ansprechpartner", "kontaktperson"], [], 6),
+                        "ansprechpartner", "kontaktperson"],
+     ["oppdater", "update", "endre", "actualizar", "atualizar", "modifier",
+      "aktualisieren", "mettre a jour", "mettre à jour",
+      "slett", "delete", "eliminar", "excluir", "supprimer", "löschen"], 6),
 
     # ── Update tasks ──
     ("update_employee", ["oppdater ansatt", "update employee", "endre ansatt",
@@ -258,7 +293,9 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "actualizar empleado", "modificar empleado",
                          "atualizar funcionário", "modificar funcionário",
                          "mettre à jour employé", "modifier employé",
+                         "mettre à jour l'employé",
                          "mitarbeiter aktualisieren", "mitarbeiter ändern",
+                         "aktualisieren sie den mitarbeiter", "aktualisieren sie mitarbeiter",
                          "oppdatere mobilnummer", "oppdater mobilnummer",
                          "endre mobilnummer", "oppdatere telefon", "endre telefon",
                          "nytt mobilnummer", "bytte telefon",
@@ -269,7 +306,10 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "actualizar cliente", "modificar cliente",
                          "atualizar cliente", "modificar cliente",
                          "mettre à jour client", "modifier client",
+                         "mettre à jour le client",
                          "kunde aktualisieren", "kunden ändern",
+                         "kunden aktualisieren",
+                         "aktualisieren sie den kunden", "aktualisieren sie kunden",
                          "oppdatere telefon", "endre telefonnummer",
                          "nytt telefonnummer", "oppdatere e-post", "endre e-post",
                          "oppdater kunden", "endre kunden"],
@@ -279,7 +319,9 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                         "actualizar producto", "modificar producto", "cambiar precio",
                         "atualizar produto", "modificar produto", "alterar preço",
                         "mettre à jour produit", "modifier produit", "changer prix",
+                        "mettre à jour le produit",
                         "produkt aktualisieren", "produkt ändern", "preis ändern",
+                        "aktualisieren sie das produkt", "aktualisieren sie produkt",
                         "oppdatere prisen", "endre prisen", "oppdater pris",
                         "ny pris", "justere pris", "øke prisen", "senke prisen",
                         "oppdater produktet", "endre produktet"],
@@ -288,22 +330,32 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "actualizar proveedor", "modificar proveedor",
                          "atualizar fornecedor", "modificar fornecedor",
                          "mettre à jour fournisseur", "modifier fournisseur",
+                         "mettre à jour le fournisseur",
                          "lieferant aktualisieren", "lieferant ändern",
+                         "aktualisieren sie den lieferanten", "aktualisieren sie lieferanten",
                          "oppdater leverandøren", "endre leverandøren"],
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen"], 8),
     ("update_department", ["oppdater avdeling", "update department", "endre avdeling", "oppdatere avdeling",
                            "actualizar departamento", "modificar departamento",
                            "atualizar departamento", "modificar departamento",
                            "mettre à jour département", "modifier département",
+                           "mettre à jour le département",
                            "abteilung aktualisieren", "abteilung ändern",
+                           "aktualisieren sie die abteilung", "aktualisieren sie abteilung",
                            "oppdater avdelingen", "endre avdelingen",
                            "gi nytt navn", "endre navn"],
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen"], 8),
     ("update_contact", ["oppdater kontaktperson", "update contact", "endre kontaktperson", "oppdatere kontakt",
                          "actualizar contacto", "modificar contacto",
+                         "actualizar persona de contacto",
                          "atualizar contato", "modificar contato",
+                         "atualizar pessoa de contato",
                          "mettre à jour contact", "modifier contact",
+                         "mettre à jour personne de contact",
                          "kontakt aktualisieren", "kontakt ändern",
+                         "kontaktperson aktualisieren",
+                         "aktualisieren sie die kontaktperson", "aktualisieren sie kontaktperson",
+                         "aktualisieren sie kontakt",
                          "oppdater kontakten", "endre kontakten"],
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen"], 8),
 
@@ -323,11 +375,13 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "lieferant", "fornecedor", "leverandøren"],
      ["slett", "delete", "faktura", "invoice", "inngående",
       "eliminar", "excluir", "supprimer", "löschen", "oppdater", "update", "endre",
-      "actualizar", "atualizar", "modifier", "ändern"], 4),
+      "actualizar", "atualizar", "modifier", "ändern", "aktualisieren",
+      "mettre a jour", "mettre à jour"], 4),
     ("create_department", ["avdeling", "department", "departamento", "département",
                            "abteilung", "avdelinga"],
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen",
-      "oppdater", "update", "endre", "actualizar", "atualizar", "modifier", "ändern"], 4),
+      "oppdater", "update", "endre", "actualizar", "atualizar", "modifier", "ändern",
+      "aktualisieren", "mettre a jour", "mettre à jour"], 4),
     ("create_employee", ["ansatt", "employee", "empleado", "employé",
                          "mitarbeiter", "funcionário", "tilsett",
                          "kollega", "medarbeider", "ny kollega", "new colleague",
@@ -336,19 +390,33 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
       "prosjekt", "project", "ansettelse", "employment", "permisjon", "leave",
       "arbeidstid", "lønn", "salary", "deaktiver", "deactivate",
       "eliminar", "excluir", "supprimer", "löschen",
-      "actualizar", "atualizar", "modifier", "ändern",
-      "salário", "salario", "salaire", "gehalt", "lohn", "payroll", "nómina"], 3),
+      "actualizar", "atualizar", "modifier", "ändern", "aktualisieren",
+      "mettre a jour", "mettre à jour",
+      "salário", "salario", "salaire", "gehalt", "lohn", "payroll", "nómina",
+      "start date", "startdato", "tiltredelse", "tiltredelsesdato",
+      "stillingsprosent", "stillingstittel", "yrkeskode", "occupation code",
+      "startdatum", "eintrittsdatum", "date d'embauche", "fecha de inicio",
+      "data de início", "data de inicio"], 3),
     ("create_customer", ["kunde", "customer", "cliente", "client", "klient", "kunden"],
      ["slett", "delete", "oppdater", "update", "endre",
       "faktura", "invoice", "fatura", "factura", "facture", "rechnung",
       "kontakt", "contact", "contato", "contacto",
       "prosjekt", "project", "proyecto", "projeto", "projet", "projekt",
       "eliminar", "excluir", "supprimer", "löschen",
-      "actualizar", "atualizar", "modifier", "ändern"], 3),
+      "actualizar", "atualizar", "modifier", "ändern", "aktualisieren",
+      "mettre a jour", "mettre à jour"], 3),
     ("create_product", ["produkt", "product", "producto", "produit", "produto", "vare"],
      ["slett", "delete", "oppdater", "update", "endre", "faktura", "invoice",
       "eliminar", "excluir", "supprimer", "löschen",
-      "actualizar", "atualizar", "modifier", "ändern"], 3),
+      "actualizar", "atualizar", "modifier", "ändern", "aktualisieren",
+      "mettre a jour", "mettre à jour"], 3),
+]
+
+# ── Normalize patterns: strip accents so both patterns and text match uniformly ──
+_PATTERNS = [
+    (task_type, [_strip_accents(p) for p in positives],
+     [_strip_accents(n) for n in negatives], bonus)
+    for task_type, positives, negatives, bonus in _PATTERNS
 ]
 
 
@@ -357,7 +425,7 @@ def classify_task(prompt: str) -> str | None:
 
     Returns task type string if confident, None for fallback to all tools.
     """
-    text = prompt.lower().strip()
+    text = _strip_accents(prompt.lower().strip())
     # Strip email addresses to prevent false positives (e.g. "faktura@firma.no" → "invoice")
     text = re.sub(r'\S+@\S+\.\S+', '', text)
 
@@ -430,6 +498,12 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
                  "personne de contact", "ansprechpartner"],
 }
 
+# Normalize CATEGORY_KEYWORDS for accent-insensitive matching
+CATEGORY_KEYWORDS = {
+    cat: [_strip_accents(kw) for kw in keywords]
+    for cat, keywords in CATEGORY_KEYWORDS.items()
+}
+
 CATEGORY_TOOLS: dict[str, list[str]] = {
     "employee": ["create_employee", "update_employee", "search_employees",
                  "create_employment", "create_employment_details",
@@ -462,7 +536,7 @@ def detect_categories(prompt: str) -> list[str]:
 
     Returns list of matching category names (e.g. ["employee", "customer"]).
     """
-    text = prompt.lower().strip()
+    text = _strip_accents(prompt.lower().strip())
     text = re.sub(r'\S+@\S+\.\S+', '', text)  # strip emails
     matched = []
     for category, keywords in CATEGORY_KEYWORDS.items():

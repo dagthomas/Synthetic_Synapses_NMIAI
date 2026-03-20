@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react"
-import { useTasks, useLanguages } from "@/hooks/use-api"
+import { useTasks, useLanguages, useTasksLiveSummary } from "@/hooks/use-api"
 import { startBatch, fetchRuns, fetchSandboxHealth, seedSandbox } from "@/lib/api"
 import type { EvalRun } from "@/types/api"
 import { PageHeader } from "@/components/layout/page-header"
@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import { Play, Rocket, Layers, Globe, AlertCircle, Loader2 } from "lucide-react"
+import { Play, Rocket, Layers, Globe, AlertCircle, Loader2, CheckCircle2 } from "lucide-react"
 
 interface RunPanelProps {
   onBatchDone: (runs: EvalRun[]) => void
@@ -28,6 +28,11 @@ interface RunPanelProps {
 export function RunPanel({ onBatchDone, onNavigate }: RunPanelProps) {
   const { data: tasks, isLoading: tasksLoading } = useTasks()
   const { data: languages } = useLanguages()
+  const { data: liveSummary } = useTasksLiveSummary()
+
+  const realTaskNames = (liveSummary ?? [])
+    .filter((t) => t.live_runs > 0)
+    .map((t) => t.name)
 
   const [selectedTier, setSelectedTier] = useState<number | null>(null)
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
@@ -67,6 +72,15 @@ export function RunPanel({ onBatchDone, onNavigate }: RunPanelProps) {
   const tierCounts = tiers.map(
     (t) => tasks?.filter((task) => task.tier === t).length ?? 0
   )
+
+  function selectRealTasks() {
+    setSelectedTier(null)
+    setSelectedTasks(new Set(realTaskNames))
+    // Also select all languages
+    if (languages) {
+      setSelectedLangs(new Set(Object.keys(languages)))
+    }
+  }
 
   function toggleTier(tier: number) {
     const newTier = selectedTier === tier ? null : tier
@@ -244,13 +258,32 @@ export function RunPanel({ onBatchDone, onNavigate }: RunPanelProps) {
 
       <Card className="shadow-premium">
         <CardContent className="p-5 space-y-5">
-          {/* Tier selection */}
+          {/* Quick select + Tier selection */}
           <div>
             <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
               <Layers className="h-3.5 w-3.5" />
-              Tier
+              Quick Select
             </label>
             <div className="flex gap-2">
+              {realTaskNames.length > 0 && (
+                <button
+                  onClick={selectRealTasks}
+                  className={cn(
+                    "relative px-4 py-2 rounded-lg text-[13px] font-semibold transition-all duration-150 border",
+                    selectedTasks.size > 0 &&
+                      realTaskNames.length === selectedTasks.size &&
+                      realTaskNames.every((n) => selectedTasks.has(n))
+                      ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                      : "bg-card text-foreground border-emerald-300 hover:border-emerald-500 hover:bg-emerald-50/50"
+                  )}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+                  Real Tasks
+                  <span className="ml-1.5 text-[11px] opacity-70">
+                    ({realTaskNames.length})
+                  </span>
+                </button>
+              )}
               {tiers.map((tier, i) => {
                 const isActive = selectedTier === tier
                 return (

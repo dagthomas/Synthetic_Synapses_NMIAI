@@ -19,6 +19,7 @@ def build_salary_tools(client: TripletexClient) -> dict:
         year: int,
         month: int,
         employee_ids: str = "",
+        payslip_lines: str = "",
     ) -> dict:
         """Create a salary transaction (loennskjoering).
 
@@ -27,20 +28,42 @@ def build_salary_tools(client: TripletexClient) -> dict:
             year: The year.
             month: The month (1-12).
             employee_ids: JSON string of employee IDs, e.g. '[1, 2, 3]'. If empty, tries to include all employees.
+            payslip_lines: JSON string of salary specifications per employee.
+                Format: '[{"employee_id": 123, "lines": [{"salary_type_number": 10, "rate": 58350, "count": 1}]}]'
+                Each line needs: salary_type_number (from search_salary_types), rate (amount in NOK), count (usually 1).
 
         Returns:
             Created salary transaction or error.
         """
-        if employee_ids:
+        payslips = []
+        if payslip_lines:
+            specs = _json.loads(payslip_lines) if isinstance(payslip_lines, str) else payslip_lines
+            for spec in specs:
+                eid = spec["employee_id"]
+                lines = spec.get("lines", [])
+                payslip = {"employee": {"id": eid}}
+                if lines:
+                    payslip["specifications"] = [
+                        {
+                            "salaryType": {"number": line["salary_type_number"]},
+                            "rate": line["rate"],
+                            "count": line.get("count", 1),
+                        }
+                        for line in lines
+                    ]
+                payslips.append(payslip)
+        elif employee_ids:
             ids = _json.loads(employee_ids) if isinstance(employee_ids, str) else employee_ids
+            payslips = [{"employee": {"id": eid}} for eid in ids]
         else:
             emps = client.get("/employee", params={"fields": "id"})
             ids = [e["id"] for e in emps.get("values", [])]
+            payslips = [{"employee": {"id": eid}} for eid in ids]
         body = {
             "date": date,
             "year": year,
             "month": month,
-            "payslips": [{"employee": {"id": eid}} for eid in ids],
+            "payslips": payslips,
         }
         return client.post("/salary/transaction", json=body)
 

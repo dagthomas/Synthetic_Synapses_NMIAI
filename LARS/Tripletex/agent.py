@@ -55,7 +55,9 @@ Create customer (1 call):
   → If prompt mentions an address/adresse → include addressLine1, postalCode, city
 
 Create product (1 call):
-  → create_product(name, priceExcludingVatCurrency, number if given)
+  → create_product(name, priceExcludingVatCurrency, productNumber if given)
+  → ONLY send priceExcludingVatCurrency — NEVER send both excl and incl prices (Tripletex auto-calculates incl from VAT type)
+  → If product number already exists, create_product auto-returns the existing product — use its ID directly
 
 Create supplier (1 call):
   → create_supplier(name, email, organizationNumber if given, phoneNumber if given, addressLine1, postalCode, city if address given)
@@ -138,9 +140,11 @@ Create employee with full setup (3-5 calls):
   → "permisjon"/"leave" → create_leave_of_absence(employment_id, startDate, endDate, leaveType, percentage)
   → Leave types: MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, FURLOUGH, OTHER
 
-Supplier invoice / leverandørfaktura (2-3 calls):
-  → create_supplier → create_incoming_invoice(invoiceDate, supplierId, invoiceNumber, amount)
-  → OR: search_supplier_invoices to find existing, then approve_supplier_invoice or reject_supplier_invoice
+Supplier invoice / leverandørfaktura (2 calls):
+  → create_supplier(name, organizationNumber) → create_incoming_invoice(invoiceDate, supplierId, invoiceNumber, amountIncludingVat, expenseAccountNumber, vatPercentage)
+  → The tool auto-creates a voucher with correct VAT postings and supplier link
+  → Common expense accounts: 4000=varekostnad, 6300=leie, 6590=annet driftsmateriale, 6800=kontorrekvisita
+  → VAT rates: 25 (standard), 15 (medium/mat), 12 (low/transport), 0 (exempt)
 
 ═══════════════════════════════════════════════════════
 TIER 3 — COMPLEX TASKS (highest multiplier)
@@ -202,8 +206,10 @@ Year-end / årsoppgjør (2-4 calls):
 VAT return / MVA-oppgave (1-2 calls):
   → get_vat_returns → use the info to create appropriate voucher
 
-Salary / lønn (2-3 calls):
-  → search_salary_types → create_salary_transaction(date, month, year)
+Salary / lønn (4-5 calls):
+  → create_employee(firstName, lastName, email) → create_employment(employee_id, startDate="2026-01-01") → search_salary_types → create_salary_transaction(date, month, year, payslip_lines)
+  → Employee MUST have employment record before salary can run.
+  → payslip_lines: '[{{"employee_id": ID, "lines": [{{"salary_type_number": N, "rate": AMOUNT, "count": 1}}]}}]'
   → "lønn"/"lønnskjøring"/"payroll"
 
 ═══════════════════════════════════════════════════════
@@ -245,7 +251,9 @@ TASK: Create customer (1 call)
 
     "create_product": """
 TASK: Create product (1 call)
--> create_product(name, priceExcludingVatCurrency, number if given)""",
+-> create_product(name, priceExcludingVatCurrency, productNumber if given)
+- ONLY send priceExcludingVatCurrency — NEVER send both excl and incl prices.
+- If product number already exists, the tool auto-returns the existing product.""",
 
     "create_department": """
 TASK: Create department (1 call)
@@ -304,7 +312,9 @@ TASK: Create invoice (4 calls)
     "create_multi_line_invoice": """
 TASK: Create multi-line invoice (5-6 calls)
 -> create_customer -> create_product (x2-3) -> create_order(customer_id, date, orderLines=[...all products...]) -> create_invoice(date, dueDate, order_id)
-- Create ALL products FIRST, then ONE order with ALL order lines, then ONE invoice.
+- Create ALL products FIRST (in parallel if possible), then ONE order with ALL order lines, then ONE invoice.
+- ONLY send priceExcludingVatCurrency to create_product — NEVER send both excl and incl prices.
+- If a product number already exists, create_product auto-returns the existing product — use its ID directly.
 - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.""",
 
     "create_project": """
@@ -348,9 +358,15 @@ Optionally: create_employment_details, create_standard_time, create_leave_of_abs
 - Leave types: MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, FURLOUGH, OTHER""",
 
     "supplier_invoice": """
-TASK: Supplier invoice (2-3 calls)
--> create_supplier -> create_incoming_invoice(invoiceDate, supplierId, invoiceNumber, amount)
-- "leverandorfaktura"/"inngaende faktura" = supplier/incoming invoice""",
+TASK: Supplier invoice (3-4 calls: create_supplier + 2 account lookups + create_incoming_invoice)
+-> create_supplier(name, organizationNumber)
+-> create_incoming_invoice(invoiceDate=date, supplierId=supplier.id, invoiceNumber=invoiceRef, amountIncludingVat=totalAmount, expenseAccountNumber=accountFromPrompt, vatPercentage=vatRate)
+- "leverandorfaktura"/"inngaende faktura" = supplier/incoming invoice
+- The tool auto-creates a voucher with expense debit (+ input VAT) and payables credit linked to supplier
+- Common expense accounts: 4000=varekostnad, 6300=leie, 6590=annet driftsmateriale, 6800=kontorrekvisita, 7100=lonn
+- VAT rates: 25 (standard/hoey), 15 (medium/mat), 12 (low/transport), 0 (exempt)
+- amountIncludingVat is the TOTAL amount (including VAT) from the prompt
+- CRITICAL: Extract the expense account number from the prompt (e.g. "account 6590" -> expenseAccountNumber=6590)""",
 
     "delete_travel_expense": """
 TASK: Delete travel expense (2 calls)
@@ -432,9 +448,14 @@ TASK: Year-end (2-4 calls)
 - "arsoppgjor"/"year-end" """,
 
     "salary": """
-TASK: Salary transaction (2-3 calls)
--> search_salary_types -> create_salary_transaction(date, month, year)
-- "lonn"/"lonnskjoring"/"payroll" """,
+TASK: Salary / payroll (4-5 calls)
+-> create_employee(firstName, lastName, email) -> create_employment(employee_id, startDate="2026-01-01") -> search_salary_types() -> create_salary_transaction(date, month, year, payslip_lines)
+- The employee MUST have an employment record before salary can be run.
+- search_salary_types returns available salary types with numbers. Common types:
+  - "Fastlonn" (base salary): usually number 10 or similar
+  - "Bonus"/"Tillegg" (bonus/supplement): find the right number from search results
+- payslip_lines format: '[{{"employee_id": 123, "lines": [{{"salary_type_number": 10, "rate": 58350, "count": 1}}, {{"salary_type_number": 30, "rate": 9300, "count": 1}}]}}]'
+- "lonn"/"lonnskjoring"/"payroll"/"salaire"/"salario"/"Gehalt" """,
 }
 
 # Keep the full instruction for unclassified tasks (no regression)
@@ -456,7 +477,9 @@ Create customer (1 call):
   -> If prompt says "org.nr" or "organisasjonsnummer" -> include it
 
 Create product (1 call):
-  -> create_product(name, priceExcludingVatCurrency, number if given)
+  -> create_product(name, priceExcludingVatCurrency, productNumber if given)
+  -> ONLY send priceExcludingVatCurrency — NEVER both excl and incl prices
+  -> If product number already exists, create_product auto-returns the existing product
 
 Create supplier (1 call):
   -> create_supplier(name, email, organizationNumber if given, phoneNumber if given)
@@ -490,6 +513,8 @@ Create invoice (4 calls):
 Create multi-line invoice (5-6 calls):
   -> create_customer -> create_product (x2-3) -> create_order(customer_id, date, orderLines=[...all products...]) -> create_invoice(date, dueDate, order_id)
   -> Create ALL products FIRST, then ONE order with ALL order lines, then ONE invoice.
+  -> ONLY send priceExcludingVatCurrency — NEVER both excl and incl prices.
+  -> If product number already exists, create_product auto-returns the existing product.
 
 Create invoice + payment (5 calls):
   -> [create invoice: 4 calls] -> register_payment(invoice_id, amount, date)
@@ -526,9 +551,11 @@ Create employee with full setup (3-5 calls):
   -> "permisjon"/"leave" -> create_leave_of_absence(employment_id, startDate, endDate, leaveType, percentage)
   -> Leave types: MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, FURLOUGH, OTHER
 
-Supplier invoice / leverandorfaktura (2-3 calls):
-  -> create_supplier -> create_incoming_invoice(invoiceDate, supplierId, invoiceNumber, amount)
-  -> OR: search_supplier_invoices to find existing, then approve_supplier_invoice or reject_supplier_invoice
+Supplier invoice / leverandorfaktura (2 calls):
+  -> create_supplier(name, organizationNumber) -> create_incoming_invoice(invoiceDate, supplierId, invoiceNumber, amountIncludingVat, expenseAccountNumber, vatPercentage)
+  -> The tool auto-creates a voucher with correct VAT postings and supplier link
+  -> Common expense accounts: 4000=varekostnad, 6300=leie, 6590=annet driftsmateriale, 6800=kontorrekvisita
+  -> VAT rates: 25 (standard), 15 (medium/mat), 12 (low/transport), 0 (exempt)
 
 ═══════════════════════════════════════════════════════
 TIER 3 — COMPLEX TASKS (highest multiplier)
@@ -581,8 +608,10 @@ Year-end / arsoppgjor (2-4 calls):
 VAT return / MVA-oppgave (1-2 calls):
   -> get_vat_returns -> use the info to create appropriate voucher
 
-Salary / lonn (2-3 calls):
-  -> search_salary_types -> create_salary_transaction(date, month, year)
+Salary / lonn (4-5 calls):
+  -> create_employee(firstName, lastName, email) -> create_employment(employee_id, startDate="2026-01-01") -> search_salary_types -> create_salary_transaction(date, month, year, payslip_lines)
+  -> Employee MUST have an employment record before salary can run.
+  -> payslip_lines: '[{{"employee_id": ID, "lines": [{{"salary_type_number": N, "rate": AMOUNT, "count": 1}}]}}]'
   -> "lonn"/"lonnskjoring"/"payroll"
 
 ═══════════════════════════════════════════════════════

@@ -71,37 +71,33 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             name: New supplier name (empty to keep unchanged).
             email: New email (empty to keep unchanged).
             phoneNumber: New phone number (empty to keep unchanged).
-            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
+            version: Entity version from the create response. If provided (>0), skips the GET call (saves 1 API call).
 
         Returns:
             The updated supplier or an error message.
         """
-        if version >= 0:
-            # Fast path: build minimal PUT body without GET
-            body = {"id": supplier_id, "version": version, "isSupplier": True}
+        _WRITABLE = {
+            "id", "version", "name", "email", "phoneNumber", "phoneNumberMobile",
+            "organizationNumber", "isSupplier", "isCustomer", "accountManager",
+            "description", "bankAccounts",
+        }
+        if version > 0 and name:
+            # Fast path: skip GET when we have version + required field (name)
+            body = {"id": supplier_id, "version": version, "name": name, "isSupplier": True}
+            if email:
+                body["email"] = email
+            if phoneNumber:
+                body["phoneNumber"] = phoneNumber
+        else:
+            current = client.get(f"/supplier/{supplier_id}", params={"fields": "*"})
+            full = current.get("value", {})
+            body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
             if name:
                 body["name"] = name
             if email:
                 body["email"] = email
             if phoneNumber:
                 body["phoneNumber"] = phoneNumber
-            return client.put(f"/supplier/{supplier_id}", json=body)
-
-        # Fallback: GET first to preserve existing fields
-        _WRITABLE = {
-            "id", "version", "name", "email", "phoneNumber", "phoneNumberMobile",
-            "organizationNumber", "isSupplier", "isCustomer", "accountManager",
-            "description", "bankAccounts",
-        }
-        current = client.get(f"/supplier/{supplier_id}", params={"fields": "*"})
-        full = current.get("value", {})
-        body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
-        if name:
-            body["name"] = name
-        if email:
-            body["email"] = email
-        if phoneNumber:
-            body["phoneNumber"] = phoneNumber
         return client.put(f"/supplier/{supplier_id}", json=body)
 
     def delete_supplier(supplier_id: int) -> dict:

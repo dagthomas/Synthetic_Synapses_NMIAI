@@ -5,10 +5,15 @@ CLI (populate_sandbox.py).
 """
 
 import logging
+import threading
 
 from tripletex_client import TripletexClient
 
 log = logging.getLogger(__name__)
+
+# Module-level flag: only seed once per process
+_seeded = False
+_seed_lock = threading.Lock()
 
 # Entity types we track, in dependency order (seed top-down, clean bottom-up)
 ENTITY_TYPES = [
@@ -393,6 +398,84 @@ def seed_entities(client: TripletexClient,
         "total_created": total_created,
         "total_errors": total_errors,
     }
+
+
+def ensure_sandbox_ready(client: TripletexClient, force: bool = False) -> dict:
+    """Check sandbox health and seed data if needed. Thread-safe, runs once per process.
+
+    Always logs seeding status (success and failure) for visibility.
+    Returns the health check or seed result.
+    """
+    global _seeded
+
+    if _seeded and not force:
+        log.info("[SEED] Sandbox already seeded this session, skipping")
+        return {"status": "already_seeded"}
+
+    with _seed_lock:
+        if _seeded and not force:
+            return {"status": "already_seeded"}
+
+        log.info("[SEED] Checking sandbox readiness...")
+        health = check_health(client)
+
+        # Always log current state
+        log.info(f"[SEED] Connected: {health['connected']}")
+        if not health["connected"]:
+            log.error("[SEED] Cannot connect to sandbox!")
+            return {"status": "connection_failed", "health": health}
+
+        for entity_type, info in health.get("entities", {}).items():
+            status = "OK" if info["ok"] else "MISSING"
+            log.info(f"[SEED]   {entity_type:<20} count={info['count']:<5} [{status}]")
+
+        log.info(f"[SEED]   bank_account_1920: {'OK' if health['bank_account_1920'] else 'MISSING'}")
+
+        if health["ready"]:
+            log.info("[SEED] Sandbox is ready — all entities present")
+            _seeded = True
+            # Still enable modules (idempotent, fast)
+            modules_result = enable_modules(client)
+            log.info(f"[SEED] Modules enabled: {modules_result}")
+            return {"status": "ready", "health": health}
+
+        # Seed missing data
+        log.info("[SEED] Sandbox NOT ready — seeding required data...")
+        seed_result = seed_entities(client)
+
+        # Log every seed result in detail
+        log.info(f"[SEED] Modules: {seed_result.get('modules', {})}")
+        log.info(f"[SEED] Bank account: {seed_result.get('bank_account', {})}")
+        for entity_type, r in seed_result.get("results", {}).items():
+            created = r.get("created", 0)
+            errors = r.get("errors", [])
+            if errors:
+                for err in errors:
+                    log.warning(f"[SEED]   {entity_type}: ERROR — {err}")
+            if created > 0:
+                log.info(f"[SEED]   {entity_type}: created {created} entities (ids={r.get('ids', [])})")
+            elif not errors:
+                log.info(f"[SEED]   {entity_type}: 0 created (may already exist)")
+
+        log.info(f"[SEED] Total created: {seed_result['total_created']}, "
+                 f"errors: {seed_result['total_errors']}")
+
+        # Verify after seeding
+        post_health = check_health(client)
+        if post_health["ready"]:
+            log.info("[SEED] Sandbox ready after seeding")
+        else:
+            missing = [k for k, v in post_health.get("entities", {}).items()
+                       if not v.get("ok")]
+            log.warning(f"[SEED] Sandbox still not fully ready after seeding! "
+                        f"Missing: {missing}")
+
+        _seeded = True
+        return {
+            "status": "seeded",
+            "seed_result": seed_result,
+            "post_health": post_health,
+        }
 
 
 # ── Clean ─────────────────────────────────────────────────────────

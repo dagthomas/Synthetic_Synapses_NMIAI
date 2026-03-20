@@ -12,6 +12,7 @@ import type {
   Languages,
   CoverageCategory,
   SolveLog,
+  TaskLiveSummary,
 } from "@/types/api"
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
@@ -95,6 +96,13 @@ export const fetchToolCatalog = () =>
 export const fetchCoverage = () =>
   request<CoverageCategory[]>("/api/coverage")
 
+// Tasks Live Summary
+export const fetchTasksLiveSummary = () =>
+  request<TaskLiveSummary[]>("/api/tasks/live-summary")
+
 // Solve Logs
 export const fetchLogs = (limit = 100) =>
   request<SolveLog[]>(`/api/logs?limit=${limit}`)
+
+export const deleteAllLogs = () =>
+  request<{ ok: boolean; deleted_db: number; deleted_files: number }>("/api/logs", { method: "DELETE" })

@@ -848,24 +848,30 @@ Expected fields:
 CREATE_SUPPLIER_INVOICE = TaskDef(
     name="create_supplier_invoice",
     tier=2,
-    description="Create an incoming invoice from a supplier",
-    sandbox_broken=True,  # POST /supplierInvoice returns 500 in dev sandbox
+    description="Create an incoming invoice from a supplier (via ledger voucher with VAT postings)",
     gen_instruction="""\
 Generate a task to create an incoming invoice (leverandørfaktura) in Tripletex.
 Include ALL:
-- supplier_name: company name ending in AS
-- supplier_email: email for the supplier
+- supplier_name: company name ending in AS or Ltd
+- supplier_org_number: 9-digit Norwegian org number
 - invoice_date: March 2026 (YYYY-MM-DD)
-- invoice_number: a vendor invoice number (e.g. "F-2026-001")
+- invoice_number: a vendor invoice number (e.g. "INV-2026-001")
+- amount_including_vat: total amount INCLUDING VAT in NOK
+- expense_account: the account number for the expense (e.g. 6590 for office services)
+- vat_percentage: 25 (standard rate)
 
-The prompt should instruct to first create the supplier, then register the incoming invoice.
+The prompt should instruct to first create the supplier, then register the supplier invoice
+with the correct input VAT (inngående MVA).
 
 Expected fields:
 - supplier_name (string)
-- supplier_email (string)
+- supplier_org_number (string)
 - invoice_date (string, YYYY-MM-DD)
-- invoice_number (string)""",
-    entity_type="supplierInvoice",
+- invoice_number (string)
+- amount_including_vat (float)
+- expense_account (int)
+- vat_percentage (int)""",
+    entity_type="voucher",
     search_fields=[],
     field_checks=[
         FieldCheck("_supplier_found", 2),
@@ -874,7 +880,7 @@ Expected fields:
         FieldCheck("invoice_date", 2),
         FieldCheck("invoice_number", 2),
     ],
-    baseline_calls=2,
+    baseline_calls=3,
 )
 
 CREATE_TRAVEL_EXPENSE_WITH_COSTS = TaskDef(

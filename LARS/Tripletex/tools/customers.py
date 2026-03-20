@@ -60,39 +60,35 @@ def build_customer_tools(client: TripletexClient) -> dict:
             name: New name (leave empty to keep current).
             email: New email (leave empty to keep current).
             phoneNumber: New phone number (leave empty to keep current).
-            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
+            version: Entity version from the create response. If provided (>0), skips the GET call (saves 1 API call).
 
         Returns:
             The updated customer data or an error message.
         """
-        if version >= 0:
-            # Fast path: build minimal PUT body without GET
-            body = {"id": customer_id, "version": version, "isCustomer": True}
-            if name:
-                body["name"] = name
-            if email:
-                body["email"] = email
-            if phoneNumber:
-                body["phoneNumber"] = phoneNumber
-            return client.put(f"/customer/{customer_id}", json=body)
-
-        # Fallback: GET first to preserve existing fields
         _WRITABLE = {
             "id", "version", "name", "email", "phoneNumber", "phoneNumberMobile",
             "organizationNumber", "isCustomer", "isSupplier", "accountManager",
             "description", "language", "invoiceEmail", "category1", "category2",
             "category3", "bankAccounts", "invoiceSendMethod",
         }
-        current = client.get(f"/customer/{customer_id}", params={"fields": "*"})
-        full = current.get("value", {})
-        body = {k: v for k, v in full.items() if k in _WRITABLE} if full else {}
-        body = {k: v for k, v in body.items() if v is not None}
-        if name:
-            body["name"] = name
-        if email:
-            body["email"] = email
-        if phoneNumber:
-            body["phoneNumber"] = phoneNumber
+        if version > 0 and name:
+            # Fast path: skip GET when we have version + required field (name)
+            body = {"id": customer_id, "version": version, "name": name, "isCustomer": True}
+            if email:
+                body["email"] = email
+            if phoneNumber:
+                body["phoneNumber"] = phoneNumber
+        else:
+            current = client.get(f"/customer/{customer_id}", params={"fields": "*"})
+            full = current.get("value", {})
+            body = {k: v for k, v in full.items() if k in _WRITABLE} if full else {}
+            body = {k: v for k, v in body.items() if v is not None}
+            if name:
+                body["name"] = name
+            if email:
+                body["email"] = email
+            if phoneNumber:
+                body["phoneNumber"] = phoneNumber
         return client.put(f"/customer/{customer_id}", json=body)
 
     def search_customers(name: str = "", email: str = "") -> dict:

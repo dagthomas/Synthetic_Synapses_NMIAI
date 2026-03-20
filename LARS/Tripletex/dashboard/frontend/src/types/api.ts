@@ -74,6 +74,7 @@ export interface Payload {
 export interface ToolCallResult {
   ok: boolean | null
   error?: string
+  data?: string
 }
 
 export interface ToolCall {
@@ -148,6 +149,22 @@ export interface ToolInfo {
   summary: string
   docstring: string
   params: ToolParam[]
+}
+
+export interface TaskLiveSummary {
+  name: string
+  tier: number
+  description: string
+  baseline_calls: number
+  field_count: number
+  max_points: number
+  live_runs: number
+  avg_api_calls: number | null
+  avg_api_errors: number | null
+  avg_elapsed: number | null
+  min_api_calls: number | null
+  max_api_calls: number | null
+  last_run: string | null
 }
 
 export type Languages = Record<string, string>

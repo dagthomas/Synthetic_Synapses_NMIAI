@@ -72,13 +72,19 @@ def build_contact_tools(client: TripletexClient) -> dict:
             email: New email (empty to keep).
             phoneNumberMobile: New phone (empty to keep).
             isInactive: Set to True to deactivate the contact.
-            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
+            version: Entity version from the create response. If provided (>0) with customer_id, skips the GET call (saves 1 API call).
             customer_id: Customer ID (required for fast path when version is provided).
 
         Returns:
             Updated contact or error.
         """
-        if version >= 0 and customer_id:
+        _WRITABLE = {
+            "id", "version", "firstName", "lastName", "email",
+            "phoneNumberMobile", "phoneNumberWork", "customer",
+            "department", "isInactive",
+        }
+        if version > 0 and customer_id > 0 and (firstName or lastName):
+            # Fast path: skip GET when we have version + customer_id + a required name field
             body = {"id": contact_id, "version": version, "customer": {"id": customer_id}}
             if firstName:
                 body["firstName"] = firstName
@@ -90,30 +96,24 @@ def build_contact_tools(client: TripletexClient) -> dict:
                 body["phoneNumberMobile"] = phoneNumberMobile
             if isInactive:
                 body["isInactive"] = True
-            return client.put(f"/contact/{contact_id}", json=body)
-
-        _WRITABLE = {
-            "id", "version", "firstName", "lastName", "email",
-            "phoneNumberMobile", "phoneNumberWork", "customer",
-            "department", "isInactive",
-        }
-        current = client.get(f"/contact/{contact_id}", params={"fields": "*"})
-        full = current.get("value", {})
-        body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
-        if isinstance(body.get("customer"), dict):
-            body["customer"] = {"id": body["customer"]["id"]}
-        if isinstance(body.get("department"), dict):
-            body["department"] = {"id": body["department"]["id"]}
-        if firstName:
-            body["firstName"] = firstName
-        if lastName:
-            body["lastName"] = lastName
-        if email:
-            body["email"] = email
-        if phoneNumberMobile:
-            body["phoneNumberMobile"] = phoneNumberMobile
-        if isInactive:
-            body["isInactive"] = True
+        else:
+            current = client.get(f"/contact/{contact_id}", params={"fields": "*"})
+            full = current.get("value", {})
+            body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
+            if isinstance(body.get("customer"), dict):
+                body["customer"] = {"id": body["customer"]["id"]}
+            if isinstance(body.get("department"), dict):
+                body["department"] = {"id": body["department"]["id"]}
+            if firstName:
+                body["firstName"] = firstName
+            if lastName:
+                body["lastName"] = lastName
+            if email:
+                body["email"] = email
+            if phoneNumberMobile:
+                body["phoneNumberMobile"] = phoneNumberMobile
+            if isInactive:
+                body["isInactive"] = True
         return client.put(f"/contact/{contact_id}", json=body)
 
     def delete_contact(contact_id: int) -> dict:

@@ -14,27 +14,42 @@ def build_product_tools(client: TripletexClient) -> dict:
 
         Args:
             name: The product name.
-            priceExcludingVatCurrency: Price excluding VAT in NOK.
-            priceIncludingVatCurrency: Price including VAT in NOK.
+            priceExcludingVatCurrency: Price excluding VAT in NOK. Preferred — Tripletex auto-calculates incl VAT.
+            priceIncludingVatCurrency: Price including VAT in NOK. Only send this if you do NOT send priceExcludingVatCurrency.
             productNumber: Optional product number/SKU.
 
         Returns:
             The created product with id and fields, or an error message.
         """
         body = {"name": name}
+        # Only send ONE price — sending both causes validation errors when they don't match the product's VAT type
         if priceExcludingVatCurrency:
             body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
-        if priceIncludingVatCurrency:
+        elif priceIncludingVatCurrency:
             body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
         if productNumber:
             body["number"] = productNumber
-        return client.post("/product", json=body)
+        result = client.post("/product", json=body)
 
-    def search_products(name: str = "") -> dict:
-        """Search for products by name.
+        # Auto-recover: if product number already exists, find and return the existing product
+        if (result.get("error") and result.get("status_code") == 422
+                and productNumber and "er i bruk" in str(result.get("message", "")).lower()):
+            existing = client.get("/product", params={
+                "number": productNumber,
+                "fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency",
+            })
+            vals = existing.get("values", [])
+            if vals:
+                return {"value": vals[0], "_note": "Product number already existed, returning existing."}
+
+        return result
+
+    def search_products(name: str = "", number: str = "") -> dict:
+        """Search for products by name or product number.
 
         Args:
             name: Filter by product name (partial match).
+            number: Filter by product number/SKU (exact match).
 
         Returns:
             A list of matching products with id, name, number, price fields.
@@ -42,6 +57,8 @@ def build_product_tools(client: TripletexClient) -> dict:
         params = {"fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency"}
         if name:
             params["name"] = name
+        if number:
+            params["number"] = number
         return client.get("/product", params=params)
 
     def update_product(
@@ -60,43 +77,39 @@ def build_product_tools(client: TripletexClient) -> dict:
             priceExcludingVatCurrency: New price excl VAT (0 to keep current).
             priceIncludingVatCurrency: New price incl VAT (0 to keep current).
             description: New description (empty to keep current).
-            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
+            version: Entity version from the create response. If provided (>0), skips the GET call (saves 1 API call).
 
         Returns:
             The updated product or an error message.
         """
-        if version >= 0:
-            # Fast path: build minimal PUT body without GET
-            body = {"id": product_id, "version": version}
-            if name:
-                body["name"] = name
-            if priceExcludingVatCurrency:
-                body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
-            if priceIncludingVatCurrency:
-                body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
-            if description:
-                body["description"] = description
-            return client.put(f"/product/{product_id}", json=body)
-
-        # Fallback: GET first to preserve existing fields
         _WRITABLE = {
             "id", "version", "name", "number", "description",
             "priceExcludingVatCurrency", "priceIncludingVatCurrency",
             "costExcludingVatCurrency", "isInactive", "isStockItem",
         }
-        current = client.get(f"/product/{product_id}", params={"fields": "*"})
-        full = current.get("value", {})
-        body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
-        if name:
-            body["name"] = name
-        if priceExcludingVatCurrency:
-            body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
-            body.pop("priceIncludingVatCurrency", None)
-        if priceIncludingVatCurrency:
-            body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
-            body.pop("priceExcludingVatCurrency", None)
-        if description:
-            body["description"] = description
+        if version > 0 and name:
+            # Fast path: skip GET when we have version + required field (name)
+            body = {"id": product_id, "version": version, "name": name}
+            if priceExcludingVatCurrency:
+                body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
+            elif priceIncludingVatCurrency:
+                body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
+            if description:
+                body["description"] = description
+        else:
+            current = client.get(f"/product/{product_id}", params={"fields": "*"})
+            full = current.get("value", {})
+            body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
+            if name:
+                body["name"] = name
+            if priceExcludingVatCurrency:
+                body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
+                body.pop("priceIncludingVatCurrency", None)
+            if priceIncludingVatCurrency:
+                body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
+                body.pop("priceExcludingVatCurrency", None)
+            if description:
+                body["description"] = description
         return client.put(f"/product/{product_id}", json=body)
 
     def delete_product(product_id: int) -> dict:

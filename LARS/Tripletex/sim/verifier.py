@@ -796,7 +796,9 @@ def verify_deletion(
             checks.append(_make_check(
                 fc.field, 0, fc.points, False, "Pre-create failed, cannot verify",
             ))
-        return {"checks": checks, "entity_id": 0}
+        total = sum(c["points"] for c in checks)
+        max_pts = sum(c["max"] for c in checks)
+        return {"checks": checks, "entity_id": 0, "total_points": total, "max_points": max_pts}
 
     result = client.get(f"/{task_def.entity_type}/{pre_created_id}", params={"fields": "id,isInactive"})
     # Some entity types (e.g. employee) don't support isInactive filter — retry with id only
@@ -1102,13 +1104,19 @@ def verify_supplier_invoice(
     task_def: TaskDef,
     expected: dict,
 ) -> dict:
-    """Verify a supplier invoice creation task."""
+    """Verify a supplier invoice creation task.
+
+    The tool creates a ledger voucher (since POST /supplierInvoice is broken).
+    Verifies: supplier exists, voucher with matching description/date exists,
+    and postings include the supplier reference.
+    """
     checks = []
     entity_ids = []
 
-    # Check supplier exists (use email for precise matching)
+    # Check supplier exists
     supplier_name = expected.get("supplier_name", "")
     supplier_email = expected.get("supplier_email", "")
+    supplier_org = expected.get("supplier_org_number", "")
     supp_search = {"name": supplier_name}
     if supplier_email:
         supp_search["email"] = supplier_email
@@ -1117,26 +1125,28 @@ def verify_supplier_invoice(
         suppliers = _search_entity(client, "supplier", {"name": supplier_name})
     supplier = _best_match(suppliers, {"name": supplier_name, "email": supplier_email}, ["name"])
 
-    # Find supplier invoices
+    # Find voucher by date range with invoice number in description
     inv_date = expected.get("invoice_date", "")
+    inv_number = expected.get("invoice_number", "")
     search_params = {}
     if inv_date:
         from datetime import date as dt_date, timedelta
         d = dt_date.fromisoformat(inv_date)
-        search_params["invoiceDateFrom"] = (d - timedelta(days=1)).isoformat()
-        search_params["invoiceDateTo"] = (d + timedelta(days=30)).isoformat()
+        search_params["dateFrom"] = (d - timedelta(days=1)).isoformat()
+        search_params["dateTo"] = (d + timedelta(days=30)).isoformat()
     else:
-        search_params["invoiceDateFrom"] = "2026-01-01"
-        search_params["invoiceDateTo"] = "2026-12-31"
+        search_params["dateFrom"] = "2026-01-01"
+        search_params["dateTo"] = "2026-12-31"
 
-    invoices = _search_entity(client, "supplierInvoice", search_params)
-    matching = []
-    if supplier:
-        for inv in invoices:
-            inv_supplier = inv.get("supplier", {})
-            if isinstance(inv_supplier, dict) and inv_supplier.get("id") == supplier["id"]:
-                matching.append(inv)
-    invoice = matching[0] if matching else None
+    vouchers = _search_entity(client, "ledger/voucher", search_params)
+    # Match voucher by invoice number in description
+    voucher = None
+    if inv_number:
+        for v in vouchers:
+            desc = (v.get("description") or "").lower()
+            if inv_number.lower() in desc:
+                voucher = v
+                break
 
     for fc in task_def.field_checks:
         if fc.field == "_supplier_found":
@@ -1150,11 +1160,13 @@ def verify_supplier_invoice(
             continue
 
         if fc.field == "_found":
-            passed = invoice is not None
+            passed = voucher is not None
             checks.append(_make_check(
-                "Invoice found", fc.points if passed else 0, fc.points, passed,
-                f"Found {len(matching)} invoice(s) for supplier",
+                "Voucher found", fc.points if passed else 0, fc.points, passed,
+                f"Found voucher with '{inv_number}' in description" if passed else "No matching voucher",
             ))
+            if voucher:
+                entity_ids.append(("ledger/voucher", voucher["id"]))
             continue
 
         if fc.field == "supplier_name":
@@ -1167,8 +1179,8 @@ def verify_supplier_invoice(
 
         if fc.field == "invoice_date" and "invoice_date" in expected:
             passed = False
-            if invoice:
-                passed = _fields_match(invoice.get("invoiceDate"), expected["invoice_date"])
+            if voucher:
+                passed = _fields_match(voucher.get("date"), expected["invoice_date"])
             checks.append(_make_check(
                 "invoice_date", fc.points if passed else 0, fc.points, passed,
                 f"expected={expected['invoice_date']}",
@@ -1176,9 +1188,7 @@ def verify_supplier_invoice(
             continue
 
         if fc.field == "invoice_number" and "invoice_number" in expected:
-            passed = False
-            if invoice:
-                passed = _fields_match(invoice.get("invoiceNumber"), expected["invoice_number"])
+            passed = voucher is not None  # already matched by description
             checks.append(_make_check(
                 "invoice_number", fc.points if passed else 0, fc.points, passed,
                 f"expected={expected['invoice_number']}",

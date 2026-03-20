@@ -65,6 +65,7 @@ class TripletexClient:
                 f"{self.base_url}/department",
                 auth=self.auth,
                 params={"fields": "id", "count": 1},
+                timeout=10,
             )
             if dept_result.status_code == 200:
                 depts = dept_result.json().get("values", [])
@@ -78,11 +79,26 @@ class TripletexClient:
                 f"{self.base_url}/division",
                 auth=self.auth,
                 params={"fields": "id", "count": 1},
+                timeout=10,
             )
             if div_result.status_code == 200:
                 divs = div_result.json().get("values", [])
                 if divs:
                     self._cache["default_division"] = divs[0]["id"]
+        except Exception:
+            pass
+        # Payables account 2400 (used by supplier invoice tool)
+        try:
+            acct_result = requests.get(
+                f"{self.base_url}/ledger/account",
+                auth=self.auth,
+                params={"number": "2400", "fields": "id", "count": 1},
+                timeout=10,
+            )
+            if acct_result.status_code == 200:
+                accts = acct_result.json().get("values", [])
+                if accts:
+                    self._cache["acct_2400"] = accts[0]["id"]
         except Exception:
             pass
 
@@ -96,6 +112,7 @@ class TripletexClient:
 
     def _do_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """Execute request with single retry on 401 (transient token errors)."""
+        kwargs.setdefault("timeout", 30)
         resp = requests.request(method, url, auth=self.auth, **kwargs)
         if resp.status_code == 401:
             # Check if token is expired/invalid — don't retry those
@@ -128,15 +145,16 @@ class TripletexClient:
             try:
                 body = resp.json()
                 # Include full validation details from Tripletex
-                msg = body.get("message", body.get("error", resp.text))
-                validation = body.get("validationMessages", [])
+                # Use `or` chain: .get() returns None if key exists with null value
+                msg = body.get("message") or body.get("error") or resp.text if isinstance(body, dict) else resp.text
+                validation = body.get("validationMessages", []) if isinstance(body, dict) else []
                 details = "; ".join(
                     f"{v.get('field', '?')}: {v.get('message', v)}"
                     for v in validation
                 ) if validation else ""
                 full_msg = f"{msg} [{details}]" if details else str(msg)
             except Exception:
-                full_msg = resp.text[:500]
+                full_msg = resp.text[:500] if resp.text else "(empty response body)"
             log.error(f"[API ERROR] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {full_msg}")
             self._call_log.append({
                 "method": method, "url": url, "status": resp.status_code,

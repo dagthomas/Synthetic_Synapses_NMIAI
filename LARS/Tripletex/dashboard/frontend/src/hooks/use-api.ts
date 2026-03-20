@@ -7,6 +7,7 @@ import {
   fetchPayloads,
   fetchCoverage,
   fetchLogs,
+  fetchTasksLiveSummary,
 } from "@/lib/api"
 
 export function useTasks() {
@@ -55,5 +56,12 @@ export function useLogs(enabled = true) {
   return useSWR(enabled ? "logs" : null, () => fetchLogs(100), {
     refreshInterval: 10_000,
     dedupingInterval: 5_000,
+  })
+}
+
+export function useTasksLiveSummary() {
+  return useSWR("tasks-live-summary", fetchTasksLiveSummary, {
+    revalidateOnFocus: false,
+    dedupingInterval: 30_000,
   })
 }

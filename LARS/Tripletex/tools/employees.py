@@ -83,21 +83,37 @@ def build_employee_tools(client: TripletexClient) -> dict:
             email: New email (leave empty to keep current).
             phoneNumberMobile: New phone number (leave empty to keep current).
             isInactive: Set to True to deactivate the employee.
-            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
+            version: Entity version from the create response. If provided (>0), skips the GET call (saves 1 API call).
 
         Returns:
             The updated employee data or an error message.
         """
-        if version >= 0:
-            # Fast path: build minimal PUT body without GET
-            dept_id = client.get_cached("default_department")
-            body = {
-                "id": employee_id,
-                "version": version,
-                "dateOfBirth": "1990-01-01",
-            }
-            if dept_id:
-                body["department"] = {"id": dept_id}
+        _WRITABLE = {
+            "id", "version", "firstName", "lastName", "email",
+            "phoneNumberMobile", "phoneNumberHome", "phoneNumberWork",
+            "dateOfBirth", "department", "employeeNumber", "address",
+            "userType", "nationalIdentityNumber", "bankAccountNumber",
+            "comments", "employeeCategory", "isInactive",
+        }
+        if version > 0 and firstName and lastName:
+            # Fast path: skip GET when we have version + required fields
+            body = {"id": employee_id, "version": version, "firstName": firstName, "lastName": lastName,
+                    "dateOfBirth": "1990-01-01"}
+            if email:
+                body["email"] = email
+            if phoneNumberMobile:
+                body["phoneNumberMobile"] = phoneNumberMobile
+            if isInactive:
+                body["isInactive"] = True
+        else:
+            current = client.get(f"/employee/{employee_id}", params={"fields": "*"})
+            full = current.get("value", {})
+            body = {k: v for k, v in full.items() if k in _WRITABLE} if full else {}
+            if not body.get("dateOfBirth"):
+                body["dateOfBirth"] = "1990-01-01"
+            if isinstance(body.get("department"), dict):
+                body["department"] = {"id": body["department"]["id"]}
+            body = {k: v for k, v in body.items() if v is not None}
             if firstName:
                 body["firstName"] = firstName
             if lastName:
@@ -106,32 +122,6 @@ def build_employee_tools(client: TripletexClient) -> dict:
                 body["phoneNumberMobile"] = phoneNumberMobile
             if isInactive:
                 body["isInactive"] = True
-            return client.put(f"/employee/{employee_id}", json=body)
-
-        # Fallback: GET first to preserve existing fields
-        _WRITABLE = {
-            "id", "version", "firstName", "lastName", "email",
-            "phoneNumberMobile", "phoneNumberHome", "phoneNumberWork",
-            "dateOfBirth", "department", "employeeNumber", "address",
-            "userType", "nationalIdentityNumber", "bankAccountNumber",
-            "comments", "employeeCategory", "isInactive",
-        }
-        current = client.get(f"/employee/{employee_id}", params={"fields": "*"})
-        full = current.get("value", {})
-        body = {k: v for k, v in full.items() if k in _WRITABLE} if full else {}
-        if not body.get("dateOfBirth"):
-            body["dateOfBirth"] = "1990-01-01"
-        if isinstance(body.get("department"), dict):
-            body["department"] = {"id": body["department"]["id"]}
-        body = {k: v for k, v in body.items() if v is not None}
-        if firstName:
-            body["firstName"] = firstName
-        if lastName:
-            body["lastName"] = lastName
-        if phoneNumberMobile:
-            body["phoneNumberMobile"] = phoneNumberMobile
-        if isInactive:
-            body["isInactive"] = True
         return client.put(f"/employee/{employee_id}", json=body)
 
     def search_employees(firstName: str = "", lastName: str = "", email: str = "") -> dict:

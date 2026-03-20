@@ -36,6 +36,7 @@ from sim.task_definitions import ALL_TASKS, LANGUAGES
 from sim.generator import generate_task
 from sim.verifier import verify_task
 from sim.scorer import calculate_score
+from dashboard.sandbox import ensure_sandbox_ready
 
 logging.basicConfig(
     level=logging.INFO,
@@ -227,11 +228,12 @@ def call_agent(agent_url: str, prompt: str, base_url: str, token: str) -> dict:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    log.info(f"Calling agent at {agent_url}/solve")
+    log.info(f"Calling agent at {agent_url}/solve-debug?source=eval")
     start = time.time()
     try:
         resp = requests.post(
-            f"{agent_url}/solve",
+            f"{agent_url}/solve-debug",
+            params={"source": "eval"},
             json=payload,
             headers=headers,
             timeout=300,
@@ -402,19 +404,11 @@ def main():
 
     client = get_sandbox_client()
 
-    # Test sandbox connectivity
-    log.info("Testing sandbox connectivity...")
-    test = client.get("/employee", params={"count": 1, "fields": "id"})
-    if "error" in test:
-        print(f"ERROR: Cannot connect to sandbox: {test}")
+    # Ensure sandbox has required data (modules, departments, etc.)
+    seed_result = ensure_sandbox_ready(client)
+    if seed_result.get("status") == "connection_failed":
+        print("ERROR: Cannot connect to sandbox!")
         sys.exit(1)
-    log.info("Sandbox OK")
-
-    # Enable modules upfront
-    client.put("/company/modules", json={
-        "moduleDepartment": True,
-        "moduleProjectEconomy": True,
-    })
 
     # Run tasks
     scores = []

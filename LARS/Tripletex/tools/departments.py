@@ -43,29 +43,27 @@ def build_department_tools(client: TripletexClient) -> dict:
             department_id: The ID of the department to update.
             name: New name (empty to keep current).
             departmentNumber: New number (empty to keep current).
-            version: Entity version from the create response. If provided, skips the GET call (saves 1 API call).
+            version: Entity version from the create response. If provided (>0), skips the GET call (saves 1 API call).
 
         Returns:
             The updated department or error.
         """
-        if version >= 0:
-            body = {"id": department_id, "version": version}
+        _WRITABLE = {"id", "version", "name", "departmentNumber", "departmentManager", "isInactive"}
+        if version > 0 and name:
+            # Fast path: skip GET when we have version + required field (name)
+            body = {"id": department_id, "version": version, "name": name}
+            if departmentNumber:
+                body["departmentNumber"] = departmentNumber
+        else:
+            current = client.get(f"/department/{department_id}", params={"fields": "*"})
+            full = current.get("value", {})
+            body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
+            if isinstance(body.get("departmentManager"), dict):
+                body["departmentManager"] = {"id": body["departmentManager"]["id"]}
             if name:
                 body["name"] = name
             if departmentNumber:
                 body["departmentNumber"] = departmentNumber
-            return client.put(f"/department/{department_id}", json=body)
-
-        _WRITABLE = {"id", "version", "name", "departmentNumber", "departmentManager", "isInactive"}
-        current = client.get(f"/department/{department_id}", params={"fields": "*"})
-        full = current.get("value", {})
-        body = {k: v for k, v in full.items() if k in _WRITABLE and v is not None} if full else {}
-        if isinstance(body.get("departmentManager"), dict):
-            body["departmentManager"] = {"id": body["departmentManager"]["id"]}
-        if name:
-            body["name"] = name
-        if departmentNumber:
-            body["departmentNumber"] = departmentNumber
         return client.put(f"/department/{department_id}", json=body)
 
     def delete_department(department_id: int) -> dict:

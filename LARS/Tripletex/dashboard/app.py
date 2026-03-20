@@ -377,13 +377,44 @@ def list_tools():
     return _tool_catalog_cache
 
 
+# ── API: Tasks Live Summary ────────────────────────────────────────
+
+@app.get("/api/tasks/live-summary")
+def tasks_live_summary():
+    """Return all task definitions enriched with live competition solve_log stats."""
+    # Get live run stats from solve_logs (source='competition')
+    live_stats = db.get_live_task_stats()
+    live_by_type = {s["task_type"]: s for s in live_stats}
+
+    result = []
+    for name, td in ALL_TASKS.items():
+        entry = {
+            "name": name,
+            "tier": td.tier,
+            "description": td.description,
+            "baseline_calls": td.baseline_calls,
+            "field_count": len(td.field_checks),
+            "max_points": sum(fc.points for fc in td.field_checks),
+        }
+        stats = live_by_type.get(name, {})
+        entry["live_runs"] = stats.get("run_count", 0)
+        entry["avg_api_calls"] = stats.get("avg_api_calls")
+        entry["avg_api_errors"] = stats.get("avg_api_errors")
+        entry["avg_elapsed"] = stats.get("avg_elapsed")
+        entry["min_api_calls"] = stats.get("min_api_calls")
+        entry["max_api_calls"] = stats.get("max_api_calls")
+        entry["last_run"] = stats.get("last_run")
+        result.append(entry)
+    return result
+
+
 # ── API: Solve Logs ─────────────────────────────────────────────────
 
 @app.get("/api/logs")
-def list_logs(limit: int = Query(50, le=200)):
+def list_logs(limit: int = Query(50, le=200), source: str = Query("", description="Filter by source: competition, eval, debug")):
     """Return solve logs from DB + payload files."""
     # DB logs
-    db_logs = db.get_solve_logs(limit=limit)
+    db_logs = db.get_solve_logs(limit=limit, source=source)
 
     # Also scan payloads/ directory for any not yet in DB
     file_logs = []
@@ -414,6 +445,21 @@ def list_logs(limit: int = Query(50, le=200)):
     seen_ids = {l["request_id"] for l in db_logs if l.get("request_id")}
     merged = db_logs + [fl for fl in file_logs if fl["request_id"] not in seen_ids]
     return merged[:limit]
+
+
+@app.delete("/api/logs")
+def delete_all_logs():
+    """Delete all solve logs from DB and payload files."""
+    deleted_db = db.delete_all_solve_logs()
+    deleted_files = 0
+    if os.path.isdir(PAYLOADS_DIR):
+        for f in glob(os.path.join(PAYLOADS_DIR, "*.json")):
+            try:
+                os.remove(f)
+                deleted_files += 1
+            except Exception:
+                pass
+    return {"ok": True, "deleted_db": deleted_db, "deleted_files": deleted_files}
 
 
 # ── API: Sandbox ───────────────────────────────────────────────────

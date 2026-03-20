@@ -29,7 +29,7 @@ def init_db():
     with closing(get_conn()) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         # Migrate: add columns if missing
-        for col, ctype in [("tool_calls_json", "TEXT"), ("api_log_json", "TEXT"), ("task_type", "TEXT"), ("tool_count", "INTEGER")]:
+        for col, ctype in [("tool_calls_json", "TEXT"), ("api_log_json", "TEXT"), ("task_type", "TEXT"), ("tool_count", "INTEGER"), ("source", "TEXT")]:
             try:
                 conn.execute(f"ALTER TABLE solve_logs ADD COLUMN {col} {ctype}")
             except Exception:
@@ -70,7 +70,10 @@ def init_db():
             agent_response TEXT,
             tool_calls_json TEXT,
             api_log_json TEXT,
-            created_at TEXT
+            created_at TEXT,
+            task_type TEXT,
+            tool_count INTEGER,
+            source TEXT
         );
         """)
         conn.commit()
@@ -183,24 +186,58 @@ def get_stats():
 def create_solve_log(*, request_id, prompt, files_json, base_url,
                      api_calls=0, api_errors=0, elapsed_seconds=0,
                      agent_response="", tool_calls_json="", api_log_json="",
-                     task_type="", tool_count=0):
+                     task_type="", tool_count=0, source=""):
     with closing(get_conn()) as conn:
         conn.execute(
             """INSERT INTO solve_logs
                (request_id, prompt, files_json, base_url,
                 api_calls, api_errors, elapsed_seconds, agent_response,
-                tool_calls_json, api_log_json, task_type, tool_count, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tool_calls_json, api_log_json, task_type, tool_count, source, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (request_id, prompt, files_json, base_url,
              api_calls, api_errors, elapsed_seconds, agent_response,
-             tool_calls_json, api_log_json, task_type or "", tool_count, _now()),
+             tool_calls_json, api_log_json, task_type or "", tool_count, source or "", _now()),
         )
         conn.commit()
 
 
-def get_solve_logs(limit=100):
+def delete_all_solve_logs():
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT * FROM solve_logs ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        cur = conn.execute("DELETE FROM solve_logs")
+        conn.commit()
+        return cur.rowcount
+
+
+def get_live_task_stats():
+    """Aggregate solve_log stats per task_type for live competition runs."""
+    with closing(get_conn()) as conn:
+        rows = conn.execute("""
+            SELECT task_type,
+                   COUNT(*) as run_count,
+                   AVG(api_calls) as avg_api_calls,
+                   AVG(api_errors) as avg_api_errors,
+                   AVG(elapsed_seconds) as avg_elapsed,
+                   MIN(api_calls) as min_api_calls,
+                   MAX(api_calls) as max_api_calls,
+                   MAX(created_at) as last_run
+            FROM solve_logs
+            WHERE source = 'competition'
+              AND task_type IS NOT NULL
+              AND task_type != ''
+            GROUP BY task_type
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_solve_logs(limit=100, source=""):
+    with closing(get_conn()) as conn:
+        if source:
+            rows = conn.execute(
+                "SELECT * FROM solve_logs WHERE source = ? ORDER BY id DESC LIMIT ?",
+                (source, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM solve_logs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
         return [dict(r) for r in rows]

@@ -42,8 +42,13 @@ def _run_eval_sync(task_name, language, agent_url, base_url, session_token) -> i
     from sim.generator import generate_task
     from sim.verifier import verify_task
     from sim.scorer import calculate_score
+    from dashboard.sandbox import ensure_sandbox_ready
 
     task_def = ALL_TASKS[task_name]
+
+    # 0. Ensure sandbox has required seed data (runs once per process)
+    seed_client = TripletexClient(base_url, session_token)
+    ensure_sandbox_ready(seed_client)
 
     # 1. Generate task prompt + expected values
     generated = generate_task(task_def, language=language)
@@ -83,7 +88,8 @@ def _run_eval_sync(task_name, language, agent_url, base_url, session_token) -> i
 
         t0 = time.time()
         resp = requests.post(
-            f"{agent_url}/solve", json=payload, headers=headers, timeout=300
+            f"{agent_url}/solve-debug", params={"source": "eval"},
+            json=payload, headers=headers, timeout=300,
         )
         elapsed = time.time() - t0
 
@@ -165,6 +171,54 @@ def _pre_create(client, task_def, expected: dict) -> int:
         result = client.post("/customer", json={
             "name": name, "email": "slett@example.com", "isCustomer": True,
         })
+        return result.get("value", {}).get("id", 0) if "error" not in result else 0
+
+    if task_def.name == "delete_supplier":
+        name = expected.get("name", "Temp Leverandør AS")
+        result = client.post("/supplier", json={
+            "name": name, "email": "slett@example.com", "isSupplier": True,
+        })
+        return result.get("value", {}).get("id", 0) if "error" not in result else 0
+
+    if task_def.name == "delete_product":
+        name = expected.get("name", "Temp Produkt")
+        result = client.post("/product", json={
+            "name": name, "priceExcludingVatCurrency": 100,
+        })
+        return result.get("value", {}).get("id", 0) if "error" not in result else 0
+
+    if task_def.name == "delete_department":
+        name = expected.get("name", "Temp Avdeling")
+        result = client.post("/department", json={"name": name})
+        return result.get("value", {}).get("id", 0) if "error" not in result else 0
+
+    if task_def.name == "delete_contact":
+        first = expected.get("firstName", "Temp")
+        last = expected.get("lastName", "Kontakt")
+        cust = client.post("/customer", json={
+            "name": "Temp Kunde AS", "isCustomer": True, "email": "temp@example.com",
+        })
+        cust_id = cust.get("value", {}).get("id", 0)
+        if not cust_id:
+            return 0
+        result = client.post("/contact", json={
+            "firstName": first, "lastName": last,
+            "email": "kontakt@example.com", "customer": {"id": cust_id},
+        })
+        return result.get("value", {}).get("id", 0) if "error" not in result else 0
+
+    if task_def.name == "delete_employee":
+        import uuid as _uuid
+        first = expected.get("firstName", "Temp")
+        last = expected.get("lastName", "Ansatt")
+        dept_r = client.get("/department", params={"fields": "id", "count": 1})
+        depts = dept_r.get("values", [])
+        dept_id = depts[0]["id"] if depts else 0
+        unique_email = f"del-{_uuid.uuid4().hex[:8]}@example.com"
+        body = {"firstName": first, "lastName": last, "email": unique_email, "userType": "NO_ACCESS"}
+        if dept_id:
+            body["department"] = {"id": dept_id}
+        result = client.post("/employee", json=body)
         return result.get("value", {}).get("id", 0) if "error" not in result else 0
 
     if task_def.name == "reverse_voucher":
