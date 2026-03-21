@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react"
 import { useTasks, useLanguages } from "@/hooks/use-api"
-import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix, streamLiveEval } from "@/lib/api"
+import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix, streamLiveEval, subscribeLiveEvents, streamLogEval, fetchLogJson } from "@/lib/api"
 import type {
   AutoFixEvent,
   AutoFixScore,
@@ -13,6 +13,8 @@ import type {
   ToolCall,
   LiveEvalEvent,
   LiveLogExplanation,
+  LiveEvent,
+  LogEvalEvent,
 } from "@/types/api"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
@@ -39,6 +41,19 @@ import {
   ClipboardCopy,
   Play,
   Zap,
+  Radio,
+  Tag,
+  Bot,
+  CircleDot,
+  ArrowRight,
+  Globe,
+  MessageSquare,
+  CheckCircle,
+  Clock,
+  Brain,
+  Square,
+  Trash2,
+  Download,
 } from "lucide-react"
 
 type Mode = "tasks" | "live" | "batch" | "single"
@@ -110,421 +125,647 @@ export function AutoFixPanel() {
 }
 
 // ── Live Submissions View ────────────────────────────────────────────
+// Shows real-time agent activity (SSE), auto-evaluates completed requests,
+// and offers per-request auto-fix for failures.
 
-interface LiveLogResult {
-  logId: number
-  taskType: string
-  passed: boolean
-  reasoning: string
-  issues: string[]
-  apiCalls: number
-  apiErrors: number
-  runLogJson: string
-  explanation?: LiveLogExplanation
+interface LiveRequestState {
+  request_id: string
+  prompt: string
+  events: LiveEvent[]
+  done: boolean
+  startTs: string
+  // Solve log ID (found after request_done, matched via DB)
+  solveLogId: number | null
+  // Eval state
+  evalStatus: "idle" | "evaluating" | "passed" | "failed" | "error"
+  evalPhase: string
+  evalVerdicts: Array<{ iteration: number; passed: boolean; reasoning: string; issues: string[] }>
+  evalFixes: Array<{ iteration: number; raw_text: string; parsed_fixes: AutoFixParsedFix[]; report: string }>
+  evalApplied: Array<{ iteration: number; results: AutoFixApplyResult[] }>
+  evalRerunResults: Array<{ iteration: number; api_calls: number; api_errors: number; tool_count: number; agent_response: string }>
+  evalError: string
+}
+
+function _relativeTime(startTs: string, eventTs: string): string {
+  try {
+    const diff = (new Date(eventTs).getTime() - new Date(startTs).getTime()) / 1000
+    return `+${diff.toFixed(1)}s`
+  } catch { return "" }
 }
 
 function LiveSubmissionsView() {
-  const [running, setRunning] = useState(false)
-  const [autoFix, setAutoFix] = useState(false)
-  const [logLimit, setLogLimit] = useState(50)
-  const controllerRef = useRef<AbortController | null>(null)
+  const [events, setEvents] = useState<LiveEvent[]>([])
+  const [connected, setConnected] = useState(false)
+  const [expandedReq, setExpandedReq] = useState<string | null>(null)
+  const [requests, setRequests] = useState<LiveRequestState[]>([])
+  const evalControllersRef = useRef<Map<string, AbortController>>(new Map())
 
-  // State
-  const [results, setResults] = useState<LiveLogResult[]>([])
-  const [totalLogs, setTotalLogs] = useState(0)
-  const [progress, setProgress] = useState(0)
-  const [currentLog, setCurrentLog] = useState("")
-  const [doneMessage, setDoneMessage] = useState("")
-  const [errorMessage, setErrorMessage] = useState("")
-  const [expandedLog, setExpandedLog] = useState<number | null>(null)
-  const [copiedLogId, setCopiedLogId] = useState<number | null>(null)
-
-  // Fix state
-  const [fixHistory, setFixHistory] = useState<{ taskType: string; fixes: AutoFixApplyResult[] }[]>([])
-  const [fixingType, setFixingType] = useState("")
-
-  const passedCount = useMemo(() => results.filter(r => r.passed).length, [results])
-  const failedCount = useMemo(() => results.filter(r => !r.passed).length, [results])
-
-  const handleStart = useCallback(() => {
-    setResults([])
-    setDoneMessage("")
-    setErrorMessage("")
-    setFixHistory([])
-    setFixingType("")
-    setExpandedLog(null)
-    setRunning(true)
-
-    controllerRef.current = streamLiveEval(
-      0, // since_id=0 → all recent
-      logLimit,
-      autoFix,
-      (event: LiveEvalEvent) => {
-        switch (event.type) {
-          case "live_start":
-            setTotalLogs(event.total)
-            break
-
-          case "evaluating":
-            setCurrentLog(`#${event.log_id} ${event.task_type}`)
-            setProgress(((event.index) / event.total) * 100)
-            break
-
-          case "log_result":
-            setProgress(prev => prev + (100 / totalLogs || 1))
-            setResults(prev => [...prev, {
-              logId: event.log_id,
-              taskType: event.task_type,
-              passed: event.passed,
-              reasoning: event.reasoning,
-              issues: event.issues,
-              apiCalls: event.api_calls,
-              apiErrors: event.api_errors,
-              runLogJson: JSON.stringify(event.run_log, null, 2),
-              explanation: event.explanation,
-            }])
-            break
-
-          case "eval_error":
-            setResults(prev => [...prev, {
-              logId: event.log_id,
-              taskType: event.task_type,
-              passed: false,
-              reasoning: event.error,
-              issues: [],
-              apiCalls: 0,
-              apiErrors: 0,
-              runLogJson: "",
-            }])
-            break
-
-          case "fixing":
-            setFixingType(event.task_type)
-            break
-
-          case "fixes_applied":
-            setFixHistory(prev => [...prev, { taskType: event.task_type, fixes: event.results }])
-            setFixingType("")
-            break
-
-          case "fix_error":
-            setFixingType("")
-            toast.error(`Fix error (${event.task_type}): ${event.error}`)
-            break
-
-          case "live_done":
-            setDoneMessage(event.message)
-            setCurrentLog("")
-            setProgress(100)
-            break
+  // SSE subscription
+  useEffect(() => {
+    const sub = subscribeLiveEvents(
+      (event) => {
+        setEvents(prev => {
+          const next = [...prev, event]
+          return next.length > 500 ? next.slice(-400) : next
+        })
+        // Auto-expand new requests
+        if (event.type === "request_start") {
+          setExpandedReq(event.request_id)
         }
       },
-      () => setRunning(false),
-      (err) => {
-        setErrorMessage(err)
-        setRunning(false)
-      }
+      () => setConnected(true),
+      () => setConnected(false),
     )
-  }, [logLimit, autoFix, totalLogs])
-
-  const handleStop = useCallback(() => {
-    controllerRef.current?.abort()
-    setRunning(false)
+    return () => sub.close()
   }, [])
 
-  const handleCopyLog = useCallback((logId: number, json: string) => {
-    navigator.clipboard.writeText(json)
-    setCopiedLogId(logId)
-    toast.success("Run log copied to clipboard")
-    setTimeout(() => setCopiedLogId(null), 2000)
-  }, [])
+  // Group events into requests
+  useEffect(() => {
+    const map = new Map<string, LiveRequestState>()
+    // Preserve existing eval state
+    for (const r of requests) map.set(r.request_id, r)
 
-  // Group results by task type
-  const byTaskType = useMemo(() => {
-    const map = new Map<string, LiveLogResult[]>()
-    for (const r of results) {
-      const arr = map.get(r.taskType) || []
-      arr.push(r)
-      map.set(r.taskType, arr)
+    for (const ev of events) {
+      if (ev.type === "error") continue
+      const rid = ev.request_id
+      if (!map.has(rid)) {
+        map.set(rid, {
+          request_id: rid,
+          prompt: ev.type === "request_start" ? ev.prompt : "",
+          events: [],
+          done: false,
+          startTs: ev.ts || "",
+          solveLogId: null,
+          evalStatus: "idle",
+          evalPhase: "",
+          evalVerdicts: [],
+          evalFixes: [],
+          evalApplied: [],
+          evalRerunResults: [],
+          evalError: "",
+        })
+      }
+      const req = map.get(rid)!
+      // Only add if not already present (avoid duplicates on re-render)
+      if (!req.events.some(e => e === ev)) {
+        req.events = [...req.events, ev]
+      }
+      if (ev.type === "request_start") req.prompt = ev.prompt
+      if (ev.type === "request_done" || ev.type === "request_error") req.done = true
     }
-    return Array.from(map.entries()).sort(([, a], [, b]) => {
-      const aFail = a.filter(r => !r.passed).length
-      const bFail = b.filter(r => !r.passed).length
-      return bFail - aFail
-    })
-  }, [results])
+    setRequests(Array.from(map.values()).reverse())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events])
+
+  const activeCount = useMemo(() => requests.filter(r => !r.done).length, [requests])
+  const passedCount = useMemo(() => requests.filter(r => r.evalStatus === "passed").length, [requests])
+  const failedCount = useMemo(() => requests.filter(r => r.evalStatus === "failed").length, [requests])
+
+  // Find solve log ID from DB for a completed request
+  const findSolveLogId = useCallback(async (reqId: string): Promise<number | null> => {
+    try {
+      const resp = await fetch(`/api/logs?limit=20`)
+      if (!resp.ok) return null
+      const logs = await resp.json()
+      // Match by request_id
+      const match = logs.find((l: { request_id: string }) => l.request_id === reqId)
+      return match?.id ?? null
+    } catch { return null }
+  }, [])
+
+  // Start eval for a specific request
+  const handleEvaluate = useCallback(async (reqId: string) => {
+    // Find solve log ID
+    let logId: number | null = null
+    const req = requests.find(r => r.request_id === reqId)
+    if (req?.solveLogId) {
+      logId = req.solveLogId
+    } else {
+      logId = await findSolveLogId(reqId)
+      if (logId) {
+        setRequests(prev => prev.map(r =>
+          r.request_id === reqId ? { ...r, solveLogId: logId } : r
+        ))
+      }
+    }
+
+    if (!logId) {
+      toast.error("Could not find solve log for this request")
+      return
+    }
+
+    // Reset eval state
+    setRequests(prev => prev.map(r =>
+      r.request_id === reqId ? {
+        ...r,
+        evalStatus: "evaluating" as const,
+        evalPhase: "",
+        evalVerdicts: [],
+        evalFixes: [],
+        evalApplied: [],
+        evalRerunResults: [],
+        evalError: "",
+      } : r
+    ))
+
+    const controller = streamLogEval(
+      logId,
+      5, // max iterations
+      (event: LogEvalEvent) => {
+        setRequests(prev => prev.map(r => {
+          if (r.request_id !== reqId) return r
+          switch (event.type) {
+            case "phase":
+              return { ...r, evalPhase: event.message }
+            case "eval_verdict":
+              return {
+                ...r,
+                evalVerdicts: [...r.evalVerdicts, { iteration: event.iteration, passed: event.passed, reasoning: event.reasoning, issues: event.issues }],
+                evalStatus: event.passed ? "passed" : (r.evalStatus === "evaluating" ? "evaluating" : r.evalStatus),
+              }
+            case "fixes":
+              return { ...r, evalFixes: [...r.evalFixes, { iteration: event.iteration, raw_text: event.raw_text, parsed_fixes: event.parsed_fixes, report: event.report }] }
+            case "applied":
+              return { ...r, evalApplied: [...r.evalApplied, { iteration: event.iteration, results: event.results }] }
+            case "rerun_result":
+              return { ...r, evalRerunResults: [...r.evalRerunResults, { iteration: event.iteration, api_calls: event.api_calls, api_errors: event.api_errors, tool_count: event.tool_count, agent_response: event.agent_response }] }
+            case "error":
+              return { ...r, evalError: event.message, evalStatus: "error" }
+            default:
+              return r
+          }
+        }))
+      },
+      () => {
+        // Done — set final status based on last verdict
+        setRequests(prev => prev.map(r => {
+          if (r.request_id !== reqId) return r
+          const lastVerdict = r.evalVerdicts[r.evalVerdicts.length - 1]
+          return { ...r, evalStatus: lastVerdict?.passed ? "passed" : "failed" }
+        }))
+        evalControllersRef.current.delete(reqId)
+      },
+      (err) => {
+        setRequests(prev => prev.map(r =>
+          r.request_id === reqId ? { ...r, evalError: err, evalStatus: "error" as const } : r
+        ))
+        evalControllersRef.current.delete(reqId)
+      },
+    )
+
+    evalControllersRef.current.set(reqId, controller)
+  }, [requests, findSolveLogId])
+
+  const handleStopEval = useCallback((reqId: string) => {
+    evalControllersRef.current.get(reqId)?.abort()
+    evalControllersRef.current.delete(reqId)
+    setRequests(prev => prev.map(r =>
+      r.request_id === reqId ? { ...r, evalStatus: r.evalVerdicts.length > 0 ? (r.evalVerdicts[r.evalVerdicts.length - 1].passed ? "passed" : "failed") : "idle" } : r
+    ))
+  }, [])
+
+  const handleClear = useCallback(() => {
+    setEvents([])
+    setRequests([])
+    setExpandedReq(null)
+  }, [])
 
   return (
     <div className="space-y-4">
-      {/* Controls */}
-      <Card className="shadow-premium">
-        <CardContent className="p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                <Zap className="h-4 w-4 text-emerald-700" />
-              </div>
-              <div>
-                <p className="text-[13px] font-semibold">Live Submissions</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Submit on app.ainm.no, then evaluate results here. Auto-fix failures.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5">
-                <label className="text-[11px] text-muted-foreground">Logs</label>
-                <input
-                  type="number" min={1} max={200} value={logLimit}
-                  onChange={e => setLogLimit(Math.max(1, parseInt(e.target.value) || 50))}
-                  disabled={running}
-                  className="w-14 h-7 text-[12px] text-center tabular-nums border rounded-md bg-background"
-                />
-              </div>
-              <label className="flex items-center gap-1.5 text-[12px]">
-                <input
-                  type="checkbox" checked={autoFix}
-                  onChange={e => setAutoFix(e.target.checked)}
-                  disabled={running}
-                  className="rounded"
-                />
-                Auto-fix
-              </label>
-              {running ? (
-                <Button variant="destructive" size="sm" onClick={handleStop}>Stop</Button>
-              ) : (
-                <Button
-                  onClick={handleStart}
-                  className="h-9 px-5 font-semibold bg-gradient-to-r from-emerald-500 to-teal-500 hover:shadow-lg hover:shadow-emerald-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all"
-                >
-                  <Zap className="h-4 w-4 mr-2" />
-                  Evaluate Submissions
-                </Button>
+      {/* Live Activity Header */}
+      <Card className="shadow-premium border-l-4 border-l-emerald-500">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="relative flex items-center">
+              <Radio className={cn("h-4 w-4", connected ? "text-emerald-500" : "text-red-400")} />
+              {connected && activeCount > 0 && (
+                <span className="absolute h-4 w-4 rounded-full bg-emerald-400 animate-ping opacity-30" />
               )}
             </div>
+            <span className="text-[13px] font-semibold">Live Activity + Auto Fix</span>
+            <Badge variant="secondary" className="text-[10px]">
+              {connected ? (activeCount > 0 ? `${activeCount} active` : "listening") : "disconnected"}
+            </Badge>
+            {passedCount > 0 && <Badge className="bg-emerald-500 text-[10px]">{passedCount} pass</Badge>}
+            {failedCount > 0 && <Badge variant="destructive" className="text-[10px]">{failedCount} fail</Badge>}
+            <div className="flex-1" />
+            <p className="text-[11px] text-muted-foreground mr-2">
+              Submit on app.ainm.no — requests appear here in real-time
+            </p>
+            {requests.length > 0 && (
+              <button
+                onClick={handleClear}
+                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded bg-muted/40 text-muted-foreground hover:bg-muted/60 transition-colors shrink-0"
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+                Clear
+              </button>
+            )}
           </div>
 
-          {/* Progress */}
-          {(running || doneMessage) && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-[12px]">
-                <div className="flex items-center gap-2">
-                  {running && <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />}
-                  {doneMessage ? (
-                    <span className="font-medium">{doneMessage}</span>
-                  ) : fixingType ? (
-                    <span className="text-muted-foreground">
-                      Fixing <span className="font-medium text-foreground">{fixingType}</span>...
-                    </span>
-                  ) : currentLog ? (
-                    <span className="text-muted-foreground">
-                      Evaluating <span className="font-medium text-foreground">{currentLog}</span>
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">Starting...</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 tabular-nums">
-                  {passedCount > 0 && <span className="text-emerald-600 font-semibold">{passedCount} pass</span>}
-                  {failedCount > 0 && <span className="text-red-600 font-semibold">{failedCount} fail</span>}
-                  {totalLogs > 0 && <span className="text-muted-foreground">{results.length}/{totalLogs}</span>}
-                </div>
-              </div>
-              <Progress value={progress} className="h-2" />
+          {/* Request list */}
+          {requests.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground text-[12px]">
+              {connected
+                ? "Waiting for /solve requests from competition..."
+                : "Connecting to agent..."}
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[700px] overflow-y-auto">
+              {requests.map(req => (
+                <LiveFixRequestCard
+                  key={req.request_id}
+                  req={req}
+                  expanded={expandedReq === req.request_id}
+                  onToggle={() => setExpandedReq(expandedReq === req.request_id ? null : req.request_id)}
+                  onEvaluate={() => handleEvaluate(req.request_id)}
+                  onStopEval={() => handleStopEval(req.request_id)}
+                />
+              ))}
             </div>
           )}
         </CardContent>
       </Card>
+    </div>
+  )
+}
 
-      {/* Error */}
-      {errorMessage && (
-        <Card className="border-red-200 bg-red-50/50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-2">
-              <XCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
-              <p className="text-[13px] text-red-700">{errorMessage}</p>
-            </div>
-          </CardContent>
-        </Card>
+// ── Per-request card with live events + eval + fix ────────────────────
+
+function LiveFixRequestCard({
+  req,
+  expanded,
+  onToggle,
+  onEvaluate,
+  onStopEval,
+}: {
+  req: LiveRequestState
+  expanded: boolean
+  onToggle: () => void
+  onEvaluate: () => void
+  onStopEval: () => void
+}) {
+  const [copiedJson, setCopiedJson] = useState(false)
+  const [expandedIter, setExpandedIter] = useState<number | null>(null)
+
+  const doneEvent = req.events.find(e => e.type === "request_done") as Extract<LiveEvent, { type: "request_done" }> | undefined
+  const classifyEvent = req.events.find(e => e.type === "classify") as Extract<LiveEvent, { type: "classify" }> | undefined
+  const errorEvent = req.events.find(e => e.type === "request_error") as Extract<LiveEvent, { type: "request_error" }> | undefined
+  const hasApiErrors = req.events.some(e => (e.type === "tool_result" && !e.ok) || (e.type === "api_call" && !e.ok) || e.type === "request_error")
+
+  const lastVerdict = req.evalVerdicts[req.evalVerdicts.length - 1]
+  const isEvaluating = req.evalStatus === "evaluating"
+
+  const handleCopyJson = useCallback(async () => {
+    if (!req.solveLogId) {
+      // Try fetching by request ID
+      try {
+        const resp = await fetch(`/api/logs?limit=20`)
+        const logs = await resp.json()
+        const match = logs.find((l: { request_id: string }) => l.request_id === req.request_id)
+        if (match?.id) {
+          const data = await fetchLogJson(match.id)
+          await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+          setCopiedJson(true)
+          setTimeout(() => setCopiedJson(false), 2000)
+          return
+        }
+      } catch { /* fall through */ }
+      toast.error("Could not find log JSON")
+      return
+    }
+    try {
+      const data = await fetchLogJson(req.solveLogId)
+      await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+      setCopiedJson(true)
+      setTimeout(() => setCopiedJson(false), 2000)
+    } catch { toast.error("Failed to copy JSON") }
+  }, [req.solveLogId, req.request_id])
+
+  // Border color based on eval status
+  const borderClass =
+    req.evalStatus === "passed" ? "border-emerald-300" :
+    req.evalStatus === "failed" ? "border-red-300" :
+    !req.done ? "border-violet-300" :
+    hasApiErrors ? "border-amber-200" :
+    "border-border/50"
+
+  const bgClass =
+    !req.done ? "bg-violet-50/30" :
+    req.evalStatus === "passed" ? "bg-emerald-50/20" :
+    req.evalStatus === "failed" ? "bg-red-50/20" :
+    ""
+
+  return (
+    <div className={cn("rounded-lg border text-[12px] overflow-hidden transition-colors", borderClass, bgClass)}>
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-muted/30 transition-colors" onClick={onToggle}>
+        {expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+
+        {/* Status icon */}
+        {!req.done ? (
+          <Loader2 className="h-3.5 w-3.5 text-violet-500 animate-spin shrink-0" />
+        ) : req.evalStatus === "passed" ? (
+          <CheckCircle className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+        ) : req.evalStatus === "failed" ? (
+          <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+        ) : errorEvent ? (
+          <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+        ) : hasApiErrors ? (
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+        ) : (
+          <CheckCircle className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+        )}
+
+        {/* Task type badge */}
+        {classifyEvent?.task_type && (
+          <Badge variant="outline" className="text-[9px] shrink-0">
+            <Tag className="h-2 w-2 mr-0.5" />
+            {classifyEvent.task_type}
+          </Badge>
+        )}
+
+        {/* Prompt preview */}
+        <span className="truncate flex-1 text-[11px]">{req.prompt}</span>
+
+        {/* Eval verdict badge */}
+        {lastVerdict && !isEvaluating && (
+          <Badge
+            variant={lastVerdict.passed ? "default" : "destructive"}
+            className={cn("text-[10px] shrink-0", lastVerdict.passed && "bg-emerald-600")}
+          >
+            <Brain className="h-2.5 w-2.5 mr-1" />
+            {lastVerdict.passed ? "PASS" : `FAIL (${req.evalVerdicts.length}x)`}
+          </Badge>
+        )}
+
+        {/* Stats */}
+        {doneEvent && (
+          <>
+            <Badge variant="secondary" className="text-[9px] tabular-nums shrink-0">
+              <Clock className="h-2 w-2 mr-0.5" />{doneEvent.elapsed}s
+            </Badge>
+            <Badge variant="secondary" className="text-[9px] tabular-nums shrink-0">
+              <Zap className="h-2 w-2 mr-0.5" />{doneEvent.api_calls}
+            </Badge>
+            {doneEvent.api_errors > 0 && (
+              <Badge variant="destructive" className="text-[9px] tabular-nums shrink-0">{doneEvent.api_errors} err</Badge>
+            )}
+          </>
+        )}
+
+        {/* Action buttons */}
+        {req.done && (
+          <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+            {/* Copy JSON */}
+            <button
+              onClick={handleCopyJson}
+              className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded bg-blue-500/10 text-blue-600 hover:bg-blue-500/20 transition-colors"
+            >
+              {copiedJson ? <Check className="h-2.5 w-2.5" /> : <Download className="h-2.5 w-2.5" />}
+              {copiedJson ? "Copied!" : "JSON"}
+            </button>
+            {/* Evaluate / Stop / Re-eval */}
+            {isEvaluating ? (
+              <button
+                onClick={onStopEval}
+                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded bg-red-500/10 text-red-600 hover:bg-red-500/20 transition-colors"
+              >
+                <Square className="h-2.5 w-2.5" />Stop
+              </button>
+            ) : (
+              <button
+                onClick={onEvaluate}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded transition-colors",
+                  req.evalStatus === "failed"
+                    ? "bg-orange-500/10 text-orange-600 hover:bg-orange-500/20"
+                    : "bg-violet-500/10 text-violet-600 hover:bg-violet-500/20"
+                )}
+              >
+                {req.evalVerdicts.length > 0 ? (
+                  <><Wrench className="h-2.5 w-2.5" />{req.evalStatus === "failed" ? "Auto Fix" : "Re-eval"}</>
+                ) : (
+                  <><Play className="h-2.5 w-2.5" />Evaluate</>
+                )}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Evaluating spinner */}
+      {isEvaluating && (
+        <div className="px-3 py-1.5 border-t border-border/30 flex items-center gap-2 text-[11px] text-violet-600">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>{req.evalPhase || "Evaluating..."}</span>
+        </div>
       )}
 
-      {/* Results by task type */}
-      {byTaskType.length > 0 && (
-        <Card className="shadow-premium">
-          <CardContent className="p-0">
-            <div className="px-4 py-2.5 border-b bg-muted/20 flex items-center justify-between">
-              <span className="text-[12px] font-semibold text-muted-foreground">
-                Submission Results
-              </span>
-              <div className="flex items-center gap-2">
-                <Badge className="bg-emerald-500 text-[10px]">{passedCount} passed</Badge>
-                {failedCount > 0 && <Badge variant="destructive" className="text-[10px]">{failedCount} failed</Badge>}
+      {/* Expanded: live event timeline + eval results */}
+      {expanded && (
+        <div className="border-t border-border/30">
+          {/* Eval results (if any) — shown first/prominently */}
+          {req.evalVerdicts.length > 0 && (
+            <div className="px-3 py-2 space-y-2 bg-muted/10 border-b border-border/30">
+              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+                <Brain className="h-3 w-3" />LLM Evaluation
               </div>
-            </div>
-            <div className="divide-y">
-              {byTaskType.map(([taskType, logs]) => {
-                const tp = logs.filter(r => r.passed).length
-                const tf = logs.filter(r => !r.passed).length
-                const allPass = tf === 0
+              {req.evalVerdicts.map(v => {
+                const iterFixes = req.evalFixes.find(f => f.iteration === v.iteration)
+                const iterApplied = req.evalApplied.find(a => a.iteration === v.iteration)
+                const iterRerun = req.evalRerunResults.find(r => r.iteration === v.iteration + 1)
+                const isExp = expandedIter === v.iteration
                 return (
-                  <div key={taskType}>
-                    <button
-                      onClick={() => setExpandedLog(expandedLog === logs[0].logId ? null : logs[0].logId)}
-                      className={cn(
-                        "w-full flex items-center gap-2 px-4 py-2.5 text-[12px] transition-colors",
-                        allPass ? "hover:bg-emerald-50/60" : "hover:bg-red-50/60"
-                      )}
+                  <div key={v.iteration} className={cn("rounded-lg border text-[12px] overflow-hidden", v.passed ? "border-emerald-200" : "border-red-200")}>
+                    <div
+                      className={cn("flex items-center gap-2 px-3 py-1.5 cursor-pointer", v.passed ? "bg-emerald-50" : "bg-red-50")}
+                      onClick={() => setExpandedIter(isExp ? null : v.iteration)}
                     >
-                      {allPass ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                      ) : (
-                        <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                      {isExp ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      <Badge variant={v.passed ? "default" : "destructive"} className={cn("text-[10px]", v.passed && "bg-emerald-600")}>
+                        {v.passed ? "PASS" : "FAIL"}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground">Iter {v.iteration}</span>
+                      <span className="flex-1 text-[11px] truncate">{v.reasoning}</span>
+                      {iterFixes && <Badge variant="outline" className="text-[9px]">{iterFixes.parsed_fixes.length} fixes</Badge>}
+                      {iterApplied && (
+                        <Badge className="bg-emerald-500 text-[9px]">
+                          {iterApplied.results.filter(r => r.applied).length} applied
+                        </Badge>
                       )}
-                      <span className="font-medium flex-1 text-left">{taskType}</span>
-                      <span className="tabular-nums text-muted-foreground">{tp}/{tp + tf}</span>
-                      {expandedLog === logs[0].logId ? (
-                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                      )}
-                    </button>
-                    {expandedLog === logs[0].logId && (
-                      <div className="px-4 pb-3 space-y-2">
-                        {logs.map(r => (
-                          <LiveLogRow
-                            key={r.logId}
-                            result={r}
-                            onCopyJson={() => handleCopyLog(r.logId, r.runLogJson)}
-                            copied={copiedLogId === r.logId}
-                          />
-                        ))}
+                    </div>
+                    {isExp && (
+                      <div className="px-3 py-2 space-y-2 border-t border-border/30">
+                        <p className="text-[11px]">{v.reasoning}</p>
+                        {v.issues.length > 0 && (
+                          <div>
+                            <span className="text-[9px] uppercase tracking-wide text-red-500 font-semibold">Issues</span>
+                            <ul className="mt-0.5 space-y-0.5">
+                              {v.issues.map((issue, i) => (
+                                <li key={i} className="text-[11px] text-red-600 flex items-start gap-1">
+                                  <XCircle className="h-3 w-3 mt-0.5 shrink-0" />{issue}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {iterFixes && iterFixes.parsed_fixes.length > 0 && (
+                          <div>
+                            <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Code Fixes</span>
+                            <div className="mt-1 space-y-1">
+                              {iterFixes.parsed_fixes.map((fix, i) => {
+                                const ar = iterApplied?.results[i]
+                                return (
+                                  <div key={i} className="rounded border border-border/50 p-2 bg-muted/20">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <Badge variant="outline" className="text-[9px] font-mono">{fix.file}</Badge>
+                                      <span className="text-[10px] text-muted-foreground">{fix.reason}</span>
+                                      {ar && (
+                                        <Badge variant={ar.applied ? "default" : "destructive"} className={cn("text-[9px]", ar.applied && "bg-emerald-600")}>
+                                          {ar.applied ? "Applied" : ar.error || "Skipped"}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-1 text-[10px] font-mono">
+                                      <pre className="bg-red-50 rounded p-1.5 whitespace-pre-wrap break-words max-h-[100px] overflow-y-auto">{fix.old}</pre>
+                                      <pre className="bg-emerald-50 rounded p-1.5 whitespace-pre-wrap break-words max-h-[100px] overflow-y-auto">{fix.new}</pre>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {iterRerun && (
+                          <div className="rounded bg-muted/30 p-2">
+                            <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Rerun</span>
+                            <div className="flex gap-3 mt-1 text-[11px]">
+                              <span>API: {iterRerun.api_calls}</span>
+                              <span>Errors: {iterRerun.api_errors}</span>
+                              <span>Tools: {iterRerun.tool_count}</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 )
               })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Fix History */}
-      {fixHistory.length > 0 && (
-        <Card className="shadow-premium border-orange-200">
-          <CardContent className="p-4 space-y-3">
-            <h3 className="text-[14px] font-semibold flex items-center gap-2">
-              <FileCode className="h-4 w-4 text-orange-500" />
-              Applied Fixes ({fixHistory.reduce((s, f) => s + f.fixes.filter(a => a.applied).length, 0)})
-            </h3>
-            <div className="space-y-2">
-              {fixHistory.map((fh, i) => (
-                <div key={i} className="rounded-lg border p-3 space-y-1.5">
-                  <span className="text-[12px] font-medium">{fh.taskType}</span>
-                  {fh.fixes.map((a, j) => (
-                    <div key={j} className={cn("text-[11px] px-2 py-1 rounded", a.applied ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
-                      {a.applied ? <><CheckCircle2 className="h-3 w-3 inline mr-1" />{a.file}: {a.reason}</> : <><AlertTriangle className="h-3 w-3 inline mr-1" />{a.file}: {a.error}</>}
-                    </div>
-                  ))}
+              {req.evalError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-600">
+                  <AlertTriangle className="h-3 w-3 inline mr-1" />{req.evalError}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Live event timeline */}
+          <div className="px-3 py-2">
+            <div className="space-y-0.5">
+              {req.events.map((ev, i) => (
+                <LiveFixEventRow key={i} event={ev} startTs={req.startTs} />
               ))}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
     </div>
   )
 }
 
-function LiveLogRow({
-  result,
-  onCopyJson,
-  copied,
-}: {
-  result: LiveLogResult
-  onCopyJson: () => void
-  copied: boolean
-}) {
-  const [showDetails, setShowDetails] = useState(!result.passed)
+// ── Event row (reused from logs panel pattern) ───────────────────────
 
-  return (
-    <div className={cn(
-      "rounded-lg border p-3 space-y-2",
-      result.passed ? "border-emerald-200 bg-emerald-50/30" : "border-red-200 bg-red-50/30"
-    )}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {result.passed ? (
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-          ) : (
-            <XCircle className="h-3.5 w-3.5 text-red-500" />
-          )}
-          <span className="text-[12px] font-medium">{result.passed ? "PASS" : "FAIL"}</span>
-          <span className="text-[11px] font-mono text-muted-foreground">#{result.logId}</span>
-          <span className="text-[11px] tabular-nums text-muted-foreground">
-            {result.apiCalls} calls
-            {result.apiErrors > 0 && <span className="text-red-500"> ({result.apiErrors} err)</span>}
+function LiveFixEventRow({ event: ev, startTs }: { event: LiveEvent; startTs: string }) {
+  const rel = ev.ts ? _relativeTime(startTs, ev.ts) : ""
+
+  switch (ev.type) {
+    case "request_start":
+      return (
+        <div className="flex items-center gap-2 text-[11px]">
+          <CircleDot className="h-3 w-3 text-violet-500 shrink-0" />
+          <span className="text-muted-foreground">Request started</span>
+          {ev.files.length > 0 && <Badge variant="outline" className="text-[9px]">{ev.files.length} file(s)</Badge>}
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{rel}</span>
+        </div>
+      )
+    case "classify":
+      return (
+        <div className="flex items-center gap-2 text-[11px]">
+          <Tag className="h-3 w-3 text-blue-500 shrink-0" />
+          <span><span className="font-medium">{ev.task_type || "unknown"}</span><span className="text-muted-foreground"> ({ev.classification_level}, {ev.tool_count}/{ev.total_tools} tools)</span></span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{rel}</span>
+        </div>
+      )
+    case "agent_start":
+      return (
+        <div className="flex items-center gap-2 text-[11px]">
+          <Bot className="h-3 w-3 text-violet-500 shrink-0" />
+          <span className="text-muted-foreground">Agent started</span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{rel}</span>
+        </div>
+      )
+    case "tool_call":
+      return (
+        <div className="flex items-center gap-2 text-[11px]">
+          <ArrowRight className="h-3 w-3 text-blue-500 shrink-0" />
+          <code className="font-semibold text-blue-600">{ev.tool}</code>
+          <span className="text-muted-foreground truncate text-[10px]">
+            ({Object.entries(ev.args || {}).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ").slice(0, 80)})
           </span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{rel}</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          {result.runLogJson && (
-            <Button variant="outline" size="sm" onClick={onCopyJson} className="h-6 text-[10px] gap-1 px-2">
-              {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <ClipboardCopy className="h-3 w-3" />}
-              Copy JSON
-            </Button>
-          )}
-          <button
-            onClick={() => setShowDetails(!showDetails)}
-            className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {showDetails ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          </button>
+      )
+    case "tool_result":
+      return (
+        <div className="flex items-center gap-2 text-[11px]">
+          {ev.ok ? <CheckCircle className="h-3 w-3 text-emerald-500 shrink-0" /> : <XCircle className="h-3 w-3 text-red-500 shrink-0" />}
+          <code className={cn("font-medium", ev.ok ? "text-emerald-600" : "text-red-600")}>{ev.tool}</code>
+          {!ev.ok && ev.error && <span className="text-red-500 truncate text-[10px]">{ev.error.slice(0, 100)}</span>}
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{rel}</span>
         </div>
-      </div>
-
-      {/* Reasoning */}
-      <p className="text-[11px] text-muted-foreground">{result.reasoning}</p>
-
-      {/* Expanded details */}
-      {showDetails && result.explanation && (
-        <div className="space-y-1.5 pt-1 border-t border-red-200/50">
-          {/* Issues */}
-          {result.issues.length > 0 && (
-            <div className="space-y-0.5">
-              {result.issues.map((issue, i) => (
-                <p key={i} className="text-[11px] text-red-700 flex items-start gap-1.5">
-                  <span className="text-red-400 shrink-0">·</span>
-                  {issue}
-                </p>
-              ))}
-            </div>
-          )}
-
-          {/* API errors */}
-          {result.explanation.api_errors.length > 0 && (
-            <div className="space-y-0.5">
-              <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wider">API Errors</p>
-              {result.explanation.api_errors.map((e, i) => (
-                <p key={i} className="text-[10px] text-red-600 font-mono">
-                  {e.method} {e.url} → {e.status}
-                </p>
-              ))}
-            </div>
-          )}
-
-          {/* Failed tools */}
-          {result.explanation.failed_tools.length > 0 && (
-            <div className="space-y-0.5">
-              <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wider">Failed Tools</p>
-              {result.explanation.failed_tools.map((t, i) => (
-                <p key={i} className="text-[10px] text-red-600 font-mono">{t.tool}: {t.error}</p>
-              ))}
-            </div>
-          )}
+      )
+    case "api_call":
+      return (
+        <div className="flex items-center gap-2 text-[11px] ml-4">
+          <Globe className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+          <span className={cn("font-mono text-[10px] font-semibold w-10 shrink-0",
+            ev.method === "POST" ? "text-blue-500" : ev.method === "PUT" ? "text-amber-500" : ev.method === "DELETE" ? "text-red-500" : "text-muted-foreground"
+          )}>{ev.method}</span>
+          <span className={cn("text-[10px] w-6 shrink-0 tabular-nums text-center rounded px-0.5",
+            ev.status >= 400 ? "bg-red-100 text-red-600" : ev.status >= 200 && ev.status < 300 ? "text-emerald-600" : "text-muted-foreground"
+          )}>{ev.status}</span>
+          <span className="text-muted-foreground truncate text-[10px]">{ev.url.replace(/^https?:\/\/[^/]+/, "")}</span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{ev.elapsed}s</span>
         </div>
-      )}
-    </div>
-  )
+      )
+    case "text":
+      return (
+        <div className="flex items-center gap-2 text-[11px]">
+          <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">&ldquo;{ev.text.slice(0, 120)}&rdquo;</span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{rel}</span>
+        </div>
+      )
+    case "request_done":
+      return (
+        <div className="flex items-center gap-2 text-[11px] font-medium">
+          <CheckCircle className="h-3 w-3 text-emerald-500 shrink-0" />
+          <span className="text-emerald-600">Done {ev.elapsed}s ({ev.api_calls} API, {ev.api_errors} err, {ev.turns} turns)</span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{rel}</span>
+        </div>
+      )
+    case "request_error":
+      return (
+        <div className="flex items-center gap-2 text-[11px]">
+          <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+          <span className="text-red-500">{ev.error}</span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60 tabular-nums shrink-0">{rel}</span>
+        </div>
+      )
+    default:
+      return null
+  }
 }
 
 // ── Task Picker View ─────────────────────────────────────────────────

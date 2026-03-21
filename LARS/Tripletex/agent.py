@@ -211,6 +211,10 @@ Create opening balance / åpningsbalanse (1 call):
   → create_opening_balance(date="2026-01-01", accountNumber, amount)
   → "inngående balanse"/"åpningsbalanse"/"opening balance"
 
+Check trial balance / Saldenbilanz prüfen (1 call):
+  → get_trial_balance(date)
+  → "Saldenbilanz"/"trial balance"
+
 Credit/delete invoice (5 calls):
   → [create invoice: 4 calls] → create_credit_note(invoice_id)
 
@@ -574,9 +578,34 @@ TASK: Process invoice from file (4-5 calls)
 -> Then: create_customer -> create_product -> create_order -> create_invoice""",
 
     "year_end": """
-TASK: Year-end (2-4 calls)
--> search_year_ends -> search_year_end_annexes(year_end_id) or create_year_end_note(year_end_id, note)
-- "arsoppgjor"/"year-end" """,
+TASK: Perform simplified annual closing for 2025.
+Use `create_ledger_voucher` for all accounting entries. Use date "2025-12-31" for all vouchers.
+
+STEPS:
+1.  **Calculate and book annual depreciation for three fixed assets.**
+    -   For each asset, calculate annual depreciation (linear method: Cost / Years).
+    -   Create a separate `create_ledger_voucher` call for each.
+    -   Depreciation expense account: 6010 (Debit). Accumulated depreciation account: 1209 (Credit).
+    -   Assets:
+        -   Programvare (Software): 111950 NOK, 9 years. Amount = 111950 / 9 = 12438.89.
+        -   Kontormaskiner (Office machines): 351450 NOK, 9 years. Amount = 351450 / 9 = 39050.00.
+        -   Inventar (Furniture): 418800 NOK, 10 years. Amount = 418800 / 10 = 41880.00.
+
+2.  **Reverse accrued expenses.**
+    -   Total 79750 NOK at account 1700 (Prepaid expenses).
+    -   Create one `create_ledger_voucher` call: Debit 6990 (Other operating expenses - assumed), Credit 1700. Amount = 79750.
+
+3.  **Calculate and book tax provision.**
+    -   Tax rate: 22% of taxable profit. Accounts: 8700 (Debit) / 2920 (Credit).
+    -   CRITICAL: Taxable profit is NOT provided. You cannot calculate the exact amount.
+    -   To complete the task, create a `create_ledger_voucher` with a placeholder amount of 0 for the tax provision, and include a note in the description about the missing taxable profit.
+
+4.  **Create a year-end note (if specified in the prompt).**
+    -   Call `search_year_ends` to get the `year_end_id`. If not found, `create_year_end_note` will auto-detect the most recent.
+    -   Then call `create_year_end_note(year_end_id, note)`.
+
+CRITICAL: All voucher postings MUST balance (sum of amounts = 0). Positive = debit, negative = credit.
+""",
 
     "salary": """
 TASK: Salary / payroll (3-4 calls)

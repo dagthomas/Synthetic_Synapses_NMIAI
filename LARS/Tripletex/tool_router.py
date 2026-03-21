@@ -303,7 +303,13 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                 "folha de pagamento", "folha salarial",
                 "lønskjøring", "lønstransaksjon"],
      ["opprett ansatt", "create employee", "crear empleado", "criar funcionário",
-      "créer employé", "mitarbeiter erstellen"], 6),
+      "créer employé", "mitarbeiter erstellen",
+      # Exclude ledger/voucher terms to prevent misclassification
+      "bilag", "voucher", "buchungsbeleg", "buchung", "postering",
+      "konto", "abschreibung", "rückstellung", "rechnungsabgrenzung",
+      "saldenbilanz", "monatsabschluss", "kontenrahmen",
+      "debitere", "kreditere", "hauptbuch", "journal entries",
+      "écriture comptable", "asiento contable", "lançamento contábil"], 6),
 
     # ── Travel expense with costs ──
     ("create_travel_expense_with_costs", ["reiseregning med utlegg", "travel expense with costs",
@@ -557,10 +563,16 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                "comprobante", "asiento contable",
                                "comprovante", "lançamento contábil",
                                "pièce comptable", "écriture comptable",
-                               "buchungsbeleg", "buchung", "korrekturbuchung"],
+                               "buchungsbeleg", "buchung", "korrekturbuchung",
+                               # German accounting terms that indicate journal entries
+                               "rückstellung", "abschreibung", "rechnungsabgrenzung",
+                               "saldenbilanz", "monatsabschluss", "kontenrahmen",
+                               "hauptbuch", "gegenkonto", "sollkonto", "habenkonto",
+                               "journal entries", "journal entry",
+                               "kontieren", "verbuchen"],
      ["tilbakeføre", "reversere", "reverse", "slett", "delete",
       "åpningsbalanse", "opening balance", "revertir", "reverter",
-      "contrepasser", "stornieren"], 5),
+      "contrepasser", "stornieren"], 7),
 
     # ── "New hire" compound words (before basic create_employee) ──
     ("create_employee", ["nyansettelse", "ny ansettelse", "nyansatt", "nytilsett",
