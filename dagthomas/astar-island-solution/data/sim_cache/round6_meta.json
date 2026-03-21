@@ -1,0 +1,27 @@
+{
+  "params": {
+    "base_survival": -0.3495020168825838,
+    "expansion_str": 0.8450800134259736,
+    "expansion_scale": 5.535088305074971,
+    "decay_power": 1.4409569978524286,
+    "max_reach": 9.082668559805436,
+    "coastal_mod": 0.32135926520967306,
+    "food_coeff": 1.2906543557431636,
+    "cluster_pen": -1.261501847706319,
+    "cluster_optimal": 1.273854485446965,
+    "cluster_quad": -0.7039695673274722,
+    "ruin_rate": 0.15454529768012834,
+    "port_factor": 0.47902548679441603,
+    "forest_resist": 0.026680254069227364,
+    "forest_clear": 0.5233777567369369,
+    "forest_reclaim": 0.19621337309224984,
+    "exp_death": 0.3790414524212875
+  },
+  "fit_score": 78.8133046998274,
+  "seed_scores": [
+    79.75857379081748
+  ],
+  "avg_score": 79.75857379081748,
+  "n_sims_fit": 500,
+  "n_sims_pred": 5000
+}

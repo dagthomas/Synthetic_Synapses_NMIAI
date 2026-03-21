@@ -1,0 +1,162 @@
+============================================================
+Step 1: Download analysis for recently completed rounds
+============================================================
+
+Round 11 (completed):
+  Round 11 analysis already exists, skipping download
+
+Round 10 (completed):
+  Round 10 analysis already exists, skipping download
+
+Round 9 (completed):
+  Round 9 analysis already exists, skipping download
+
+Round 8 (completed):
+  Round 8 analysis already exists, skipping download
+
+============================================================
+Step 2: Calibration model status
+============================================================
+  Loaded round1: 8000 total cells
+  Loaded round10: 16000 total cells
+  Loaded round11: 24000 total cells
+  Loaded round2: 32000 total cells
+  Loaded round3: 40000 total cells
+  Loaded round4: 48000 total cells
+  Loaded round5: 56000 total cells
+  Loaded round6: 64000 total cells
+  Loaded round7: 72000 total cells
+  Loaded round8: 80000 total cells
+  Loaded round9: 88000 total cells
+  CalibrationModel: 11 rounds, 88000 cells, 185 fine keys, 51 coarse keys
+  {'rounds_loaded': 11, 'total_cells': 88000, 'fine_keys': 185, 'coarse_keys': 51, 'base_keys': 6, 'global_probs': [0.6571, 0.1123, 0.01, 0.0109, 0.1902, 0.0195]}
+
+============================================================
+Step 3: Waiting for active round (checking every 60s)
+============================================================
+
+============================================================
+ACTIVE ROUND DETECTED: Round 12 (795bfb1f-54bd-4f39-a526-9868b36f7ebd)
+Time: 06:18:42
+============================================================
+  No queries remaining for round 12
+
+============================================================
+ACTIVE ROUND DETECTED: Round 13 (7b4bda99-6165-4221-97cc-27880f5e6d95)
+Time: 07:18:02
+============================================================
+Map: 40x40, 5 seeds, 28 queries remaining
+
+============================================================
+Phase 0: Analyzing initial states (free)
+============================================================
+Seed 0: 43 settlements (0 ports), 1217 static / 359 dynamic cells
+Seed 1: 53 settlements (3 ports), 1198 static / 378 dynamic cells
+Seed 2: 54 settlements (1 ports), 1201 static / 374 dynamic cells
+Seed 3: 44 settlements (0 ports), 1194 static / 353 dynamic cells
+Seed 4: 56 settlements (5 ports), 1214 static / 368 dynamic cells
+
+Base terrain shared across seeds: False
+
+Budget: 25 queries remaining
+Loading calibration model...
+  Loaded round1: 8000 total cells
+  Loaded round10: 16000 total cells
+  Loaded round11: 24000 total cells
+  Loaded round12: 32000 total cells
+  Loaded round2: 40000 total cells
+  Loaded round3: 48000 total cells
+  Loaded round4: 56000 total cells
+  Loaded round5: 64000 total cells
+  Loaded round6: 72000 total cells
+  Loaded round7: 80000 total cells
+  Loaded round8: 88000 total cells
+  Loaded round9: 96000 total cells
+  CalibrationModel: 12 rounds, 96000 cells, 185 fine keys, 51 coarse keys
+
+============================================================
+Phase 1: Scout queries (3 viewports × 5 seeds = 15 queries)
+============================================================
+  Q1: seed=0, vp=(0,0)
+  Q2: seed=1, vp=(0,0)
+  Q3: seed=2, vp=(0,0)
+  Q4: seed=3, vp=(0,0)
+  Q5: seed=4, vp=(0,0)
+
+Scout phase: 5 queries used, 0 remaining
+
+============================================================
+REGIME DETECTION (from 1125 observed cells)
+============================================================
+  Settlement multiplier: 0.789
+  Settlement observed %: 7.2%
+  Detected regime: MODERATE
+  Strategy for remaining budget: GRID COVERAGE
+
+============================================================
+Phase 2: Grid coverage (0 queries)
+============================================================
+
+============================================================
+Phase 3: Parameter estimation + final analysis
+============================================================
+
+--- Parameter Estimates ---
+  Settlements: 86 alive, 0 dead
+  Avg population: 1.299 (R1: 2.5)
+  Avg food: 0.627 (R1: 0.4)
+  Avg wealth: 0.004
+  Port fraction: 5.8%
+  Factions: 13, largest: 19
+  Settlement survival: 6.7% (R1: 41.0%)
+  Expansion rate: 7.8% (R1: 19.0%)
+  Regime: {'winter': 'mild', 'trade': 'low', 'conflict': 'fragmented', 'expansion': 'low'}
+  Recommended prior strength: 1.41 (R1 default: 3.0)
+  Adjustments vs R1: {'settlement_survival': 0.163, 'expansion': 0.411, 'forest_loss': 0.59}
+
+  Final regime: MODERATE (scout detected: MODERATE)
+
+Data saved to X:\KODE\AINMNO\astar-island-solution\data\rounds\7b4bda99-6165-4221-97cc-27880f5e6d95
+
+Global multipliers (1125 cells):
+  empty: 1.0151
+  settlement: 0.7889
+  port: 0.6988
+  ruin: 1.1503
+  forest: 1.0227
+  mountain: 1.0000
+
+Feature-key buckets: 1125 obs, 103 keys, avg 11/key
+  Seed 0: 225/1600 cells (14.1%)
+  Seed 1: 225/1600 cells (14.1%)
+  Seed 2: 225/1600 cells (14.1%)
+  Seed 3: 225/1600 cells (14.1%)
+  Seed 4: 225/1600 cells (14.1%)
+
+Exploration complete. Queries used: 50/50
+
+Variance regime: MODERATE
+Global multipliers: sett=0.789, port=0.699, ruin=1.150, forest=1.023
+
+============================================================
+Generating and submitting predictions
+============================================================
+
+Seed 0:
+  Submitted: accepted
+
+Seed 1:
+  Submitted: accepted
+
+Seed 2:
+  Submitted: accepted
+
+Seed 3:
+  Submitted: accepted
+
+Seed 4:
+  Submitted: accepted
+
+All predictions submitted for round 7b4bda99-6165-4221-97cc-27880f5e6d95
+
+Submission complete. Continuing to monitor...

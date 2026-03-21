@@ -1,0 +1,88 @@
+{
+  "round_id": "3eb0c25d-28fa-48ca-b8e1-fc249e3918e9",
+  "num_observations": 50,
+  "shared_terrain": false,
+  "strategy": "fixed_3x3_grid",
+  "seeds": [
+    {
+      "seed_index": 0,
+      "num_settlements": 57,
+      "num_ports": 1,
+      "terrain_counts": {
+        "0": 1179,
+        "1": 56,
+        "2": 1,
+        "4": 349,
+        "5": 15
+      },
+      "static_cells": 1194,
+      "dynamic_cells": 366,
+      "cells_observed": 1320,
+      "max_observations": 4
+    },
+    {
+      "seed_index": 1,
+      "num_settlements": 56,
+      "num_ports": 2,
+      "terrain_counts": {
+        "0": 1168,
+        "1": 54,
+        "2": 2,
+        "4": 335,
+        "5": 41
+      },
+      "static_cells": 1209,
+      "dynamic_cells": 361,
+      "cells_observed": 1320,
+      "max_observations": 4
+    },
+    {
+      "seed_index": 2,
+      "num_settlements": 52,
+      "num_ports": 2,
+      "terrain_counts": {
+        "0": 1190,
+        "1": 50,
+        "2": 2,
+        "4": 321,
+        "5": 37
+      },
+      "static_cells": 1227,
+      "dynamic_cells": 339,
+      "cells_observed": 1320,
+      "max_observations": 4
+    },
+    {
+      "seed_index": 3,
+      "num_settlements": 57,
+      "num_ports": 2,
+      "terrain_counts": {
+        "0": 1171,
+        "1": 55,
+        "2": 2,
+        "4": 330,
+        "5": 42
+      },
+      "static_cells": 1213,
+      "dynamic_cells": 357,
+      "cells_observed": 1320,
+      "max_observations": 4
+    },
+    {
+      "seed_index": 4,
+      "num_settlements": 47,
+      "num_ports": 4,
+      "terrain_counts": {
+        "0": 1171,
+        "1": 43,
+        "2": 4,
+        "4": 343,
+        "5": 39
+      },
+      "static_cells": 1210,
+      "dynamic_cells": 364,
+      "cells_observed": 1320,
+      "max_observations": 4
+    }
+  ]
+}

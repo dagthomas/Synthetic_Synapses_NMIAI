@@ -1,0 +1,154 @@
+{
+  "round_id": "8e839974-b13b-407b-a5e7-fc749d877195",
+  "round_number": 4,
+  "status": "completed",
+  "event_date": "2026-03-20",
+  "map_size": "40x40",
+  "seeds_count": 5,
+  "round_score": 53.3346,
+  "seed_scores": [
+    55.7622,
+    50.8334,
+    54.0506,
+    54.7576,
+    51.2695
+  ],
+  "rank": 65,
+  "total_teams": 86,
+  "queries_used": 50,
+  "queries_max": 50,
+  "saved_at": "2026-03-20T05:57:31.141976+00:00",
+  "seeds": [
+    {
+      "seed_index": 0,
+      "score": 55.7622,
+      "height": 40,
+      "width": 40,
+      "entropy_mean": 0.4521,
+      "entropy_max": 1.2876,
+      "dynamic_cells": 1316,
+      "total_cells": 1600,
+      "gt_distribution": {
+        "empty": 1203,
+        "settlement": 0,
+        "port": 0,
+        "ruin": 0,
+        "forest": 366,
+        "mountain": 31
+      },
+      "argmax_accuracy": 0.9444,
+      "per_class_accuracy": {
+        "empty": 0.951,
+        "forest": 0.918,
+        "mountain": 1.0
+      },
+      "mean_kl": 0.150988,
+      "weighted_kl": 0.194975
+    },
+    {
+      "seed_index": 1,
+      "score": 50.8334,
+      "height": 40,
+      "width": 40,
+      "entropy_mean": 0.5136,
+      "entropy_max": 1.1871,
+      "dynamic_cells": 1345,
+      "total_cells": 1600,
+      "gt_distribution": {
+        "empty": 1236,
+        "settlement": 0,
+        "port": 0,
+        "ruin": 0,
+        "forest": 335,
+        "mountain": 29
+      },
+      "argmax_accuracy": 0.9106,
+      "per_class_accuracy": {
+        "empty": 0.9094,
+        "forest": 0.9075,
+        "mountain": 1.0
+      },
+      "mean_kl": 0.180171,
+      "weighted_kl": 0.225725
+    },
+    {
+      "seed_index": 2,
+      "score": 54.0506,
+      "height": 40,
+      "width": 40,
+      "entropy_mean": 0.4323,
+      "entropy_max": 1.3451,
+      "dynamic_cells": 1263,
+      "total_cells": 1600,
+      "gt_distribution": {
+        "empty": 1225,
+        "settlement": 0,
+        "port": 0,
+        "ruin": 0,
+        "forest": 326,
+        "mountain": 49
+      },
+      "argmax_accuracy": 0.9413,
+      "per_class_accuracy": {
+        "empty": 0.9404,
+        "forest": 0.9356,
+        "mountain": 1.0
+      },
+      "mean_kl": 0.154114,
+      "weighted_kl": 0.205599
+    },
+    {
+      "seed_index": 3,
+      "score": 54.7576,
+      "height": 40,
+      "width": 40,
+      "entropy_mean": 0.425,
+      "entropy_max": 1.3138,
+      "dynamic_cells": 1264,
+      "total_cells": 1600,
+      "gt_distribution": {
+        "empty": 1217,
+        "settlement": 2,
+        "port": 0,
+        "ruin": 0,
+        "forest": 333,
+        "mountain": 48
+      },
+      "argmax_accuracy": 0.9463,
+      "per_class_accuracy": {
+        "empty": 0.9515,
+        "settlement": 0.0,
+        "forest": 0.9249,
+        "mountain": 1.0
+      },
+      "mean_kl": 0.147351,
+      "weighted_kl": 0.201285
+    },
+    {
+      "seed_index": 4,
+      "score": 51.2695,
+      "height": 40,
+      "width": 40,
+      "entropy_mean": 0.5041,
+      "entropy_max": 1.2181,
+      "dynamic_cells": 1370,
+      "total_cells": 1600,
+      "gt_distribution": {
+        "empty": 1221,
+        "settlement": 0,
+        "port": 0,
+        "ruin": 0,
+        "forest": 358,
+        "mountain": 21
+      },
+      "argmax_accuracy": 0.9131,
+      "per_class_accuracy": {
+        "empty": 0.9197,
+        "forest": 0.8855,
+        "mountain": 1.0
+      },
+      "mean_kl": 0.179807,
+      "weighted_kl": 0.222878
+    }
+  ]
+}

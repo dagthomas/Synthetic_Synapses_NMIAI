@@ -1,0 +1,56 @@
+# NorgesGruppen dataset
+docs/norgesgruppen-data/
+
+# Training data, crops, and image artifacts
+norgesgruppen-solution/classifier_data/
+norgesgruppen-solution/datasets/
+norgesgruppen-solution/runs/
+norgesgruppen-solution/__pycache__/
+
+# All images
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.npy
+
+# Zip archives
+*.zip
+submissions/*/
+
+# Large log/data files
+astar-island-solution/data/autoloop_log.jsonl
+astar-island-solution/data/autoloop_fast_log.jsonl
+astar-island-solution/data/autoloop_fast_log_*.jsonl
+astar-island-solution/data/autoloop_cmaes_log.jsonl
+astar-island-solution/data/autoloop_fast_output.log
+astar-island-solution/data/daemon.log
+astar-island-solution/data/gemini_research_log.jsonl
+astar-island-solution/data/gemini_researcher_output.log
+astar-island-solution/data/multi_research_log.jsonl
+astar-island-solution/data/multi_researcher_output.log
+
+# Test prediction files
+norgesgruppen-solution/test_*.json
+submissions/preds_*.json
+
+# Binary/compiled
+*.exe
+*.exe~
+__pycache__/
+*.pyc
+
+# 3D models
+*.glb
+*.glb.zip
+
+# Dependencies & docs
+node_modules/
+docs/

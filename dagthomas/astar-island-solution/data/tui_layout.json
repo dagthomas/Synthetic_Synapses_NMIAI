@@ -1,0 +1,17 @@
+{
+  "kind": 1,
+  "ratio": 0.7000000000000002,
+  "left": {
+    "kind": 0,
+    "tab_idx": 5,
+    "ratio": 0.5
+  },
+  "right": {
+    "kind": 0,
+    "tab_idx": 1,
+    "ratio": 0.5
+  },
+  "focused": [
+    0
+  ]
+}

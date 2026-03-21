@@ -1,0 +1,29 @@
+# FAILED: Compilation failed: unterminated string literal (detected at line 25) (<string>, line 25)
+# Direction: Change the FK blend normalization from `(pw + ew)` to `max(pw, ew)` to prevent high-confidence featu
+
+def experimental_pred_fn(state: dict, global_mult: GlobalMultipliers,
+                   fk_buckets: FeatureKeyBuckets,
+                   multi_store=None,
+                   variance_regime: str = None,
+                   obs_expansion_radius: int = None) -> np.ndarray:
+    """Production prediction with auto-loaded best params.
+
+    Args:
+        obs_expansion_radius: Maximum distance from initial settlements where
+            settlements were observed during exploration. If provided, suppresses
+            settlement predictions beyond this radius.
+    """
+    grid = np.array(state['grid'])
+    settlements = state['settlements']
+
+    # 1. Feature Keys
+    fkeys = build_feature_keys(grid, settlements)
+    idx_grid, unique_keys = _build_feature_key_index(fkeys)
+
+    # 2. Calibration
+    cal = predict.get_calibration()
+    cal_params = {
+        'cal_fine_base': 1.0, 'cal_fine_divisor': 100.0, 'cal_fine_max': 5.0,
+        'cal_coarse_base': 0.5, 'cal_coarse_divisor': 100.0, 'cal_coarse_max': 2.0,
+        'cal_base_base': 0.1, 'cal_base_divisor': 100.0, 'cal
+    return probs

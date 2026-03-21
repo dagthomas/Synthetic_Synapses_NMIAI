@@ -1,0 +1,401 @@
+[
+  {
+    "name": "fk_prior=5_str=8",
+    "params": {
+      "fk_prior_weight": 5.0,
+      "fk_max_strength": 8.0
+    },
+    "scores": {
+      "round2": 88.87902754109946,
+      "round3": 87.68733579205967,
+      "round4": 91.62214808528554,
+      "avg": 89.3961704728149
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "fk_prior=4_str=10",
+    "params": {
+      "fk_prior_weight": 4.0,
+      "fk_max_strength": 10.0
+    },
+    "scores": {
+      "round2": 88.20919170229222,
+      "round3": 87.99220220175663,
+      "round4": 90.74332807896285,
+      "avg": 88.98157399433723
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "fk_min_count=10",
+    "params": {
+      "fk_min_count": 10
+    },
+    "scores": {
+      "round2": 88.04432027879193,
+      "round3": 87.83427163530628,
+      "round4": 89.8784680303695,
+      "avg": 88.5856866481559
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_power=0.45",
+    "params": {
+      "mult_power": 0.45
+    },
+    "scores": {
+      "round2": 86.94106626880647,
+      "round3": 88.92299720578372,
+      "round4": 89.41731647655553,
+      "avg": 88.42712665038191
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "floor=0.008",
+    "params": {
+      "floor_nonzero": 0.008
+    },
+    "scores": {
+      "round2": 87.50640539140593,
+      "round3": 87.9047003259213,
+      "round4": 89.77624136332719,
+      "avg": 88.39578236021815
+    },
+    "elapsed": 0.9
+  },
+  {
+    "name": "mult_power=0.5",
+    "params": {
+      "mult_power": 0.5
+    },
+    "scores": {
+      "round2": 86.49922842501164,
+      "round3": 89.46560715740053,
+      "round4": 89.15254558875777,
+      "avg": 88.37246039038997
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "baseline",
+    "params": {},
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.9
+  },
+  {
+    "name": "mult_sett_lo=0.10",
+    "params": {
+      "mult_sett_lo": 0.1
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_sett_lo=0.20",
+    "params": {
+      "mult_sett_lo": 0.2
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_sett_lo=0.05",
+    "params": {
+      "mult_sett_lo": 0.05
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_sett_hi=2.5",
+    "params": {
+      "mult_sett_hi": 2.5
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_sett_hi=3.0",
+    "params": {
+      "mult_sett_hi": 3.0
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_forest_lo=0.3",
+    "params": {
+      "mult_forest_lo": 0.3
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_forest_hi=2.0",
+    "params": {
+      "mult_forest_hi": 2.0
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_empty=0.65-1.35",
+    "params": {
+      "mult_empty_lo": 0.65,
+      "mult_empty_hi": 1.35
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_empty=0.85-1.15",
+    "params": {
+      "mult_empty_lo": 0.85,
+      "mult_empty_hi": 1.15
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "keep_mountain",
+    "params": {
+      "zero_mountain": false
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.9
+  },
+  {
+    "name": "keep_port_inland",
+    "params": {
+      "zero_port_inland": false
+    },
+    "scores": {
+      "round2": 87.25556819932227,
+      "round3": 88.1616073001889,
+      "round4": 89.6651074458104,
+      "avg": 88.36076098177386
+    },
+    "elapsed": 0.9
+  },
+  {
+    "name": "floor=0.010",
+    "params": {
+      "floor_nonzero": 0.01
+    },
+    "scores": {
+      "round2": 87.63826243691749,
+      "round3": 87.61884853148885,
+      "round4": 89.811062556477,
+      "avg": 88.35605784162777
+    },
+    "elapsed": 0.9
+  },
+  {
+    "name": "fk_prior=3_str=15",
+    "params": {
+      "fk_prior_weight": 3.0,
+      "fk_max_strength": 15.0
+    },
+    "scores": {
+      "round2": 87.17213170941372,
+      "round3": 88.1616073001889,
+      "round4": 89.64342766160462,
+      "avg": 88.32572222373574
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "fk_min_count=3",
+    "params": {
+      "fk_min_count": 3
+    },
+    "scores": {
+      "round2": 87.13646255029732,
+      "round3": 88.36503851487639,
+      "round4": 89.45736733510972,
+      "avg": 88.31962280009448
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "floor=0.003",
+    "params": {
+      "floor_nonzero": 0.003
+    },
+    "scores": {
+      "round2": 87.14525961562451,
+      "round3": 88.22701118354685,
+      "round4": 89.52284861581687,
+      "avg": 88.29837313832941
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "floor=0.002",
+    "params": {
+      "floor_nonzero": 0.002
+    },
+    "scores": {
+      "round2": 87.14525961562451,
+      "round3": 88.23945713131116,
+      "round4": 89.4952074553921,
+      "avg": 88.2933080674426
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "mult_power=0.35",
+    "params": {
+      "mult_power": 0.35
+    },
+    "scores": {
+      "round2": 87.44462468384621,
+      "round3": 87.15249957188337,
+      "round4": 89.89530741843453,
+      "avg": 88.16414389138804
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "combo_power035_sett010",
+    "params": {
+      "mult_power": 0.35,
+      "mult_sett_lo": 0.1
+    },
+    "scores": {
+      "round2": 87.44462468384621,
+      "round3": 87.15249957188337,
+      "round4": 89.89530741843453,
+      "avg": 88.16414389138804
+    },
+    "elapsed": 0.9
+  },
+  {
+    "name": "mult_power=0.3",
+    "params": {
+      "mult_power": 0.3
+    },
+    "scores": {
+      "round2": 87.51208321563666,
+      "round3": 85.85883491304081,
+      "round4": 90.10734296760127,
+      "avg": 87.82608703209291
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "combo_power03_floor003",
+    "params": {
+      "mult_power": 0.3,
+      "floor_nonzero": 0.003
+    },
+    "scores": {
+      "round2": 87.36349717527018,
+      "round3": 85.92822049316976,
+      "round4": 89.97167613460257,
+      "avg": 87.75446460101416
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "fk_prior=2_str=15",
+    "params": {
+      "fk_prior_weight": 2.0,
+      "fk_max_strength": 15.0
+    },
+    "scores": {
+      "round2": 85.81411621843829,
+      "round3": 88.12513508667753,
+      "round4": 88.06193677747788,
+      "avg": 87.33372936086455
+    },
+    "elapsed": 0.8
+  },
+  {
+    "name": "combo_fk2_15_power035",
+    "params": {
+      "fk_prior_weight": 2.0,
+      "fk_max_strength": 15.0,
+      "mult_power": 0.35
+    },
+    "scores": {
+      "round2": 86.17029722452581,
+      "round3": 87.34288753316699,
+      "round4": 88.31562256415813,
+      "avg": 87.27626910728365
+    },
+    "elapsed": 0.9
+  },
+  {
+    "name": "fk_prior=1.5_str=18",
+    "params": {
+      "fk_prior_weight": 1.5,
+      "fk_max_strength": 18.0
+    },
+    "scores": {
+      "round2": 84.8227523568143,
+      "round3": 87.92882606363158,
+      "round4": 86.88663116532032,
+      "avg": 86.54606986192205
+    },
+    "elapsed": 0.8
+  }
+]

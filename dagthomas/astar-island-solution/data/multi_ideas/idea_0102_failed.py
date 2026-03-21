@@ -1,0 +1,74 @@
+# FAILED: Crashed on round2 seed 0: name 'probs' is not defined
+# Direction: Adjust the settlement class calibration weight from 1.0 to 1.08 to more heavily weight empirical buc
+
+def experimental_pred_fn(state: dict, global_mult: GlobalMultipliers,
+                   fk_buckets: FeatureKeyBuckets,
+                   multi_store=None,
+                   variance_regime: str = None,
+                   obs_expansion_radius: int = None) -> np.ndarray:
+    if hasattr(predict, '_load_params'):
+        p = predict._load_params()
+    else:
+        p = {"prior_w": 2.0, "emp_max": 5.0, "base_power": 0.5}
+        
+    grid = np.array(state['grid'])
+    settlements = state['settlements']
+
+    # 1. Feature Keys
+    fkeys = build_feature_keys(grid, settlements)
+    idx_grid, unique_keys = _build_feature_key_index(fkeys)
+
+    # 2. Calibration
+    cal = predict.get_calibration()
+    cal_params = {
+        'cal_fine_base': 1.0, 'cal_fine_divisor': 100.0, 'cal_fine_max': 5.0,
+        'cal_coarse_base': 0.5, 'cal_coarse_divisor': 100.0, 'cal_coarse_max': 2.0,
+        'cal_base_base': 0.1, 'cal_base_divisor': 100.0, 'cal_base_max': 1.0,
+        'cal_global_weight': 0.01,
+    }
+    priors = build_calibration_lookup(cal, unique_keys, cal_params)
+
+    # 3. Empirical
+    if fk_buckets is not None and hasattr(fk_buckets, 'get_empirical'):
+        empiricals, counts = build_fk_empirical_lookup(fk_buckets, unique_keys, min_count=5)
+    else:
+        empiricals = np.zeros((len(unique_keys), NUM_CLASSES), dtype=float)
+        counts = np.zeros(len(unique_keys), dtype=float)
+
+    # Ratio
+    if global_mult is not None and hasattr(global_mult, 'observed') and global_mult.observed.sum() > 0:
+        obs = global_mult.observed
+        exp_arr = global_mult.expected
+    else:
+        obs = np.ones(NUM_CLASSES)
+        exp_arr = np.ones(NUM_CLASSES)
+    exp_arr = np.maximum(exp_arr, 1e-6)
+    ratio = obs / exp_arr
+
+    # 4. Vectorized FK blending
+    prior_w = p.get("prior_w", 2.0)
+    emp_max = p.get("emp_max", 5.0)
+    if variance_regime == 'EXTREME_BOOM':
+        prior_w = max(prior_w - 0.5, 0.5)
+        emp_max = emp_max * 1.2
+
+    pred = priors[idx_grid]
+    emp_grid = empiricals[idx_grid]
+    cnt_grid = counts[idx_grid]
+    has_fk = cnt_grid >= 5
+
+    strengths = np.minimum(emp_max, np.sqrt(cnt_grid))
+    
+    emp_weights = np.ones(NUM_CLASSES)
+    emp_weights[1] = 1.08
+    
+    blended = pred * prior_w + emp_grid * strengths[:, :, np.newaxis] * emp_weights
+    blended /= np.maximum(blended.sum(axis=-1, keepdims=True), 1e-10)
+    pred = np.where(has_fk[:, :, np.newaxis], blended, pred)
+
+    # 5. Global multiplier
+    bp = p.get("base_power", 0.5)
+    mult = np.power(ratio, bp)
+    mult[1] = np.power(ratio[1], bp)
+    mult[2] = np.power(ratio[2], bp)
+    return probs

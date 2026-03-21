@@ -1,0 +1,332 @@
+[
+  {
+    "yolo": "sz1536_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 72671,
+    "det_mAP": 0.9839399813098236,
+    "cls_mAP": 0.9642042420250699,
+    "combined": 0.9780192595243975
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 83617,
+    "det_mAP": 0.9839412489289863,
+    "cls_mAP": 0.9640536752683558,
+    "combined": 0.977974976830797
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 84152,
+    "det_mAP": 0.9839367166513695,
+    "cls_mAP": 0.9640429208508831,
+    "combined": 0.9779685779112235
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.5_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 65679,
+    "det_mAP": 0.9838518432082054,
+    "cls_mAP": 0.9640981556444749,
+    "combined": 0.9779257369390861
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.5_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 76112,
+    "det_mAP": 0.9839200197660599,
+    "cls_mAP": 0.963990943459588,
+    "combined": 0.9779412968741183
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.5_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 76598,
+    "det_mAP": 0.9839141548855793,
+    "cls_mAP": 0.9639830348214805,
+    "combined": 0.9779348188663497
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.7_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 82856,
+    "det_mAP": 0.9835326306294451,
+    "cls_mAP": 0.9615606014197458,
+    "combined": 0.9769410218665352
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.7_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 94609,
+    "det_mAP": 0.9836492205249391,
+    "cls_mAP": 0.9621240254691829,
+    "combined": 0.9771916620082122
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.7_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 95219,
+    "det_mAP": 0.98364443896758,
+    "cls_mAP": 0.9621154201511596,
+    "combined": 0.9771857333226538
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.45_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 62855,
+    "det_mAP": 0.9838379801314218,
+    "cls_mAP": 0.961729774390734,
+    "combined": 0.9772055184092154
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.45_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 73116,
+    "det_mAP": 0.9837416603076571,
+    "cls_mAP": 0.9615696804721857,
+    "combined": 0.9770900663570157
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.45_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 73581,
+    "det_mAP": 0.9837347145855497,
+    "cls_mAP": 0.961561801223819,
+    "combined": 0.9770828405770304
+  },
+  {
+    "yolo": "sz1536_c0.005_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 49357,
+    "det_mAP": 0.9839399813098236,
+    "cls_mAP": 0.9634838361645024,
+    "combined": 0.9778031377662273
+  },
+  {
+    "yolo": "sz1536_c0.005_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 54650,
+    "det_mAP": 0.9839412489289863,
+    "cls_mAP": 0.9632913128554175,
+    "combined": 0.9777462681069156
+  },
+  {
+    "yolo": "sz1536_c0.005_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 55037,
+    "det_mAP": 0.9839367166513695,
+    "cls_mAP": 0.9632865158543219,
+    "combined": 0.9777416564122552
+  },
+  {
+    "yolo": "sz1536_c0.0005_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 73933,
+    "det_mAP": 0.9839399813098236,
+    "cls_mAP": 0.9642042420250699,
+    "combined": 0.9780192595243975
+  },
+  {
+    "yolo": "sz1536_c0.0005_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 84879,
+    "det_mAP": 0.9839412489289863,
+    "cls_mAP": 0.9640536752683558,
+    "combined": 0.977974976830797
+  },
+  {
+    "yolo": "sz1536_c0.0005_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 85414,
+    "det_mAP": 0.9839367166513695,
+    "cls_mAP": 0.9640429208508831,
+    "combined": 0.9779685779112235
+  },
+  {
+    "yolo": "sz1536_c0.01_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 42779,
+    "det_mAP": 0.9839399813098236,
+    "cls_mAP": 0.9631787740906237,
+    "combined": 0.9777116191440636
+  },
+  {
+    "yolo": "sz1536_c0.01_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 46977,
+    "det_mAP": 0.9839412489289863,
+    "cls_mAP": 0.962988642212394,
+    "combined": 0.9776554669140085
+  },
+  {
+    "yolo": "sz1536_c0.01_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 47262,
+    "det_mAP": 0.9839367166513695,
+    "cls_mAP": 0.9629875506560582,
+    "combined": 0.977651966852776
+  },
+  {
+    "yolo": "sz1280_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 66735,
+    "det_mAP": 0.9835896345267493,
+    "cls_mAP": 0.9623728324572831,
+    "combined": 0.9772245939059094
+  },
+  {
+    "yolo": "sz1280_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 76838,
+    "det_mAP": 0.983510515022025,
+    "cls_mAP": 0.9618861365902235,
+    "combined": 0.9770232014924846
+  },
+  {
+    "yolo": "sz1280_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 77323,
+    "det_mAP": 0.9835022863843133,
+    "cls_mAP": 0.9618834988105762,
+    "combined": 0.9770166501121921
+  },
+  {
+    "yolo": "sz1920_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 83352,
+    "det_mAP": 0.9806409365273597,
+    "cls_mAP": 0.9548019445008208,
+    "combined": 0.972889238919398
+  },
+  {
+    "yolo": "sz1920_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 95898,
+    "det_mAP": 0.9804459335628749,
+    "cls_mAP": 0.9566097267423944,
+    "combined": 0.9732950715167308
+  },
+  {
+    "yolo": "sz1920_c0.001_i0.6_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 96510,
+    "det_mAP": 0.9804372557301497,
+    "cls_mAP": 0.9565873560061793,
+    "combined": 0.9732822858129585
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.6_augFalse",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 54760,
+    "det_mAP": 0.9828880316334231,
+    "cls_mAP": 0.959368392454684,
+    "combined": 0.9758321398798013
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.6_augFalse",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 62601,
+    "det_mAP": 0.9829177906519192,
+    "cls_mAP": 0.9584569670667749,
+    "combined": 0.9755795435763759
+  },
+  {
+    "yolo": "sz1536_c0.001_i0.6_augFalse",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 62933,
+    "det_mAP": 0.9829063957778923,
+    "cls_mAP": 0.9584475869503188,
+    "combined": 0.9755687531296202
+  },
+  {
+    "yolo": "sz1920_c0.001_i0.5_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "yolo_trust",
+    "n_preds": 74246,
+    "det_mAP": 0.9807328007645362,
+    "cls_mAP": 0.9563466121870449,
+    "combined": 0.9734169441912888
+  },
+  {
+    "yolo": "sz1920_c0.001_i0.5_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.3,
+    "blend": "default",
+    "n_preds": 86219,
+    "det_mAP": 0.9805718044229764,
+    "cls_mAP": 0.9573650896401966,
+    "combined": 0.9736097899881424
+  },
+  {
+    "yolo": "sz1920_c0.001_i0.5_augTrue",
+    "top_k": 2,
+    "bg_reject": 0.5,
+    "blend": "default",
+    "n_preds": 86774,
+    "det_mAP": 0.9805609888628614,
+    "cls_mAP": 0.9573430027520532,
+    "combined": 0.9735955930296188
+  }
+]

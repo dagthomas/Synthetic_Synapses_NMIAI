@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: ./tui
+      dockerfile: Dockerfile
+    ports:
+      - "7091:7091"
+    volumes:
+      # Mount data and .env to match the expected directory structure:
+      #   /app/tui/  = workdir
+      #   /app/.env  = ../.env from workdir
+      #   /app/data/ = ../data from workdir
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+      - ./best_params.json:/app/best_params.json:ro
+    environment:
+      - GCP_ACCESS_TOKEN=${GCP_ACCESS_TOKEN}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "7092:7092"
+    environment:
+      - PORT=7092
+      - HOST=0.0.0.0
+      # Server-side: SvelteKit node server -> Go API container
+      - PUBLIC_GO_API_INTERNAL=http://api:7091
+      # Browser-side: user's browser -> host-mapped Go API port
+      - PUBLIC_GO_API_PUBLIC=http://localhost:7091
+    depends_on:
+      - api
+    restart: unless-stopped

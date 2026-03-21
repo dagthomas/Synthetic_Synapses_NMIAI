@@ -1,0 +1,106 @@
+[
+  {
+    "config": "v1_local_solo",
+    "n_preds": 68192,
+    "det_mAP": 0.9829004077891856,
+    "cls_mAP": 0.95710799735128,
+    "combined": 0.975162684657814,
+    "time_s": 45.203532457351685
+  },
+  {
+    "config": "cloud_s42_solo",
+    "n_preds": 61029,
+    "det_mAP": 0.9876278690365966,
+    "cls_mAP": 0.9724178972240993,
+    "combined": 0.9830648774928474,
+    "time_s": 40.11562252044678
+  },
+  {
+    "config": "cloud_s123_solo",
+    "n_preds": 61206,
+    "det_mAP": 0.9881002740976786,
+    "cls_mAP": 0.9666812456260389,
+    "combined": 0.9816745655561866,
+    "time_s": 39.60334753990173
+  },
+  {
+    "config": "cloud_v3_s7_solo",
+    "n_preds": 54966,
+    "det_mAP": 0.9889155647409573,
+    "cls_mAP": 0.9781067352501518,
+    "combined": 0.9856729158937156,
+    "time_s": 38.38521957397461
+  },
+  {
+    "config": "rtdetr_x_solo",
+    "n_preds": 988,
+    "det_mAP": 0.0,
+    "cls_mAP": 0.0,
+    "combined": 0.0,
+    "time_s": 18.783631563186646
+  },
+  {
+    "config": "rtdetr_x_fixed_solo",
+    "n_preds": 13333,
+    "det_mAP": 0.0,
+    "cls_mAP": 0.0,
+    "combined": 0.0,
+    "time_s": 18.222867012023926
+  },
+  {
+    "config": "hires_solo",
+    "n_preds": 179116,
+    "det_mAP": 0.9207294158792185,
+    "cls_mAP": 0.8499314267771111,
+    "combined": 0.8994900191485863,
+    "time_s": 61.42786765098572
+  },
+  {
+    "config": "BASELINE_v1+rtdetr",
+    "n_preds": 100036,
+    "det_mAP": 0.9816112146802823,
+    "cls_mAP": 0.9391879470897032,
+    "combined": 0.9688842344031086,
+    "time_s": 74.63115382194519
+  },
+  {
+    "config": "cloud42+rtdetr_fixed",
+    "n_preds": 94419,
+    "det_mAP": 0.9861845211145362,
+    "cls_mAP": 0.972612214957234,
+    "combined": 0.9821128292673456,
+    "time_s": 73.39435625076294
+  },
+  {
+    "config": "cloud42+rtdetr_orig",
+    "n_preds": 87712,
+    "det_mAP": 0.9867854965262041,
+    "cls_mAP": 0.9524551360996922,
+    "combined": 0.9764863883982504,
+    "time_s": 72.40881443023682
+  },
+  {
+    "config": "cloudv3_s7+rtdetr_fixed",
+    "n_preds": 81666,
+    "det_mAP": 0.9874027535926183,
+    "cls_mAP": 0.9828964239380421,
+    "combined": 0.9860508546962454,
+    "time_s": 70.85624694824219
+  },
+  {
+    "config": "3model_v1+cloud42+rtdetr_fixed",
+    "n_preds": 127011,
+    "det_mAP": 0.9878959889835331,
+    "cls_mAP": 0.9745041380968174,
+    "combined": 0.9838784337175184,
+    "time_s": 98.2363932132721
+  },
+  {
+    "config": "hires+rtdetr_fixed",
+    "n_preds": 252097,
+    "det_mAP": 0.9080513151803976,
+    "cls_mAP": 0.8442635714698234,
+    "combined": 0.8889149920672252,
+    "time_s": 107.92985892295837
+  }
+]
