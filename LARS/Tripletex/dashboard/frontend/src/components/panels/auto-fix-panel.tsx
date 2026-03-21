@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react"
 import { useTasks, useLanguages } from "@/hooks/use-api"
-import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix } from "@/lib/api"
+import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix, streamLiveEval } from "@/lib/api"
 import type {
   AutoFixEvent,
   AutoFixScore,
@@ -11,6 +11,8 @@ import type {
   LastEvalResult,
   FieldCheck,
   ToolCall,
+  LiveEvalEvent,
+  LiveLogExplanation,
 } from "@/types/api"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
@@ -34,9 +36,12 @@ import {
   Check,
   Rocket,
   ListChecks,
+  ClipboardCopy,
+  Play,
+  Zap,
 } from "lucide-react"
 
-type Mode = "tasks" | "batch" | "single"
+type Mode = "tasks" | "live" | "batch" | "single"
 
 export function AutoFixPanel() {
   const [mode, setMode] = useState<Mode>("tasks")
@@ -59,6 +64,18 @@ export function AutoFixPanel() {
           >
             <ListChecks className="h-3 w-3" />
             Tasks
+          </button>
+          <button
+            onClick={() => setMode("live")}
+            className={cn(
+              "h-7 px-3 rounded-md text-[12px] font-medium transition-all duration-150 flex items-center gap-1",
+              mode === "live"
+                ? "bg-emerald-500/20 text-emerald-700 shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Zap className="h-3 w-3" />
+            Live
           </button>
           <button
             onClick={() => setMode("batch")}
@@ -87,7 +104,425 @@ export function AutoFixPanel() {
         </div>
       </PageHeader>
 
-      {mode === "tasks" ? <TaskPickerView /> : mode === "batch" ? <BatchAutoFixView /> : <SingleAutoFixView />}
+      {mode === "tasks" ? <TaskPickerView /> : mode === "live" ? <LiveSubmissionsView /> : mode === "batch" ? <BatchAutoFixView /> : <SingleAutoFixView />}
+    </div>
+  )
+}
+
+// ── Live Submissions View ────────────────────────────────────────────
+
+interface LiveLogResult {
+  logId: number
+  taskType: string
+  passed: boolean
+  reasoning: string
+  issues: string[]
+  apiCalls: number
+  apiErrors: number
+  runLogJson: string
+  explanation?: LiveLogExplanation
+}
+
+function LiveSubmissionsView() {
+  const [running, setRunning] = useState(false)
+  const [autoFix, setAutoFix] = useState(false)
+  const [logLimit, setLogLimit] = useState(50)
+  const controllerRef = useRef<AbortController | null>(null)
+
+  // State
+  const [results, setResults] = useState<LiveLogResult[]>([])
+  const [totalLogs, setTotalLogs] = useState(0)
+  const [progress, setProgress] = useState(0)
+  const [currentLog, setCurrentLog] = useState("")
+  const [doneMessage, setDoneMessage] = useState("")
+  const [errorMessage, setErrorMessage] = useState("")
+  const [expandedLog, setExpandedLog] = useState<number | null>(null)
+  const [copiedLogId, setCopiedLogId] = useState<number | null>(null)
+
+  // Fix state
+  const [fixHistory, setFixHistory] = useState<{ taskType: string; fixes: AutoFixApplyResult[] }[]>([])
+  const [fixingType, setFixingType] = useState("")
+
+  const passedCount = useMemo(() => results.filter(r => r.passed).length, [results])
+  const failedCount = useMemo(() => results.filter(r => !r.passed).length, [results])
+
+  const handleStart = useCallback(() => {
+    setResults([])
+    setDoneMessage("")
+    setErrorMessage("")
+    setFixHistory([])
+    setFixingType("")
+    setExpandedLog(null)
+    setRunning(true)
+
+    controllerRef.current = streamLiveEval(
+      0, // since_id=0 → all recent
+      logLimit,
+      autoFix,
+      (event: LiveEvalEvent) => {
+        switch (event.type) {
+          case "live_start":
+            setTotalLogs(event.total)
+            break
+
+          case "evaluating":
+            setCurrentLog(`#${event.log_id} ${event.task_type}`)
+            setProgress(((event.index) / event.total) * 100)
+            break
+
+          case "log_result":
+            setProgress(prev => prev + (100 / totalLogs || 1))
+            setResults(prev => [...prev, {
+              logId: event.log_id,
+              taskType: event.task_type,
+              passed: event.passed,
+              reasoning: event.reasoning,
+              issues: event.issues,
+              apiCalls: event.api_calls,
+              apiErrors: event.api_errors,
+              runLogJson: JSON.stringify(event.run_log, null, 2),
+              explanation: event.explanation,
+            }])
+            break
+
+          case "eval_error":
+            setResults(prev => [...prev, {
+              logId: event.log_id,
+              taskType: event.task_type,
+              passed: false,
+              reasoning: event.error,
+              issues: [],
+              apiCalls: 0,
+              apiErrors: 0,
+              runLogJson: "",
+            }])
+            break
+
+          case "fixing":
+            setFixingType(event.task_type)
+            break
+
+          case "fixes_applied":
+            setFixHistory(prev => [...prev, { taskType: event.task_type, fixes: event.results }])
+            setFixingType("")
+            break
+
+          case "fix_error":
+            setFixingType("")
+            toast.error(`Fix error (${event.task_type}): ${event.error}`)
+            break
+
+          case "live_done":
+            setDoneMessage(event.message)
+            setCurrentLog("")
+            setProgress(100)
+            break
+        }
+      },
+      () => setRunning(false),
+      (err) => {
+        setErrorMessage(err)
+        setRunning(false)
+      }
+    )
+  }, [logLimit, autoFix, totalLogs])
+
+  const handleStop = useCallback(() => {
+    controllerRef.current?.abort()
+    setRunning(false)
+  }, [])
+
+  const handleCopyLog = useCallback((logId: number, json: string) => {
+    navigator.clipboard.writeText(json)
+    setCopiedLogId(logId)
+    toast.success("Run log copied to clipboard")
+    setTimeout(() => setCopiedLogId(null), 2000)
+  }, [])
+
+  // Group results by task type
+  const byTaskType = useMemo(() => {
+    const map = new Map<string, LiveLogResult[]>()
+    for (const r of results) {
+      const arr = map.get(r.taskType) || []
+      arr.push(r)
+      map.set(r.taskType, arr)
+    }
+    return Array.from(map.entries()).sort(([, a], [, b]) => {
+      const aFail = a.filter(r => !r.passed).length
+      const bFail = b.filter(r => !r.passed).length
+      return bFail - aFail
+    })
+  }, [results])
+
+  return (
+    <div className="space-y-4">
+      {/* Controls */}
+      <Card className="shadow-premium">
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                <Zap className="h-4 w-4 text-emerald-700" />
+              </div>
+              <div>
+                <p className="text-[13px] font-semibold">Live Submissions</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Submit on app.ainm.no, then evaluate results here. Auto-fix failures.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <label className="text-[11px] text-muted-foreground">Logs</label>
+                <input
+                  type="number" min={1} max={200} value={logLimit}
+                  onChange={e => setLogLimit(Math.max(1, parseInt(e.target.value) || 50))}
+                  disabled={running}
+                  className="w-14 h-7 text-[12px] text-center tabular-nums border rounded-md bg-background"
+                />
+              </div>
+              <label className="flex items-center gap-1.5 text-[12px]">
+                <input
+                  type="checkbox" checked={autoFix}
+                  onChange={e => setAutoFix(e.target.checked)}
+                  disabled={running}
+                  className="rounded"
+                />
+                Auto-fix
+              </label>
+              {running ? (
+                <Button variant="destructive" size="sm" onClick={handleStop}>Stop</Button>
+              ) : (
+                <Button
+                  onClick={handleStart}
+                  className="h-9 px-5 font-semibold bg-gradient-to-r from-emerald-500 to-teal-500 hover:shadow-lg hover:shadow-emerald-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  <Zap className="h-4 w-4 mr-2" />
+                  Evaluate Submissions
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Progress */}
+          {(running || doneMessage) && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-[12px]">
+                <div className="flex items-center gap-2">
+                  {running && <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />}
+                  {doneMessage ? (
+                    <span className="font-medium">{doneMessage}</span>
+                  ) : fixingType ? (
+                    <span className="text-muted-foreground">
+                      Fixing <span className="font-medium text-foreground">{fixingType}</span>...
+                    </span>
+                  ) : currentLog ? (
+                    <span className="text-muted-foreground">
+                      Evaluating <span className="font-medium text-foreground">{currentLog}</span>
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Starting...</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 tabular-nums">
+                  {passedCount > 0 && <span className="text-emerald-600 font-semibold">{passedCount} pass</span>}
+                  {failedCount > 0 && <span className="text-red-600 font-semibold">{failedCount} fail</span>}
+                  {totalLogs > 0 && <span className="text-muted-foreground">{results.length}/{totalLogs}</span>}
+                </div>
+              </div>
+              <Progress value={progress} className="h-2" />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Error */}
+      {errorMessage && (
+        <Card className="border-red-200 bg-red-50/50">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-2">
+              <XCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+              <p className="text-[13px] text-red-700">{errorMessage}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Results by task type */}
+      {byTaskType.length > 0 && (
+        <Card className="shadow-premium">
+          <CardContent className="p-0">
+            <div className="px-4 py-2.5 border-b bg-muted/20 flex items-center justify-between">
+              <span className="text-[12px] font-semibold text-muted-foreground">
+                Submission Results
+              </span>
+              <div className="flex items-center gap-2">
+                <Badge className="bg-emerald-500 text-[10px]">{passedCount} passed</Badge>
+                {failedCount > 0 && <Badge variant="destructive" className="text-[10px]">{failedCount} failed</Badge>}
+              </div>
+            </div>
+            <div className="divide-y">
+              {byTaskType.map(([taskType, logs]) => {
+                const tp = logs.filter(r => r.passed).length
+                const tf = logs.filter(r => !r.passed).length
+                const allPass = tf === 0
+                return (
+                  <div key={taskType}>
+                    <button
+                      onClick={() => setExpandedLog(expandedLog === logs[0].logId ? null : logs[0].logId)}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-4 py-2.5 text-[12px] transition-colors",
+                        allPass ? "hover:bg-emerald-50/60" : "hover:bg-red-50/60"
+                      )}
+                    >
+                      {allPass ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                      )}
+                      <span className="font-medium flex-1 text-left">{taskType}</span>
+                      <span className="tabular-nums text-muted-foreground">{tp}/{tp + tf}</span>
+                      {expandedLog === logs[0].logId ? (
+                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                      )}
+                    </button>
+                    {expandedLog === logs[0].logId && (
+                      <div className="px-4 pb-3 space-y-2">
+                        {logs.map(r => (
+                          <LiveLogRow
+                            key={r.logId}
+                            result={r}
+                            onCopyJson={() => handleCopyLog(r.logId, r.runLogJson)}
+                            copied={copiedLogId === r.logId}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Fix History */}
+      {fixHistory.length > 0 && (
+        <Card className="shadow-premium border-orange-200">
+          <CardContent className="p-4 space-y-3">
+            <h3 className="text-[14px] font-semibold flex items-center gap-2">
+              <FileCode className="h-4 w-4 text-orange-500" />
+              Applied Fixes ({fixHistory.reduce((s, f) => s + f.fixes.filter(a => a.applied).length, 0)})
+            </h3>
+            <div className="space-y-2">
+              {fixHistory.map((fh, i) => (
+                <div key={i} className="rounded-lg border p-3 space-y-1.5">
+                  <span className="text-[12px] font-medium">{fh.taskType}</span>
+                  {fh.fixes.map((a, j) => (
+                    <div key={j} className={cn("text-[11px] px-2 py-1 rounded", a.applied ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
+                      {a.applied ? <><CheckCircle2 className="h-3 w-3 inline mr-1" />{a.file}: {a.reason}</> : <><AlertTriangle className="h-3 w-3 inline mr-1" />{a.file}: {a.error}</>}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+function LiveLogRow({
+  result,
+  onCopyJson,
+  copied,
+}: {
+  result: LiveLogResult
+  onCopyJson: () => void
+  copied: boolean
+}) {
+  const [showDetails, setShowDetails] = useState(!result.passed)
+
+  return (
+    <div className={cn(
+      "rounded-lg border p-3 space-y-2",
+      result.passed ? "border-emerald-200 bg-emerald-50/30" : "border-red-200 bg-red-50/30"
+    )}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {result.passed ? (
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+          ) : (
+            <XCircle className="h-3.5 w-3.5 text-red-500" />
+          )}
+          <span className="text-[12px] font-medium">{result.passed ? "PASS" : "FAIL"}</span>
+          <span className="text-[11px] font-mono text-muted-foreground">#{result.logId}</span>
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {result.apiCalls} calls
+            {result.apiErrors > 0 && <span className="text-red-500"> ({result.apiErrors} err)</span>}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {result.runLogJson && (
+            <Button variant="outline" size="sm" onClick={onCopyJson} className="h-6 text-[10px] gap-1 px-2">
+              {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <ClipboardCopy className="h-3 w-3" />}
+              Copy JSON
+            </Button>
+          )}
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {showDetails ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Reasoning */}
+      <p className="text-[11px] text-muted-foreground">{result.reasoning}</p>
+
+      {/* Expanded details */}
+      {showDetails && result.explanation && (
+        <div className="space-y-1.5 pt-1 border-t border-red-200/50">
+          {/* Issues */}
+          {result.issues.length > 0 && (
+            <div className="space-y-0.5">
+              {result.issues.map((issue, i) => (
+                <p key={i} className="text-[11px] text-red-700 flex items-start gap-1.5">
+                  <span className="text-red-400 shrink-0">·</span>
+                  {issue}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* API errors */}
+          {result.explanation.api_errors.length > 0 && (
+            <div className="space-y-0.5">
+              <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wider">API Errors</p>
+              {result.explanation.api_errors.map((e, i) => (
+                <p key={i} className="text-[10px] text-red-600 font-mono">
+                  {e.method} {e.url} → {e.status}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* Failed tools */}
+          {result.explanation.failed_tools.length > 0 && (
+            <div className="space-y-0.5">
+              <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wider">Failed Tools</p>
+              {result.explanation.failed_tools.map((t, i) => (
+                <p key={i} className="text-[10px] text-red-600 font-mono">{t.tool}: {t.error}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -1042,6 +1477,7 @@ function SingleAutoFixView() {
 
   const [selectedTask, setSelectedTask] = useState("")
   const [selectedLang, setSelectedLang] = useState("")
+  const [autoApply, setAutoApply] = useState(false)
   const [running, setRunning] = useState(false)
   const [phase, setPhase] = useState("")
   const [phaseMessage, setPhaseMessage] = useState("")
@@ -1059,6 +1495,13 @@ function SingleAutoFixView() {
     tool_calls: ToolCall[]
     agent_response: string
   } | null>(null)
+  const [runLogJson, setRunLogJson] = useState<string>("")
+  const [explanation, setExplanation] = useState<{
+    summary: string
+    issues: string[]
+    api_errors: { method: string; url: string; status: number; response: string }[]
+    failed_tools: { tool: string; error: string }[]
+  } | null>(null)
   const [fixes, setFixes] = useState<AutoFixParsedFix[]>([])
   const [fixRawText, setFixRawText] = useState("")
   const [errorReport, setErrorReport] = useState("")
@@ -1069,11 +1512,15 @@ function SingleAutoFixView() {
   const [showReport, setShowReport] = useState(false)
   const [showToolCalls, setShowToolCalls] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [copiedJson, setCopiedJson] = useState(false)
+  const [fixing, setFixing] = useState(false)
 
   const controllerRef = useRef<AbortController | null>(null)
 
   const reset = useCallback(() => {
     setEvalResult(null)
+    setRunLogJson("")
+    setExplanation(null)
     setFixes([])
     setFixRawText("")
     setErrorReport("")
@@ -1083,6 +1530,8 @@ function SingleAutoFixView() {
     setPhaseMessage("")
     setShowReport(false)
     setShowToolCalls(false)
+    setCopiedJson(false)
+    setFixing(false)
   }, [])
 
   const handleRun = useCallback(() => {
@@ -1093,13 +1542,13 @@ function SingleAutoFixView() {
 
     reset()
     setRunning(true)
-    setPhase("generating")
-    setPhaseMessage("Starting...")
+    setPhase("running")
+    setPhaseMessage("Running submission...")
 
     controllerRef.current = streamAutoFix(
       selectedTask,
       selectedLang,
-      false,
+      autoApply,
       (event: AutoFixEvent) => {
         switch (event.type) {
           case "phase":
@@ -1118,6 +1567,17 @@ function SingleAutoFixView() {
               checks: event.checks,
               tool_calls: event.tool_calls,
               agent_response: event.agent_response,
+            })
+            break
+          case "run_log":
+            setRunLogJson(JSON.stringify(event.log, null, 2))
+            break
+          case "explanation":
+            setExplanation({
+              summary: event.summary,
+              issues: event.issues,
+              api_errors: event.api_errors,
+              failed_tools: event.failed_tools,
             })
             break
           case "fixes":
@@ -1139,7 +1599,47 @@ function SingleAutoFixView() {
         setRunning(false)
       }
     )
-  }, [selectedTask, selectedLang, reset])
+  }, [selectedTask, selectedLang, autoApply, reset])
+
+  // Manual "Auto Fix Task" trigger — runs with auto_apply=true
+  const handleAutoFix = useCallback(() => {
+    if (!selectedTask) return
+    setFixing(true)
+    setFixes([])
+    setFixRawText("")
+    setErrorReport("")
+    setApplyResults([])
+
+    controllerRef.current = streamAutoFix(
+      selectedTask,
+      selectedLang,
+      true, // auto_apply = true
+      (event: AutoFixEvent) => {
+        switch (event.type) {
+          case "phase":
+            setPhase(event.phase)
+            setPhaseMessage(event.message)
+            break
+          case "fixes":
+            setFixes(event.parsed_fixes)
+            setFixRawText(event.raw_text)
+            setErrorReport(event.report)
+            break
+          case "applied":
+            setApplyResults(event.results)
+            break
+          case "error":
+            setErrorMessage(event.message)
+            break
+        }
+      },
+      () => setFixing(false),
+      (err) => {
+        setErrorMessage(err)
+        setFixing(false)
+      }
+    )
+  }, [selectedTask, selectedLang])
 
   const handleApply = useCallback(async () => {
     if (fixes.length === 0) return
@@ -1156,9 +1656,18 @@ function SingleAutoFixView() {
     }
   }, [fixes])
 
+  const handleCopyJson = useCallback(() => {
+    if (!runLogJson) return
+    navigator.clipboard.writeText(runLogJson)
+    setCopiedJson(true)
+    toast.success("Run log copied to clipboard")
+    setTimeout(() => setCopiedJson(false), 2000)
+  }, [runLogJson])
+
   const handleStop = useCallback(() => {
     controllerRef.current?.abort()
     setRunning(false)
+    setFixing(false)
   }, [])
 
   if (tasksLoading) {
@@ -1172,6 +1681,7 @@ function SingleAutoFixView() {
 
   const passedChecks = evalResult?.checks.filter((c) => c.passed) ?? []
   const isPerfect = evalResult?.score.correctness === 1
+  const isRunningOrFixing = running || fixing
 
   return (
     <div>
@@ -1187,7 +1697,7 @@ function SingleAutoFixView() {
               <select
                 value={selectedTask}
                 onChange={(e) => setSelectedTask(e.target.value)}
-                disabled={running}
+                disabled={isRunningOrFixing}
                 className="w-full h-9 px-3 rounded-lg border border-border bg-background text-[13px] focus:outline-none focus:ring-2 focus:ring-primary/20"
               >
                 <option value="">Select task...</option>
@@ -1213,7 +1723,7 @@ function SingleAutoFixView() {
               <select
                 value={selectedLang}
                 onChange={(e) => setSelectedLang(e.target.value)}
-                disabled={running}
+                disabled={isRunningOrFixing}
                 className="w-full h-9 px-3 rounded-lg border border-border bg-background text-[13px] focus:outline-none focus:ring-2 focus:ring-primary/20"
               >
                 <option value="">Random</option>
@@ -1226,9 +1736,21 @@ function SingleAutoFixView() {
               </select>
             </div>
 
+            {/* Auto-fix toggle */}
+            <label className="flex items-center gap-1.5 text-[12px] pb-1.5">
+              <input
+                type="checkbox"
+                checked={autoApply}
+                onChange={(e) => setAutoApply(e.target.checked)}
+                disabled={isRunningOrFixing}
+                className="rounded"
+              />
+              Auto-fix on fail
+            </label>
+
             {/* Buttons */}
             <div className="flex gap-2">
-              {running ? (
+              {isRunningOrFixing ? (
                 <Button variant="destructive" size="sm" onClick={handleStop}>
                   Stop
                 </Button>
@@ -1236,19 +1758,19 @@ function SingleAutoFixView() {
                 <Button
                   onClick={handleRun}
                   disabled={!selectedTask}
-                  className="h-9 px-5 font-semibold bg-gradient-to-r from-orange-500 to-amber-500 hover:shadow-lg hover:shadow-orange-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                  className="h-9 px-5 font-semibold bg-gradient-to-r from-blue-500 to-cyan-500 hover:shadow-lg hover:shadow-blue-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all"
                 >
-                  <Wrench className="h-4 w-4 mr-2" />
-                  Run & Analyze
+                  <Play className="h-4 w-4 mr-2" />
+                  Run Submission
                 </Button>
               )}
             </div>
           </div>
 
           {/* Progress indicator */}
-          {running && (
+          {isRunningOrFixing && (
             <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin text-orange-500" />
+              <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
               <span>{phaseMessage}</span>
             </div>
           )}
@@ -1267,43 +1789,57 @@ function SingleAutoFixView() {
         </Card>
       )}
 
-      {/* Eval Result */}
+      {/* LLM Verdict Card */}
       {evalResult && (
-        <Card className="mb-4 shadow-premium">
+        <Card className={cn("mb-4 shadow-premium", isPerfect ? "border-emerald-200" : "border-red-200")}>
           <CardContent className="p-5 space-y-4">
+            {/* Verdict header */}
             <div className="flex items-center justify-between">
-              <h3 className="text-[14px] font-semibold flex items-center gap-2">
-                {isPerfect ? (
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
-                )}
-                Eval Result
-              </h3>
               <div className="flex items-center gap-3">
+                <div className={cn(
+                  "h-10 w-10 rounded-xl flex items-center justify-center",
+                  isPerfect ? "bg-emerald-100" : "bg-red-100"
+                )}>
+                  {isPerfect ? (
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  ) : (
+                    <XCircle className="h-5 w-5 text-red-600" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-[15px] font-bold">
+                    {isPerfect ? "PASS" : "FAIL"} — LLM Eval
+                  </h3>
+                  <p className="text-[12px] text-muted-foreground">
+                    {evalResult.elapsed}s · {evalResult.api_calls} API calls
+                    {evalResult.api_errors > 0 && (
+                      <span className="text-red-500"> · {evalResult.api_errors} errors</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
                 <Badge
                   variant={isPerfect ? "default" : "destructive"}
-                  className={cn(
-                    "text-[12px] font-bold",
-                    isPerfect && "bg-emerald-500"
-                  )}
+                  className={cn("text-[13px] font-bold px-3 py-1", isPerfect && "bg-emerald-500")}
                 >
                   {(evalResult.score.correctness * 100).toFixed(0)}%
                 </Badge>
-                <span className="text-[12px] text-muted-foreground tabular-nums">
-                  {evalResult.score.final_score}/{evalResult.score.max_possible}
-                </span>
-                <span className="text-[12px] text-muted-foreground tabular-nums">
-                  {evalResult.elapsed}s
-                </span>
-                <span className="text-[12px] text-muted-foreground tabular-nums">
-                  {evalResult.api_calls} calls
-                  {evalResult.api_errors > 0 && (
-                    <span className="text-red-500 ml-1">
-                      ({evalResult.api_errors} errors)
-                    </span>
-                  )}
-                </span>
+                {runLogJson && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyJson}
+                    className="h-8 gap-1.5"
+                  >
+                    {copiedJson ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-500" />
+                    ) : (
+                      <ClipboardCopy className="h-3.5 w-3.5" />
+                    )}
+                    Copy JSON
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1315,10 +1851,75 @@ function SingleAutoFixView() {
               <p className="text-[13px]">{evalResult.prompt}</p>
             </div>
 
+            {/* Explanation — only on failure */}
+            {explanation && (
+              <div className="rounded-lg border border-red-200 bg-red-50/50 p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                  <div className="space-y-2 flex-1">
+                    <p className="text-[13px] font-medium text-red-800">{explanation.summary}</p>
+
+                    {/* Issues */}
+                    {explanation.issues.length > 0 && (
+                      <div className="space-y-0.5">
+                        {explanation.issues.map((issue, i) => (
+                          <p key={i} className="text-[12px] text-red-700 flex items-start gap-1.5">
+                            <span className="text-red-400 shrink-0">·</span>
+                            {issue}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* API errors */}
+                    {explanation.api_errors.length > 0 && (
+                      <div className="space-y-0.5 mt-1">
+                        <p className="text-[11px] font-semibold text-red-600 uppercase tracking-wider">API Errors</p>
+                        {explanation.api_errors.map((e, i) => (
+                          <p key={i} className="text-[11px] text-red-600 font-mono">
+                            {e.method} {e.url} → {e.status}
+                            {e.response && <span className="text-red-400 ml-1">({e.response.slice(0, 80)})</span>}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Failed tools */}
+                    {explanation.failed_tools.length > 0 && (
+                      <div className="space-y-0.5 mt-1">
+                        <p className="text-[11px] font-semibold text-red-600 uppercase tracking-wider">Failed Tool Calls</p>
+                        {explanation.failed_tools.map((t, i) => (
+                          <p key={i} className="text-[11px] text-red-600 font-mono">
+                            {t.tool}: {t.error}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Auto Fix button — only when not auto-applying and no fixes generated yet */}
+                {!autoApply && fixes.length === 0 && !fixing && (
+                  <div className="flex items-center gap-3 pt-2 border-t border-red-200">
+                    <Button
+                      onClick={handleAutoFix}
+                      className="h-9 px-5 font-semibold bg-gradient-to-r from-orange-500 to-amber-500 hover:shadow-lg hover:shadow-orange-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                    >
+                      <Zap className="h-4 w-4 mr-2" />
+                      Auto Fix Task
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">
+                      Analyze errors and generate code fixes
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Field Checks */}
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Field Checks ({passedChecks.length}/{evalResult.checks.length} passed)
+                Checks ({passedChecks.length}/{evalResult.checks.length} passed)
               </p>
               <div className="space-y-1">
                 {evalResult.checks.map((c, i) => (
@@ -1337,12 +1938,8 @@ function SingleAutoFixView() {
                       <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
                     )}
                     <span className="font-medium w-[160px] shrink-0">{c.field}</span>
-                    <span className="flex-1 truncate text-muted-foreground">
-                      {c.detail}
-                    </span>
-                    <span className="tabular-nums font-medium shrink-0">
-                      {c.points}/{c.max}
-                    </span>
+                    <span className="flex-1 truncate text-muted-foreground">{c.detail}</span>
+                    <span className="tabular-nums font-medium shrink-0">{c.points}/{c.max}</span>
                   </div>
                 ))}
               </div>
@@ -1354,40 +1951,27 @@ function SingleAutoFixView() {
                 onClick={() => setShowToolCalls(!showToolCalls)}
                 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
               >
-                {showToolCalls ? (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5" />
-                )}
+                {showToolCalls ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                 Tool Calls ({evalResult.tool_calls.length})
               </button>
               {showToolCalls && (
                 <div className="mt-2 space-y-1">
                   {evalResult.tool_calls.map((tc, i) => {
-                    const isError =
-                      tc.result && tc.result.ok === false
+                    const isError = tc.result && tc.result.ok === false
                     return (
                       <div
                         key={i}
                         className={cn(
                           "px-3 py-1.5 rounded-md text-[12px] font-mono border",
-                          isError
-                            ? "bg-red-50 border-red-100"
-                            : "bg-muted/30 border-border/30"
+                          isError ? "bg-red-50 border-red-100" : "bg-muted/30 border-border/30"
                         )}
                       >
                         <span className="font-semibold">{tc.tool}</span>
                         <span className="text-muted-foreground ml-1">
-                          ({Object.entries(tc.args || {})
-                            .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-                            .join(", ")
-                            .slice(0, 150)}
-                          )
+                          ({Object.entries(tc.args || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ").slice(0, 150)})
                         </span>
                         {isError && tc.result?.error && (
-                          <div className="text-red-600 mt-0.5 text-[11px]">
-                            {tc.result.error.slice(0, 200)}
-                          </div>
+                          <div className="text-red-600 mt-0.5 text-[11px]">{tc.result.error.slice(0, 200)}</div>
                         )}
                       </div>
                     )
@@ -1399,12 +1983,8 @@ function SingleAutoFixView() {
             {/* Agent Response */}
             {evalResult.agent_response && (
               <div className="bg-muted/50 rounded-lg p-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                  Agent Response
-                </p>
-                <p className="text-[12px] text-muted-foreground">
-                  {evalResult.agent_response}
-                </p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Agent Response</p>
+                <p className="text-[12px] text-muted-foreground">{evalResult.agent_response}</p>
               </div>
             )}
           </CardContent>
@@ -1421,11 +2001,7 @@ function SingleAutoFixView() {
                 Suggested Fixes ({fixes.length})
               </h3>
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowReport(!showReport)}
-                >
+                <Button variant="outline" size="sm" onClick={() => setShowReport(!showReport)}>
                   {showReport ? "Hide" : "Show"} Error Report
                 </Button>
                 {applyResults.length === 0 && (
@@ -1435,39 +2011,25 @@ function SingleAutoFixView() {
                     disabled={applying}
                     className="bg-gradient-to-r from-orange-500 to-amber-500 hover:shadow-lg"
                   >
-                    {applying ? (
-                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                    ) : (
-                      <Wrench className="h-3.5 w-3.5 mr-1.5" />
-                    )}
+                    {applying ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5 mr-1.5" />}
                     Apply All Fixes
                   </Button>
                 )}
               </div>
             </div>
 
-            {/* Error Report (collapsible) */}
             {showReport && (
               <ScrollArea className="h-[300px] rounded-lg border bg-slate-950 p-4">
-                <pre className="text-[11px] text-slate-300 font-mono whitespace-pre-wrap">
-                  {errorReport}
-                </pre>
+                <pre className="text-[11px] text-slate-300 font-mono whitespace-pre-wrap">{errorReport}</pre>
               </ScrollArea>
             )}
 
-            {/* Individual fixes */}
             <div className="space-y-3">
               {fixes.map((fix, i) => (
-                <FixCard
-                  key={i}
-                  fix={fix}
-                  index={i}
-                  applyResult={applyResults[i]}
-                />
+                <FixCard key={i} fix={fix} index={i} applyResult={applyResults[i]} />
               ))}
             </div>
 
-            {/* Apply results summary */}
             {applyResults.length > 0 && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50">
                 {applyResults.every((r) => r.applied) ? (
@@ -1476,8 +2038,7 @@ function SingleAutoFixView() {
                   <AlertTriangle className="h-4 w-4 text-amber-500" />
                 )}
                 <span className="text-[13px]">
-                  {applyResults.filter((r) => r.applied).length}/{applyResults.length}{" "}
-                  fixes applied
+                  {applyResults.filter((r) => r.applied).length}/{applyResults.length} fixes applied
                 </span>
               </div>
             )}
@@ -1486,11 +2047,11 @@ function SingleAutoFixView() {
       )}
 
       {/* Done state with no fixes needed */}
-      {phase === "done" && !evalResult && !errorMessage && (
+      {phase === "done" && isPerfect && (
         <Card>
           <CardContent className="p-8 text-center">
             <CheckCircle2 className="h-8 w-8 text-emerald-500 mx-auto mb-2" />
-            <p className="text-[14px] font-medium">{phaseMessage}</p>
+            <p className="text-[14px] font-medium">All checks passed! No fixes needed.</p>
           </CardContent>
         </Card>
       )}
@@ -1501,10 +2062,32 @@ function SingleAutoFixView() {
           <CardContent className="p-4">
             <ExpandableSection title="Raw LLM Output">
               <ScrollArea className="h-[300px] rounded-lg border bg-slate-950 p-4">
-                <pre className="text-[11px] text-slate-300 font-mono whitespace-pre-wrap">
-                  {fixRawText}
-                </pre>
+                <pre className="text-[11px] text-slate-300 font-mono whitespace-pre-wrap">{fixRawText}</pre>
               </ScrollArea>
+            </ExpandableSection>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Run log JSON (collapsible) */}
+      {runLogJson && (
+        <Card className="mt-4">
+          <CardContent className="p-4">
+            <ExpandableSection title="Full Run Log (JSON)">
+              <div className="relative">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyJson}
+                  className="absolute top-2 right-2 z-10 h-7 gap-1"
+                >
+                  {copiedJson ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                  Copy
+                </Button>
+                <ScrollArea className="h-[400px] rounded-lg border bg-slate-950 p-4">
+                  <pre className="text-[11px] text-slate-300 font-mono whitespace-pre-wrap">{runLogJson}</pre>
+                </ScrollArea>
+              </div>
             </ExpandableSection>
           </CardContent>
         </Card>

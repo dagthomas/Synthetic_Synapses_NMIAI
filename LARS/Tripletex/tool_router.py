@@ -63,8 +63,7 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "create_supplier_invoice":     ["create_supplier", "create_incoming_invoice"],
     "project_invoice":             ["create_customer", "create_employee", "create_project",
                                     "create_product", "create_order", "create_invoice", "send_invoice"],
-    "create_project_with_pm":      ["create_customer", "create_employee", "create_project",
-                                    "create_product", "create_order", "create_invoice", "send_invoice"],
+    # create_project_with_pm merged into project_invoice (identical tools)
     # Tier 3 — complex
     "delete_travel_expense":  ["search_travel_expenses", "delete_travel_expense"],
     "delete_customer":        ["search_customers", "delete_customer"],
@@ -376,9 +375,9 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "facturar el proyecto", "faturar o projeto",
                          "facturer le projet"], [], 10),
 
-    # ── Create project with PM ──
-    ("create_project_with_pm", ["prosjektleder", "project manager",
-                                "jefe de proyecto", "gerente de projeto", "chef de projet", "projektleiter"],
+    # ── Create project with PM (routes to project_invoice — same tools) ──
+    ("project_invoice", ["prosjektleder", "project manager",
+                         "jefe de proyecto", "gerente de projeto", "chef de projet", "projektleiter"],
      [], 10),
 
     # ── Create project ──

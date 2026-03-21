@@ -277,6 +277,42 @@ def build_error_report(result: dict) -> str:
     lines.append(f"Correctness: {score['correctness']:.0%} ({verification['total_points']}/{verification['max_points']})")
     lines.append(f"Score: {score['final_score']}/{score['max_possible']}")
     lines.append(f"API calls: {result['api_calls']}, errors: {result['api_errors']}")
+
+    # Break down write vs read calls (only writes count for efficiency)
+    write_methods = {"POST", "PUT", "DELETE", "PATCH"}
+    write_calls = [e for e in api_log if e.get("method", "").upper() in write_methods]
+    read_calls = [e for e in api_log if e.get("method", "").upper() not in write_methods]
+    write_errors = [e for e in write_calls if e.get("status", 200) >= 400]
+    lines.append(f"Write calls (POST/PUT/DELETE/PATCH): {len(write_calls)} ({len(write_errors)} errors)")
+    lines.append(f"Read calls (GET): {len(read_calls)} (free, don't count for efficiency)")
+
+    # Optimal call count from TASK_INSTRUCTIONS
+    _OPTIMAL_WRITES = {
+        "create_employee": 1, "create_customer": 1, "create_product": 1,
+        "create_department": 1, "create_supplier": 1, "create_contact": 2,
+        "update_employee": 2, "update_customer": 2, "update_product": 2,
+        "update_supplier": 2, "update_department": 2, "update_contact": 3,
+        "create_invoice": 4, "create_multi_line_invoice": 6,
+        "create_project": 3, "create_travel_expense": 2,
+        "create_travel_expense_with_costs": 4, "invoice_with_payment": 5,
+        "create_credit_note": 5, "create_employee_with_employment": 2,
+        "create_supplier_invoice": 2, "project_invoice": 7,
+        "delete_travel_expense": 1, "delete_customer": 1, "delete_supplier": 1,
+        "delete_product": 1, "delete_department": 1, "delete_contact": 1,
+        "delete_employee": 1, "create_ledger_voucher": 1,
+        "reverse_voucher": 1, "reverse_payment": 1,
+        "delete_invoice": 5, "create_opening_balance": 1,
+        "create_dimension": 3, "bank_reconciliation": 2,
+        "process_invoice_file": 4, "salary": 3,
+    }
+    optimal = _OPTIMAL_WRITES.get(result["task_name"])
+    if optimal:
+        delta = len(write_calls) - optimal
+        if delta > 0:
+            lines.append(f"EFFICIENCY WARNING: {len(write_calls)} writes vs {optimal} optimal (+{delta} extra)")
+        else:
+            lines.append(f"Write efficiency: {len(write_calls)}/{optimal} (on target)")
+
     lines.append(f"Elapsed: {result['elapsed']:.1f}s")
     lines.append("")
 
@@ -341,10 +377,22 @@ def get_fix_suggestions(error_report: str, sources: dict[str, str]) -> str:
         source_context += f"\n\n=== {filename} ===\n{content}"
 
     system_prompt = """\
-You are an expert Python developer fixing bugs in a Tripletex API integration.
+You are an expert Python developer fixing bugs in a Tripletex API integration agent for a competition.
+
+SCORING RULES (critical context):
+- Correctness: field-by-field verification against Tripletex API. Must be 1.0 (perfect) to get efficiency bonus.
+- Efficiency bonus (only applies at perfect correctness): based on WRITE calls (POST/PUT/DELETE/PATCH) vs best known solution. GET requests are FREE and don't count. Every 4xx error reduces the bonus.
+- Max score = tier × 2 (e.g. Tier 2 task max = 4.0). Perfect correctness + optimal writes + zero errors = max score.
+- Best score per task is kept forever — bad runs don't hurt, only improvements count.
+
+PRIORITY ORDER for fixes:
+1. CORRECTNESS FIRST: Fix field mismatches, missing steps, wrong values. A non-perfect run scores 0 efficiency bonus.
+2. ELIMINATE 4xx ERRORS: Every 4xx error (400, 404, 422) on a write call reduces the efficiency bonus. Pre-validate inputs in tool code when possible.
+3. MINIMIZE WRITE CALLS: Remove unnecessary POST/PUT/DELETE/PATCH calls. GET calls are free — reading data to avoid a failed write is always worth it.
+4. NEVER add extra verification calls: Don't call GET after a successful create — the create response already has all data.
 
 You are given:
-1. An error report from running an eval task
+1. An error report from running an eval task (includes write vs read call breakdown)
 2. The source code of the relevant tool files
 
 Analyze the error report to understand what went wrong:
@@ -352,6 +400,7 @@ Analyze the error report to understand what went wrong:
 - API errors (4xx): the tool sent an invalid request to the Tripletex API
 - Tool call errors: the agent called a tool with wrong arguments
 - Missing tool calls: the agent didn't call a necessary tool
+- Extra write calls: unnecessary POST/PUT/DELETE beyond what the task requires
 
 Return your fix as concrete code changes. For each change:
 1. State the file to modify
@@ -375,6 +424,8 @@ Rules:
 - If the issue is in the agent instructions (wrong flow), suggest agent.py changes
 - If the issue is a tool not sending the right fields, fix the tool
 - If the fix requires a new parameter, update the function signature and docstring
+- NEVER suggest adding GET verification calls after creates — this wastes turns (even though GETs are free, they waste agent turns)
+- If a tool can pre-validate inputs (e.g. check postings balance) to avoid a 422, that's a good fix
 """
 
     user_msg = f"""\
@@ -383,7 +434,8 @@ Rules:
 === SOURCE CODE ==={source_context}
 
 Analyze the failures and suggest minimal code fixes.
-If the eval passed perfectly (100% correctness), say "No fixes needed."
+If the eval passed perfectly (100% correctness) AND write efficiency is on target, say "No fixes needed."
+If correctness is perfect but there are extra write calls or 4xx errors, suggest efficiency fixes (these affect the efficiency bonus).
 """
 
     response = client.models.generate_content(

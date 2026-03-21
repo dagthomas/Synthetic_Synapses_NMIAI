@@ -26,8 +26,9 @@ The sandbox usually starts empty. ALWAYS try to create entities first — NEVER 
 - EXCEPTION: Delete/reverse tasks and "pay existing invoice" tasks reference existing entities — use search tools for those.
 
 SCORING — your score depends on:
-- Correctness: every field must match exactly (names, emails, amounts, dates, roles)
-- Efficiency: fewer API calls = higher bonus. Every 4xx error reduces your bonus.
+- Correctness: every field must match exactly (names, emails, amounts, dates, roles). Must be perfect (1.0) to get ANY efficiency bonus.
+- Efficiency: only WRITE calls count (POST/PUT/DELETE/PATCH). GET requests are FREE. Every 4xx error reduces your bonus.
+- Priority: correctness first, then minimize write calls and avoid 4xx errors.
 
 CRITICAL FIELD RULES:
 - Preserve Norwegian characters (ae, oe, aa) exactly as given.
@@ -337,31 +338,10 @@ TASK: Update contact person (3 calls)
 - "kontaktperson" = contact person""",
 
     "create_invoice": """
-TASK: Create invoice (4-7 calls)
-This task handles various invoicing scenarios.
-
-1. General Invoice (4 calls):
-   Use this for simple invoices without explicit mention of projects, employees, or hours.
-   -> create_customer -> create_product -> create_order(customer_id, date, orderLines=[{{product_id, count}}]) -> create_invoice(date, dueDate, order_id)
-
-2. Project Invoice (6-7 calls):
-   Use this if the prompt mentions a 'project', 'hours', or an 'employee' whose hours are being registered.
-   CRITICAL: Follow these steps in order:
-   -> create_customer(name, organizationNumber)
-   -> create_employee(firstName, lastName, email, userType="STANDARD") # For the person whose hours are registered
-   -> create_project(name, customer_id, projectManagerId=employeeId if employee is also explicitly a PM, startDate, fixedPriceAmount=<total if fixed price>)
-      - If the employee is explicitly mentioned as a project manager, set userType="EXTENDED" for them. Otherwise, "STANDARD" is appropriate for an employee whose hours are tracked.
-      - The create_project tool auto-handles PM employment and entitlements internally.
-   -> create_product(name="<descriptive name>", priceExcludingVatCurrency=<hourly rate or item price>)
-   -> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": <quantity or hours>}}], project_id=project.id)
-      - CRITICAL: YOU MUST PASS project_id=project.id to link the order to the project.
-   -> create_invoice(invoiceDate, invoiceDueDate, order_id)
-
-COMMON RULES FOR ALL INVOICES:
+TASK: Create invoice (4-5 calls)
+-> create_customer -> create_product -> create_order(customer_id, date, orderLines=[{{product_id, count}}]) -> create_invoice(date, dueDate, order_id)
 - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
-- For "hours registered", the 'count' in orderLines should be the number of hours, and 'priceExcludingVatCurrency' for the product should be the hourly rate.
-- SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice. Otherwise, skip sending.
-""",
+- SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice. Otherwise, skip sending.""",
 
     "create_multi_line_invoice": """
 TASK: Create multi-line invoice (5-6 calls)
@@ -388,32 +368,7 @@ With project manager:
 Without PM:
 -> create_customer -> create_project(name, customer_id, startDate)""",
 
-    "create_project_with_pm": """
-TASK: Create project with project manager AND invoice milestone (6-7 calls)
-This task involves creating a project with a project manager and then invoicing a milestone payment based on the project's fixed price.
-
-1. Create Customer:
-   -> create_customer(name, organizationNumber)
-2. Create Project Manager Employee:
-   -> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED")
-      - !!! YOU MUST PASS userType="EXTENDED" !!! Without it, PM entitlements CANNOT be granted and the project will use a fallback PM.
-      - If create_employee returns an existing employee (email taken), use their ID directly.
-3. Create Project:
-   -> create_project(name, customer_id, projectManagerId=employeeId, startDate, fixedPriceAmount=<total project value if fixed price>)
-      - CRITICAL: If "fastpris"/"fixed price" is mentioned, pass fixedPriceAmount to create_project (e.g. fastpris 170650 -> fixedPriceAmount=170650).
-      - The create_project tool auto-handles PM employment and entitlements internally.
-      - Do NOT retry create_project if it fails with PM error — the tool auto-falls back to admin PM.
-4. Create Product for Milestone Payment:
-   -> create_product(name="Paiement d'étape", priceExcludingVatCurrency=<fixedPriceAmount * 0.25>)
-      - Calculate the milestone amount (e.g., 25% of the fixed price) and use it for priceExcludingVatCurrency.
-5. Create Order for Milestone:
-   -> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": 1}}], project_id=project.id)
-      - !!! YOU MUST PASS project_id=project.id !!! This links the order to the project.
-6. Create Invoice:
-   -> create_invoice(invoiceDate, invoiceDueDate, order_id)
-      - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate + 14 days (or invoiceDate if unclear).
-      - SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice.
-""",
+    # create_project_with_pm merged into project_invoice (identical tools + flow)
 
     "project_invoice": """
 TASK: Create project + invoice (6-7 calls)
@@ -425,8 +380,9 @@ TASK: Create project + invoice (6-7 calls)
 -> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": <quantity or hours>}}], project_id=project.id)
    !!! YOU MUST PASS project_id=project.id !!! This links the order to the project.
 -> create_invoice(invoiceDate, invoiceDueDate, order_id)
-- CRITICAL: "Fixed price"/"fastpris"/"precio fijo" = total project value. You MUST pass fixedPriceAmount to create_project (e.g. fastpris 316000 -> fixedPriceAmount=316000).
-- For hourly/time-based tasks: product price = hourly rate, count = number of hours. Total = rate × hours.
+- CRITICAL: "Fixed price"/"fastpris"/"precio fijo" = total project value. You MUST pass fixedPriceAmount to create_project.
+- For milestone/partial invoicing: product price = milestone amount (e.g. 25% of fixed price), count = 1.
+- For hourly/time-based tasks: product price = hourly rate, count = number of hours.
 - For fixed-price tasks: product price = invoiced amount, count = 1.
 - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate + 14 days (or invoiceDate if unclear).
 - SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice.

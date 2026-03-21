@@ -206,9 +206,23 @@ export interface AutoFixApplyResult {
   error?: string
 }
 
+export interface AutoFixApiError {
+  method: string
+  url: string
+  status: number
+  response: string
+}
+
+export interface AutoFixFailedTool {
+  tool: string
+  error: string
+}
+
 export type AutoFixEvent =
   | { type: "phase"; phase: string; message: string }
   | { type: "eval_result"; score: AutoFixScore; prompt: string; expected: Record<string, unknown>; language: string; api_calls: number; api_errors: number; elapsed: number; checks: FieldCheck[]; tool_calls: ToolCall[]; agent_response: string }
+  | { type: "run_log"; log: Record<string, unknown> }
+  | { type: "explanation"; summary: string; issues: string[]; api_errors: AutoFixApiError[]; failed_tools: AutoFixFailedTool[] }
   | { type: "fixes"; raw_text: string; parsed_fixes: AutoFixParsedFix[]; report: string }
   | { type: "applied"; results: AutoFixApplyResult[] }
   | { type: "error"; message: string }
@@ -324,6 +338,34 @@ export type AutoTestEvent =
   | { type: "scored"; log_id: number; task_type: string; correctness: number; intent_passed: boolean; total_points: number; max_points: number; checks: AutoTestFieldCheck[]; intent_reasoning: string }
   | { type: "error"; log_id: number; error: string }
   | { type: "batch_done"; total: number; passed: number; failed: number; avg_score: number }
+
+// Live eval types (real competition submissions)
+export interface LiveLogSummary {
+  id: number
+  task_type: string
+  prompt: string
+  api_calls: number
+  api_errors: number
+  created_at: string
+}
+
+export interface LiveLogExplanation {
+  summary: string
+  api_errors: AutoFixApiError[]
+  failed_tools: AutoFixFailedTool[]
+}
+
+export type LiveEvalEvent =
+  | { type: "live_start"; total: number; logs: LiveLogSummary[] }
+  | { type: "evaluating"; index: number; total: number; log_id: number; task_type: string; prompt: string }
+  | { type: "log_result"; log_id: number; task_type: string; passed: boolean; reasoning: string; issues: string[]; api_calls: number; api_errors: number; run_log: Record<string, unknown>; explanation?: LiveLogExplanation }
+  | { type: "eval_error"; log_id: number; task_type: string; error: string }
+  | { type: "fixing"; task_type: string; count: number; message: string }
+  | { type: "fixes"; task_type: string; parsed_fixes: AutoFixParsedFix[]; raw_text: string; report: string }
+  | { type: "fixes_applied"; task_type: string; results: AutoFixApplyResult[]; applied: number; total: number }
+  | { type: "fix_error"; task_type: string; error: string }
+  | { type: "no_fixes"; task_type: string }
+  | { type: "live_done"; total: number; passed: number; failed: number; message: string }
 
 // Log evaluation types
 export type LogEvalEvent =

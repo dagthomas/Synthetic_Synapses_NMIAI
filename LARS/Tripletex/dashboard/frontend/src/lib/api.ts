@@ -364,6 +364,54 @@ export function streamAutoTestBatch(
   return controller
 }
 
+// Live Eval (real competition submissions)
+export function streamLiveEval(
+  sinceId: number,
+  limit: number,
+  autoFix: boolean,
+  onEvent: (event: import("@/types/api").LiveEvalEvent) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+): AbortController {
+  const controller = new AbortController()
+  fetch("/api/auto-fix/live-eval", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ since_id: sinceId, limit, auto_fix: autoFix }),
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }))
+        onError(body.error || res.statusText)
+        return
+      }
+      const reader = res.body?.getReader()
+      if (!reader) { onError("No response body"); return }
+      const decoder = new TextDecoder()
+      let buffer = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data === "[DONE]") { onDone(); return }
+            try { onEvent(JSON.parse(data)) } catch { /* skip malformed */ }
+          }
+        }
+      }
+      onDone()
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError(String(err))
+    })
+  return controller
+}
+
 // Log Evaluation
 export function streamLogEval(
   solveLogId: number,

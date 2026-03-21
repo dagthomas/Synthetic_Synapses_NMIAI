@@ -368,8 +368,8 @@ async def auto_fix_run(req: AutoFixRequest):
             _find_relevant_sources,
         )
 
-        # Phase 1: Generating task
-        yield f"data: {json.dumps({'type': 'phase', 'phase': 'generating', 'message': 'Generating task prompt...'})}\n\n"
+        # Phase 1: Running submission
+        yield f"data: {json.dumps({'type': 'phase', 'phase': 'running', 'message': 'Running submission through agent...'})}\n\n"
 
         try:
             result = run_eval_with_logs(req.task_name, agent_url)
@@ -382,13 +382,66 @@ async def auto_fix_run(req: AutoFixRequest):
         verification = result["verification"]
         checks = verification.get("checks", [])
         failed_checks = [c for c in checks if not c["passed"]]
+        tool_calls = result.get("tool_calls", [])
+        api_log = result.get("api_log", [])
+        agent_response = result.get("agent_result", {}).get("agent_response", "")
 
-        # Phase 2: Eval result
-        yield f"data: {json.dumps({'type': 'eval_result', 'score': score, 'prompt': result['prompt'], 'expected': result['expected'], 'language': result['language'], 'api_calls': result['api_calls'], 'api_errors': result['api_errors'], 'elapsed': round(result['elapsed'], 1), 'checks': checks, 'tool_calls': result.get('tool_calls', [])[:20], 'agent_response': result.get('agent_result', {}).get('agent_response', '')[:500]}, default=str)}\n\n"
+        # Phase 2: LLM eval complete — send eval result
+        yield f"data: {json.dumps({'type': 'eval_result', 'score': score, 'prompt': result['prompt'], 'expected': result['expected'], 'language': result['language'], 'api_calls': result['api_calls'], 'api_errors': result['api_errors'], 'elapsed': round(result['elapsed'], 1), 'checks': checks, 'tool_calls': tool_calls[:20], 'agent_response': agent_response[:500]}, default=str)}\n\n"
+
+        # Send full run log for "Copy JSON" button
+        run_log = {
+            "task_name": result["task_name"],
+            "prompt": result["prompt"],
+            "tool_calls": tool_calls,
+            "api_log": api_log,
+            "api_calls": result["api_calls"],
+            "api_errors": result["api_errors"],
+            "agent_response": agent_response,
+            "elapsed": round(result["elapsed"], 1),
+            "verification": verification,
+            "score": score,
+        }
+        yield f"data: {json.dumps({'type': 'run_log', 'log': run_log}, default=str)}\n\n"
 
         # If perfect, no fixes needed
         if score["correctness"] == 1.0:
             yield f"data: {json.dumps({'type': 'phase', 'phase': 'done', 'message': 'All checks passed! No fixes needed.'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        # Build failure explanation from LLM eval
+        issues = [c["detail"] for c in failed_checks if c.get("detail")]
+        error_api_calls = [e for e in api_log if e.get("status", 200) >= 400]
+        failed_tools = [tc for tc in tool_calls if tc.get("result") and not tc["result"].get("ok")]
+
+        explanation_parts = []
+        # LLM verdict reasoning (from _llm_eval check)
+        llm_check = next((c for c in checks if c["field"] == "_llm_eval"), None)
+        if llm_check and not llm_check["passed"]:
+            explanation_parts.append(llm_check["detail"])
+        # Specific issues
+        issue_checks = [c for c in checks if c["field"] == "_issue"]
+        if issue_checks:
+            explanation_parts.append("Issues: " + "; ".join(c["detail"] for c in issue_checks))
+        # API errors
+        if error_api_calls:
+            explanation_parts.append(f"{len(error_api_calls)} API error(s): " + "; ".join(
+                f"{e.get('method')} {e.get('url', '?')[-60:]} → {e.get('status')}" for e in error_api_calls[:3]
+            ))
+        # Failed tool calls
+        if failed_tools:
+            explanation_parts.append(f"{len(failed_tools)} tool call error(s): " + "; ".join(
+                f"{tc['tool']}: {tc['result'].get('error', '')[:80]}" for tc in failed_tools[:3]
+            ))
+
+        explanation = " | ".join(explanation_parts) if explanation_parts else "Eval failed — see checks for details."
+
+        yield f"data: {json.dumps({'type': 'explanation', 'summary': explanation, 'issues': issues, 'api_errors': [{'method': e.get('method'), 'url': e.get('url', '')[-80:], 'status': e.get('status'), 'response': str(e.get('response', ''))[:200]} for e in error_api_calls[:5]], 'failed_tools': [{'tool': tc['tool'], 'error': tc['result'].get('error', '')[:200]} for tc in failed_tools[:5]]})}\n\n"
+
+        # If auto_apply is off, stop here — user can click "Auto Fix" manually
+        if not req.auto_apply:
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'awaiting_fix', 'message': 'Ready for auto-fix. Click Auto Fix Task to analyze and fix.'})}\n\n"
             yield "data: [DONE]\n\n"
             return
 
@@ -397,7 +450,7 @@ async def auto_fix_run(req: AutoFixRequest):
 
         try:
             report = build_error_report(result)
-            sources = _find_relevant_sources(result.get("tool_calls", []), req.task_name)
+            sources = _find_relevant_sources(tool_calls, req.task_name)
             fix_text = get_fix_suggestions(report, sources)
             fixes = parse_fixes(fix_text)
         except Exception as e:
@@ -408,8 +461,8 @@ async def auto_fix_run(req: AutoFixRequest):
         # Phase 4: Fix suggestions
         yield f"data: {json.dumps({'type': 'fixes', 'raw_text': fix_text, 'parsed_fixes': fixes, 'report': report})}\n\n"
 
-        # Phase 5: Auto-apply if requested
-        if req.auto_apply and fixes:
+        # Phase 5: Auto-apply
+        if fixes:
             yield f"data: {json.dumps({'type': 'phase', 'phase': 'applying', 'message': f'Applying {len(fixes)} fix(es)...'})}\n\n"
             try:
                 import os as _os
@@ -432,6 +485,205 @@ async def auto_fix_apply(fixes: list[dict]):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     results = await asyncio.to_thread(apply_fixes, fixes, base_dir)
     return {"ok": True, "results": results}
+
+
+class LiveEvalRequest(BaseModel):
+    since_id: int = 0  # only logs with id > since_id
+    limit: int = Field(50, ge=1, le=200)
+    auto_fix: bool = False  # if true, auto-fix failed logs
+
+
+@app.post("/api/auto-fix/live-eval")
+async def auto_fix_live_eval(req: LiveEvalRequest):
+    """SSE stream: fetch recent competition solve_logs, LLM-evaluate each, report pass/fail with explanation."""
+    base_url, token, agent_url = _get_credentials()
+    if not base_url or not token:
+        return JSONResponse(
+            {"error": "Set TRIPLETEX_BASE_URL and TRIPLETEX_SESSION_TOKEN env vars"},
+            status_code=400,
+        )
+
+    # Fetch recent competition logs
+    from contextlib import closing
+    with closing(db.get_conn()) as conn:
+        if req.since_id > 0:
+            rows = conn.execute(
+                """SELECT * FROM solve_logs
+                   WHERE source = 'competition' AND id > ?
+                   ORDER BY id DESC LIMIT ?""",
+                (req.since_id, req.limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM solve_logs
+                   WHERE source = 'competition'
+                   ORDER BY id DESC LIMIT ?""",
+                (req.limit,),
+            ).fetchall()
+    logs = [dict(r) for r in rows]
+
+    if not logs:
+        return JSONResponse({"error": "No competition logs found"}, 400)
+
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, default=str)}\n\n"
+
+    def _generate():
+        from auto_fixer import (
+            llm_evaluate_logs, build_error_report, get_fix_suggestions,
+            parse_fixes, apply_fixes, _find_relevant_sources,
+        )
+
+        total = len(logs)
+        yield _sse({"type": "live_start", "total": total, "logs": [
+            {"id": l["id"], "task_type": l.get("task_type", "unknown"),
+             "prompt": (l.get("prompt") or "")[:120],
+             "api_calls": l.get("api_calls", 0),
+             "api_errors": l.get("api_errors", 0),
+             "created_at": l.get("created_at", "")}
+            for l in logs
+        ]})
+
+        passed = 0
+        failed = 0
+        failed_logs = []
+
+        for idx, log_entry in enumerate(logs):
+            log_id = log_entry.get("id", 0)
+            task_type = log_entry.get("task_type", "unknown")
+            prompt = log_entry.get("prompt", "")
+            tool_calls = json.loads(log_entry.get("tool_calls_json") or "[]")
+            api_log = json.loads(log_entry.get("api_log_json") or "[]")
+            agent_response = log_entry.get("agent_response", "")
+            api_calls = log_entry.get("api_calls", 0)
+            api_errors_count = log_entry.get("api_errors", 0)
+
+            yield _sse({"type": "evaluating", "index": idx, "total": total,
+                         "log_id": log_id, "task_type": task_type,
+                         "prompt": prompt[:120]})
+
+            try:
+                verdict = llm_evaluate_logs(prompt, tool_calls, api_log, agent_response)
+            except Exception as e:
+                failed += 1
+                yield _sse({"type": "eval_error", "log_id": log_id,
+                             "task_type": task_type, "error": str(e)})
+                continue
+
+            # Build run log JSON for copy button
+            run_log = {
+                "log_id": log_id,
+                "task_type": task_type,
+                "prompt": prompt,
+                "tool_calls": tool_calls,
+                "api_log": api_log,
+                "api_calls": api_calls,
+                "api_errors": api_errors_count,
+                "agent_response": agent_response,
+            }
+
+            if verdict["passed"]:
+                passed += 1
+                yield _sse({"type": "log_result", "log_id": log_id,
+                             "task_type": task_type, "passed": True,
+                             "reasoning": verdict["reasoning"],
+                             "issues": [],
+                             "api_calls": api_calls,
+                             "api_errors": api_errors_count,
+                             "run_log": run_log})
+            else:
+                failed += 1
+                # Build explanation
+                error_api_calls = [e for e in api_log if e.get("status", 200) >= 400]
+                failed_tools = [tc for tc in tool_calls if tc.get("result") and not tc["result"].get("ok")]
+
+                yield _sse({"type": "log_result", "log_id": log_id,
+                             "task_type": task_type, "passed": False,
+                             "reasoning": verdict["reasoning"],
+                             "issues": verdict["issues"],
+                             "api_calls": api_calls,
+                             "api_errors": api_errors_count,
+                             "run_log": run_log,
+                             "explanation": {
+                                 "summary": verdict["reasoning"],
+                                 "api_errors": [{"method": e.get("method"), "url": e.get("url", "")[-80:],
+                                                 "status": e.get("status"),
+                                                 "response": str(e.get("response", ""))[:200]}
+                                                for e in error_api_calls[:5]],
+                                 "failed_tools": [{"tool": tc["tool"],
+                                                   "error": tc["result"].get("error", "")[:200]}
+                                                  for tc in failed_tools[:5]],
+                             }})
+                failed_logs.append({"log_id": log_id, "task_type": task_type,
+                                    "prompt": prompt, "tool_calls": tool_calls,
+                                    "api_log": api_log, "agent_response": agent_response})
+
+        # Auto-fix failed logs if requested
+        if req.auto_fix and failed_logs:
+            # Group by task_type for efficient fixing
+            by_type: dict[str, list] = {}
+            for fl in failed_logs:
+                by_type.setdefault(fl["task_type"], []).append(fl)
+
+            for task_type, type_logs in by_type.items():
+                yield _sse({"type": "fixing", "task_type": task_type,
+                             "count": len(type_logs),
+                             "message": f"Analyzing {task_type} ({len(type_logs)} failures)..."})
+
+                # Use the first failed log as representative for fix generation
+                rep = type_logs[0]
+                try:
+                    # Build error report from verdict
+                    report_lines = [
+                        f"=== LIVE EVAL REPORT: {task_type} ===",
+                        f"PROMPT: {rep['prompt']}",
+                        "", "=== TOOL CALLS ===",
+                    ]
+                    for i, tc in enumerate(rep["tool_calls"], 1):
+                        ok = tc.get("result", {}).get("ok", "?")
+                        report_lines.append(
+                            f"  #{i} [{'OK' if ok else 'ERROR'}] {tc.get('tool', '?')}"
+                            f"({json.dumps(tc.get('args', {}), ensure_ascii=False)[:200]})")
+                        if tc.get("result") and not tc.get("result", {}).get("ok"):
+                            report_lines.append(f"       Error: {tc['result'].get('error', '')[:300]}")
+                    report_lines.append("")
+                    report_lines.append(f"AGENT RESPONSE: {rep['agent_response'][:500]}")
+                    report = "\n".join(report_lines)
+
+                    sources = _find_relevant_sources(rep["tool_calls"], task_type)
+                    fix_text = get_fix_suggestions(report, sources)
+                    fixes = parse_fixes(fix_text)
+                except Exception as e:
+                    yield _sse({"type": "fix_error", "task_type": task_type,
+                                 "error": str(e)})
+                    continue
+
+                if not fixes:
+                    yield _sse({"type": "no_fixes", "task_type": task_type})
+                    continue
+
+                yield _sse({"type": "fixes", "task_type": task_type,
+                             "parsed_fixes": fixes, "raw_text": fix_text,
+                             "report": report})
+
+                # Apply fixes
+                try:
+                    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    apply_results = apply_fixes(fixes, base_dir)
+                    applied_count = sum(1 for r in apply_results if r.get("applied"))
+                    yield _sse({"type": "fixes_applied", "task_type": task_type,
+                                 "results": apply_results,
+                                 "applied": applied_count, "total": len(fixes)})
+                except Exception as e:
+                    yield _sse({"type": "fix_error", "task_type": task_type,
+                                 "error": str(e)})
+
+        yield _sse({"type": "live_done", "total": total, "passed": passed,
+                     "failed": failed,
+                     "message": f"Evaluated {total} logs: {passed} passed, {failed} failed"})
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
 
 
 @app.get("/api/auto-fix/last-results")
