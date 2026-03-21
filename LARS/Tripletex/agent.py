@@ -17,21 +17,6 @@ PROCESS — for every task:
    - NEVER summarize what you did in a long paragraph. Just say "Done." and stop.
    - Every extra API call after the task is complete REDUCES your efficiency score.
 
-CRITICAL — FRESH SANDBOX RULES:
-The sandbox usually starts empty. ALWAYS try to create entities first — NEVER search before creating.
-- If create_employee returns an existing employee (email already taken), use that employee's ID directly. Do NOT search again — the tool already found them for you.
-- If any other create fails with a duplicate error, use the ID from the error/response directly.
-- NEVER call search_employees, search_customers, or any search tool before creating.
-- EXCEPTION: Delete/reverse tasks and "pay existing invoice" tasks reference existing entities — use search tools for those.
-
-SEARCH RESULT MATCHING:
-- search_customers/search_suppliers/search_products may return MULTIPLE results. ALWAYS match by EXACT NAME before using an ID. NEVER blindly use the first result — it may be a different entity.
-
-SCORING — your score depends on:
-- Correctness: every field must match exactly (names, emails, amounts, dates, roles). Must be perfect (1.0) to get ANY efficiency bonus.
-- Efficiency: only WRITE calls count (POST/PUT/DELETE/PATCH). GET requests are FREE. Every 4xx error reduces your bonus.
-- Priority: correctness first, then minimize write calls and avoid 4xx errors.
-
 CRITICAL FIELD RULES:
 - Preserve Norwegian characters (ae, oe, aa) exactly as given.
 - Dates: use YYYY-MM-DD format. If no date given, use today's date: {today}.
@@ -297,23 +282,7 @@ When the prompt references attached files (PDF, CSV, images):
   → FIRST call extract_file_content(filename) to read the file
   → Extract relevant data (names, amounts, dates, line items)
   → Then execute the appropriate task using extracted values
-  → "vedlagt"/"attached"/"se vedlegg"/"ver PDF adjunto" = check for files
-
-KEY NORWEGIAN TERMS:
-- ansatt = employee, kunde = customer, leverandor = supplier, produkt = product
-- faktura = invoice, kreditnota = credit note, betaling = payment
-- reiseregning = travel expense, prosjekt = project, avdeling = department
-- bilag/voucher = voucher, korreksjon = correction, tilbakefore = reverse
-- kontoadministrator = account administrator (EXTENDED role)
-- organisasjonsnummer/org.nr = organization number
-- kontaktperson = contact person, prosjektleder = project manager
-- ansettelsesforhold = employment, permisjon = leave of absence
-- lønn = salary, arbeidstid = working hours, årsoppgjør = year-end
-- leverandørfaktura/inngående faktura = supplier/incoming invoice
-- bankavstemming = bank reconciliation, åpningsbalanse = opening balance
-- MVA = VAT, moms = VAT, diett = per diem, kjøregodtgjørelse = mileage allowance
-- adresse = address, postadresse = postal address, gateadresse = street address
-- postnummer = postal code, poststed = city, gate/vei = street"""
+  → "vedlagt"/"attached"/"se vedlegg"/"ver PDF adjunto" = check for files"""
 
 
 # ── Task-specific instructions ───────────────────────────────────────
@@ -461,64 +430,29 @@ Do NOT retry create_project if PM fails — the tool auto-falls back to admin PM
 """,
 
     "project_invoice": """
-TASK: Project invoice — create a project and invoice the customer.
+TASK: Project invoice — create project and invoice customer.
 
-This task has two main scenarios: Fixed-Price Milestone Payments or Hourly Projects.
-Identify which scenario applies based on the prompt.
+COMMON STEPS:
+1. create_customer(name, organizationNumber)
+2. create_employee(firstName, lastName, email, userType="EXTENDED") — use existing if email taken.
+3. create_project(name, customer_id, startDate="{today}", projectManagerId=employeeId, fixedPriceAmount=<if fixed price>, isInternal=<if internal>)
 
-COMMON STEPS (for both scenarios):
-STEP 1 — Create customer:
-→ create_customer(name, organizationNumber)
+SCENARIO A — FIXED-PRICE MILESTONE (when "Festpreis"/"fixed price" AND percentage mentioned):
+4. invoice_amount = fixedPriceAmount × (percentage / 100)
+5. create_product(name="Milestone Payment for <project>", priceExcludingVatCurrency=invoice_amount, vatPercentage=25)
+6. create_order(customer_id, deliveryDate="{today}", orderLines, project_id)
+7. create_invoice(invoiceDate="{today}", invoiceDueDate="{today}", order_id). Send if asked.
 
-STEP 2 — Create employee (Project Manager):
-→ create_employee(firstName, lastName, email, userType="EXTENDED")
-→ If create_employee returns an existing employee (email taken), use their ID directly.
+SCENARIO B — HOURLY PROJECT (when "hours"/"timer" AND "hourly rate"/"timepris" mentioned):
+4. create_project_participant(project_id, employee_id)
+5. create_hourly_cost_and_rate(employee_id, date="{today}", rate=<hourly_rate>)
+6. create_employment(employee_id, startDate="2026-01-01") → create_timesheet_entry(employee_id, date, hours, project_id, activity_name)
+7. total = hourly_rate × hours → create_product(name, priceExcludingVatCurrency=TOTAL, vatPercentage=25)
+   WARNING: price = rate × hours (TOTAL), NOT hourly rate alone! count=1 on order line.
+8. create_order → create_invoice. Send if asked.
 
-STEP 3 — Create project:
-→ create_project(name, customer_id, startDate="{today}", projectManagerId=employeeId, fixedPriceAmount=<total if fixed price>, isInternal=<True if internal project>)
-→ If "fastpris"/"fixed price"/"precio fijo"/"Festpreis" is EXPLICITLY mentioned, pass fixedPriceAmount.
-→ If "internal project"/"internt prosjekt" is mentioned, pass isInternal=True.
-→ The create_project tool auto-handles PM employment and entitlements internally.
-
-SCENARIO A: FIXED-PRICE MILESTONE PAYMENT (when "Festpreis"/"fixed price" AND a percentage to invoice are mentioned)
-After completing COMMON STEPS 1-3:
-STEP 4 — Calculate milestone invoice amount:
-→ Calculate: invoice_amount_ex_vat = fixedPriceAmount (from create_project response) * (percentage_to_invoice / 100)
-  Example: 350650 NOK fixed price, 25% to invoice → 350650 * 0.25 = 87662.5 NOK. This is priceExcludingVatCurrency.
-STEP 5 — Create product for milestone:
-→ create_product(name="Milestone Payment for <project name>", priceExcludingVatCurrency=<invoice_amount_ex_vat>, vatPercentage=25)
-STEP 6 — Create order:
-→ create_order(customer_id, deliveryDate="{today}", orderLines='[{{"product_id": <product_id from step 5>, "count": 1}}]', project_id=project_id)
-STEP 7 — Create invoice:
-→ create_invoice(invoiceDate="{today}", invoiceDueDate="{today}", order_id=order_id)
-→ If prompt says "send"/"envoyez"/"enviar"/"senden" → send_invoice(invoice_id)
-
-SCENARIO B: HOURLY PROJECT (when "hours"/"timer" AND "hourly rate"/"timepris" are mentioned)
-After completing COMMON STEPS 1-3:
-STEP 4 — Add employee as project participant (REQUIRED when registering hours):
-→ create_project_participant(project_id, employee_id)
-STEP 5 — Set hourly rate (REQUIRED when hourly rate is mentioned):
-→ create_hourly_cost_and_rate(employee_id, date="{today}", rate=<hourly_rate>)
-STEP 6 — Register hours (REQUIRED when hours are mentioned):
-→ create_employment(employee_id, startDate="2026-01-01") — employee MUST have employment before timesheet
-→ create_timesheet_entry(employee_id, date="{today}", hours=N, project_id=project_id, activity_name="<activity name from prompt>")
-→ If an activity name is mentioned (e.g., "Design", "Development", "Consulting"), pass activity_name=<name>.
-STEP 7 — Create invoice (CALCULATE TOTAL FIRST):
-→ FIRST compute: total_ex_vat = hourly_rate × hours.
-  Example: 1400 NOK/h × 38 hours = 53200 NOK. This is priceExcludingVatCurrency.
-→ create_product(name="<activity or project name>", priceExcludingVatCurrency=<total_ex_vat>, vatPercentage=25)
-  WARNING: priceExcludingVatCurrency is the TOTAL (rate×hours), NOT the hourly rate alone!
-→ create_order(customer_id, deliveryDate="{today}", orderLines='[{{"product_id": X, "count": 1}}]', project_id=project_id)
-→ create_invoice(invoiceDate="{today}", invoiceDueDate="{today}", order_id=order_id)
-→ If prompt says "send"/"envoyez"/"enviar"/"senden" → send_invoice(invoice_id)
-
-CRITICAL (for both scenarios):
-- invoiceDueDate REQUIRED. If not in prompt, set = invoiceDate.
-- Product price for hourly projects = hourly_rate × hours (the TOTAL, not the rate). count=1 on the order line.
-- Employee needs employment BEFORE timesheet entries (for hourly projects).
-- "taux horaire"/"taxa horária"/"timepris"/"hourly rate"/"tarifa por hora"/"Stundensatz" = price per hour.
-- "heures"/"horas"/"timer"/"hours"/"Stunden" = hours to register.
-- Always pass activity_name when the prompt specifies an activity (for hourly projects).
+invoiceDueDate REQUIRED — if not in prompt, set = invoiceDate.
+Employee needs employment BEFORE timesheet. "taux horaire"/"timepris"/"Stundensatz" = hourly rate.
 """,
 
     "create_travel_expense": """
@@ -527,26 +461,30 @@ TASK: Create travel expense (1 compound call)
 - The tool creates the employee AND travel expense in one call.""",
 
     "create_travel_expense_with_costs": """
-TASK: Travel expense with costs (multiple calls)
+TASK: Travel expense with costs (1 compound call preferred, or multiple calls)
 
-STEPS:
-1. Create employee:
-   → create_employee(firstName, lastName, email)
-2. Create travel expense report:
-   → create_travel_expense(employee_id=response.id, title, departureDate, returnDate)
-3. If per diem is specified, create per diem compensation:
-   → create_per_diem_compensation(travel_expense_id=response.id, location="Norge", rate=<DAILY_RATE_FROM_PROMPT_e.g._800_NOK>, count=<TRIP_DURATION_DAYS_FROM_PROMPT_e.g._5_days>)
-   - CRITICAL: You MUST extract the daily rate (e.g., "800 NOK per dag") and pass it as `rate`.
-   - CRITICAL: You MUST extract the trip duration (e.g., "5 days") and pass it as `count`. If not specified, `count=0` will auto-calculate from departure/return dates.
-   - For meal deductions: deduct_breakfast/lunch/dinner=True if mentioned.
-4. For each individual cost/expense, create a travel expense cost:
-   → create_travel_expense_cost(travel_expense_id=response.id, amount, category, comments, date)
-   - category MUST be one of: "transport", "food", "accommodation", "other".
-   - comments = human-readable description (e.g. "Flybillett", "Taxi", "Hotellopphold").
-5. If mileage is specified, create mileage allowance:
-   → create_mileage_allowance(travel_expense_id=response.id, date, km, departureLocation, destination)
-6. If accommodation allowance (nattillegg) is specified, create accommodation allowance:
-   → create_accommodation_allowance(travel_expense_id=response.id, count=<number_of_nights>, location, address)
+PREFERRED: Use process_travel_expense — it handles employee creation, travel expense, AND all costs in ONE call:
+  → process_travel_expense(employee_firstName, employee_lastName, employee_email, title, departureDate, returnDate,
+      costs='[{{"amount":500,"category":"transport","comments":"Flybillett","date":"2026-03-10"}}]',
+      per_diem_rate=800, per_diem_days=5, per_diem_location="Norge",
+      mileage_km=120, mileage_departure="Oslo", mileage_destination="Drammen",
+      accommodation_nights=3, accommodation_location="Oslo",
+      deduct_breakfast=False, deduct_lunch=False, deduct_dinner=False)
+
+PARAMETER MAPPING:
+- Per diem (diett/Tagegeld): per_diem_rate=<daily rate>, per_diem_days=<trip days>, per_diem_location=<location>
+- Costs (utlegg/Auslagen): costs='[{{"amount":X,"category":"transport|food|accommodation|other","comments":"description","date":"YYYY-MM-DD"}}]'
+- Mileage (kjøregodtgjørelse): mileage_km=<km>, mileage_departure=<from>, mileage_destination=<to>
+- Accommodation allowance (nattillegg): accommodation_nights=<nights>, accommodation_location=<location>
+- Meal deductions: deduct_breakfast/deduct_lunch/deduct_dinner=True if mentioned
+
+FALLBACK: If process_travel_expense is not available, use individual tools:
+1. create_employee(firstName, lastName, email)
+2. create_travel_expense(employee_id, title, departureDate, returnDate)
+3. create_per_diem_compensation(travel_expense_id, location, rate, count)
+4. create_travel_expense_cost(travel_expense_id, amount, category, comments, date)
+5. create_mileage_allowance(travel_expense_id, date, km, departureLocation, destination)
+6. create_accommodation_allowance(travel_expense_id, count, location, address)
 
 CRITICAL:
 - Extract ALL details from the prompt for each type of expense.
@@ -582,88 +520,40 @@ CRITICAL:
     "invoice_with_payment": """
 TASK: Register payment on an invoice (2-6 calls, up to 8 with currency/agio)
 
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-MANDATORY FIRST CHECK — before choosing ANY flow, scan the prompt for:
-  EUR, USD, GBP, "kurs", "valutakurs", "exchange rate", "agio", "disagio",
-  "valutadifferanse", "kursdifferanse", "gain de change", "perte de change",
-  "diferencia cambiaria", "wechselkursdifferenz"
-If ANY of these appear → you MUST use the FOREIGN CURRENCY / AGIO flow.
-Do NOT use the simple EXISTING INVOICE flow. Do NOT skip create_voucher.
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+MANDATORY FIRST CHECK — scan prompt for: EUR, USD, GBP, "kurs", "agio", "disagio",
+"valutadifferanse", "exchange rate", "gain de change", "wechselkursdifferenz".
+If ANY appear → MUST use FOREIGN CURRENCY flow. Do NOT skip create_voucher.
 
-STEP 1 — Determine if the invoice ALREADY EXISTS or must be created:
-- EXISTING signals: "vi sendte en faktura"/"we sent an invoice", "har en ubetalt faktura"/"has an unpaid invoice",
-  "kunden har betalt"/"the customer has paid", "a une facture impayée", "tiene una factura pendiente",
-  "hat eine unbezahlte Rechnung", "has an outstanding invoice", past tense about an invoice.
-- CREATE NEW signals: "opprett en faktura og registrer betaling", explicitly lists all details for a new invoice.
+STEP 1 — Determine if invoice EXISTS or must be CREATED:
+- EXISTING: "vi sendte en faktura", "har en ubetalt faktura", "has paid", past tense about invoice.
+- CREATE NEW: "opprett en faktura og registrer betaling", all details for new invoice provided.
 
-═══ EXISTING INVOICE flow — simple NOK payment only (3 calls) ═══
-Use this ONLY when there is NO foreign currency or exchange rate in the prompt.
-1. search_customers(name="<customer name>") — find the customer ID
-   - CRITICAL: search may return MULTIPLE customers. Match by EXACT NAME before using the ID. Do NOT blindly use the first result.
-2. search_invoices(invoiceDateFrom="2000-01-01", invoiceDateTo="2030-12-31", customerId=<customer_id>) — find their unpaid invoice
-   - Pick the invoice where amountOutstanding > 0
-   - The response already contains id, amount, amountOutstanding, amountCurrencyOutstanding — you have everything you need.
-   - If ALL invoices have amountOutstanding == 0, the invoice is ALREADY FULLY PAID.
-     STOP immediately and respond: "Invoice already paid (amountOutstanding=0)." Do NOT create new entities or call register_payment.
-3. register_payment(invoice_id=<invoice_id>, amount=<amountOutstanding>, paymentDate="{today}")
-   - CRITICAL: Use the amountOutstanding value from the search_invoices response as the payment amount.
-   - Do NOT use the amount from the prompt — it may be ex-VAT while amountOutstanding includes VAT.
-   - NEVER call register_payment with amount=0. If amountOutstanding is 0, the invoice is already paid — STOP.
+═══ EXISTING INVOICE flow (NOK only, 3 calls) ═══
+1. search_customers(name) — match by EXACT NAME, never blindly use first result.
+2. search_invoices(invoiceDateFrom="2000-01-01", invoiceDateTo="2030-12-31", customerId)
+   Pick invoice with amountOutstanding > 0. If all are 0 → already paid, STOP.
+3. register_payment(invoice_id, amount=amountOutstanding, paymentDate="{today}")
+   Use amountOutstanding from search (includes VAT). NEVER amount=0.
 
-═══ FOREIGN CURRENCY / AGIO flow (4-5 calls) — MANDATORY when prompt has currency signals ═══
-You MUST complete ALL 4 steps. Do NOT stop after register_payment — you MUST also create_voucher for the agio.
-
-WORKED EXAMPLE — "faktura 18391 EUR, gammel kurs 11.50, ny kurs 12.24":
-  invoiceNOK = 18391 * 11.50 = 211496.50   (original booking in NOK)
-  paymentNOK = 18391 * 12.24 = 225105.84   (what the customer actually paid in NOK)
-  agio       = 225105.84 - 211496.50 = 13609.34  (exchange gain for the company)
-  → register_payment(amount=225105.84, paidAmountCurrency=18391)
-  → create_voucher: debit 1500 +13609.34 (customerId!), credit 8060 -13609.34
-
-WORKED EXAMPLE 2 — "faktura 11219 EUR, kurs 10.02, betalt ved kurs 10.29":
-  invoiceNOK = 11219 * 10.02 = 112,414.38
-  paymentNOK = 11219 * 10.29 = 115,443.51
-  agio       = 115443.51 - 112414.38 = 3,029.13
-  → register_payment(amount=115443.51, paidAmountCurrency=11219)
-  → create_voucher: debit 1500 +3029.13 (customerId!), credit 8060 -3029.13
-
-Steps:
-1. search_customers(name) → search_invoices(customerId) — same as EXISTING flow
-   - Extract the foreign currency amount from the PROMPT (e.g. "18391 EUR", "11219 EUR")
-   - Extract both exchange rates from the PROMPT (old rate at invoice time, new rate at payment)
-2. Calculate ALL amounts using ONLY values from the PROMPT — NEVER use amountOutstanding from the system:
-   - invoiceNOK = foreign_currency_amount × old_exchange_rate
-   - paymentNOK = foreign_currency_amount × new_exchange_rate
-   - diff = paymentNOK − invoiceNOK
-   !!!! CRITICAL: The system's amountOutstanding may differ from invoiceNOK (sandbox stores EUR as NOK, VAT, etc.).
-        IGNORE the system amount. ALWAYS compute invoiceNOK and paymentNOK from the PROMPT's EUR amount and rates. !!!!
-3. register_payment(invoice_id, amount=paymentNOK, paymentDate, paidAmountCurrency=foreign_currency_amount)
-   - amount = paymentNOK (= foreign_currency_amount × new_exchange_rate) — NOT amountOutstanding!
-   - paidAmountCurrency = the foreign currency amount (e.g. 18391)
-4. Book the exchange rate difference with create_voucher — DO NOT SKIP THIS STEP:
-   - If diff > 0 (agio/gain — company receives more NOK than booked):
-     create_voucher(date=paymentDate, description="Agio valutadifferanse",
-       postings='[{{"accountNumber": "1500", "amount": <diff>, "customerId": <customer_id>}}, {{"accountNumber": "8060", "amount": -<diff>}}]')
-   - If diff < 0 (disagio/loss — company receives fewer NOK than booked):
-     create_voucher(date=paymentDate, description="Disagio valutadifferanse",
-       postings='[{{"accountNumber": "8160", "amount": <abs_diff>}}, {{"accountNumber": "1500", "amount": -<abs_diff>, "customerId": <customer_id>}}]')
-   - CRITICAL: Account 1500 (kundefordringer) REQUIRES customerId on the posting!
-   - Account 8060 = agiogevinst (exchange gain), Account 8160 = agiotap (exchange loss)
+═══ FOREIGN CURRENCY / AGIO flow (4-5 calls) ═══
+Must complete ALL steps including create_voucher.
+1. search_customers → search_invoices (same as above)
+2. Calculate from PROMPT values ONLY (never use system amountOutstanding):
+   invoiceNOK = foreign_amount × old_rate, paymentNOK = foreign_amount × new_rate, diff = paymentNOK − invoiceNOK
+   Example: 11219 EUR, old 10.02, new 10.29 → payment=115443.51, invoice=112414.38, agio=3029.13
+3. register_payment(invoice_id, amount=paymentNOK, paymentDate, paidAmountCurrency=foreign_amount)
+4. create_voucher for exchange difference — DO NOT SKIP:
+   Gain (diff>0): debit 1500 +diff (with customerId!), credit 8060 -diff
+   Loss (diff<0): debit 8160 +|diff|, credit 1500 -|diff| (with customerId!)
+   Account 1500 REQUIRES customerId. 8060=agiogevinst, 8160=agiotap.
 
 ═══ CREATE NEW flow (5-6 calls) ═══
-   - ONLY use this flow if the prompt explicitly asks to create a new invoice or provides all details for one.
-1. create_customer -> create_product -> create_order -> create_invoice
-2. register_payment(invoice_id, amount=<total including VAT>, paymentDate)
-   - Payment amount = total including VAT (price x quantity x 1.25 for 25% MVA)
+Only if prompt explicitly asks to create a new invoice.
+1. create_customer → create_product → create_order → create_invoice
+2. register_payment(invoice_id, amount=total incl VAT, paymentDate)
 
-CRITICAL RULES:
-- If the prompt implies an EXISTING invoice (past tense, "vi sendte", "has an unpaid invoice"), you MUST follow the EXISTING INVOICE flow and NEVER call create_customer, create_product, create_order, or create_invoice.
-- If the prompt mentions foreign currency/agio/exchange rate, you MUST use the FOREIGN CURRENCY flow — do NOT skip the create_voucher step.
-- You MUST call register_payment EXACTLY ONCE. NEVER call it more than once.
-- "paiement intégral"/"full betaling"/"full payment" = pay the ENTIRE amountOutstanding.
-- paymentDate: use the payment date from the prompt, or today's date if not specified.
-- NEVER call get_entity_by_id after search — the search result already has all needed data.""",
+RULES: Call register_payment EXACTLY ONCE. "paiement intégral"/"full betaling" = pay entire amountOutstanding.
+If EXISTING invoice → NEVER create_customer/product/order/invoice. If foreign currency → NEVER skip create_voucher.""",
 
     "create_credit_note": """
 TASK: Credit note (1 compound call)
@@ -843,88 +733,29 @@ CRITICAL RULES:
 - Each create_voucher needs a descriptive text identifying which error it corrects.""",
 
     "create_ledger_voucher": """
-TASK: Ledger correction voucher / Manual journal entry OR Supplier Invoice processing
+TASK: Ledger correction voucher / Manual journal entry
 
-If the prompt mentions "factura de proveedor", "supplier invoice", "leverandørfaktura", or "PDF adjunto",
-you MUST process it as a Supplier Invoice. Follow these steps:
+If prompt mentions "supplier invoice"/"leverandørfaktura"/"factura de proveedor" with a PDF,
+use the create_supplier_invoice task flow instead.
 
-    TASK: Supplier invoice / expense receipt (2-4 calls: extract_file_content + create_department + create_supplier + create_incoming_invoice)
-    STEPS:
-    1. Use extract_file_content(filename="<the attached file>") to read the attached PDF/receipt.
-    2. Extract ALL of the following from the PDF content:
-       - Supplier name and organization number (org.nr/organisasjonsnummer)
-       - Invoice date (fakturadato) in YYYY-MM-DD format
-       - Due date (forfallsdato) in YYYY-MM-DD format
-       - Invoice number (fakturanummer)
-       - Total amount INCLUDING VAT (totalt/total)
-       - VAT rate (MVA %, e.g. 25, 15, 12, or 0)
-       - Expense account number (konto, e.g. 6300, 6590, 6800)
-       - Bank account number (bankkonto/kontonummer) if present
-       - Line description (beskrivelse, e.g. "Nettverkstjenester", "Konsulenttjenester")
-       - Address (adresse) if present
-    3. If the prompt mentions a department (avdeling) to post the expense to:
-       → create_department(name="<department name>") — get the department ID from the response.
-    4. Create the supplier: create_supplier(name, organizationNumber, bankAccountNumber if available, addressLine1/postalCode/city if available).
-    5. Create the incoming invoice with ALL extracted fields:
-       create_incoming_invoice(invoiceDate=date, supplierId=supplier.id, invoiceNumber=invoiceRef,
-         amountIncludingVat=totalAmount, expenseAccountNumber=account, vatPercentage=vatRate,
-         dueDate=forfallsdato, lineDescription=description, departmentId=<dept_id if department requested>)
-    - "leverandorfaktura"/"inngaende faktura" = supplier/incoming invoice
-    - The tool auto-creates a voucher with expense debit (+ input VAT) and payables credit linked to supplier
-    - Common expense accounts: 4000=varekostnad, 6300=leie, 6540=inventar, 6590=annet driftsmateriale, 6800=kontorrekvisita, 7100=lonn
-    - Kontorstoler/office chairs/office furniture → 6540 (inventar og utstyr) or 6590 (annet driftsmateriale)
-    - VAT rates: 25 (standard/hoey), 15 (medium/mat), 12 (low/transport), 0 (exempt)
-    - amountIncludingVat is the TOTAL amount (including VAT) from the PDF
-    - CRITICAL: If the prompt specifies a department (e.g. "posted to department Produksjon"), create the department FIRST, then pass its ID as departmentId to create_incoming_invoice.
-    - CRITICAL: Extract the expense account number from the PDF content (e.g. "Konto: 6300" -> expenseAccountNumber=6300). If not in PDF, determine from item type.
-    - CRITICAL: Extract and pass the due date (forfallsdato) — this is required for scoring
-    - CRITICAL: Extract and pass the bank account number to create_supplier if present in the PDF
-    - CRITICAL: Extract and pass the line description (what the invoice is for) to lineDescription
+RULE #1 — N ERRORS = N SEPARATE VOUCHERS:
+Each error = one create_voucher call. NEVER combine corrections. Evaluator expects N separate vouchers.
 
-Otherwise (for manual ledger corrections):
+RULE #2 — SEARCH FIRST:
+Call get_ledger_postings(dateFrom, dateTo) to find existing postings and counter-accounts.
 
-    RULE #1 — N ERRORS = N SEPARATE VOUCHERS (THIS OVERRIDES ALL OTHER RULES):
-    When the prompt describes N errors/corrections, you MUST call create_voucher EXACTLY N times.
-    NEVER combine multiple corrections into one voucher. Each error = one separate create_voucher call.
-    Combining corrections into one voucher WILL FAIL scoring. The evaluator expects N separate vouchers.
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+RULE #3 — For each error, create_voucher with descriptive text, 2-3 postings, sum=0.
 
-    RULE #2 — SEARCH FIRST (overrides "fresh sandbox" rule for this task type):
-    Call get_ledger_postings(dateFrom, dateTo) FIRST to find existing postings and their counter-accounts.
-    This helps you verify the errors and find the correct counter-accounts.
+CORRECTION PATTERNS (each = ONE voucher):
+- Wrong account (A→B, amount X): Debit B +X, Credit A -X
+- Duplicate (account A, amount X): find counterpart C → Credit A -X, Debit C +X
+- Missing VAT (net booked, VAT missing): Debit 2710 +(net*0.25), Credit counterpart -(net*0.25)
+  If gross booked entirely to expense: VAT = gross/5. Debit 2710 +VAT, Credit expense -VAT
+- Wrong amount (A, recorded X vs correct Y): Credit A -(X-Y), Debit counterpart +(X-Y)
+- Overbooked: Credit expense -excess, Debit counterpart +excess
 
-    RULE #3 — EXECUTION:
-    For EACH error, call create_voucher separately with:
-      - A descriptive text identifying which specific error this corrects
-      - Only the 2-3 posting lines needed for THAT specific correction
-      - Postings MUST balance: sum of all amounts = 0
-      - Positive = debit, Negative = credit
-
-    CONCRETE EXAMPLE — 4 errors → EXACTLY 4 create_voucher calls:
-      Call 1: create_voucher(date, "Korreksjon: feil konto 7300→7000",
-        postings='[{{"accountNumber":"7000","amount":7300}},{{"accountNumber":"7300","amount":-7300}}]')
-      Call 2: create_voucher(date, "Korreksjon: duplikat konto 7000",
-        postings='[{{"accountNumber":"7000","amount":-4600}},{{"accountNumber":"1920","amount":4600}}]')
-      Call 3: create_voucher(date, "Korreksjon: manglende MVA konto 6540",
-        postings='[{{"accountNumber":"2710","amount":3900}},{{"accountNumber":"1920","amount":-3900}}]')
-      Call 4: create_voucher(date, "Korreksjon: feil beløp konto 6540",
-        postings='[{{"accountNumber":"6540","amount":-1800}},{{"accountNumber":"1920","amount":1800}}]')
-
-    CORRECTION PATTERNS (each is ONE voucher):
-      - **Wrong account (7300 used instead of 7000 for 3900 NOK):**
-        Debit correct (7000): +3900, Credit wrong (7300): -3900
-      - **Missing VAT (net booked, VAT line missing, bank underpaid):**
-        VAT = net_amount * 0.25. Debit 2710: +VAT, Credit 1920: -VAT
-      - **Missing VAT (gross booked entirely to expense, bank paid gross correctly):**
-        VAT = gross / 5. Debit 2710: +VAT, Credit expense: -VAT
-      - **Duplicate expense (6590, 1650 NOK):**
-        Credit 6590: -1650, Debit counter-account (e.g., 1920): +1650
-      - **Overbooked expense (6860, excess 17400):**
-        Credit 6860: -17400, Debit counter-account (e.g., 1920): +17400
-    - Common: 1920=bank, 1500=receivables (REQUIRES customerId!), 2400=payables (REQUIRES supplierId!)
-    - CRITICAL: Account 1500 postings REQUIRE "customerId", account 2400 postings REQUIRE "supplierId".
-
-    -> create_voucher(date, description, postings='[{{"accountNumber": "1920", "amount": 1000}}, {{"accountNumber": "456", "amount": -1000}}]')""",
+Positive=debit, negative=credit. Account 1500 REQUIRES customerId, 2400 REQUIRES supplierId.
+Common: 1920=bank, 1500=receivables, 2400=payables.""",
 
     "reverse_voucher": """
 TASK: Reverse voucher (2 calls)
@@ -952,46 +783,26 @@ TASK: Create opening balance (1 call)
 - "inngaende balanse"/"apningsbalanse"/"opening balance" """,
 
     "bank_reconciliation": """
-TASK: Bank reconciliation — match bank statement with invoices and book entries
+TASK: Bank reconciliation — match bank statement with invoices and book entries.
 
 STEPS:
-1. extract_file_content(filename) — use the EXACT filename from "Attached files:" line. NEVER guess filenames.
-2. Parse each line: date, description, amount (Inn=incoming, Ut/negative=outgoing)
+1. extract_file_content(filename) — use EXACT filename from "Attached files:" line.
+2. Parse each line: date, description, amount (Inn=incoming, Ut/negative=outgoing).
 
 FOR EACH LINE:
-
-A) CUSTOMER PAYMENT (Inn > 0, "Innbetaling fra X / Faktura Y"):
-   → search_customers(name="X")
-   → CRITICAL: If multiple customers share the SAME NAME, search invoices for EACH customer ID
-     until you find an invoice whose amountOutstanding matches the bank amount.
-   → search_invoices(customerId=<id>) — match the invoice by:
-     1. amountOutstanding == bank amount (best match for full payments)
-     2. amountOutstanding > 0 (for partial payments)
-   → NEVER register a payment on an invoice with amountOutstanding = 0 (already fully paid!)
-   → register_payment with EXACT Inn amount
-
-B) SUPPLIER PAYMENT (Ut < 0, "Betaling Leverandør/Fournisseur/Fornecedor/Supplier X"):
-   → The supplier name in the bank includes the prefix: e.g. "Fournisseur Leroy SARL" (not just "Leroy SARL")
-   → search_suppliers(name="<FULL supplier name including prefix>")
-   → CRITICAL: Match by EXACT name in results! Do NOT use the first result blindly.
-   → FIRST try: search_supplier_invoices(supplierId=<id>) to find open supplier invoices
-     If found, use add_supplier_invoice_payment(invoice_id=<voucher_id>) to register payment
-   → FALLBACK: create_voucher: [{{"accountNumber":"2400","amount":abs,"supplierId":<CORRECT id>}}, {{"accountNumber":"1920","amount":-abs}}]
-   → supplierId is REQUIRED on 2400 postings!
-
-C) BANK FEE: debit 7770, credit 1920
+A) CUSTOMER PAYMENT (Inn>0): search_customers(name) → search_invoices(customerId)
+   Match invoice by amountOutstanding == bank amount. Never pay invoice with amountOutstanding=0.
+   If multiple customers share same name, search invoices for EACH until amount matches.
+   → register_payment with EXACT bank amount.
+B) SUPPLIER PAYMENT (Ut<0): search_suppliers(name incl. prefix like "Fournisseur")
+   Match by EXACT name. Try search_supplier_invoices → add_supplier_invoice_payment.
+   Fallback: create_voucher debit 2400 (with supplierId!), credit 1920.
+C) BANK FEE: debit 7770, credit 1920.
 D) TAX (Skattetrekk): incoming → debit 1920, credit 2600. Outgoing → debit 2600, credit 1920.
-E) INTEREST (Renteinntekter): incoming → debit 1920, credit 8040. Outgoing → debit 8040, credit 1920.
+E) INTEREST: incoming → debit 1920, credit 8040. Outgoing → debit 8040, credit 1920.
 
-CRITICAL:
-- Use EXACT filename from "Attached files:". NEVER guess.
-- Register EXACT bank amount for partial payments.
-- NEVER register payment on an invoice with amountOutstanding = 0.
-- supplierId REQUIRED on 2400 postings — use the CORRECT supplier, not the first search result.
-- Postings MUST balance (sum = 0).
-- DUPLICATE CUSTOMERS: If search returns multiple customers with same name, search invoices for EACH customer
-  and pick the one whose invoice matches the bank amount.
-- "Fournisseur" = French for supplier. "Lieferant" = German. "Fornecedor" = Portuguese. All mean supplier payment → use account 2400.""",
+Exact bank amounts. supplierId REQUIRED on 2400. Postings balance (sum=0).
+"Fournisseur"=French, "Lieferant"=German, "Fornecedor"=Portuguese for supplier.""",
 
     "process_invoice_file": """
 TASK: Process invoice from file (4-5 calls)
@@ -1000,99 +811,32 @@ TASK: Process invoice from file (4-5 calls)
 -> Then: create_customer -> create_product -> create_order -> create_invoice""",
 
     "year_end": """
-TASK: Perform annual closing, monthly closing (clôture mensuelle/Monatsabschluss), or periodic accounting entries.
-Use `create_voucher` for all accounting entries and `create_year_end_note` if a note is required.
-Use the voucher date from the prompt. For monthly closing use the last day of that month (e.g. "2026-03-31" for March). If no date is specified, use "{today}".
+TASK: Year-end / monthly / periodic closing entries.
+Use create_voucher for entries, create_year_end_note if requested.
+Date: from prompt; monthly closing = last day of month; default "{today}".
 
-CRITICAL — ACCOUNT RESOLUTION (DO THIS FIRST):
-Before creating ANY voucher, ensure all required account numbers are available.
-- If an account number is explicitly given in the prompt (e.g., 1209, 8700, 2920), you MUST ensure it exists.
-  Call `create_ledger_account(number=<account_number>, name="<appropriate_name>")`.
-  The tool will return the existing account if it's already there, preventing duplicates.
-- If `create_ledger_account` fails or the account cannot be created, search `get_ledger_accounts(number=<first 2 digits>)`
-  to find the closest valid account and use that instead.
-- If ANY account is NOT explicitly specified, you MUST call `get_ledger_accounts` FIRST to find a valid account.
-- For prepaid/accrued expense → charge account mapping, use this table:
-    1700 (Forskuddsbetalt leie) → expense 6300 (Leie lokale)
-    1710 (Forskuddsbetalt rente) → expense 8150 (Annen rentekostnad)
-    1720 (Forskuddsbetalt forsikring) → expense 7500 (Forsikringspremie)
-    1740 (Forskuddsbetalt lønn) → expense 5000 (Lønn)
-    1750 (Forskuddsbetalt annet) → search `get_ledger_accounts(number="69")` for closest match
-    1790 (Andre forskuddsbetalte kostnader) → search `get_ledger_accounts(number="69")` for closest match
-    2900-2999 (Avsetninger/accrued liabilities) → match the expense type from the prompt
-  If the prepaid account is NOT in this table, search `get_ledger_accounts` with the first 2 digits of the EXPENSE side to find the right account.
-- For accumulated depreciation contra accounts, use the asset class range:
-    6010 (transport) → contra 1230-1239 or create_ledger_account(1239, "Akkumulerte avskrivninger transportmidler")
-    6015 (machinery/IT) → contra 1210-1219 or create_ledger_account(1219, "Akkumulerte avskrivninger inventar")
-    6020 (intangibles) → contra 1000-1009 or create_ledger_account(1009, "Akkumulerte avskrivninger immaterielle")
-  If the prompt specifies a contra account, use that. Otherwise search `get_ledger_accounts(number="12")` for depreciation-related accounts.
-- For salary expense accounts: `get_ledger_accounts(number="50")` — pick the matching account.
-- For salaries payable accounts: `get_ledger_accounts(number="29")` — pick the matching account.
-- NEVER assume an account exists. If the prompt says "vers charges" or "to expenses" without a number, LOOK IT UP.
-- If `create_voucher` returns "Account X not found", immediately search `get_ledger_accounts(number=<first 2 digits>)`, find a valid account, and retry the voucher with the correct account number.
+ACCOUNT RESOLUTION — before creating ANY voucher:
+- If account doesn't exist, call create_ledger_account(number, name) first.
+- If that fails, search get_ledger_accounts(number=<first 2 digits>) for closest match.
+- Prepaid→expense: 1700→6300, 1710→8150, 1720→7500, 1740→5000, 1750/1790→search "69".
+- Depreciation contra: 6010→create 1239, 6015→create 1219, 6020→create 1009 (or credit asset directly).
+- Tax: try prompted accounts via create_ledger_account; fallback 8300 (expense) / 2500 (liability).
+- NEVER assume an account exists. If unspecified, LOOK IT UP with get_ledger_accounts.
 
-DEPRECIATION EXPENSE ACCOUNTS — use the correct account per asset type:
-- 6010 = Avskrivning på transportmidler (vehicles/kjøretøy/vehículos/véhicules/Fahrzeuge)
-- 6015 = Avskrivning på maskiner og inventar (machines/IT equipment/IT-utstyr/equipo informático/équipement informatique/IT-Ausstattung)
-- 6020 = Avskrivning på immaterielle eiendeler (software/programvare/intangibles/logiciel/Software/activos intangibles)
-- CRITICAL: Each asset MUST use the expense account matching its type. Do NOT use 6010 for all assets.
-- If the prompt specifies a DIFFERENT expense account per asset, use EXACTLY what the prompt says.
+DEPRECIATION per asset type: 6010=vehicles, 6015=machines/IT, 6020=intangibles/software.
+Use EXACTLY what the prompt specifies if different. Each asset = separate voucher.
+Monthly = Cost / years / 12 (round). Annual = Cost / years (round).
 
-TAX PROVISION ACCOUNTS — standard Norwegian accounts:
-- Tax expense: 8300 (Skattekostnad). If the prompt says 8700, try `create_ledger_account(8700, "Skattekostnad")` first;
-  if that fails, use 8300 instead.
-- Tax liability: 2500 (Betalbar skatt, ikke utlignet). If the prompt says 2920, try `create_ledger_account(2920, "Betalbar skatt")` first;
-  if that fails, use 2500 instead.
-- NOTE: Account 2920 in many Tripletex sandboxes is "Gjeld til selskap i samme konsern" (NOT tax). Always verify.
+STEPS (execute whichever the prompt requests, in order):
+1. Reverse prepaid/accrued: debit EXPENSE, credit PREPAID. Look up expense account if not specified.
+2. Depreciation: debit expense (per asset type), credit contra. If contra doesn't exist, try create_ledger_account then fall back to asset account.
+3. Salary provision: debit salary expense, credit payable. NEVER post amount=0 — default 45000 if unspecified.
+4. Trial balance: MANDATORY when prompt says "kontroller"/"vérifiez"/"prüfen"/"balanse". Call get_result_before_tax.
+5. Tax provision (annual): AFTER steps 1-3, call get_result_before_tax, tax = round(result × rate). Try prompted accounts via create_ledger_account; fallback 8300/2500.
+6. Year-end note: create_year_end_note if requested.
 
-STEPS (execute whichever steps the prompt requests, in this order):
-1.  **Reverse prepaid/accrued expenses (régularisation/periodisering/gastos prepagados).**
-    -   Use the amount and accounts from the prompt.
-    -   If the charge/expense account is NOT specified, call `get_ledger_accounts` to find it BEFORE creating the voucher.
-    -   Postings: `[{{"accountNumber": EXPENSE_ACCT, "amount": AMOUNT}}, {{"accountNumber": PREPAID_ACCT, "amount": -AMOUNT}}]`
-
-2.  **Calculate and book depreciation (avskrivning/amortissement/Abschreibung/depreciación).**
-    -   For monthly closing: amount = Cost / Useful_life_years / 12. Round to nearest whole krone.
-    -   For annual closing: amount = Cost / Useful_life_years. Round to nearest whole krone.
-    -   Use the CORRECT depreciation expense account per asset type (see mapping above).
-    -   If the prompt specifies explicit expense accounts per asset, use EXACTLY those accounts.
-    -   For the accumulated depreciation contra account: use the account from the prompt. If it doesn't exist,
-        try `create_ledger_account(number=<prompted_account>, name="Akkumulerte avskrivninger")`.
-        If that also fails, credit the ASSET account directly (e.g., 1230, 1210, 1250).
-    -   Create a SEPARATE `create_voucher` for EACH asset.
-    -   Postings: `[{{"accountNumber": EXPENSE_ACCT, "amount": DEPR_AMT}}, {{"accountNumber": ACCUM_DEPR_ACCT, "amount": -DEPR_AMT}}]`
-
-3.  **Book salary provision (provision pour salaires/lønnsavsetning/Gehaltsrückstellung) if requested.**
-    -   Debit the salary expense account, credit the salaries payable account.
-    -   Use the accounts and amount from the prompt.
-    -   CRITICAL: NEVER post a zero-amount salary provision. If the prompt does NOT specify an amount, you MUST
-        estimate a reasonable monthly salary accrual. Use 45000 NOK as default if no other information is available.
-        A zero-amount posting is WRONG and will score 0 — it is better to estimate than to post nothing.
-    -   Postings: `[{{"accountNumber": SALARY_EXPENSE, "amount": AMOUNT}}, {{"accountNumber": SALARY_PAYABLE, "amount": -AMOUNT}}]`
-
-4.  **Verify trial balance — MANDATORY when the prompt mentions "kontroller", "vérifiez", "prüfen", "balanse", "balance", "Saldenbilanz".**
-    -   You MUST call `get_result_before_tax(dateFrom="YYYY-01-01", dateTo="YYYY-MM-DD")` using the closing date.
-    -   Do NOT skip this step. Do NOT say "Done." before completing the verification.
-
-5.  **Calculate and book tax provision (only for annual closing, if requested).**
-    -   AFTER steps 1-3 are booked, call `get_result_before_tax(dateFrom="YYYY-01-01", dateTo="YYYY-12-31")`.
-    -   Tax = round(result_before_tax × tax_rate). Use the accounts from the prompt.
-    -   If the prompt specifies accounts (e.g., 8700/2920), try `create_ledger_account` for each FIRST.
-        If creation fails, fall back to standard: 8300 for tax expense, 2500 for tax liability.
-    -   Postings: `[{{"accountNumber": TAX_EXPENSE_ACCT, "amount": TAX_AMT}}, {{"accountNumber": TAX_LIABILITY_ACCT, "amount": -TAX_AMT}}]`
-    -   CRITICAL: You MUST use the `result_before_tax` from the `get_result_before_tax` call to calculate `TAX_AMT` and then create this voucher.
-
-6.  **Create a year-end note (only if specified).**
-    -   `create_year_end_note` will auto-detect the most recent year-end.
-
-CRITICAL:
--   All voucher postings MUST balance (sum of amounts = 0). Positive = debit, negative = credit.
--   NEVER create postings with amount = 0. Zero-amount postings are meaningless and score 0.
--   Use accountNumber in postings (NOT accountId).
--   Each depreciation MUST be a separate voucher (one per asset).
--   If create_voucher fails with "Account X not found", search for valid accounts and RETRY.
--   If the prompt asks to verify/check the trial balance, you MUST call get_result_before_tax BEFORE responding.
--   After all required vouchers are posted AND all verifications done, respond with "Done." and STOP.
+Postings MUST balance (sum=0). Positive=debit, negative=credit. Never amount=0. Use accountNumber (not ID).
+If "Account X not found", search get_ledger_accounts and retry.
 """,
 
     "salary_with_bonus": """
@@ -1249,8 +993,11 @@ def create_agent(tools: list, task_types: list[str] | None = None,
         if missing_tools and "extract_file_content" in missing_tools:
             missing_tools.remove("extract_file_content")
 
-    # Always use the full system instruction as base
-    parts = [SYSTEM_INSTRUCTION]
+    # Use focused prompt for classified tasks, full reference as fallback
+    if task_types:
+        parts = [COMMON_PREAMBLE]
+    else:
+        parts = [SYSTEM_INSTRUCTION]
 
     # Add task-specific instructions if task_types are provided
     if task_types:
@@ -1284,11 +1031,10 @@ If you need these tools to complete a sub-task, inform the user that the task
 cannot be fully completed due to missing tools: {tool_list}""")
 
     today_date = date.today()
-    instruction = "\n".join(parts).format(
-        today=today,
-        current_year=today_date.year,
-        current_month=today_date.month,
-    )
+    instruction = "\n".join(parts)
+    instruction = instruction.replace("{today}", str(today))
+    instruction = instruction.replace("{current_year}", str(today_date.year))
+    instruction = instruction.replace("{current_month}", str(today_date.month))
 
     return LlmAgent(
         name="tripletex_accountant",

@@ -602,11 +602,25 @@ Counter-account is usually 1920 (bank). Use 1500 for receivables, 2400 for payab
             "pm_email": {"type": "str", "required": False, "default": ""},
             "startDate": {"type": "date", "required": False},
             "fixedPriceAmount": {"type": "float", "required": False, "default": 0},
+            "isInternal": {"type": "bool", "required": False, "default": False,
+                           "hint": "True if 'internal project'/'internt prosjekt' mentioned"},
             "product_name": {"type": "str", "required": False, "default": ""},
             "product_price": {"type": "float", "required": False, "default": 0},
             "invoice_date": {"type": "date", "required": False},
             "due_date": {"type": "date", "required": False},
             "send_invoice": {"type": "bool", "required": False, "default": False},
+            "hourly_rate": {"type": "float", "required": False, "default": 0,
+                            "hint": "Hourly rate / timepris / taux horaire / Stundensatz"},
+            "hours": {"type": "float", "required": False, "default": 0,
+                      "hint": "Number of hours to log / timer / heures / Stunden"},
+            "employee_firstName": {"type": "str", "required": False, "default": "",
+                                   "hint": "Employee who logs hours (may differ from PM)"},
+            "employee_lastName": {"type": "str", "required": False, "default": ""},
+            "employee_email": {"type": "str", "required": False, "default": ""},
+            "activity_name": {"type": "str", "required": False, "default": "",
+                              "hint": "Activity name for timesheet (e.g. Design, Development, Consulting)"},
+            "milestone_percentage": {"type": "float", "required": False, "default": 0,
+                                     "hint": "Percentage of fixed price to invoice (e.g. 25 for 25%)"},
         },
     },
     "project_lifecycle": {
@@ -741,6 +755,25 @@ Counter-account is usually 1920 (bank). Use 1500 for receivables, 2400 for payab
             "invoice_date": {"type": "date", "required": False},
             "due_date": {"type": "date", "required": False},
         },
+    },
+    "register_expense_receipt": {
+        "fields": {
+            "amount_including_vat": {"type": "float", "required": True,
+                                     "hint": "Total receipt amount INCLUDING VAT"},
+            "expense_account": {"type": "int", "required": True,
+                                "hint": "Expense account number: 6300=leie, 6500=verktøy, 6590=kontor, 6800=kontorrekvisita, 6900=telefon, 7100=bil, 7140=reise, 7350=representasjon"},
+            "vat_percentage": {"type": "int", "required": False, "default": 25,
+                               "hint": "VAT rate: 25=standard, 15=food, 12=transport, 0=exempt"},
+            "receipt_date": {"type": "date", "required": True, "hint": "Receipt date YYYY-MM-DD"},
+            "description": {"type": "str", "required": True, "hint": "What was purchased"},
+            "payment_account": {"type": "int", "required": False, "default": 1920,
+                                "hint": "1920=bank (betalt med kort), 1900=cash (betalt kontant)"},
+            "department_name": {"type": "str", "required": False, "default": "",
+                                "hint": "Department name if expense should be posted to a department"},
+        },
+        "context": "Expense receipt (kvittering/utlegg). Payment account: 1920=bank/kort, 1900=kontant/cash. "
+                   "Common expense accounts: 6300=leie, 6500=verktøy, 6590=kontor, 6800=kontorrekvisita, "
+                   "6900=telefon, 7100=bil, 7140=reise, 7350=representasjon.",
     },
 }
 
@@ -1355,6 +1388,26 @@ def _pipeline_create_supplier_invoice(tools, p, ctx):
     return _call(ctx, tools, "process_supplier_invoice", **kwargs)
 
 
+def _pipeline_register_expense_receipt(tools, p, ctx):
+    dept_id = 0
+    if p.get("department_name"):
+        dept = _call(ctx, tools, "create_department", name=p["department_name"])
+        dept_id = _id(dept)
+
+    kwargs = {
+        "amountIncludingVat": p["amount_including_vat"],
+        "expenseAccountNumber": p["expense_account"],
+        "vatPercentage": p.get("vat_percentage", 25),
+        "receiptDate": p.get("receipt_date") or _today(),
+        "description": p.get("description", ""),
+        "paymentAccountNumber": p.get("payment_account", 1920),
+    }
+    if dept_id:
+        kwargs["departmentId"] = dept_id
+
+    return _call(ctx, tools, "register_expense_receipt", **kwargs)
+
+
 # --- Group E: Delete tasks ---
 
 def _pipeline_delete_customer(tools, p, ctx):
@@ -1855,11 +1908,17 @@ def _pipeline_project_invoice(tools, p, ctx):
     inv_date = p.get("invoice_date") or today
     due_date = p.get("due_date") or inv_date
 
+    hourly_rate = p.get("hourly_rate") or 0
+    hours = p.get("hours") or 0
+    is_hourly = hourly_rate > 0 and hours > 0
+
+    # ── Step 1: Create customer ──
     cust = _call(ctx, tools, "create_customer",
                  name=p["customer_name"],
                  organizationNumber=p.get("customer_org_number") or "")
     cust_id = _id(cust)
 
+    # ── Step 2: Create PM employee ──
     pm_id = 0
     if p.get("pm_email"):
         emp = _call(ctx, tools, "create_employee",
@@ -1867,6 +1926,7 @@ def _pipeline_project_invoice(tools, p, ctx):
                     email=p["pm_email"], userType="EXTENDED")
         pm_id = _id(emp)
 
+    # ── Step 3: Create project ──
     proj_kwargs = dict(
         name=p["project_name"], customer_id=cust_id,
         projectManagerId=pm_id,
@@ -1878,11 +1938,70 @@ def _pipeline_project_invoice(tools, p, ctx):
     proj = _call(ctx, tools, "create_project", **proj_kwargs)
     proj_id = _id(proj)
 
-    # Invoice part (if product specified)
-    if p.get("product_name") and p.get("product_price"):
+    if is_hourly:
+        # ── Scenario B: Hourly project ──
+
+        # Resolve worker employee (may be same as PM or different)
+        emp_email = p.get("employee_email") or p.get("pm_email") or ""
+        emp_fn = p.get("employee_firstName") or p.get("pm_firstName") or ""
+        emp_ln = p.get("employee_lastName") or p.get("pm_lastName") or ""
+
+        if emp_email and emp_email == p.get("pm_email") and pm_id:
+            worker_id = pm_id
+        else:
+            if not emp_email:
+                if emp_fn or emp_ln:
+                    fn = emp_fn.lower().replace(" ", ".")
+                    ln = emp_ln.lower().replace(" ", ".")
+                    emp_email = f"{fn}.{ln}@example.com"
+                else:
+                    raise PipelineError("employee name or email is required for hourly project invoice")
+            worker = _call(ctx, tools, "create_employee",
+                           firstName=emp_fn, lastName=emp_ln,
+                           email=emp_email)
+            worker_id = _id(worker)
+
+        # Step 4: Add as project participant
+        if "create_project_participant" in tools:
+            try:
+                _call(ctx, tools, "create_project_participant",
+                      project_id=proj_id, employee_id=worker_id)
+            except PipelineError:
+                pass  # best-effort
+
+        # Step 5: Set hourly rate
+        if "create_hourly_cost_and_rate" in tools:
+            try:
+                _call(ctx, tools, "create_hourly_cost_and_rate",
+                      employee_id=worker_id, date=today, rate=hourly_rate)
+            except PipelineError:
+                pass  # best-effort
+
+        # Step 6: Employment + timesheet entry
+        if "create_employment" in tools:
+            try:
+                _call(ctx, tools, "create_employment",
+                      employee_id=worker_id, startDate="2026-01-01")
+            except PipelineError:
+                pass  # may already exist
+
+        if "create_timesheet_entry" not in tools:
+            raise PipelineError("create_timesheet_entry tool is required for hourly projects")
+        ts_kwargs = dict(
+            employee_id=worker_id, date=today,
+            hours=hours, project_id=proj_id,
+        )
+        activity_name = p.get("activity_name") or ""
+        if activity_name:
+            ts_kwargs["activity_name"] = activity_name
+        _call(ctx, tools, "create_timesheet_entry", **ts_kwargs)
+
+        # Step 7: Invoice — total = hourly_rate × hours
+        total_ex_vat = hourly_rate * hours
+        prod_name = activity_name or p.get("product_name") or p["project_name"]
         prod = _call(ctx, tools, "create_product",
-                     name=p["product_name"],
-                     priceExcludingVatCurrency=p["product_price"],
+                     name=prod_name,
+                     priceExcludingVatCurrency=total_ex_vat,
                      vatPercentage=25)
         prod_id = _id(prod)
         order_lines = json.dumps([{"product_id": prod_id, "count": 1}])
@@ -1894,6 +2013,40 @@ def _pipeline_project_invoice(tools, p, ctx):
                     invoiceDate=inv_date, invoiceDueDate=due_date, order_id=order_id)
         if p.get("send_invoice"):
             _call(ctx, tools, "send_invoice", invoice_id=_id(inv))
+
+    else:
+        # ── Scenario A: Fixed-price / direct product ──
+
+        # Determine product price (milestone percentage or explicit)
+        product_price = p.get("product_price") or 0
+        fixed_price = p.get("fixedPriceAmount") or 0
+        milestone_pct = p.get("milestone_percentage") or 0
+        if not product_price and fixed_price and milestone_pct:
+            product_price = fixed_price * (milestone_pct / 100.0)
+
+        product_name = p.get("product_name") or ""
+        if not product_name and product_price:
+            if milestone_pct:
+                product_name = f"Milestone Payment for {p['project_name']}"
+            else:
+                product_name = f"Project Services - {p['project_name']}"
+
+        if product_name and product_price:
+            prod = _call(ctx, tools, "create_product",
+                         name=product_name,
+                         priceExcludingVatCurrency=product_price,
+                         vatPercentage=25)
+            prod_id = _id(prod)
+            order_lines = json.dumps([{"product_id": prod_id, "count": 1}])
+            order = _call(ctx, tools, "create_order",
+                          customer_id=cust_id, deliveryDate=inv_date,
+                          orderLines=order_lines, project_id=proj_id)
+            order_id = _id(order)
+            inv = _call(ctx, tools, "create_invoice",
+                        invoiceDate=inv_date, invoiceDueDate=due_date, order_id=order_id)
+            if p.get("send_invoice"):
+                _call(ctx, tools, "send_invoice", invoice_id=_id(inv))
+
     return proj
 
 
@@ -2487,6 +2640,7 @@ PIPELINES = {
     "create_travel_expense_with_costs": _pipeline_create_travel_expense_with_costs,
     "create_employee_with_employment": _pipeline_create_employee_with_employment,
     "create_supplier_invoice": _pipeline_create_supplier_invoice,
+    "register_expense_receipt": _pipeline_register_expense_receipt,
     # Group E
     "delete_customer": _pipeline_delete_customer,
     "delete_supplier": _pipeline_delete_supplier,
