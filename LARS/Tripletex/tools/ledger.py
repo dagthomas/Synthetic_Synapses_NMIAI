@@ -50,7 +50,7 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Args:
             date: Voucher date in YYYY-MM-DD format.
             description: Description of the voucher.
-            postings: JSON string of postings, each with 'accountId' (ledger account ID) and 'amount' (positive=debit, negative=credit). Example: '[{"accountId": 123, "amount": 1000}, {"accountId": 456, "amount": -1000}]'. You can also use 'accountNumber' and the tool will look up the account ID. Optionally include 'projectId' or 'departmentId' to link a posting to a project or department dimension. For free accounting dimensions, include 'dimensionValueId' (the ID from create_dimension_value) and 'dimensionIndex' (1, 2, or 3) — or just 'dimensionValueId' if already known.
+            postings: JSON string of postings, each with 'accountId' (ledger account ID) and 'amount' (positive=debit, negative=credit). Example: '[{"accountId": 123, "amount": 1000}, {"accountId": 456, "amount": -1000}]'. Alternatively, within each posting object, you can use 'accountNumber' instead of 'accountId', and the tool will look up the account ID. Optionally include 'projectId' or 'departmentId' to link a posting to a project or department dimension. For free accounting dimensions, include 'dimensionValueId' (the ID from create_dimension_value) and 'dimensionIndex' (1, 2, or 3) — or just 'dimensionValueId' if already known.
 
         Returns:
             The created voucher with id, or an error message.

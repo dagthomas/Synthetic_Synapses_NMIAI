@@ -325,5 +325,4 @@ def build_project_tools(client: TripletexClient) -> dict:
         "create_project_category": create_project_category,
         "search_project_categories": search_project_categories,
         "create_project_participant": create_project_participant,
-        "create_voucher": create_voucher, # Added
     }

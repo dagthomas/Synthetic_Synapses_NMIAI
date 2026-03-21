@@ -423,9 +423,15 @@ function LiveRequestCard({
         )}
       </div>
 
-      {/* Timeline */}
+      {/* Full prompt + Timeline */}
       {expanded && (
-        <div className="border-t border-border/30 px-3 py-2">
+        <div className="border-t border-border/30 px-3 py-2 space-y-2">
+          {req.prompt && (
+            <div className="bg-muted/50 rounded p-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Prompt</p>
+              <p className="text-[12px] whitespace-pre-wrap break-words">{req.prompt}</p>
+            </div>
+          )}
           <div className="space-y-0.5">
             {req.events.map((ev, i) => (
               <LiveEventRow key={i} event={ev} startTs={req.startTs} />

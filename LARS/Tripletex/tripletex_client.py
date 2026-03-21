@@ -20,7 +20,6 @@ class TripletexClient:
 
     def get(self, endpoint: str, params: dict | None = None) -> dict:
         url = f"{self.base_url}{endpoint}"
-        log.info(f"[API #{self._call_count+1}] GET {url} params={params}")
         self._call_count += 1
         t0 = time.time()
         resp = self._do_request("GET", url, params=params)
@@ -29,7 +28,6 @@ class TripletexClient:
 
     def post(self, endpoint: str, json: dict | None = None) -> dict:
         url = f"{self.base_url}{endpoint}"
-        log.info(f"[API #{self._call_count+1}] POST {url} body={json}")
         self._call_count += 1
         t0 = time.time()
         resp = self._do_request("POST", url, json=json)
@@ -38,7 +36,6 @@ class TripletexClient:
 
     def put(self, endpoint: str, json: dict | None = None, params: dict | None = None) -> dict:
         url = f"{self.base_url}{endpoint}"
-        log.info(f"[API #{self._call_count+1}] PUT {url} body={json} params={params}")
         self._call_count += 1
         t0 = time.time()
         resp = self._do_request("PUT", url, json=json, params=params)
@@ -47,7 +44,6 @@ class TripletexClient:
 
     def delete(self, endpoint: str) -> dict:
         url = f"{self.base_url}{endpoint}"
-        log.info(f"[API #{self._call_count+1}] DELETE {url}")
         self._call_count += 1
         t0 = time.time()
         resp = self._do_request("DELETE", url)
@@ -145,10 +141,11 @@ class TripletexClient:
                 body_text = resp.text.lower()
             except Exception:
                 body_text = ""
+            ep = url.split("/v2")[-1] if "/v2" in url else url.split("/", 3)[-1]
             if "expired" in body_text or "invalid" in body_text:
-                log.error(f"[API] {method} {url} -> 401 (token expired/invalid, not retrying)")
+                log.error(f"  API {method:6s} {ep} → 401 token expired/invalid")
                 return resp
-            log.warning(f"[API] {method} {url} -> 401, retrying once after 0.5s...")
+            log.warning(f"  API {method:6s} {ep} → 401, retrying…")
             time.sleep(0.5)
             resp = requests.request(method, url, auth=self.auth, **kwargs)
         return resp
@@ -167,10 +164,10 @@ class TripletexClient:
         try:
             resp.raise_for_status()
             result = resp.json() if resp.text else {"ok": True}
-            # Log success with response summary
-            summary = str(result)[:300]
-            log.info(f"[API] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {summary}")
-            log.debug(f"[API DETAIL] {method} {url} request_body={request_body} response_body={result}")
+            # Extract endpoint from URL for concise logging
+            ep = url.split("/v2")[-1] if "/v2" in url else url.split("/", 3)[-1]
+            log.info(f"  API {method:6s} {ep} → {resp.status_code} ({elapsed:.2f}s)")
+            log.debug(f"  API detail: {method} {ep} body={request_body} resp={result}")
             log_entry["ok"] = True
             log_entry["response_body"] = result
             self._call_log.append(log_entry)
@@ -194,8 +191,9 @@ class TripletexClient:
             except Exception:
                 body = None
                 full_msg = resp.text[:500] if resp.text else "(empty response body)"
-            log.error(f"[API ERROR] {method} {url} -> {resp.status_code} ({elapsed:.2f}s) {full_msg}")
-            log.debug(f"[API ERROR DETAIL] {method} {url} request_body={request_body} response_body={body or resp.text}")
+            ep = url.split("/v2")[-1] if "/v2" in url else url.split("/", 3)[-1]
+            log.error(f"  API {method:6s} {ep} → {resp.status_code} ({elapsed:.2f}s) {full_msg[:200]}")
+            log.debug(f"  API error detail: {method} {ep} body={request_body} resp={body or resp.text}")
             log_entry["ok"] = False
             log_entry["error"] = full_msg
             log_entry["response_body"] = body if body else resp.text[:2000]

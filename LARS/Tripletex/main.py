@@ -74,11 +74,24 @@ def _emit_event(event: dict):
 # Set Google API key for ADK
 os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s │ %(levelname)-5s │ %(message)s",
+    datefmt="%H:%M:%S",
+)
 # Suppress noisy third-party loggers
 for _noisy in ("httpx", "httpcore", "urllib3", "google", "grpc", "asyncio"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
+
+
+class _NoDocsFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return "GET /docs" not in msg and "GET /events" not in msg
+
+
+logging.getLogger("uvicorn.access").addFilter(_NoDocsFilter())
 
 security = HTTPBearer(auto_error=False)
 
@@ -159,7 +172,7 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
 
     # Emit: request started
     _emit_event({"type": "request_start", "request_id": request_id,
-                 "prompt": prompt[:300], "files": [f.filename for f in files], "source": source})
+                 "prompt": prompt, "files": [f.filename for f in files], "source": source})
 
     # Save payload only for live competition runs
     if save_payload:
@@ -183,6 +196,7 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
         for f in files:
             data = base64.b64decode(f.content_base64)
             filepath = os.path.join(files_dir, f.filename)
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "wb") as fh:
                 fh.write(data)
             file_names.append(f.filename)
@@ -206,7 +220,7 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
     tool_selection = select_tools(task_type, all_tools_dict, has_files=bool(files), prompt=prompt)
     tools = tool_selection.tools
     classification_level = tool_selection.classification_level
-    log.info(f"[REQ {request_id[:8]}] Task type: {task_type or 'UNKNOWN'}, classification: {classification_level}, tools: {len(tools)}/{len(all_tools_dict)}")
+    log.info(f"[{request_id[:8]}] classify: {task_type or '?'} ({classification_level}) | {len(tools)}/{len(all_tools_dict)} tools")
 
     # Emit: classification result
     _emit_event({"type": "classify", "request_id": request_id,
@@ -237,13 +251,9 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
     )
 
     # Run agent with turn limit
-    log.info(f"{'='*60}")
-    log.info(f"[REQ {request_id[:8]}] START")
-    log.info(f"[REQ {request_id[:8]}] Prompt: {prompt}")
-    log.info(f"[REQ {request_id[:8]}] Files: {file_names}")
-    log.info(f"[REQ {request_id[:8]}] Base URL: {creds.base_url}")
-    log.info(f"[REQ {request_id[:8]}] Session: {session_id}")
-    log.info(f"{'='*60}")
+    log.info(f"[{request_id[:8]}] ── START ── {prompt[:120]}{'…' if len(prompt)>120 else ''}")
+    if file_names:
+        log.info(f"[{request_id[:8]}]   files: {file_names}")
 
     final_text = ""
     turn_count = 0
@@ -263,13 +273,14 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                 for part in event.content.parts:
                     if hasattr(part, "text") and part.text:
                         final_text = part.text
-                        log.info(f"[AGENT] Text: {part.text[:500]}")
+                        log.info(f"[{request_id[:8]}] agent: {part.text[:200]}{'…' if len(part.text)>200 else ''}")
                         _emit_event({"type": "text", "request_id": request_id,
                                      "text": part.text[:500]})
                     if hasattr(part, "function_call") and part.function_call:
                         turn_count += 1
                         fc = part.function_call
-                        log.info(f"[AGENT] Tool call #{turn_count}: {fc.name}({fc.args})")
+                        args_brief = {k: (str(v)[:60] + '…' if len(str(v)) > 60 else v) for k, v in (fc.args or {}).items()}
+                        log.info(f"[{request_id[:8]}] tool #{turn_count}: {fc.name}({args_brief})")
                         tool_calls.append({
                             "tool": fc.name,
                             "args": dict(fc.args) if fc.args else {},
@@ -279,15 +290,17 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                                      "turn": turn_count, "tool": fc.name,
                                      "args": dict(fc.args) if fc.args else {}})
                         if turn_count >= MAX_AGENT_TURNS:
-                            log.warning(f"[AGENT] Turn limit reached ({MAX_AGENT_TURNS}), stopping")
+                            log.warning(f"[{request_id[:8]}] turn limit ({MAX_AGENT_TURNS})")
                             break
                     if hasattr(part, "function_response") and part.function_response:
                         fr = part.function_response
                         resp_data = fr.response if fr.response else {}
-                        resp_str = str(resp_data)[:500]
-                        log.info(f"[AGENT] Tool result: {fr.name} -> {resp_str}")
-                        log.debug(f"[AGENT] Tool result FULL: {fr.name} -> {resp_data}")
                         is_err = isinstance(resp_data, dict) and resp_data.get("error")
+                        if is_err:
+                            log.warning(f"[{request_id[:8]}]   => {fr.name} ERROR: {str(resp_data.get('message', resp_data))[:200]}")
+                        else:
+                            log.info(f"[{request_id[:8]}]   => {fr.name} OK")
+                        log.debug(f"[{request_id[:8]}]   => {fr.name} full: {resp_data}")
                         _emit_event({"type": "tool_result", "request_id": request_id,
                                      "turn": turn_count, "tool": fr.name,
                                      "ok": not is_err,
@@ -304,16 +317,11 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
             if turn_count >= MAX_AGENT_TURNS:
                 break
     except Exception as e:
-        log.error(f"[AGENT] Error: {e}", exc_info=True)
+        log.error(f"[{request_id[:8]}] error: {e}", exc_info=True)
         _emit_event({"type": "request_error", "request_id": request_id, "error": str(e)})
 
     elapsed = _time.time() - t_start
-    log.info(f"{'='*60}")
-    log.info(f"[REQ {request_id[:8]}] DONE in {elapsed:.1f}s")
-    log.info(f"[REQ {request_id[:8]}] API calls: {client._call_count}, errors: {client._error_count}")
-    log.info(f"[REQ {request_id[:8]}] Agent turns: {turn_count}")
-    log.info(f"[REQ {request_id[:8]}] Final response: {final_text}")
-    log.info(f"{'='*60}")
+    log.info(f"[{request_id[:8]}] ── DONE ── {elapsed:.1f}s | {turn_count} turns | {client._call_count} API calls ({client._error_count} err) | {final_text[:100]}{'…' if len(final_text)>100 else ''}")
 
     # Emit: request done
     _emit_event({"type": "request_done", "request_id": request_id,
@@ -371,9 +379,9 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
     try:
         await asyncio.wait_for(_guarded(), timeout=_AGENT_TIMEOUT)
     except asyncio.TimeoutError:
-        log.error(f"[SOLVE] Agent timed out after {_AGENT_TIMEOUT}s")
+        log.error(f"SOLVE timeout ({_AGENT_TIMEOUT}s)")
     except Exception as e:
-        log.error(f"[SOLVE] Agent error: {e}", exc_info=True)
+        log.error(f"SOLVE error: {e}", exc_info=True)
     return JSONResponse({"status": "completed"})
 
 
@@ -391,10 +399,10 @@ async def solve_debug(body: SolveRequest, source: str = "debug",
     try:
         details = await asyncio.wait_for(_guarded(), timeout=_AGENT_TIMEOUT)
     except asyncio.TimeoutError:
-        log.error(f"[SOLVE-DEBUG] Agent timed out after {_AGENT_TIMEOUT}s")
+        log.error(f"SOLVE-DEBUG timeout ({_AGENT_TIMEOUT}s)")
         details = {"agent_response": "TIMEOUT", "tool_calls": [], "api_calls": 0, "api_errors": 0, "api_log": [], "elapsed": _AGENT_TIMEOUT}
     except Exception as e:
-        log.error(f"[SOLVE-DEBUG] Agent error: {e}", exc_info=True)
+        log.error(f"SOLVE-DEBUG error: {e}", exc_info=True)
         details = {"agent_response": f"ERROR: {e}", "tool_calls": [], "api_calls": 0, "api_errors": 0, "api_log": [], "elapsed": 0}
     return JSONResponse({"status": "completed", **details})
 

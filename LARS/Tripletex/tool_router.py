@@ -50,7 +50,8 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     # Tier 2 — multi-step workflows
     "create_invoice":              ["create_customer", "create_product", "create_order", "create_invoice", "send_invoice"],
     "create_multi_line_invoice":   ["create_customer", "create_product", "create_order", "create_invoice", "send_invoice"],
-    "create_project":              ["create_customer", "create_employee", "create_project"],
+    "create_project":              ["create_customer", "create_employee", "create_project",
+                                    "get_ledger_postings", "get_ledger_accounts", "create_activity"],
     "create_travel_expense":       ["create_employee", "create_travel_expense"],
     "create_travel_expense_with_costs": ["create_employee", "create_travel_expense", "create_travel_expense_cost",
                                         "create_mileage_allowance", "create_per_diem_compensation", "update_travel_expense"],
@@ -84,7 +85,8 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "bank_reconciliation":    ["extract_file_content", "search_bank_accounts", "create_voucher"],
     "process_invoice_file":   ["extract_file_content", "create_customer", "create_product", "create_order",
                                "create_invoice"],
-    "year_end":               ["search_year_ends", "search_year_end_annexes", "create_year_end_note"],
+    "year_end":               ["create_voucher", "get_ledger_accounts", "get_ledger_postings",
+                               "search_year_end_annexes", "create_year_end_note"],
     "salary":                 ["create_employee", "create_employment", "search_salary_types", "create_salary_transaction"],
 }
 

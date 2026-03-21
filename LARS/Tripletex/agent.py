@@ -4,8 +4,6 @@ from typing import Optional
 from google.adk.agents import LlmAgent
 from config import GEMINI_MODEL
 
-# ── Common preamble (shared by all task types) ───────────────────────
-
 COMMON_PREAMBLE = """You are an expert accounting assistant for Tripletex, Norway's cloud accounting platform.
 
 PROCESS — for every task:
@@ -228,8 +226,9 @@ Process invoice from PDF/image (4-5 calls):
   → Extract: customer/supplier name, amounts, dates, line items
   → Then create the invoice/incoming invoice using extracted data
 
-Year-end / årsoppgjør (2-4 calls):
-  → search_year_ends → search_year_end_annexes(year_end_id) or create_year_end_note(year_end_id, note)
+Year-end / årsoppgjør (3-6 calls):
+  → Use create_voucher for depreciation, reversals, tax provision entries
+  → create_year_end_note for notes. Use get_ledger_postings to find taxable profit if needed.
   → "årsoppgjør"/"year-end"
 
 VAT return / MVA-oppgave (1-2 calls):
@@ -480,16 +479,19 @@ Optionally: create_employment_details, create_standard_time, create_leave_of_abs
 - Leave types: MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, FURLOUGH, OTHER""",
 
     "create_supplier_invoice": """
-TASK: Supplier invoice (3-4 calls: create_supplier + 2 account lookups + create_incoming_invoice)
--> create_supplier(name, organizationNumber)
--> create_incoming_invoice(invoiceDate=date, supplierId=supplier.id, invoiceNumber=invoiceRef, amountIncludingVat=totalAmount, expenseAccountNumber=accountFromPrompt, vatPercentage=vatRate)
+TASK: Supplier invoice (4-5 calls: extract_file_content + create_supplier + 2 account lookups + create_incoming_invoice)
+STEPS:
+1. Use extract_file_content(filename="invoice.pdf") to read the attached PDF.
+2. Extract the following from the PDF content: supplier name (and organization number if available), invoice date (YYYY-MM-DD), invoice number, total amount including VAT, VAT rate (e.g., 25, 15, 12, or 0), and the desired expense account number (e.g., 6590, 6800).
+3. Create the supplier if they don't exist: create_supplier(name, organizationNumber if available).
+4. Create the incoming invoice: create_incoming_invoice(invoiceDate=date, supplierId=supplier.id, invoiceNumber=invoiceRef, amountIncludingVat=totalAmount, expenseAccountNumber=accountFromPrompt, vatPercentage=vatRate)
 - "leverandorfaktura"/"inngaende faktura" = supplier/incoming invoice
 - The tool auto-creates a voucher with expense debit (+ input VAT) and payables credit linked to supplier
 - Common expense accounts: 4000=varekostnad, 6300=leie, 6590=annet driftsmateriale, 6800=kontorrekvisita, 7100=lonn
 - VAT rates: 25 (standard/hoey), 15 (medium/mat), 12 (low/transport), 0 (exempt)
-- amountIncludingVat is the TOTAL amount (including VAT) from the prompt
-- CRITICAL: Extract the expense account number from the prompt (e.g. "account 6590" -> expenseAccountNumber=6590)
-- CRITICAL: invoiceDate MUST be explicitly provided in the prompt. DO NOT infer today's date if not specified.""",
+- amountIncludingVat is the TOTAL amount (including VAT) from the PDF content
+- CRITICAL: Extract the expense account number from the PDF content (e.g. "account 6590" -> expenseAccountNumber=6590)
+- CRITICAL: invoiceDate MUST be explicitly provided in the PDF content. DO NOT infer today's date if not specified.""",
 
     "delete_travel_expense": """
 TASK: Delete travel expense (2 calls)
@@ -551,24 +553,24 @@ TASK: Create free accounting dimension with values + optional voucher (3-5 calls
 
     "create_ledger_voucher": """
 TASK: Ledger correction voucher / Book voucher (1 call)
--> create_voucher(date, description, postings='[{"accountNumber": "1920", "amount": 1000}, {"accountNumber": "456", "amount": -1000}]')
+-> create_voucher(date, description, postings='[{{"accountNumber": "1920", "amount": 1000}}, {{"accountNumber": "456", "amount": -1000}}]')
 - Postings MUST balance: sum of all amounts = 0
 - Positive = debit (increases assets/expenses, decreases liabilities/equity/revenue)
 - Negative = credit (decreases assets/expenses, increases liabilities/equity/revenue)
 - CRITICAL EXAMPLES for corrections:
   - **Correcting wrong account (e.g., 7300 instead of 7000 for 3900 NOK):**
-    - Debit correct account (7000): `{"accountNumber": "7000", "amount": 3900}`
-    - Credit wrong account (7300): `{"accountNumber": "7300", "amount": -3900}`
+    - Debit correct account (7000): `{{"accountNumber": "7000", "amount": 3900}}`
+    - Credit wrong account (7300): `{{"accountNumber": "7300", "amount": -3900}}`
   - **Correcting missing VAT (e.g., 19600 NOK net on 7300, missing VAT on 2710, assuming 25% VAT):**
     - VAT amount = 19600 * 0.25 = 4900 NOK
-    - Debit expense account (7300) for VAT portion: `{"accountNumber": "7300", "amount": 4900}`
-    - Credit VAT liability account (2710): `{"accountNumber": "2710", "amount": -4900}`
+    - Debit expense account (7300) for VAT portion: `{{"accountNumber": "7300", "amount": 4900}}`
+    - Credit VAT liability account (2710): `{{"accountNumber": "2710", "amount": -4900}}`
   - **Reversing a duplicate expense (e.g., 6590 for 1650 NOK):**
-    - Credit expense account (6590): `{"accountNumber": "6590", "amount": -1650}`
-    - Debit a balancing account (e.g., Bank 1920 or a suspense account): `{"accountNumber": "1920", "amount": 1650}`
+    - Credit expense account (6590): `{{"accountNumber": "6590", "amount": -1650}}`
+    - Debit a balancing account (e.g., Bank 1920 or a suspense account): `{{"accountNumber": "1920", "amount": 1650}}`
   - **Correcting an overbooked expense (e.g., 6860 booked 22550 instead of 5150, overbooked by 17400 NOK):**
-    - Credit expense account (6860) for the overbooked amount: `{"accountNumber": "6860", "amount": -17400}`
-    - Debit a balancing account (e.g., Bank 1920 or a suspense account): `{"accountNumber": "1920", "amount": 17400}`
+    - Credit expense account (6860) for the overbooked amount: `{{"accountNumber": "6860", "amount": -17400}}`
+    - Debit a balancing account (e.g., Bank 1920 or a suspense account): `{{"accountNumber": "1920", "amount": 17400}}`
 - Common accounts: 1920=bank, 1500=receivables, 2400=payables, 3000=revenue, 4000=cost of goods, 6300=leie, 7100=lonn, 2700=skattetrekk, 2770=arbeidsgiveravgift, 2900=gjeld""",
 
     "reverse_voucher": """
@@ -608,33 +610,34 @@ TASK: Process invoice from file (4-5 calls)
 -> Then: create_customer -> create_product -> create_order -> create_invoice""",
 
     "year_end": """
-TASK: Perform simplified annual closing for 2025.
-Use `create_ledger_voucher` for all accounting entries. Use date "2025-12-31" for all vouchers.
+TASK: Perform simplified annual closing.
+Use `create_voucher` for all accounting entries and `create_year_end_note` if a note is required.
+Use the voucher date from the prompt (typically year-end, e.g. "2025-12-31"). If no date is specified, use "{today}".
 
 STEPS:
-1.  **Calculate and book annual depreciation for three fixed assets.**
-    -   For each asset, calculate annual depreciation (linear method: Cost / Years).
-    -   Create a separate `create_ledger_voucher` call for each.
-    -   Depreciation expense account: 6010 (Debit). Accumulated depreciation account: 1209 (Credit).
-    -   Assets:
-        -   Programvare (Software): 111950 NOK, 9 years. Amount = 111950 / 9 = 12438.89.
-        -   Kontormaskiner (Office machines): 351450 NOK, 9 years. Amount = 351450 / 9 = 39050.00.
-        -   Inventar (Furniture): 418800 NOK, 10 years. Amount = 418800 / 10 = 41880.00.
+1.  **Calculate and book annual depreciation for each fixed asset.**
+    -   For each asset, calculate annual depreciation (straight-line: Cost / Years). Round to 2 decimals.
+    -   Create a separate `create_voucher` call for each asset.
+    -   Use the expense and accumulated depreciation accounts from the prompt.
+    -   Postings format: `[{{"accountNumber": EXPENSE_ACCT, "amount": X}}, {{"accountNumber": ACCUM_DEPR_ACCT, "amount": -X}}]`
 
-2.  **Reverse accrued expenses.**
-    -   Total 79750 NOK at account 1700 (Prepaid expenses).
-    -   Create one `create_ledger_voucher` call: Debit 6990 (Other operating expenses - assumed), Credit 1700. Amount = 79750.
+2.  **Reverse prepaid/accrued expenses.**
+    -   Use the amount and accounts from the prompt. If the corresponding expense account is not specified, use account 6990 (Other operating expenses).
+    -   Create one `create_voucher`: Debit expense account (e.g., 6990), Credit prepaid account (e.g., 1700).
 
 3.  **Calculate and book tax provision.**
-    -   Tax rate: 22% of taxable profit. Accounts: 8700 (Debit) / 2920 (Credit).
-    -   CRITICAL: Taxable profit is NOT provided. You cannot calculate the exact amount.
-    -   To complete the task, create a `create_ledger_voucher` with a placeholder amount of 0 for the tax provision, and include a note in the description about the missing taxable profit.
+    -   Tax rate and accounts from the prompt (typically 22%, accounts 8700/2920).
+    -   If taxable profit is not provided in the prompt, assume it cannot be determined and use 0 for the tax amount. Note this in the voucher description.
+    -   Postings format: `[{{"accountNumber": 8700, "amount": X}}, {{"accountNumber": 2920, "amount": -X}}]`
 
 4.  **Create a year-end note (if specified in the prompt).**
-    -   Call `search_year_ends` to get the `year_end_id`. If not found, `create_year_end_note` will auto-detect the most recent.
-    -   Then call `create_year_end_note(year_end_id, note)`.
+    -   `create_year_end_note` will auto-detect the most recent year-end.
 
-CRITICAL: All voucher postings MUST balance (sum of amounts = 0). Positive = debit, negative = credit.
+CRITICAL:
+-   ONLY use `create_voucher` and `create_year_end_note` for this task. DO NOT use any other tools.
+-   All voucher postings MUST balance (sum of amounts = 0). Positive = debit, negative = credit.
+-   Use accountNumber in postings.
+-   After all required vouchers are posted, respond with "Done." and STOP.
 """,
 
     "salary": """
@@ -659,7 +662,7 @@ def create_agent(tools: list, task_type: Optional[str] = None) -> LlmAgent:
     """Create an ADK agent with the given tools.
 
     Args:
-        tools: List of tool functions to provide to the agent.
+        tools: List of tool functions (already filtered by tool_router).
         task_type: If classified, use focused instruction for that task type.
                    If None, use full system instruction (no regression).
     """

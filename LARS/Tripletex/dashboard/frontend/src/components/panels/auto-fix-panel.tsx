@@ -495,7 +495,7 @@ function LiveSubmissionsView() {
                   switch (ev.type) {
                     case "request_start":
                       color = "text-emerald-400"
-                      detail = ev.prompt?.slice(0, 80) || ""
+                      detail = ev.prompt || ""
                       break
                     case "classify":
                       color = "text-blue-400"
@@ -1042,6 +1042,16 @@ function LiveFixRequestCard({
                   <AlertTriangle className="h-3 w-3 inline mr-1" />{req.evalError}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Full prompt */}
+          {req.prompt && (
+            <div className="px-3 pt-2">
+              <div className="bg-muted/50 rounded p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Prompt</p>
+                <p className="text-[12px] whitespace-pre-wrap break-words">{req.prompt}</p>
+              </div>
             </div>
           )}
 

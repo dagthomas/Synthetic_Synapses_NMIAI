@@ -1,10 +1,7 @@
 import os
 import logging
-import pdfplumber
-from PIL import Image
-import google.genai as genai
 
-from config import GEMINI_MODEL
+from kreuzberg import extract_file_sync
 
 log = logging.getLogger(__name__)
 
@@ -42,45 +39,16 @@ def build_file_tools(files_dir: str) -> dict:
 
 
 def _extract_pdf(filepath: str) -> dict:
-    """Extract text from PDF. Falls back to Gemini vision for scanned PDFs."""
+    """Extract text from PDF using kreuzberg."""
     try:
-        text_parts = []
-        with pdfplumber.open(filepath) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text_parts.append(page_text)
-        full_text = "\n\n".join(text_parts)
-        if full_text.strip():
-            return {"text": full_text}
-
-        # Fallback: scanned PDF — render pages to images and use Gemini vision
-        log.info("PDF has no text layer, falling back to Gemini vision")
-        return _extract_pdf_with_vision(filepath)
+        result = extract_file_sync(filepath)
+        if result.content.strip():
+            log.info(f"Successfully extracted PDF with kreuzberg: {filepath}")
+            return {"text": result.content}
+        else:
+            return {"error": True, "message": f"Kreuzberg returned empty text for {filepath}"}
     except Exception as e:
-        return {"error": True, "message": f"Failed to extract PDF: {str(e)}"}
-
-
-def _extract_pdf_with_vision(filepath: str) -> dict:
-    """Render PDF pages to images and extract text with Gemini vision."""
-    try:
-        images = []
-        with pdfplumber.open(filepath) as pdf:
-            for page in pdf.pages:
-                img = page.to_image(resolution=200).original
-                images.append(img)
-
-        client = genai.Client()
-        texts = []
-        for img in images:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=["Extract ALL text from this image exactly as written. Preserve formatting, numbers, and special characters:", img],
-            )
-            texts.append(response.text)
-        return {"text": "\n\n".join(texts)}
-    except Exception as e:
-        return {"error": True, "message": f"Vision extraction failed: {str(e)}"}
+        return {"error": True, "message": f"PDF extraction failed: {str(e)}"}
 
 
 def _extract_text(filepath: str) -> dict:
@@ -120,14 +88,12 @@ def _extract_excel(filepath: str) -> dict:
 
 
 def _extract_image(filepath: str) -> dict:
-    """Extract text from image using Gemini vision."""
+    """Extract text from image using kreuzberg."""
     try:
-        img = Image.open(filepath)
-        client = genai.Client()
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=["Extract ALL text from this image exactly as written. Preserve formatting, numbers, and special characters:", img],
-        )
-        return {"text": response.text}
+        result = extract_file_sync(filepath)
+        if result.content.strip():
+            return {"text": result.content}
+        else:
+            return {"error": True, "message": f"Kreuzberg returned empty text for {filepath}"}
     except Exception as e:
         return {"error": True, "message": f"Image extraction failed: {str(e)}"}

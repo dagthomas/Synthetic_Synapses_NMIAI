@@ -2,7 +2,6 @@ fastapi
 uvicorn[standard]
 google-adk
 google-genai
-pdfplumber
-Pillow
+kreuzberg
 requests
 python-dotenv

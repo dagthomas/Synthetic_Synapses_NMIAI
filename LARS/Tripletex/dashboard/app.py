@@ -29,6 +29,14 @@ from sim.task_definitions import ALL_TASKS, LANGUAGES
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
 
+
+class _NoDocsFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "GET /docs" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_NoDocsFilter())
+
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 DIST_DIR = os.path.join(STATIC_DIR, "dist")
 PAYLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "payloads")
@@ -545,7 +553,7 @@ async def auto_fix_live_eval(req: LiveEvalRequest):
         total = len(logs)
         yield _sse({"type": "live_start", "total": total, "logs": [
             {"id": l["id"], "task_type": l.get("task_type", "unknown"),
-             "prompt": (l.get("prompt") or "")[:120],
+             "prompt": l.get("prompt") or "",
              "api_calls": l.get("api_calls", 0),
              "api_errors": l.get("api_errors", 0),
              "created_at": l.get("created_at", "")}
@@ -568,7 +576,7 @@ async def auto_fix_live_eval(req: LiveEvalRequest):
 
             yield _sse({"type": "evaluating", "index": idx, "total": total,
                          "log_id": log_id, "task_type": task_type,
-                         "prompt": prompt[:120]})
+                         "prompt": prompt})
 
             try:
                 verdict = llm_evaluate_logs(prompt, tool_calls, api_log, agent_response)
@@ -875,7 +883,7 @@ async def auto_fix_batch_loop(req: BatchAutoFixRequest):
             "total_logs": total_logs,
             "log_ids": [l["id"] for l in logs],
             "log_summaries": [
-                {"id": l["id"], "prompt": (l.get("prompt") or "")[:120], "task_type": l.get("task_type", "unknown")}
+                {"id": l["id"], "prompt": l.get("prompt") or "", "task_type": l.get("task_type", "unknown")}
                 for l in logs
             ],
             "max_iterations": req.max_iterations,
@@ -904,7 +912,7 @@ async def auto_fix_batch_loop(req: BatchAutoFixRequest):
                     "total": len(logs_this_round),
                     "log_id": log_id,
                     "task_type": task_type,
-                    "prompt_preview": prompt[:100],
+                    "prompt_preview": prompt,
                 })
 
                 try:
@@ -2035,7 +2043,7 @@ def _score_single_log(solve_log: dict) -> dict:
     return {
         "solve_log_id": log_id,
         "task_type": task_type,
-        "prompt": prompt[:500],
+        "prompt": prompt,
         "checks": checks,
         "total_points": total_points,
         "max_points": max_points,
@@ -2048,35 +2056,134 @@ def _score_single_log(solve_log: dict) -> dict:
     }
 
 
+# ── Field alias map: field_check name → API body key names ──
+_FIELD_ALIASES: dict[str, list[str]] = {
+    "customer_name": ["name"],
+    "supplier_name": ["name"],
+    "project_name": ["name"],
+    "product_name": ["name"],
+    "dimension_name": ["name"],
+    "invoice_date": ["invoiceDate"],
+    "due_date": ["invoiceDueDate"],
+    "payment_amount": ["amount"],
+    "departure_date": ["departureDate"],
+    "return_date": ["returnDate"],
+    "start_date": ["startDate"],
+    "invoice_number": ["invoice_number", "description"],
+}
+
+# ── Meta-check patterns: _prefixed fields → (url_pattern, method, extra_body_key) ──
+_META_CHECKS: dict[str, tuple[str, str, str | None]] = {
+    "_found":             ("",                            "POST", None),
+    "_customer_found":    ("/customer",                   "POST", None),
+    "_invoice_found":     ("/invoice",                    "POST", None),
+    "_payment_found":     ("/:payment",                   "PUT",  None),
+    "_credit_note_found": ("/:createCreditNote",          "POST", None),
+    "_supplier_found":    ("/supplier",                   "POST", None),
+    "_employee_found":    ("/employee",                   "POST", None),
+    "_cost_found":        ("/travelExpense/cost",         "POST", None),
+    "_pm_found":          ("/project",                    "POST", "projectManager"),
+    "_project_found":     ("/project",                    "POST", None),
+    "_deleted":           ("",                            "DELETE", None),
+    "_salary_found":      ("/salary/transaction",         "POST", None),
+    "_payment_reversed":  ("/:payment",                   "PUT",  None),
+    "_dimension_found":   ("/ledger/accountingDimension",  "POST", None),
+    "_voucher_found":     ("/ledger/voucher",             "POST", None),
+    "_reversed":          ("/ledger/voucher/:reverse",    "PUT",  None),
+}
+
+
+def _snake_to_camel(name: str) -> str:
+    """Convert snake_case to camelCase."""
+    parts = name.split("_")
+    return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
+
 def _check_field_in_calls(field_name: str, tool_calls: list, api_log: list, prompt: str) -> bool:
     """Check if a field was set in tool calls or API log requests."""
-    # Check tool call args
+
+    # ── 1. Meta-checks (_prefixed existence checks) ──
+    if field_name.startswith("_"):
+        meta = _META_CHECKS.get(field_name)
+        if meta:
+            url_pat, method, body_key = meta
+            for entry in api_log:
+                if entry.get("method") != method or not entry.get("ok"):
+                    continue
+                url = entry.get("url", "")
+                if url_pat and url_pat not in url:
+                    continue
+                if body_key:
+                    body = entry.get("request_body", {})
+                    if not (isinstance(body, dict) and body.get(body_key)):
+                        continue
+                return True
+        return False
+
+    # ── 2. Special: product_count (count orderLines items) ──
+    if field_name == "product_count":
+        for entry in api_log:
+            body = entry.get("request_body", {})
+            if isinstance(body, dict):
+                lines = body.get("orderLines") or body.get("order_lines")
+                if isinstance(lines, list) and len(lines) >= 2:
+                    return True
+        for tc in tool_calls:
+            args = tc.get("args", {})
+            for v in args.values():
+                if isinstance(v, list) and len(v) >= 2:
+                    return True
+                if isinstance(v, str):
+                    try:
+                        parsed = json.loads(v)
+                        if isinstance(parsed, list) and len(parsed) >= 2:
+                            return True
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        return False
+
+    # ── 3. Build candidate names: original + aliases + camelCase fallback ──
+    candidates = [field_name]
+    candidates.extend(_FIELD_ALIASES.get(field_name, []))
+    camel = _snake_to_camel(field_name)
+    if camel != field_name and camel not in candidates:
+        candidates.append(camel)
+
+    # ── 4. Check tool call args ──
     for tc in tool_calls:
         args = tc.get("args", {})
-        if field_name in args and args[field_name] is not None:
-            return True
+        for cand in candidates:
+            if cand in args and args[cand] is not None:
+                return True
         # Check nested JSON args (some tools take json_data)
         for v in args.values():
-            if isinstance(v, dict) and field_name in v:
-                return True
+            if isinstance(v, dict):
+                for cand in candidates:
+                    if cand in v:
+                        return True
             if isinstance(v, str):
                 try:
                     parsed = json.loads(v)
-                    if isinstance(parsed, dict) and field_name in parsed:
-                        return True
+                    if isinstance(parsed, dict):
+                        for cand in candidates:
+                            if cand in parsed:
+                                return True
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-    # Check API request bodies
+    # ── 5. Check API request bodies ──
     for entry in api_log:
         body = entry.get("request_body", {})
         if isinstance(body, dict):
-            if field_name in body and body[field_name] is not None:
-                return True
+            for cand in candidates:
+                if cand in body and body[cand] is not None:
+                    return True
             # Check nested objects
             for v in body.values():
-                if isinstance(v, dict) and field_name in v:
-                    return True
+                if isinstance(v, dict):
+                    for cand in candidates:
+                        if cand in v:
+                            return True
 
     return False
 
@@ -2237,7 +2344,11 @@ async def fetch_scores_from_api(req: FetchScoresRequest):
     cookie = req.cookie or _load_saved_cookie()
     headers = {"Accept": "application/json"}
     if cookie:
-        headers["Cookie"] = cookie
+        # JWT tokens go as Authorization: Bearer, session cookies as Cookie header
+        if cookie.startswith("eyJ"):
+            headers["Authorization"] = f"Bearer {cookie}"
+        else:
+            headers["Cookie"] = cookie
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -2267,6 +2378,8 @@ async def fetch_scores_from_api(req: FetchScoresRequest):
     if isinstance(submissions, list):
         for sub in submissions:
             task_num = sub.get("task_number") or sub.get("taskNumber")
+            if task_num is None:
+                continue
             tasks.append({
                 "task_number": task_num,
                 "checks_passed": sub.get("checks_passed") or sub.get("checksPassed", 0),
