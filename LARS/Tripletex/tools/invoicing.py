@@ -126,16 +126,20 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         if amount == 0:
             return {"error": True, "message": "Payment amount cannot be 0. The invoice may already be fully paid (amountOutstanding=0). Check amountOutstanding from search_invoices before registering payment."}
 
-        # Resolve paymentTypeId — prefer "Betalt til bank" over "Kontant"
-        pt_result = client.get("/invoice/paymentType", params={"fields": "id,description", "count": 10})
-        payment_types = pt_result.get("values", [])
-        payment_type_id = 0
-        for pt in payment_types:
-            if "bank" in pt.get("description", "").lower():
-                payment_type_id = pt["id"]
-                break
-        if not payment_type_id and payment_types:
-            payment_type_id = payment_types[0]["id"]
+        # Resolve paymentTypeId — prefer "Betalt til bank" over "Kontant" (cached)
+        payment_type_id = client.get_cached("payment_type_bank")
+        if not payment_type_id:
+            pt_result = client.get("/invoice/paymentType", params={"fields": "id,description", "count": 10})
+            payment_types = pt_result.get("values", [])
+            payment_type_id = 0
+            for pt in payment_types:
+                if "bank" in pt.get("description", "").lower():
+                    payment_type_id = pt["id"]
+                    break
+            if not payment_type_id and payment_types:
+                payment_type_id = payment_types[0]["id"]
+            if payment_type_id:
+                client.set_cached("payment_type_bank", payment_type_id)
 
         return client.put(
             f"/invoice/{invoice_id}/:payment",

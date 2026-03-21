@@ -38,7 +38,7 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         params = {
             "dateFrom": dateFrom,
             "dateTo": dateTo,
-            "fields": "id,date,description,amount,account",
+            "fields": "id,date,description,amount,account,voucher",
         }
         if accountNumber:
             params["accountNumber"] = accountNumber

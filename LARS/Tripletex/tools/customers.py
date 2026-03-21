@@ -31,6 +31,16 @@ def build_customer_tools(client: TripletexClient) -> dict:
         Returns:
             The created customer with id and fields, or an error message.
         """
+        # Search-first: avoid creating duplicates (Tripletex allows them!)
+        if organizationNumber:
+            existing = client.get("/customer", params={
+                "organizationNumber": organizationNumber,
+                "fields": "id,name,email,organizationNumber,isCustomer,isSupplier",
+            })
+            vals = existing.get("values", [])
+            if vals:
+                return {"value": vals[0], "_note": "Customer already existed, returning existing."}
+
         body = {"name": name, "isCustomer": isCustomer}
         if email:
             body["email"] = email
@@ -114,13 +124,21 @@ def build_customer_tools(client: TripletexClient) -> dict:
 
         Returns:
             A list of matching customers with id, name, email.
+            Results are sorted so exact name matches appear first.
         """
         params = {"fields": "id,name,email,isCustomer,isSupplier"}
         if name:
             params["name"] = name
         if email:
             params["email"] = email
-        return client.get("/customer", params=params)
+        result = client.get("/customer", params=params)
+        # Sort exact name matches first so the agent picks the right one
+        if name and "values" in result and len(result["values"]) > 1:
+            target = name.strip().lower()
+            result["values"].sort(
+                key=lambda c: (0 if c.get("name", "").strip().lower() == target else 1)
+            )
+        return result
 
     def delete_customer(customer_id: int) -> dict:
         """Delete a customer.

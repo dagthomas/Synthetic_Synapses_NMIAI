@@ -148,37 +148,22 @@ def build_project_tools(client: TripletexClient) -> dict:
         if isInternal: # Added logic to set isInternal
             body["isInternal"] = True
 
-        # Try creating the project first — skip _ensure_employee_ready unless needed
-        result = client.post("/project", json=body)
-
-        # If PM access denied, ensure employee is ready and retry once
-        if result.get("error") and pm_id:
-            msg = str(result.get("message", "")).lower()
-            if "prosjektleder" in msg or "tilgang" in msg or "entitlement" in msg:
+        # Pre-ensure PM has entitlements BEFORE attempting project creation
+        # This avoids a wasted POST + 422 error + retry cycle
+        if pm_id:
+            pm_ready = _ensure_employee_ready(pm_id)
+            if not pm_ready:
+                # Fall back to admin employee
                 import logging
                 logging.getLogger("projects").warning(
-                    f"PM {pm_id} access denied, running _ensure_employee_ready")
-                # Undo the error count — this is a recoverable retry
-                client._error_count = max(0, client._error_count - 1)
-                for entry in reversed(client._call_log):
-                    if not entry.get("ok") and "/project" in entry.get("url", ""):
-                        entry["ok"] = True
-                        entry["recovered"] = True
-                        break
-                pm_ready = _ensure_employee_ready(pm_id)
-                if pm_ready:
-                    result = client.post("/project", json=body)
-                else:
-                    # Fall back to admin employee
-                    logging.getLogger("projects").warning(
-                        f"PM {pm_id} entitlements failed, falling back to admin employee")
-                    emp_result = client.get("/employee", params={"fields": "id", "count": 1})
-                    emps = emp_result.get("values", [])
-                    if emps:
-                        body["projectManager"] = {"id": emps[0]["id"]}
-                        result = client.post("/project", json=body)
+                    f"PM {pm_id} entitlements failed, falling back to admin employee")
+                emp_result = client.get("/employee", params={"fields": "id", "count": 1})
+                emps = emp_result.get("values", [])
+                if emps:
+                    pm_id = emps[0]["id"]
+                    body["projectManager"] = {"id": pm_id}
 
-        return result
+        return client.post("/project", json=body)
 
     def search_projects(name: str = "", isClosed: bool = False) -> dict:
         """Search for projects.

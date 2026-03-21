@@ -72,6 +72,12 @@ def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
+@app.get("/cyberpunk")
+def cyberpunk_dashboard():
+    """Serve the cyberpunk one-pager dashboard."""
+    return FileResponse(os.path.join(STATIC_DIR, "cyberpunk.html"))
+
+
 # Mount dist assets first (React build output)
 if os.path.isdir(os.path.join(DIST_DIR, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, "assets")), name="dist-assets")
@@ -2204,6 +2210,21 @@ def _check_field_in_calls(field_name: str, tool_calls: list, api_log: list, prom
     return False
 
 
+# ── API: Agent Health Check (proxy) ────────────────────────────────
+
+@app.get("/api/agent/health")
+async def proxy_agent_health():
+    """Proxy health check to the agent server (avoids CORS)."""
+    import httpx
+    agent_url = os.environ.get("EVAL_AGENT_URL", "http://localhost:8005")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
+            r = await client.get(f"{agent_url}/docs")
+            return {"ok": r.status_code == 200}
+    except Exception:
+        return {"ok": False}
+
+
 # ── API: Agent Live Events (SSE proxy) ────────────────────────────
 
 @app.get("/api/agent/events")
@@ -2422,6 +2443,98 @@ async def fetch_scores_from_api(req: FetchScoresRequest):
         "new_mappings": new_mappings,
         "total_score": total_score,
         "rank": rank,
+    }
+
+
+# ── Score Auto-Poll ──────────────────────────────────────────────
+
+@app.get("/api/scores/auto-poll")
+async def auto_poll_scores():
+    """Fetch scores from competition API, store snapshot, diff against previous."""
+    import httpx
+
+    cookie = _load_saved_cookie()
+    if not cookie:
+        return JSONResponse({"error": "no_cookie", "message": "No auth cookie saved"}, 401)
+
+    headers = {"Accept": "application/json"}
+    if cookie.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {cookie}"
+    else:
+        headers["Cookie"] = cookie
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.ainm.no/tripletex/my/submissions",
+                headers=headers,
+            )
+        if resp.status_code == 401:
+            return JSONResponse({"error": "auth_expired"}, 401)
+        if resp.status_code != 200:
+            return JSONResponse({"error": f"API {resp.status_code}"}, resp.status_code)
+        data = resp.json()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, 502)
+
+    submissions = data.get("submissions", data) if isinstance(data, dict) else data
+    total_score = data.get("total_score", 0) if isinstance(data, dict) else 0
+    rank = data.get("rank") if isinstance(data, dict) else None
+
+    tasks = []
+    if isinstance(submissions, list):
+        for sub in submissions:
+            task_num = sub.get("task_number") or sub.get("taskNumber")
+            if task_num is None:
+                continue
+            tasks.append({
+                "task_number": task_num,
+                "checks_passed": sub.get("checks_passed") or sub.get("checksPassed", 0),
+                "checks_total": sub.get("checks_total") or sub.get("checksTotal", 0),
+                "score": sub.get("score", 0),
+                "submission_time": sub.get("submission_time") or sub.get("submissionTime") or sub.get("created_at"),
+            })
+
+    # Store new snapshot
+    db.create_score_snapshot(
+        total_score=total_score,
+        rank=rank,
+        tasks_attempted=len(tasks),
+        total_submissions=len(submissions) if isinstance(submissions, list) else 0,
+        raw_json=json.dumps(data, default=str),
+        tasks=tasks,
+    )
+
+    # Diff against previous
+    latest, previous = db.get_snapshot_pair()
+    changes = []
+    if latest and previous:
+        prev_map = {t["task_number"]: t for t in previous.get("tasks", [])}
+        for t in latest.get("tasks", []):
+            tn = t["task_number"]
+            old = prev_map.get(tn)
+            if not old:
+                changes.append({"task_number": tn, "type": "new", "score": t["score"],
+                                "checks_passed": t["checks_passed"], "checks_total": t["checks_total"]})
+            else:
+                if t["score"] != old["score"] or t["checks_passed"] != old["checks_passed"]:
+                    changes.append({
+                        "task_number": tn, "type": "changed",
+                        "score": t["score"], "prev_score": old["score"],
+                        "checks_passed": t["checks_passed"], "prev_checks_passed": old["checks_passed"],
+                        "checks_total": t["checks_total"],
+                    })
+
+    mappings = {str(k): v for k, v in db.get_task_number_map().items()}
+
+    return {
+        "ok": True,
+        "total_score": total_score,
+        "rank": rank,
+        "tasks": latest["tasks"] if latest else tasks,
+        "changes": changes,
+        "mappings": mappings,
+        "polled_at": db._now(),
     }
 
 

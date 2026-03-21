@@ -8,6 +8,7 @@ import {
   fetchCoverage,
   fetchLogs,
   fetchTasksLiveSummary,
+  autoPollScores,
 } from "@/lib/api"
 
 export function useTasks() {
@@ -64,4 +65,17 @@ export function useTasksLiveSummary() {
     revalidateOnFocus: false,
     dedupingInterval: 30_000,
   })
+}
+
+export function useScoreAutoPolling(enabled = true) {
+  return useSWR(
+    enabled ? "score-auto-poll" : null,
+    autoPollScores,
+    {
+      refreshInterval: 30_000,
+      revalidateOnFocus: false,
+      dedupingInterval: 15_000,
+      errorRetryCount: 2,
+    }
+  )
 }

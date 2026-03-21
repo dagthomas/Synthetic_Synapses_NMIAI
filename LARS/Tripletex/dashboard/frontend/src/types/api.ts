@@ -242,9 +242,11 @@ export interface SolveLog {
   tool_calls_json?: string
   api_log_json?: string
   task_type?: string
+  llm_task_type?: string
   tool_count?: number
   created_at: string
   source?: string
+  classification_level?: string
 }
 
 // Live activity event types (SSE from agent)
@@ -394,6 +396,27 @@ export interface TaskMapping {
   task_number: number
   task_type: string
   confidence: string
+}
+
+// Auto-poll types
+export interface ScoreChange {
+  task_number: number
+  type: "new" | "changed"
+  score: number
+  prev_score?: number
+  checks_passed: number
+  prev_checks_passed?: number
+  checks_total: number
+}
+
+export interface ScorePollResult {
+  ok: boolean
+  total_score: number
+  rank: number | null
+  tasks: ScoreTask[]
+  changes: ScoreChange[]
+  mappings: Record<string, TaskMapping>
+  polled_at: string
 }
 
 // Log evaluation types

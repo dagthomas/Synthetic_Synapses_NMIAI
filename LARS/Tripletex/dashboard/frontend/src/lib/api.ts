@@ -419,6 +419,10 @@ export function streamLiveEval(
   return controller
 }
 
+// Score Auto-Poll
+export const autoPollScores = () =>
+  request<import("@/types/api").ScorePollResult>("/api/scores/auto-poll")
+
 // Score Tracking
 export const fetchLatestScores = () =>
   request<import("@/types/api").ScoreSnapshot>("/api/scores/latest")

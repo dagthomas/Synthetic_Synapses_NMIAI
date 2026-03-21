@@ -910,6 +910,56 @@ function LogCard({ log, index }: { log: SolveLog; index: number }) {
               />
             )}
 
+            {/* Classification + LLM misroute detection */}
+            {log.task_type && (() => {
+              const llmType = log.llm_task_type
+              const isMismatch = llmType && llmType !== "unknown" && llmType !== log.task_type
+              return (
+                <div className="space-y-1">
+                  {/* Keyword classifier result */}
+                  <div className={cn(
+                    "flex items-center gap-2 rounded-lg px-3 py-2 border",
+                    isMismatch
+                      ? "bg-amber-500/10 border-amber-500/30"
+                      : "bg-blue-500/10 border-blue-500/20"
+                  )}>
+                    <Tag className={cn("h-3.5 w-3.5 shrink-0", isMismatch ? "text-amber-500" : "text-blue-500")} />
+                    <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide shrink-0">Classified as:</span>
+                    <code className={cn("text-[13px] font-bold", isMismatch ? "text-amber-600 dark:text-amber-400" : "text-blue-500")}>{log.task_type}</code>
+                    {log.classification_level && (
+                      <Badge variant="secondary" className="text-[9px]">{log.classification_level}</Badge>
+                    )}
+                    {isMismatch && (
+                      <Badge variant="destructive" className="text-[9px] ml-auto">MISROUTE?</Badge>
+                    )}
+                    {llmType && !isMismatch && (
+                      <Badge variant="default" className="text-[9px] ml-auto bg-emerald-600">LLM agrees</Badge>
+                    )}
+                  </div>
+                  {/* LLM independent opinion */}
+                  {llmType && llmType !== "unknown" && (
+                    <div className={cn(
+                      "flex items-center gap-2 rounded-lg px-3 py-2 border",
+                      isMismatch
+                        ? "bg-red-500/10 border-red-500/30"
+                        : "bg-emerald-500/10 border-emerald-500/20"
+                    )}>
+                      <Brain className={cn("h-3.5 w-3.5 shrink-0", isMismatch ? "text-red-500" : "text-emerald-500")} />
+                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide shrink-0">Should be named:</span>
+                      <code className={cn("text-[13px] font-bold", isMismatch ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>{llmType}</code>
+                      <span className="text-[10px] text-muted-foreground ml-auto">(Gemini Flash)</span>
+                    </div>
+                  )}
+                  {!llmType && (
+                    <div className="flex items-center gap-2 rounded-lg px-3 py-1.5 bg-muted/30 border border-border/30">
+                      <Loader2 className="h-3 w-3 text-muted-foreground animate-spin shrink-0" />
+                      <span className="text-[10px] text-muted-foreground">LLM classification pending...</span>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
             {/* Full prompt */}
             <Section icon={<MessageSquare className="h-3 w-3" />} title="Prompt" copyText={log.prompt}>
               <div className="bg-muted/30 rounded-lg p-3 text-[12px] whitespace-pre-wrap break-words">

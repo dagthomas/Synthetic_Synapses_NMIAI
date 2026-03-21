@@ -84,28 +84,37 @@ class TripletexClient:
                     self._cache["default_division"] = divs[0]["id"]
         except Exception:
             pass
-        # VAT type map (percentage -> id) for product creation — OUTPUT VAT only
+        # VAT type maps: match by standard VAT type NUMBER (stable across all sandboxes)
+        # Standard Norwegian VAT type numbers:
+        #   Output: 3→25%, 31→15%, 33→12%, 5/6→0%
+        #   Input:  1→25%, 11→15%, 13→12%
         try:
             vat_result = requests.get(
                 f"{self.base_url}/ledger/vatType",
                 auth=self.auth,
-                params={"fields": "id,number,name,percentage", "count": 100},
+                params={"fields": "id,number,percentage", "count": 100},
                 timeout=10,
             )
             if vat_result.status_code == 200:
+                _OUT = {3: 25, 31: 15, 33: 12}
+                _IN = {1: 25, 11: 15, 13: 12}
+                _ZERO = {6, 5}
                 vat_map = {}
+                input_vat_map = {}
                 for vt in vat_result.json().get("values", []):
-                    pct = vt.get("percentage")
-                    vid = vt.get("id")
-                    name = (vt.get("name") or "").lower()
-                    if pct is not None and vid is not None:
-                        # Only output VAT types (utgående) for products/sales
-                        if "utgående" in name or "utg." in name:
-                            vat_map[int(pct)] = vid
-                        elif int(pct) == 0 and ("fritatt" in name or "uten" in name):
+                    num, vid = vt.get("number"), vt.get("id")
+                    if num is not None and vid is not None:
+                        num = int(num)
+                        if num in _OUT:
+                            vat_map[_OUT[num]] = vid
+                        elif num in _ZERO:
                             vat_map.setdefault(0, vid)
+                        elif num in _IN:
+                            input_vat_map[_IN[num]] = vid
                 if vat_map:
                     self._cache["vat_type_map"] = vat_map
+                if input_vat_map:
+                    self._cache["input_vat_type_map"] = input_vat_map
         except Exception:
             pass
         # Payables account 2400 (used by supplier invoice tool)

@@ -1,0 +1,181 @@
+================================================================================
+                 TRIPLETEX COMPETITION SCORE SNAPSHOT
+                           March 21, 2026
+================================================================================
+
+CURRENT STANDINGS
+─────────────────────────────────────────────────────────────────────────────
+Total Score:              31.06 / 124.00 points (25.0%)
+Tasks Completed:          20 / 30 tasks (66.7%)
+Total Tries Invested:      161 attempts
+Average Efficiency:        0.285 points per try
+
+SCORE BY TIER
+─────────────────────────────────────────────────────────────────────────────
+Tier 1 (Basic, ×1):       10.32 / 18.00   (57.3%)  ███████░░░░░░░░░░░░
+Tier 2 (Multi-step, ×2):  10.23 / 40.00   (25.6%)  ██░░░░░░░░░░░░░░░░
+Tier 3 (Advanced, ×3):    10.51 / 66.00   (15.9%)  █░░░░░░░░░░░░░░░░░
+
+BREAKDOWN: 7/9 Tier 1 | 6/10 Tier 2 | 7/11 Tier 3
+
+KEY METRICS
+─────────────────────────────────────────────────────────────────────────────
+Highest Score:            3.50 (Task 17: create_employee_with_employment)
+Lowest Score:             0.25 (Task 14: travel_expense_with_costs)
+Best Efficiency:          1.710 pts/try (Task 21: delete_supplier, 1 try)
+Worst Efficiency:         0.032 pts/try (Task 7: update_employee, 9 tries)
+
+TASKS BY STATUS
+─────────────────────────────────────────────────────────────────────────────
+✓ Perfect (Max Score):    5 tasks
+  • Task 2:  create_customer         (2.0/2.0)
+  • Task 3:  create_product          (2.0/2.0)
+  • Task 4:  create_department       (2.0/2.0)
+
+✓ Strong (0.5+ pts/try):  6 tasks
+  • Task 17: create_employee_with_employment  (3.50/4.0)
+  • Task 18: supplier_invoice                 (2.80/4.0)
+  • Task 26: delete_invoice                   (2.40/6.0)
+  • Task 24: create_ledger_voucher            (2.25/6.0)
+  • Task 19: delete_travel_expense            (2.05/4.0)
+  • Task 21: delete_supplier                  (1.71/6.0)
+
+✓ Passing (0.2+ pts/try): 9 tasks
+  • Task 1:  create_employee                  (1.50/2.0)
+  • Task 5:  create_supplier                  (1.33/2.0)
+  • Task 13: create_travel_expense            (1.13/4.0)
+  • Task 6:  create_contact                   (1.20/2.0)
+  • Task 27: create_opening_balance           (1.50/6.0)
+  • Task 28: bank_reconciliation              (1.50/6.0)
+  • Task 15: invoice_with_payment             (0.50/4.0)
+  • Task 20: delete_customer                  (0.60/6.0)
+  • Task 29: process_invoice_file             (0.55/6.0)
+
+✗ Failing (<0.1 pts/try): 1 task
+  • Task 7:  update_employee                  (0.29/2.0) ← 9 tries, catastrophic ROI
+
+✗ Unscored (0/max): 10 tasks
+  • Tier 1:  Tasks 8, 9        (update_customer, update_product)
+  • Tier 2:  Tasks 10, 11, 12, 16  (create_invoice, multi-invoice, project, credit_note)
+  • Tier 3:  Tasks 22, 23, 25, 30  (delete_product×2, reverse_voucher, year_end)
+
+OPPORTUNITY ANALYSIS
+─────────────────────────────────────────────────────────────────────────────
+Highest Potential Gain:
+  1. Task 22/23: delete_product (0 → 6.0 pts, 1 try each) = +12 pts [EASY]
+  2. Task 25:    reverse_voucher (0 → 6.0 pts, 3 tries) = +6 pts [MEDIUM]
+  3. Task 30:    year_end (0 → 6.0 pts, 4 tries) = +6 pts [MEDIUM]
+  4. Tasks 10-11, 16: Invoicing pipeline (0 → 4.0 each) = +12 pts [HARD]
+  5. Task 29:    process_invoice_file (0.55 → 6.0 pts) = +5.45 pts [MEDIUM]
+
+Quick Win Potential (Phase 1): +24 points in 2-4 hours
+  • Tasks 22, 23: +12 (1-2 hours)
+  • Task 25:      +6 (1 hour)
+  • Task 30:      +6 (1-2 hours)
+
+Critical Issues Blocking Progress:
+  • Invoicing Crisis: 4 tasks completely failed despite 29 tries total
+    - create_invoice, create_multi_line, create_project, create_credit_note
+    - Suggests systematic failure in order/invoice pipeline
+  • Update Operations: 3 tasks underperform (7, 8, 9)
+    - Create works (tasks 1-6), but update doesn't
+    - Likely PATCH vs PUT issue or field handling
+  • Travel Variants: Task 14 (0.25/4.0) vs Task 13 (1.13/4.0)
+    - Cost/mileage/per diem handling broken?
+
+EFFICIENCY HEATMAP
+─────────────────────────────────────────────────────────────────────────────
+Points/Try Distribution:
+  1.71  ████ (Task 21: delete_supplier)
+  0.80  ██   (Task 26: delete_invoice)
+  0.75  ██   (Tasks 27, 28: accounting basics)
+  0.68  ██   (Task 19: delete_travel_expense)
+  0.56  █    (Task 24: voucher creation)
+  0.55  █    (Task 29: file processing)
+  0.50  █    (Task 17: employee+employment)
+  0.47  █    (Task 18: supplier_invoice)
+  0.40  █    (Task 2:  create_customer)
+  0.25  .    (Tasks 1, 4: basic creates)
+  0.17  .    (Task 6: create_contact)
+  0.17  .    (Task 5: create_supplier)
+  0.15  .    (Task 20: delete_customer)
+  0.13  .    (Task 13: travel_expense)
+  0.06  .    (Task 15: invoice_with_payment)
+  0.04  .    (Task 14: travel_with_costs) ← WORST
+  0.03  .    (Task 7: update_employee) ← CATASTROPHIC
+
+HISTORICAL PATTERNS
+─────────────────────────────────────────────────────────────────────────────
+Pattern 1: Delete Operations Work Well
+  • Task 21 (delete_supplier): 1.71 pts (1 try) ← BEST EFFICIENCY
+  • Task 26 (delete_invoice): 2.40 pts (3 tries)
+  • Task 19 (delete_travel_expense): 2.05 pts (3 tries)
+  ➜ Delete pattern can be copied to Tasks 22, 23 (delete_product)
+
+Pattern 2: Create Works, Update Fails
+  • Create: Tasks 1-6 all score ≥1.2 points
+  • Update: Tasks 7-9 score 0-0.29 points
+  ➜ PATCH/PUT implementation broken; investigate field handling
+
+Pattern 3: Multi-Step Succeeds (sometimes)
+  • Task 17 (create_employee_with_employment): 3.5/4.0 ← WORKS
+  • Tasks 10-16 (invoicing variants): 0/4.0 each ← BROKEN
+  ➜ Employee→Employment relationship simpler than Customer→Product→Order→Invoice
+
+Pattern 4: Tier 3 Underinvested
+  • Tasks 22, 23, 25, 30: Only 1-4 tries each, all unscored
+  • Expected: Should score 1.5-3.0+ with minimal fixes
+  ➜ Low-hanging fruit; prioritize immediately
+
+PROJECTION: Full Recovery Plan
+─────────────────────────────────────────────────────────────────────────────
+Phase 1 (Quick Wins):      +24 pts  → 55.06 total (2-4 hours)
+Phase 2 (Invoicing Fix):   +8-12 pts → 63-67 total (4-6 hours)
+Phase 3 (Update Fix):      +3-4 pts  → 66-71 total (2-3 hours)
+Phase 4 (Tier 3 Optimize): +5-10 pts → 71-81 total (3-4 hours)
+Phase 5 (Travel Vars):     +3-4 pts  → 74-85 total (2-3 hours)
+
+ESTIMATED FINAL:  74-85 / 124.00 points (60-68% completion)
+TOTAL TIME:       13-20 hours
+EFFICIENCY:       2.15-4.15 pts/hour
+
+METADATA AVAILABLE (localStorage)
+─────────────────────────────────────────────────────────────────────────────
+Per-task storage (JSON in localStorage.tripletex_score_overview):
+  • name: Custom task label (e.g., "create_employee")
+  • testsPassed: Unit tests passed
+  • totalTests: Total unit tests
+  • score: Override value (auto-saved)
+  • tries: Override value (auto-saved)
+  • prompts[]: Array of timestamped prompts tried
+    - Format: { text: "...", addedAt: "ISO_DATE" }
+    - Supports copy-to-clipboard for retry analysis
+
+UI: 6-column grid, click-to-edit modal, separate "Edit" and "Prompts" tabs
+
+================================================================================
+                              NEXT ACTIONS
+================================================================================
+
+IMMEDIATE (Next 15 mins):
+  1. Start Phase 1: Tasks 22, 23 (1 try each → 6 pts each)
+  2. Copy Task 21 (delete_supplier) pattern exactly
+  3. Run simulator to verify scores
+  4. Report back with results
+
+SHORT TERM (2-4 hours):
+  1. Complete Phase 1 (Tasks 22, 23, 25, 30) → +24 pts
+  2. Diagnostic: Review invoicing failure patterns
+  3. Document root cause and proposed fixes
+
+MEDIUM TERM (4-10 hours):
+  1. Phase 2: Fix invoicing pipeline
+  2. Phase 3: Fix update operations
+  3. Iterative testing and refinement
+
+LONG TERM (10-20 hours):
+  1. Phase 4: Optimize Tier 3 weak tasks
+  2. Phase 5: Travel expense variations
+  3. Final polish to reach 60-68% target
+
+================================================================================

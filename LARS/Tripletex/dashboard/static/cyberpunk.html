@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SYNTHETIC SYNAPSES // TRIPLETEX CMD</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x26A1;</text></svg>">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+:root {
+  --bg:#0a0e17;--bg2:#0f1923;--bg3:#141e2b;
+  --cyan:#00f0ff;--magenta:#ff2d6f;--gold:#ffd700;--green:#00ff41;--red:#ff0040;--blue:#4a9eff;
+  --text:#c8d6e5;--muted:#4a5568;--border:rgba(0,240,255,0.12);
+  --glow-cyan:0 0 10px rgba(0,240,255,0.3),0 0 20px rgba(0,240,255,0.1);
+  --glow-magenta:0 0 10px rgba(255,45,111,0.3);
+  --glow-green:0 0 8px rgba(0,255,65,0.3);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monospace;font-size:13px;line-height:1.4;overflow-x:hidden}
+body::after{content:'';position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:9999;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,240,255,0.008) 2px,rgba(0,240,255,0.008) 4px)}
+
+/* ── HEADER ──────────────────────────── */
+.header{background:linear-gradient(90deg,var(--bg2),var(--bg3),var(--bg2));border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:20px;position:sticky;top:0;z-index:100}
+.header::before{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);box-shadow:var(--glow-cyan)}
+.team-name{font-family:'Orbitron',sans-serif;font-weight:900;font-size:16px;color:var(--cyan);text-shadow:var(--glow-cyan);letter-spacing:2px;white-space:nowrap}
+.back-link{color:var(--muted);text-decoration:none;font-size:11px;border:1px solid var(--border);padding:3px 8px;border-radius:3px;transition:all .2s}
+.back-link:hover{color:var(--cyan);border-color:var(--cyan)}
+.stat-pill{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.stat-pill .l{color:var(--muted)}.stat-pill .v{font-weight:bold}
+.v.cy{color:var(--cyan)}.v.gd{color:var(--gold)}.v.gn{color:var(--green)}.v.rd{color:var(--red)}
+.agent-status{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:var(--glow-green);animation:pulse 2s ease-in-out infinite}
+.dot.off{background:var(--red);box-shadow:0 0 8px rgba(255,0,64,0.4);animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* ── LAYOUT ──────────────────────────── */
+.main{padding:16px 24px;display:flex;flex-direction:column;gap:16px}
+.sec{background:var(--bg2);border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.sh{font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:3px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.sh .ct{color:var(--muted);font-family:'Share Tech Mono',monospace;font-weight:normal;font-size:11px}
+
+/* ── SCORE GRID ──────────────────────── */
+.sg{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;padding:12px}
+.tc{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;cursor:pointer;transition:all 0.2s;position:relative;overflow:hidden;min-width:0}
+.tc:hover{border-color:var(--cyan);box-shadow:var(--glow-cyan);transform:translateY(-1px)}
+.tc.ns{border-color:rgba(255,45,111,0.25)}.tc.ns:hover{border-color:var(--magenta);box-shadow:var(--glow-magenta)}
+.tc.pf{border-color:rgba(0,255,65,0.25)}
+.tc .tn{font-family:'Orbitron',sans-serif;font-size:9px;font-weight:700;color:var(--muted);margin-bottom:2px;display:flex;justify-content:space-between;align-items:center}
+.tc .tn .tb{font-size:8px;font-weight:bold;opacity:0.6}
+.tb.t1{color:var(--green)}.tb.t2{color:var(--gold)}.tb.t3{color:var(--magenta)}
+.tc .ts{font-size:18px;font-weight:bold;color:var(--green);line-height:1}
+.tc.ns .ts{color:var(--magenta);font-size:14px}
+.tc .tm{display:flex;justify-content:space-between;align-items:center;margin-top:3px;font-size:10px;color:var(--muted)}
+.tc .tt{font-size:10px}.tt.p{color:var(--green)}.tt.pa{color:var(--gold)}.tt.f{color:var(--red)}
+.tc .nm{font-size:8px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc .bar{margin-top:3px;height:2px;background:var(--bg3);border-radius:1px;overflow:hidden}
+.tc .bar .bf{height:100%;border-radius:1px}
+
+/* ── COLUMNS ─────────────────────────── */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.tri{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.fl{max-height:320px;overflow-y:auto;padding:8px}
+.fl::-webkit-scrollbar{width:4px}.fl::-webkit-scrollbar-track{background:var(--bg)}.fl::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* ── FEED ITEMS ──────────────────────── */
+.fi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid rgba(0,240,255,0.05);font-size:12px;animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
+.fi .ft{color:var(--muted);font-size:10px;min-width:60px}
+.fi .tg{background:var(--bg3);border:1px solid var(--border);border-radius:2px;padding:1px 6px;font-size:11px;font-weight:bold;color:var(--cyan);min-width:40px;text-align:center}
+.fi .r{font-weight:bold}.fi .r.p{color:var(--green)}.fi .r.f{color:var(--red)}.fi .r.pa{color:var(--gold)}
+.fi .pp{color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;flex:1}
+
+/* ── FOCUS LIST ──────────────────────── */
+.fci{display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:1px solid rgba(0,240,255,0.05);transition:background .2s}
+.fci:hover{background:var(--bg3)}
+.fr{font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;color:var(--magenta);min-width:22px}
+.fk{font-weight:bold;color:var(--cyan);min-width:32px;font-size:12px}
+.fb{flex:1;height:5px;background:var(--bg);border-radius:3px;overflow:hidden}
+.fb .ff{height:100%;border-radius:3px;transition:width .5s ease}
+.fp{font-size:11px;color:var(--gold);min-width:70px;text-align:right}
+.fc{font-size:10px;color:var(--muted);min-width:40px}
+
+/* ── LOG ─────────────────────────────── */
+.ll{max-height:180px;overflow-y:auto;padding:8px;font-size:11px}
+.li{padding:3px 8px;border-bottom:1px solid rgba(0,240,255,0.03);display:flex;gap:8px}
+.li .lt{color:var(--muted);min-width:65px}
+.li .ly{min-width:70px;font-weight:bold}
+.ly.classify{color:var(--cyan)}.ly.pipeline{color:var(--green)}.ly.error{color:var(--red)}.ly.submit{color:var(--gold)}.ly.info{color:var(--blue)}
+.li .lm{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── PROGRESS ────────────────────────── */
+.pb{width:120px;height:6px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--border)}
+.pf{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:3px;transition:width .5s ease}
+
+/* ── MODAL ────────────────────────────── */
+.mo{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:500;justify-content:center;align-items:center}
+.mo.a{display:flex}
+.md{background:var(--bg2);border:1px solid var(--cyan);box-shadow:var(--glow-cyan),0 20px 60px rgba(0,0,0,0.5);border-radius:8px;width:500px;max-height:80vh;overflow-y:auto;padding:20px}
+.md h2{font-family:'Orbitron',sans-serif;color:var(--cyan);font-size:14px;margin-bottom:16px;letter-spacing:2px}
+.md label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px;margin-top:12px}
+.md input,.md textarea{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px}
+.md input:focus,.md textarea:focus{outline:none;border-color:var(--cyan);box-shadow:var(--glow-cyan)}
+.md textarea{resize:vertical;min-height:60px}
+.ma{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+.btn{font-family:'Share Tech Mono',monospace;font-size:12px;padding:6px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer;transition:all .2s}
+.btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.btn.pr{background:rgba(0,240,255,0.1);border-color:var(--cyan);color:var(--cyan)}.btn.pr:hover{background:rgba(0,240,255,0.2);box-shadow:var(--glow-cyan)}
+.btn.dg{border-color:var(--red);color:var(--red)}.btn.dg:hover{background:rgba(255,0,64,0.1)}
+.es{text-align:center;color:var(--muted);padding:24px;font-style:italic}
+
+@media(max-width:1400px){.sg{grid-template-columns:repeat(6,1fr)}.tri{grid-template-columns:1fr 1fr}}
+@media(max-width:900px){.split,.tri{grid-template-columns:1fr}.sg{grid-template-columns:repeat(5,1fr)}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a href="/" class="back-link">&laquo; Dashboard</a>
+  <div class="team-name">SYNTHETIC SYNAPSES</div>
+  <div class="stat-pill"><span class="l">SCORE</span><span class="v gd" id="hScore">--</span></div>
+  <div class="stat-pill"><span class="l">RANK</span><span class="v cy" id="hRank">--</span></div>
+  <div class="stat-pill"><span class="l">SUBS</span><span class="v cy" id="hSubs">--</span><span class="l">/300</span></div>
+  <div class="stat-pill"><span class="l">SCORED</span><span class="v gn" id="hScored">--</span><span class="l">/30</span></div>
+  <div class="stat-pill" style="display:flex;align-items:center;gap:6px">
+    <div class="pb"><div class="pf" id="hBar" style="width:0%"></div></div>
+    <span class="v cy" id="hPct" style="font-size:11px">0%</span>
+  </div>
+  <div class="agent-status"><div class="dot" id="aDot"></div><span id="aLbl" style="color:var(--green)">AGENT</span></div>
+</div>
+
+<div class="main">
+  <!-- Score Matrix -->
+  <div class="sec">
+    <div class="sh"><span>SCORE MATRIX</span><span class="ct" id="mSum">30 tasks</span></div>
+    <div class="sg" id="sGrid"></div>
+  </div>
+
+  <!-- Three columns: Live Feed | Focus List | Task Stats -->
+  <div class="tri">
+    <div class="sec">
+      <div class="sh"><span>LIVE FEED</span><span class="ct" id="fCt">0</span></div>
+      <div class="fl" id="fList"><div class="es">Waiting for submissions...</div></div>
+    </div>
+    <div class="sec">
+      <div class="sh"><span>FOCUS LIST</span><span class="ct">priority</span></div>
+      <div class="fl" id="foList"></div>
+    </div>
+    <div class="sec">
+      <div class="sh"><span>TASK STATS</span><span class="ct" id="tsCt">from API</span></div>
+      <div class="fl" id="tsList"><div class="es">Loading task stats...</div></div>
+    </div>
+  </div>
+
+  <!-- System Log -->
+  <div class="sec">
+    <div class="sh"><span>SYSTEM LOG</span><span class="ct" id="lCt">0</span></div>
+    <div class="ll" id="lList"><div class="es">No log entries yet...</div></div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="mo" id="mOv">
+  <div class="md">
+    <h2 id="mTi">EDIT TASK</h2>
+    <label>Task Name / Type</label><input id="eName" placeholder="e.g. create_employee">
+    <label>Score (best)</label><input type="number" id="eScore" step="0.01" placeholder="null = unsolved">
+    <label>Tries</label><input type="number" id="eTries" min="0">
+    <label>Tests Passed / Total</label>
+    <div style="display:flex;gap:8px"><input type="number" id="eTP" min="0" placeholder="passed"><input type="number" id="eTT" min="0" placeholder="total"></div>
+    <label>Tier</label><input type="number" id="eTier" min="1" max="3" placeholder="1, 2, or 3">
+    <label>Notes</label><textarea id="eNotes" rows="3"></textarea>
+    <div class="ma">
+      <button class="btn dg" onclick="delMeta()">Clear</button>
+      <button class="btn" onclick="closeMo()">Cancel</button>
+      <button class="btn pr" onclick="saveMo()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── DATA ──────────────────────────────────────
+const SK='cyberpunk_score_overview';
+const DT=[
+  {n:1,s:1.5,t:6,r:1},{n:2,s:2.0,t:5,r:1},{n:3,s:2.0,t:9,r:1},{n:4,s:2.0,t:8,r:1},{n:5,s:1.33,t:8,r:1},{n:6,s:1.2,t:7,r:1},{n:7,s:0.29,t:9,r:1},
+  {n:8,s:null,t:7,r:2},{n:9,s:null,t:7,r:2},{n:10,s:null,t:7,r:3},{n:11,s:null,t:8,r:2},{n:12,s:null,t:6,r:2},
+  {n:13,s:1.13,t:9,r:2},{n:14,s:0.25,t:7,r:2},{n:15,s:0.5,t:8,r:2},{n:16,s:null,t:8,r:3},
+  {n:17,s:3.5,t:7,r:2},{n:18,s:2.8,t:6,r:2},{n:19,s:2.05,t:3,r:2},{n:20,s:0.6,t:4,r:2},{n:21,s:1.71,t:1,r:2},
+  {n:22,s:null,t:1,r:3},{n:23,s:null,t:1,r:3},{n:24,s:2.25,t:4,r:3},{n:25,s:null,t:3,r:3},
+  {n:26,s:2.4,t:3,r:3},{n:27,s:1.5,t:2,r:3},{n:28,s:1.5,t:2,r:3},{n:29,s:0.55,t:1,r:3},{n:30,s:null,t:4,r:3}
+];
+const TM={1:2,2:4,3:6};
+let meta={},feed=[],logs=[],agOn=false,editing=null;
+
+// ── PERSISTENCE ───────────────────────────────
+function load(){
+  try{
+    const r=localStorage.getItem(SK);
+    if(r)meta=JSON.parse(r);
+    // Migrate from old React dashboard
+    if(!Object.keys(meta).length){
+      const o=localStorage.getItem('tripletex_score_overview');
+      if(o){const d=JSON.parse(o);for(const[k,v]of Object.entries(d))meta[k]={name:v.name||'',score:v.score,tries:v.tries,testsPassed:v.testsPassed,testsTotal:v.totalTests,notes:(v.prompts||[]).map(p=>p.text).join('\n')};save()}
+    }
+  }catch(e){meta={}}
+}
+function save(){localStorage.setItem(SK,JSON.stringify(meta))}
+function gt(n){
+  const d=DT.find(x=>x.n===n)||{n,s:null,t:0,r:1},m=meta[n]||{};
+  return{num:n,score:m.score!==undefined?m.score:d.s,tries:m.tries!==undefined?m.tries:d.t,tier:m.tier||d.r,name:m.name||'',testsPassed:m.testsPassed,testsTotal:m.testsTotal,notes:m.notes||''}
+}
+
+// ── RENDER: SCORE GRID ────────────────────────
+function renderGrid(){
+  const g=document.getElementById('sGrid');let h='',ts=0,sc=0;
+  for(let i=1;i<=30;i++){
+    const t=gt(i),nl=t.score===null||t.score===undefined,mx=TM[t.tier]||2,pf=!nl&&t.score>=mx,pc=nl?0:Math.min(t.score/mx*100,100);
+    if(!nl){ts+=t.score;sc++}
+    let tc='',tl='';
+    if(t.testsTotal>0){const r=(t.testsPassed||0)/t.testsTotal;tc=r>=1?'p':r>0?'pa':'f';tl=`${t.testsPassed||0}/${t.testsTotal}`}
+    const cc=nl?'ns':pf?'pf':'',cl=nl?'var(--magenta)':pf?'var(--green)':'var(--cyan)';
+    h+=`<div class="tc ${cc}" onclick="openMo(${i})" title="${t.name||'Task '+i}${t.notes?'\n'+t.notes:''}">
+      <div class="tn"><span>T${String(i).padStart(2,'0')}</span><span class="tb t${t.tier}">T${t.tier}</span></div>
+      <div class="ts">${nl?'---':t.score.toFixed(2)}</div>
+      <div class="tm"><span>${t.tries}x</span>${tl?`<span class="tt ${tc}">${tl}</span>`:''}</div>
+      ${t.name?`<div class="nm">${t.name}</div>`:''}
+      <div class="bar"><div class="bf" style="width:${pc}%;background:${cl}"></div></div>
+    </div>`;
+  }
+  g.innerHTML=h;
+  document.getElementById('hScore').textContent=ts.toFixed(1);
+  document.getElementById('hScored').textContent=sc;
+  document.getElementById('mSum').textContent=`${sc}/30 scored | ${ts.toFixed(1)} pts`;
+  const p=Math.round(ts/120*100);
+  document.getElementById('hBar').style.width=p+'%';
+  document.getElementById('hPct').textContent=p+'%';
+}
+
+// ── RENDER: FOCUS LIST ────────────────────────
+function renderFocus(){
+  const el=document.getElementById('foList'),items=[];
+  for(let i=1;i<=30;i++){const t=gt(i),mx=TM[t.tier]||2,c=t.score||0,pot=mx-c;if(pot<=0)continue;items.push({...t,pot,mx,c})}
+  items.sort((a,b)=>b.pot-a.pot||b.tier-a.tier);
+  let h='';
+  items.forEach((it,idx)=>{
+    const fp=it.c>0?it.c/it.mx*100:0,cl=it.c===0?'var(--magenta)':'var(--cyan)';
+    h+=`<div class="fci"><span class="fr">${idx+1}.</span><span class="fk">T${String(it.num).padStart(2,'0')}</span><span class="fc">${it.c>0?it.c.toFixed(1):'null'}</span><div class="fb"><div class="ff" style="width:${fp}%;background:${cl}"></div></div><span class="fp">+${it.pot.toFixed(1)} (T${it.tier} max ${it.mx})</span></div>`;
+  });
+  el.innerHTML=h||'<div class="es">All tasks maxed!</div>';
+}
+
+// ── RENDER: FEED ──────────────────────────────
+function addFeed(e){feed.unshift(e);if(feed.length>50)feed.pop();renderFeed()}
+function renderFeed(){
+  const el=document.getElementById('fList');document.getElementById('fCt').textContent=feed.length+'';
+  if(!feed.length){el.innerHTML='<div class="es">Waiting for submissions...</div>';return}
+  let h='';
+  for(const e of feed){
+    const rc=e.passed?'p':e.partial?'pa':'f';
+    h+=`<div class="fi"><span class="ft">${e.time||'--:--'}</span><span class="tg">${e.task||'??'}</span><span class="r ${rc}">${e.res||'?'}</span><span class="pp">${(e.pr||'').substring(0,50)}</span></div>`;
+  }
+  el.innerHTML=h;
+}
+
+// ── RENDER: LOG ───────────────────────────────
+function addLog(type,msg){
+  const t=new Date().toLocaleTimeString('en-GB',{hour12:false});
+  logs.unshift({t,type,msg});if(logs.length>100)logs.pop();renderLogs();
+}
+function renderLogs(){
+  const el=document.getElementById('lList');document.getElementById('lCt').textContent=logs.length+'';
+  if(!logs.length){el.innerHTML='<div class="es">No log entries yet...</div>';return}
+  let h='';for(const e of logs.slice(0,50))h+=`<div class="li"><span class="lt">${e.t}</span><span class="ly ${e.type}">${e.type.toUpperCase()}</span><span class="lm">${e.msg}</span></div>`;
+  el.innerHTML=h;
+}
+
+// ── RENDER: TASK STATS ────────────────────────
+async function fetchTaskStats(){
+  try{
+    const r=await fetch('/api/tasks/live-summary');
+    if(!r.ok)return;
+    const data=await r.json();
+    const el=document.getElementById('tsList');
+    document.getElementById('tsCt').textContent=data.length+' types';
+    // Sort: most runs first
+    data.sort((a,b)=>(b.live_runs||0)-(a.live_runs||0));
+    let h='';
+    for(const t of data.slice(0,30)){
+      const runs=t.live_runs||0;
+      const errs=t.avg_api_errors||0;
+      const errCl=errs>1?'color:var(--red)':errs>0?'color:var(--gold)':'color:var(--green)';
+      const mc=t.manual_checks_passed!==null&&t.manual_checks_total?`${t.manual_checks_passed}/${t.manual_checks_total}`:'';
+      const mcCl=mc?(t.manual_checks_passed===t.manual_checks_total?'color:var(--green)':'color:var(--gold)'):'';
+      h+=`<div class="fci">
+        <span style="min-width:28px;color:var(--muted);font-size:10px">${runs}x</span>
+        <span style="min-width:140px;color:var(--cyan);font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</span>
+        <span style="min-width:20px;font-size:10px;opacity:0.5">T${t.tier}</span>
+        <span style="min-width:50px;font-size:10px;${errCl}">${errs.toFixed(1)} err</span>
+        ${mc?`<span style="min-width:40px;font-size:10px;${mcCl}">${mc}</span>`:''}
+      </div>`;
+    }
+    el.innerHTML=h||'<div class="es">No task stats</div>';
+  }catch(e){
+    document.getElementById('tsList').innerHTML='<div class="es">Failed to load</div>';
+  }
+}
+
+// ── MODAL ─────────────────────────────────────
+function openMo(n){
+  editing=n;const t=gt(n);
+  document.getElementById('mTi').textContent=`TASK ${String(n).padStart(2,'0')}`;
+  document.getElementById('eName').value=t.name||'';
+  document.getElementById('eScore').value=t.score!==null&&t.score!==undefined?t.score:'';
+  document.getElementById('eTries').value=t.tries||0;
+  document.getElementById('eTP').value=t.testsPassed||'';
+  document.getElementById('eTT').value=t.testsTotal||'';
+  document.getElementById('eTier').value=t.tier||'';
+  document.getElementById('eNotes').value=t.notes||'';
+  document.getElementById('mOv').classList.add('a');
+}
+function closeMo(){document.getElementById('mOv').classList.remove('a');editing=null}
+function saveMo(){
+  if(editing===null)return;const n=editing,sv=document.getElementById('eScore').value;
+  meta[n]={...(meta[n]||{}),name:document.getElementById('eName').value,score:sv===''?undefined:parseFloat(sv),tries:parseInt(document.getElementById('eTries').value)||0,testsPassed:parseInt(document.getElementById('eTP').value)||undefined,testsTotal:parseInt(document.getElementById('eTT').value)||undefined,tier:parseInt(document.getElementById('eTier').value)||undefined,notes:document.getElementById('eNotes').value};
+  save();renderGrid();renderFocus();closeMo();addLog('submit',`Task T${String(n).padStart(2,'0')} updated`);
+}
+function delMeta(){if(editing===null)return;delete meta[editing];save();renderGrid();renderFocus();closeMo()}
+document.getElementById('mOv').addEventListener('click',e=>{if(e.target===e.currentTarget)closeMo()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMo()});
+
+// ── SSE ───────────────────────────────────────
+function connectSSE(){
+  addLog('info','Connecting to agent SSE...');
+  const es=new EventSource('/api/agent/events');
+  es.onmessage=e=>{try{handleEvt(JSON.parse(e.data))}catch(x){}};
+  es.onerror=()=>{addLog('error','SSE lost, reconnecting 5s...');es.close();setTimeout(connectSSE,5000)};
+  es.onopen=()=>addLog('pipeline','SSE connected');
+}
+function handleEvt(d){
+  const tp=d.type||'';
+  if(tp==='solve_start')addLog('submit',`Solve: ${d.task_type||'...'} [${(d.request_id||'').slice(0,8)}]`);
+  else if(tp==='classification')addLog('classify',`Classified: ${d.task_type||'?'} (${d.level||'?'})`);
+  else if(tp==='tool_call')addLog('pipeline',`${d.tool}(${Object.keys(d.args||{}).join(',')})`);
+  else if(tp==='solve_complete'){
+    const tt=d.task_type||'?',c=d.api_calls||'?',er=d.api_errors||0;
+    addLog('pipeline',`Done: ${tt} ${c}calls ${er}err ${d.elapsed?d.elapsed.toFixed(1)+'s':'?'}`);
+    addFeed({time:new Date().toLocaleTimeString('en-GB',{hour12:false}),task:tt,res:`${c}c/${er}e`,passed:er===0,partial:er>0&&er<3,pr:d.prompt||''});
+  }else if(tp==='error')addLog('error',d.message||'?');
+}
+
+// ── POLLING ───────────────────────────────────
+async function checkAgent(){
+  try{await fetch('http://localhost:8005/docs',{mode:'no-cors'});agOn=true}catch(e){agOn=false}
+  document.getElementById('aDot').className=agOn?'dot':'dot off';
+  const l=document.getElementById('aLbl');l.textContent=agOn?'ONLINE':'OFFLINE';l.style.color=agOn?'var(--green)':'var(--red)';
+}
+
+async function fetchLogs(){
+  try{
+    const r=await fetch('/api/logs?limit=20&source=competition');if(!r.ok)return;
+    const d=await r.json();
+    for(const l of d.reverse()){
+      if(feed.find(e=>e.id===l.id))continue;
+      addFeed({id:l.id,time:l.created_at?new Date(l.created_at).toLocaleTimeString('en-GB',{hour12:false}):'?',task:l.task_type||'??',res:`${l.api_calls||'?'}c/${l.api_errors||0}e`,passed:(l.api_errors||0)===0,partial:(l.api_errors||0)>0,pr:(l.prompt||'').substring(0,80)});
+    }
+  }catch(e){}
+}
+
+async function fetchScore(){
+  try{
+    const r=await fetch('/api/scores/latest');if(!r.ok)return;
+    const d=await r.json();
+    if(d.total_score)document.getElementById('hScore').textContent=d.total_score.toFixed(1);
+    if(d.rank)document.getElementById('hRank').textContent='#'+d.rank;
+    if(d.total_submissions)document.getElementById('hSubs').textContent=d.total_submissions;
+  }catch(e){}
+}
+
+// ── INIT ──────────────────────────────────────
+load();renderGrid();renderFocus();renderFeed();renderLogs();
+addLog('info','Cyberpunk dashboard initialized');
+addLog('pipeline',`${Object.keys(meta).length} task overrides from localStorage`);
+connectSSE();checkAgent();fetchTaskStats();
+setInterval(checkAgent,10000);setInterval(fetchLogs,15000);setInterval(fetchScore,30000);setInterval(fetchTaskStats,60000);
+fetchLogs();fetchScore();
+</script>
+</body>
+</html>

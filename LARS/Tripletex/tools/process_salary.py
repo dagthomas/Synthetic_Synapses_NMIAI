@@ -60,8 +60,14 @@ def build_process_salary_tools(client: TripletexClient) -> dict:
         Returns:
             Summary with employee_id, employment_id, transaction_id, or error details.
         """
-        today = dt_date.today().isoformat()
+        today = dt_date.today()
+        today_str = today.isoformat()
         steps_log = []
+
+        # ── Sanity check: auto-correct year if it's clearly wrong ──
+        if year < today.year - 1:
+            log.warning("process_salary: year=%d looks wrong (today=%s), correcting to %d", year, today_str, today.year)
+            year = today.year
 
         # ── Defaults ──
         if not startDate:
@@ -74,6 +80,13 @@ def build_process_salary_tools(client: TripletexClient) -> dict:
         if base_salary == 0.0 and annualSalary > 0:
             base_salary = round(annualSalary / 12, 2)
         salary_date = f"{year}-{month:02d}-15"  # mid-month
+
+        # ── Validate: salary period must not be before employment start ──
+        salary_ym = f"{year}-{month:02d}"
+        start_ym = startDate[:7]
+        if salary_ym < start_ym:
+            log.warning("process_salary: salary period %s is before employment start %s, adjusting startDate", salary_ym, startDate)
+            startDate = f"{year}-{month:02d}-01"
 
         # ── Step 1: Create or find employee ──
         dept_id = 0
@@ -120,6 +133,7 @@ def build_process_salary_tools(client: TripletexClient) -> dict:
 
         emp_result = client.post("/employee", json=emp_body)
         employee_id = None
+        emp_just_created = False
 
         # Check for email collision — find existing employee
         if emp_result.get("error") and emp_result.get("status_code") == 422:
@@ -142,6 +156,7 @@ def build_process_salary_tools(client: TripletexClient) -> dict:
             employee_id = emp_val.get("id")
             if not employee_id:
                 return {"error": True, "message": f"Failed to create employee: {emp_result}", "steps": steps_log}
+            emp_just_created = True
             steps_log.append(f"Created employee {firstName} {lastName} (id={employee_id})")
 
         # ── Step 2: Ensure division exists ──
@@ -174,10 +189,12 @@ def build_process_salary_tools(client: TripletexClient) -> dict:
 
         # ── Step 3: Create employment ──
         # Ensure dateOfBirth is set (required for employment)
-        emp_check = client.get(f"/employee/{employee_id}", params={"fields": "id,dateOfBirth"})
-        emp_data = emp_check.get("value", emp_check)
-        if not emp_data.get("dateOfBirth"):
-            client.put(f"/employee/{employee_id}", json={"dateOfBirth": dateOfBirth})
+        # Skip check if we just created the employee WITH dateOfBirth
+        if not emp_just_created:
+            emp_check = client.get(f"/employee/{employee_id}", params={"fields": "id,dateOfBirth"})
+            emp_data = emp_check.get("value", emp_check)
+            if not emp_data.get("dateOfBirth"):
+                client.put(f"/employee/{employee_id}", json={"dateOfBirth": dateOfBirth})
 
         emp_details = {
             "date": startDate,

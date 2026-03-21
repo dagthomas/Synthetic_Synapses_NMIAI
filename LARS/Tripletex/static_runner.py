@@ -53,8 +53,9 @@ def _first(result, entity="entity", name_match: str = ""):
     """Get first result from a search response, raise if empty.
 
     If name_match is provided, filters results by exact name (case-insensitive)
-    before picking the first. This is critical because Tripletex search APIs
-    sometimes return ALL entities instead of filtering by name.
+    before picking the first. Falls back to substring matching (e.g. "Leroy SARL"
+    matches "Fournisseur Leroy SARL"). This is critical because Tripletex search
+    APIs sometimes return ALL entities instead of filtering by name.
     """
     if isinstance(result, dict) and result.get("error"):
         raise PipelineError(result.get("message", str(result)))
@@ -63,8 +64,14 @@ def _first(result, entity="entity", name_match: str = ""):
         raise PipelineError(f"No {entity} found")
     if name_match:
         target = name_match.strip().lower()
+        # 1. Exact match
         for v in vals:
             if v.get("name", "").strip().lower() == target:
+                return v
+        # 2. Substring match (target in candidate name, or vice versa)
+        for v in vals:
+            candidate = v.get("name", "").strip().lower()
+            if target in candidate or candidate in target:
                 return v
     return vals[0]
 
@@ -246,7 +253,7 @@ SCHEMAS = {
             "customer_email": {"type": "str", "required": False, "default": ""},
             "customer_org_number": {"type": "str", "required": False, "default": ""},
             "products": {"type": "list", "required": True,
-                         "hint": "Array of objects: [{name: str, price: float (excl VAT), quantity: int, vat_percentage: int}]"},
+                         "hint": "Array of objects: [{name: str, number: str (product number/SKU if given), price: float (excl VAT), quantity: int, vat_percentage: int}]"},
             "invoice_date": {"type": "date", "required": False, "hint": "Default today"},
             "due_date": {"type": "date", "required": False, "hint": "Default = invoice_date"},
             "send_invoice": {"type": "bool", "required": False, "default": False,
@@ -287,6 +294,25 @@ SCHEMAS = {
                    "VAT: 25=standard, 15=food/mat, 12=transport, 0=exempt. Only extract priceExcludingVat. "
                    "CURRENCY: If prompt mentions EUR/USD/GBP + exchange rates + agio/disagio/valutadifferanse, "
                    "extract foreign_currency, foreign_amount, old_exchange_rate, new_exchange_rate.",
+    },
+    "order_to_invoice_with_payment": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "product_name": {"type": "str", "required": False, "default": ""},
+            "product_number": {"type": "str", "required": False, "default": ""},
+            "product_price": {"type": "float", "required": False, "default": 0},
+            "products": {"type": "list", "required": False, "default": None,
+                        "hint": "Array of product objects: [{name, number, price, quantity, vat_percentage}]. null if single product."},
+            "quantity": {"type": "int", "required": False, "default": 1},
+            "vat_percentage": {"type": "int", "required": False, "default": 25},
+            "invoice_date": {"type": "date", "required": False, "hint": "Default today"},
+            "due_date": {"type": "date", "required": False, "hint": "Default = invoice_date"},
+            "payment_date": {"type": "date", "required": False, "hint": "Default today"},
+        },
+        "context": "Order-to-invoice workflow: create order, convert to invoice, register payment. "
+                   "VAT: 25=standard, 15=food/mat, 12=transport, 0=exempt. Only extract priceExcludingVat.",
     },
     "create_credit_note": {
         "fields": {
@@ -335,11 +361,16 @@ SCHEMAS = {
             "per_diem_rate": {"type": "float", "required": False, "default": 0,
                               "hint": "Daily allowance rate (diett/Tagegeld/per diem)"},
             "costs": {"type": "list", "required": False, "default": [],
-                       "hint": "Array of {amount: float, category: str (transport/food/other)}"},
+                       "hint": "Array of {amount: float, category: str, comments: str, date: str}"},
             "mileage_km": {"type": "float", "required": False, "default": 0,
                            "hint": "Kilometers for mileage allowance (kjoeregodtgjoerelse)"},
+            "accommodation_nights": {"type": "int", "required": False, "default": 0,
+                                      "hint": "Number of nights for fixed-rate nattillegg"},
+            "accommodation_location": {"type": "str", "required": False, "default": "",
+                                        "hint": "Location for nattillegg (e.g. Oslo)"},
         },
-        "context": "Tagegeld/diett = per diem. Auslagen/utlegg = expense costs. ONE per diem call covers the full trip.",
+        "context": "Tagegeld/diett = per diem. Auslagen/utlegg = expense costs. ONE per diem call covers the full trip. "
+                   "overnatting/hotell with receipt = cost with category=accommodation. nattillegg = accommodation_allowance.",
     },
     "create_employee_with_employment": {
         "fields": {
@@ -347,9 +378,20 @@ SCHEMAS = {
             "lastName": {"type": "str", "required": True},
             "email": {"type": "str", "required": True},
             "dateOfBirth": {"type": "date", "required": False, "default": "",
-                           "hint": "Date of birth (fodselsdato/né le/geboren am) in YYYY-MM-DD"},
+                           "hint": "Date of birth (fodselsdato/né le/geboren am/fecha de nacimiento) in YYYY-MM-DD"},
+            "nationalIdentityNumber": {"type": "str", "required": False, "default": "",
+                                       "hint": "National identity number (personnummer/fodselsnummer/numero de identidad/DNI/RUT). 11-digit Norwegian or foreign ID."},
+            "bankAccountNumber": {"type": "str", "required": False, "default": "",
+                                  "hint": "Bank account number (bankkonto/kontonummer/cuenta bancaria). Norwegian 11-digit."},
+            "department_name": {"type": "str", "required": False, "default": "",
+                               "hint": "Department name (avdeling/departamento/Abteilung) from contract"},
             "startDate": {"type": "date", "required": True, "hint": "Employment start date"},
-            "annualSalary": {"type": "float", "required": False, "default": 0},
+            "annualSalary": {"type": "float", "required": False, "default": 0,
+                            "hint": "Annual salary (aarslonn/salario anual/Jahresgehalt)"},
+            "percentageOfFullTimeEquivalent": {"type": "float", "required": False, "default": 100,
+                                               "hint": "Employment percentage (stillingsprosent/porcentaje de empleo). 100 = full time."},
+            "occupationCode": {"type": "str", "required": False, "default": "",
+                              "hint": "Occupation/position code (yrkeskode/stillingskode/codigo de ocupacion/STYRK). Numeric code e.g. '3323', '2411'."},
             "hoursPerDay": {"type": "float", "required": False, "default": 0},
             "leave_startDate": {"type": "date", "required": False, "default": ""},
             "leave_endDate": {"type": "date", "required": False, "default": ""},
@@ -357,19 +399,30 @@ SCHEMAS = {
                           "hint": "MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, FURLOUGH, OTHER"},
             "leave_percentage": {"type": "float", "required": False, "default": 100},
             "jobTitle": {"type": "str", "required": False, "default": ""},
-            "occupationCode": {"type": "str", "required": False, "default": ""},
         },
     },
     "create_supplier_invoice": {
         "fields": {
             "supplier_name": {"type": "str", "required": True},
             "supplier_org_number": {"type": "str", "required": False, "default": ""},
+            "supplier_bank_account": {"type": "str", "required": False, "default": "",
+                                      "hint": "Supplier bank account number e.g. 19048571614"},
+            "supplier_address": {"type": "str", "required": False, "default": "",
+                                 "hint": "Street address e.g. Storgata 1"},
+            "supplier_postal_code": {"type": "str", "required": False, "default": ""},
+            "supplier_city": {"type": "str", "required": False, "default": ""},
             "invoice_number": {"type": "str", "required": False, "default": ""},
             "amount_including_vat": {"type": "float", "required": True},
             "expense_account": {"type": "int", "required": True,
                                 "hint": "Expense account number e.g. 6590, 4000, 6300, 6800"},
             "vat_percentage": {"type": "int", "required": False, "default": 25},
             "invoice_date": {"type": "date", "required": True},
+            "due_date": {"type": "date", "required": False, "default": "",
+                         "hint": "Payment due date (forfallsdato) YYYY-MM-DD"},
+            "department_name": {"type": "str", "required": False, "default": "",
+                                "hint": "Department name e.g. Økonomi, Salg, IT"},
+            "line_description": {"type": "str", "required": False, "default": "",
+                                 "hint": "What the invoice is for e.g. Kontorstoler, Nettverkstjenester"},
         },
         "context": "Common accounts: 4000=varekostnad, 6300=leie, 6590=annet driftsmateriale, 6800=kontorrekvisita.",
     },
@@ -409,6 +462,24 @@ SCHEMAS = {
     },
 
     # ── Group F: Complex tasks ──────────────────────────────────
+    "correct_ledger_errors": {
+        "fields": {
+            "date_from": {"type": "date", "required": True, "hint": "Start of period to check (e.g. 2026-01-01)"},
+            "date_to": {"type": "date", "required": True, "hint": "End of period to check (e.g. 2026-02-28)"},
+            "errors": {"type": "list", "required": True,
+                       "hint": """Array of error objects. EACH error = one object. Format:
+[{type: "wrong_account", wrong_account: int, correct_account: int, amount: float},
+ {type: "duplicate", account: int, amount: float},
+ {type: "missing_vat", expense_account: int, vat_account: int, amount_excl_vat: float},
+ {type: "wrong_amount", account: int, recorded_amount: float, correct_amount: float}]"""},
+        },
+        "context": """Extract EACH error as a separate object. Error types:
+- wrong_account: account X used instead of Y, amount Z
+- duplicate: duplicate posting on account X, amount Z
+- missing_vat: expense on account X, amount excl VAT Z, missing VAT on account V
+- wrong_amount: account X, recorded amount Z instead of correct amount W
+Always extract amounts as positive numbers.""",
+    },
     "create_ledger_voucher": {
         "fields": {
             "date": {"type": "date", "required": True, "hint": "Voucher date. Use the last day of the period mentioned (e.g. Feb -> 2026-02-28)."},
@@ -475,15 +546,23 @@ Counter-account is usually 1920 (bank). Use 1500 for receivables, 2400 for payab
     },
     "create_dimension": {
         "fields": {
-            "dimension_name": {"type": "str", "required": True, "hint": "Name of the accounting dimension"},
+            "dimension_name": {"type": "str", "required": True, "hint": "Name of the accounting dimension (e.g. Kostsenter, Region)"},
             "values": {"type": "list", "required": True,
-                       "hint": "Array of dimension value names (strings)"},
-            "voucher_date": {"type": "date", "required": False, "default": ""},
+                       "hint": "Array of dimension value names (strings), e.g. [\"IT\", \"HR\"]"},
+            "voucher_date": {"type": "date", "required": False, "default": "",
+                            "hint": "Date for the voucher (today if not specified)"},
             "voucher_description": {"type": "str", "required": False, "default": ""},
             "voucher_postings": {"type": "list", "required": False, "default": [],
-                                 "hint": "Array of {accountNumber: str, amount: float, dimensionValueName: str}"},
+                                 "hint": "Array of BALANCED postings: [{accountNumber: str, amount: float, dimensionValueName: str}]. "
+                                         "Amounts MUST sum to 0 (positive=debit, negative=credit). "
+                                         "Only include dimensionValueName on the posting(s) that should be linked to the dimension. "
+                                         "Example for 38100 on 6590 linked to HR: "
+                                         "[{accountNumber: '6590', amount: 38100, dimensionValueName: 'HR'}, "
+                                         "{accountNumber: '1920', amount: -38100}]"},
         },
-        "context": "Fri rekneskapsdimensjon/custom accounting dimension. Create dimension, then values, then optionally a voucher linked to a value.",
+        "context": "Fri rekneskapsdimensjon/custom accounting dimension/dimension comptable personnalisée. "
+                   "Create dimension, then values, then optionally a voucher linked to a value. "
+                   "Counter-account: 1920=bank, 2400=payables. Postings MUST balance (sum=0).",
     },
     "create_project": {
         "fields": {
@@ -495,6 +574,8 @@ Counter-account is usually 1920 (bank). Use 1500 for receivables, 2400 for payab
             "pm_email": {"type": "str", "required": False, "default": ""},
             "startDate": {"type": "date", "required": False},
             "fixedPriceAmount": {"type": "float", "required": False, "default": 0},
+            "isInternal": {"type": "bool", "required": False, "default": False,
+                           "hint": "True if 'internal project'/'internt prosjekt' mentioned"},
         },
     },
     "create_project_with_pm": {
@@ -507,6 +588,8 @@ Counter-account is usually 1920 (bank). Use 1500 for receivables, 2400 for payab
             "pm_email": {"type": "str", "required": True},
             "startDate": {"type": "date", "required": False},
             "fixedPriceAmount": {"type": "float", "required": False, "default": 0},
+            "isInternal": {"type": "bool", "required": False, "default": False,
+                           "hint": "True if 'internal project'/'internt prosjekt' mentioned"},
         },
     },
     "project_invoice": {
@@ -543,6 +626,31 @@ Counter-account is usually 1920 (bank). Use 1500 for receivables, 2400 for payab
             "create_customer_invoice": {"type": "bool", "required": False, "default": False},
         },
     },
+    "create_project_with_billing": {
+        "fields": {
+            "project_name": {"type": "str", "required": True},
+            "customer_name": {"type": "str", "required": True},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "pm_firstName": {"type": "str", "required": False, "default": "",
+                             "hint": "Project manager first name. Identify from role: Projektleiter/project manager/prosjektleder"},
+            "pm_lastName": {"type": "str", "required": False, "default": ""},
+            "pm_email": {"type": "str", "required": False, "default": ""},
+            "budget": {"type": "float", "required": False, "default": 0,
+                       "hint": "Project budget amount in NOK"},
+            "employees": {"type": "list", "required": False, "default": [],
+                          "hint": "Array of ALL employees with hours: [{firstName, lastName, email, hours, role}]. "
+                                  "Include the PM here too if they have hours."},
+            "supplier_name": {"type": "str", "required": False, "default": ""},
+            "supplier_org_number": {"type": "str", "required": False, "default": ""},
+            "supplier_cost": {"type": "float", "required": False, "default": 0,
+                              "hint": "Supplier cost amount in NOK (including VAT)"},
+            "create_customer_invoice": {"type": "bool", "required": False, "default": False,
+                                        "hint": "True if prompt asks for customer invoice / Kundenrechnung / kundefaktura"},
+        },
+        "context": "Extract PM from role mentions: Projektleiter/project manager/prosjektleder/chef de projet/jefe de proyecto. "
+                   "Budget is the project fixed price amount. Supplier cost is amount INCLUDING VAT. "
+                   "Set create_customer_invoice=True if prompt mentions Kundenrechnung/customer invoice/kundefaktura/facture client.",
+    },
     "salary_with_bonus": {
         "fields": {
             "firstName": {"type": "str", "required": True},
@@ -572,22 +680,31 @@ Counter-account is usually 1920 (bank). Use 1500 for receivables, 2400 for payab
         },
         "context": "Extract employee data from offer letter (tilbudsbrev) or salary prompt. "
                    "If email is missing, generate as firstname.lastname@example.com (lowercase). "
-                   "year and month should come from startDate if present. "
+                   "year and month: extract from explicit date, or from 'this month'/'diesen Monat'/'ce mois'/'este mes'/'este mês' = current month/year. "
                    "If only annualSalary is given (no explicit base_salary), set base_salary to 0 — it will be auto-derived.",
     },
     "year_end": {
         "fields": {
             "voucher_date": {"type": "date", "required": True, "hint": "Year-end date e.g. 2025-12-31"},
+            "is_monthly": {"type": "bool", "required": False, "default": False,
+                          "hint": "True if monthly closing (clôture mensuelle/Monatsabschluss/månedlig avslutning). False for annual."},
             "assets": {"type": "list", "required": False, "default": [],
                        "hint": "Array of {name, cost, years, expense_account, depreciation_account}"},
             "prepaid_expenses": {"type": "list", "required": False, "default": [],
                                  "hint": "Array of {amount, prepaid_account, expense_account}"},
+            "salary_provisions": {"type": "list", "required": False, "default": [],
+                                  "hint": "Array of {amount, expense_account, payable_account}. Salary accruals (lønnsavsetning/provision pour salaires/Gehaltsrückstellung)."},
             "tax_rate": {"type": "float", "required": False, "default": 0.22},
             "tax_expense_account": {"type": "str", "required": False, "default": "8700"},
             "tax_liability_account": {"type": "str", "required": False, "default": "2920"},
             "taxable_profit": {"type": "float", "required": False, "default": 0},
             "year_end_note": {"type": "str", "required": False, "default": ""},
+            "verify_balance": {"type": "bool", "required": False, "default": False,
+                              "hint": "True if prompt says to check/verify trial balance (kontroller/vérifiez/prüfen/balanse)"},
         },
+        "context": "Year-end or monthly closing task. Monthly closing = is_monthly true, depreciation divided by 12. "
+                   "Salary provision: if prompt mentions salary accrual but no amount, use 45000 NOK. "
+                   "Account numbers: extract from prompt. If not specified, set to empty string (pipeline will look up).",
     },
     "reminder_fee": {
         "fields": {
@@ -924,7 +1041,8 @@ def _pipeline_create_multi_line_invoice(tools, p, ctx):
         prod = _call(ctx, tools, "create_product",
                      name=prod_spec["name"],
                      priceExcludingVatCurrency=prod_spec.get("price", 0),
-                     vatPercentage=prod_spec.get("vat_percentage", 25))
+                     vatPercentage=prod_spec.get("vat_percentage", 25),
+                     productNumber=prod_spec.get("number") or "")
         prod_id = _id(prod)
         order_lines.append({"product_id": prod_id, "count": prod_spec.get("quantity", 1)})
 
@@ -1068,6 +1186,30 @@ def _pipeline_invoice_with_payment(tools, p, ctx):
                      invoice_id=inv_id, amount=round(amount, 2), paymentDate=payment_date)
 
 
+def _pipeline_order_to_invoice_with_payment(tools, p, ctx):
+    """Order → Invoice → Payment via compound tool (1 call)."""
+    today = _today()
+
+    # Build products list if multi-product
+    products_json = "[]"
+    if p.get("products") and isinstance(p["products"], list) and len(p["products"]) > 0:
+        products_json = json.dumps(p["products"])
+
+    return _call(ctx, tools, "process_order_to_invoice_with_payment",
+                 customer_name=p["customer_name"],
+                 customer_email=p.get("customer_email") or "",
+                 customer_org_number=p.get("customer_org_number") or "",
+                 product_name=p.get("product_name") or "",
+                 product_price=p.get("product_price", 0),
+                 product_number=p.get("product_number") or "",
+                 quantity=p.get("quantity", 1),
+                 vat_percentage=p.get("vat_percentage", 25),
+                 products=products_json,
+                 invoiceDate=p.get("invoice_date") or today,
+                 invoiceDueDate=p.get("due_date") or p.get("invoice_date") or today,
+                 paymentDate=p.get("payment_date") or today)
+
+
 def _pipeline_create_credit_note(tools, p, ctx):
     inv = _create_invoice_common(tools, p, ctx)
     return _call(ctx, tools, "create_credit_note", invoice_id=_id(inv))
@@ -1105,10 +1247,23 @@ def _pipeline_create_travel_expense_with_costs(tools, p, ctx):
 
     # Additional costs (hotel, taxi, etc.)
     for cost in (p.get("costs") or []):
-        _call(ctx, tools, "create_travel_expense_cost",
-              travel_expense_id=te_id,
-              amount=cost.get("amount", 0),
-              category=cost.get("category", ""))
+        cost_kwargs = dict(
+            travel_expense_id=te_id,
+            amount=cost.get("amount", 0),
+            category=cost.get("category", ""),
+        )
+        if cost.get("comments"):
+            cost_kwargs["comments"] = cost["comments"]
+        if cost.get("date"):
+            cost_kwargs["date"] = cost["date"]
+        _call(ctx, tools, "create_travel_expense_cost", **cost_kwargs)
+
+    # Accommodation allowance (fixed-rate nattillegg)
+    if p.get("accommodation_nights") and p["accommodation_nights"] > 0:
+        acc_kwargs = dict(travel_expense_id=te_id, count=p["accommodation_nights"])
+        if p.get("accommodation_location"):
+            acc_kwargs["location"] = p["accommodation_location"]
+        _call(ctx, tools, "create_accommodation_allowance", **acc_kwargs)
 
     # Mileage allowance
     if p.get("mileage_km") and p["mileage_km"] > 0:
@@ -1122,18 +1277,26 @@ def _pipeline_create_employee_with_employment(tools, p, ctx):
     emp_kwargs = dict(firstName=p["firstName"], lastName=p["lastName"], email=p["email"])
     if p.get("dateOfBirth"):
         emp_kwargs["dateOfBirth"] = p["dateOfBirth"]
+    if p.get("nationalIdentityNumber"):
+        emp_kwargs["nationalIdentityNumber"] = p["nationalIdentityNumber"]
+    if p.get("bankAccountNumber"):
+        emp_kwargs["bankAccountNumber"] = p["bankAccountNumber"]
+    if p.get("department_name"):
+        emp_kwargs["department_name"] = p["department_name"]
     emp = _call(ctx, tools, "create_employee", **emp_kwargs)
     emp_id = _id(emp)
 
-    employment = _call(ctx, tools, "create_employment",
-                       employee_id=emp_id, startDate=p["startDate"])
-    employment_id = _id(employment)
-
-    # Optional: employment details (salary)
+    # Pass salary, FTE%, and occupationCode directly to create_employment
+    # (it creates initial employment details automatically — avoids duplicate 422)
+    empl_kwargs = dict(employee_id=emp_id, startDate=p["startDate"])
     if p.get("annualSalary") and p["annualSalary"] > 0:
-        _call(ctx, tools, "create_employment_details",
-              employment_id=employment_id, date=p["startDate"],
-              annualSalary=p["annualSalary"])
+        empl_kwargs["annualSalary"] = p["annualSalary"]
+    if p.get("percentageOfFullTimeEquivalent") and p["percentageOfFullTimeEquivalent"] != 100:
+        empl_kwargs["percentageOfFullTimeEquivalent"] = p["percentageOfFullTimeEquivalent"]
+    if p.get("occupationCode"):
+        empl_kwargs["occupationCode"] = p["occupationCode"]
+    employment = _call(ctx, tools, "create_employment", **empl_kwargs)
+    employment_id = _id(employment)
 
     # Optional: standard time
     if p.get("hoursPerDay") and p["hoursPerDay"] > 0:
@@ -1155,23 +1318,41 @@ def _pipeline_create_employee_with_employment(tools, p, ctx):
 
 def _pipeline_create_supplier_invoice(tools, p, ctx):
     # If files are present, try to extract content first
-    if "extract_file_content" in tools:
-        try:
-            _call(ctx, tools, "extract_file_content", filename="invoice.pdf")
-        except PipelineError:
-            pass  # file extraction is best-effort; data may be in prompt
+    for fname in ctx.get("file_names") or []:
+        if "extract_file_content" in tools:
+            try:
+                _call(ctx, tools, "extract_file_content", filename=fname)
+            except PipelineError:
+                pass  # file extraction is best-effort; data may be in prompt
 
-    sup = _call(ctx, tools, "create_supplier",
-                name=p["supplier_name"],
-                organizationNumber=p.get("supplier_org_number") or "")
-    sup_id = _id(sup)
-    return _call(ctx, tools, "create_incoming_invoice",
-                 supplierId=sup_id,
-                 invoiceNumber=p.get("invoice_number") or "",
-                 amountIncludingVat=p["amount_including_vat"],
-                 expenseAccountNumber=p["expense_account"],
-                 vatPercentage=p.get("vat_percentage", 25),
-                 invoiceDate=p["invoice_date"])
+    kwargs = {
+        "supplier_name": p["supplier_name"],
+        "amountIncludingVat": p["amount_including_vat"],
+        "expenseAccountNumber": p["expense_account"],
+        "invoiceDate": p["invoice_date"],
+    }
+    if p.get("supplier_org_number"):
+        kwargs["supplierOrgNumber"] = p["supplier_org_number"]
+    if p.get("supplier_bank_account"):
+        kwargs["supplierBankAccount"] = p["supplier_bank_account"]
+    if p.get("supplier_address"):
+        kwargs["supplierAddress"] = p["supplier_address"]
+    if p.get("supplier_postal_code"):
+        kwargs["supplierPostalCode"] = p["supplier_postal_code"]
+    if p.get("supplier_city"):
+        kwargs["supplierCity"] = p["supplier_city"]
+    if p.get("invoice_number"):
+        kwargs["invoiceNumber"] = p["invoice_number"]
+    if p.get("vat_percentage") is not None:
+        kwargs["vatPercentage"] = p.get("vat_percentage", 25)
+    if p.get("due_date"):
+        kwargs["dueDate"] = p["due_date"]
+    if p.get("line_description"):
+        kwargs["lineDescription"] = p["line_description"]
+    if p.get("department_name"):
+        kwargs["departmentName"] = p["department_name"]
+
+    return _call(ctx, tools, "process_supplier_invoice", **kwargs)
 
 
 # --- Group E: Delete tasks ---
@@ -1243,6 +1424,133 @@ def _pipeline_delete_travel_expense(tools, p, ctx):
 
 # --- Group F: Complex tasks ---
 
+def _pipeline_correct_ledger_errors(tools, p, ctx):
+    """Correct ledger errors by searching for original vouchers and creating corrections."""
+    date_from = p["date_from"]
+    date_to = p["date_to"]
+    correction_date = date_to  # Date corrections at end of period
+
+    # STEP 0: Fetch all vouchers in the period to find counterpart accounts + customer/supplier IDs
+    acct_counter = {}    # (debit_acct_number, abs_amount) -> credit_acct_number
+    expense_counter = {} # expense_acct_number -> counter_acct_number (latest)
+    acct_customer = {}   # acct_number -> customerId (from 1500 postings)
+    acct_supplier = {}   # acct_number -> supplierId (from 2400 postings)
+    client = ctx.get("client")
+    if client:
+        try:
+            raw = client.get("/ledger/voucher", params={
+                "dateFrom": date_from,
+                "dateTo": date_to,
+                "fields": "id,postings(account(id,number),amount,customer(id),supplier(id))",
+                "count": 200,
+            })
+            for v in (raw.get("values") or []):
+                plist = v.get("postings") or []
+                # Track customer/supplier IDs from all postings
+                for pp in plist:
+                    acct_num = str((pp.get("account") or {}).get("number", ""))
+                    cust = pp.get("customer") or {}
+                    sup = pp.get("supplier") or {}
+                    if cust.get("id") and acct_num:
+                        acct_customer[acct_num] = cust["id"]
+                    if sup.get("id") and acct_num:
+                        acct_supplier[acct_num] = sup["id"]
+                if len(plist) != 2:
+                    continue
+                a0 = str((plist[0].get("account") or {}).get("number", ""))
+                a1 = str((plist[1].get("account") or {}).get("number", ""))
+                m0 = float(plist[0].get("amount") or 0)
+                m1 = float(plist[1].get("amount") or 0)
+                if not a0 or not a1:
+                    continue
+                if m0 > 0:
+                    debit_acct, credit_acct, debit_amt = a0, a1, abs(m0)
+                else:
+                    debit_acct, credit_acct, debit_amt = a1, a0, abs(m1)
+                acct_counter[(debit_acct, round(debit_amt, 2))] = credit_acct
+                expense_counter[debit_acct] = credit_acct
+        except Exception:
+            pass
+
+    def _find_counter(acct: str, amount: float) -> str:
+        """Look up actual counterpart, fall back to 1920."""
+        c = acct_counter.get((acct, round(amount, 2)))
+        if c and c != acct:
+            return c
+        c = expense_counter.get(acct)
+        if c and c != acct:
+            return c
+        return "1920"
+
+    def _enrich_posting(posting: dict):
+        """Add customerId/supplierId for 1500/2400 accounts."""
+        acct = str(posting.get("accountNumber", ""))
+        if acct == "1500" and acct in acct_customer:
+            posting["customerId"] = acct_customer[acct]
+        elif acct == "2400" and acct in acct_supplier:
+            posting["supplierId"] = acct_supplier[acct]
+
+    # STEP 1: Create one corrective voucher per error
+    last = None
+    for error in p.get("errors", []):
+        etype = error.get("type", "")
+        postings = []
+        desc = ""
+
+        if etype == "wrong_account":
+            wrong = str(error["wrong_account"])
+            correct = str(error["correct_account"])
+            amount = float(error["amount"])
+            postings = [
+                {"accountNumber": wrong, "amount": -amount},
+                {"accountNumber": correct, "amount": amount},
+            ]
+            desc = f"Korreksjon: feil konto {wrong} -> {correct}"
+
+        elif etype == "duplicate":
+            acct = str(error["account"])
+            amount = float(error["amount"])
+            counter = _find_counter(acct, amount)
+            postings = [
+                {"accountNumber": acct, "amount": -amount},
+                {"accountNumber": counter, "amount": amount},
+            ]
+            desc = f"Korreksjon: duplikat konto {acct}"
+
+        elif etype == "missing_vat":
+            expense_acct = str(error["expense_account"])
+            vat_acct = str(error["vat_account"])
+            amount_excl = float(error["amount_excl_vat"])
+            vat_amount = round(amount_excl * 0.25, 2)
+            counter = _find_counter(expense_acct, amount_excl)
+            postings = [
+                {"accountNumber": vat_acct, "amount": vat_amount},
+                {"accountNumber": counter, "amount": -vat_amount},
+            ]
+            desc = f"Korreksjon: manglende MVA konto {expense_acct}"
+
+        elif etype == "wrong_amount":
+            acct = str(error["account"])
+            recorded = float(error["recorded_amount"])
+            correct_amt = float(error["correct_amount"])
+            diff = round(recorded - correct_amt, 2)
+            counter = _find_counter(acct, recorded)
+            postings = [
+                {"accountNumber": acct, "amount": -diff},
+                {"accountNumber": counter, "amount": diff},
+            ]
+            desc = f"Korreksjon: feil beløp konto {acct}"
+
+        if postings:
+            # Enrich postings with customer/supplier IDs for 1500/2400
+            for posting in postings:
+                _enrich_posting(posting)
+            last = _call(ctx, tools, "create_voucher",
+                         date=correction_date, description=desc,
+                         postings=json.dumps(postings))
+    return last
+
+
 def _pipeline_create_ledger_voucher(tools, p, ctx):
     import re as _re
 
@@ -1253,22 +1561,33 @@ def _pipeline_create_ledger_voucher(tools, p, ctx):
     vdate = p["date"]
     year = vdate[:4]
 
-    # ── STEP 0: Search existing vouchers to find actual counter-accounts ──
+    # ── STEP 0: Search existing vouchers to find actual counter-accounts + customer/supplier IDs ──
     # The extraction assumes 1920 (bank) as counter, but the original entries
     # may use 2400 (payables), etc.  Search + fix before creating corrections.
     acct_counter = {}   # (debit_acct_number, abs_amount) -> credit_acct_number
     expense_counter = {}  # expense_acct_number -> counter_acct_number (latest)
+    acct_customer = {}   # acct_number -> customerId (from 1500 postings)
+    acct_supplier = {}   # acct_number -> supplierId (from 2400 postings)
     client = ctx.get("client")
     if client:
         try:
             raw = client.get("/ledger/voucher", params={
                 "dateFrom": f"{year}-01-01",
                 "dateTo": vdate,
-                "fields": "id,postings(account(id,number),amount)",
+                "fields": "id,postings(account(id,number),amount,customer(id),supplier(id))",
                 "count": 200,
             })
             for v in (raw.get("values") or []):
                 plist = v.get("postings") or []
+                # Track customer/supplier IDs from all postings
+                for pp in plist:
+                    acct_num = str((pp.get("account") or {}).get("number", ""))
+                    cust = pp.get("customer") or {}
+                    sup = pp.get("supplier") or {}
+                    if cust.get("id") and acct_num:
+                        acct_customer[acct_num] = cust["id"]
+                    if sup.get("id") and acct_num:
+                        acct_supplier[acct_num] = sup["id"]
                 if len(plist) != 2:
                     continue
                 a0 = str((plist[0].get("account") or {}).get("number", ""))
@@ -1352,6 +1671,13 @@ def _pipeline_create_ledger_voucher(tools, p, ctx):
         postings = corr.get("postings", [])
         if not postings:
             continue
+        # Enrich postings with customer/supplier IDs for 1500/2400
+        for posting in postings:
+            acct = str(posting.get("accountNumber", ""))
+            if acct == "1500" and acct in acct_customer and "customerId" not in posting:
+                posting["customerId"] = acct_customer[acct]
+            elif acct == "2400" and acct in acct_supplier and "supplierId" not in posting:
+                posting["supplierId"] = acct_supplier[acct]
         last = _call(ctx, tools, "create_voucher",
                      date=vdate, description=desc,
                      postings=json.dumps(postings))
@@ -1479,7 +1805,8 @@ def _pipeline_create_dimension(tools, p, ctx):
         value_ids[val_name] = _id(dv)
 
     # Optional voucher linked to dimension
-    if p.get("voucher_postings") and p.get("voucher_date"):
+    if p.get("voucher_postings"):
+        voucher_date = p.get("voucher_date") or _today()
         postings = []
         for posting in p["voucher_postings"]:
             entry = {
@@ -1492,7 +1819,7 @@ def _pipeline_create_dimension(tools, p, ctx):
                 entry["dimensionIndex"] = dim_index
             postings.append(entry)
         _call(ctx, tools, "create_voucher",
-              date=p["voucher_date"],
+              date=voucher_date,
               description=p.get("voucher_description") or f"Voucher for {p['dimension_name']}",
               postings=json.dumps(postings))
     return dim
@@ -1512,11 +1839,15 @@ def _pipeline_create_project(tools, p, ctx):
                     email=p["pm_email"], userType="EXTENDED")
         pm_id = _id(emp)
 
-    return _call(ctx, tools, "create_project",
-                 name=p["project_name"], customer_id=cust_id,
-                 projectManagerId=pm_id,
-                 startDate=p.get("startDate") or today,
-                 fixedPriceAmount=p.get("fixedPriceAmount") or 0)
+    proj_kwargs = dict(
+        name=p["project_name"], customer_id=cust_id,
+        projectManagerId=pm_id,
+        startDate=p.get("startDate") or today,
+        fixedPriceAmount=p.get("fixedPriceAmount") or 0,
+    )
+    if p.get("isInternal"):
+        proj_kwargs["isInternal"] = True
+    return _call(ctx, tools, "create_project", **proj_kwargs)
 
 
 def _pipeline_project_invoice(tools, p, ctx):
@@ -1536,11 +1867,15 @@ def _pipeline_project_invoice(tools, p, ctx):
                     email=p["pm_email"], userType="EXTENDED")
         pm_id = _id(emp)
 
-    proj = _call(ctx, tools, "create_project",
-                 name=p["project_name"], customer_id=cust_id,
-                 projectManagerId=pm_id,
-                 startDate=p.get("startDate") or today,
-                 fixedPriceAmount=p.get("fixedPriceAmount") or 0)
+    proj_kwargs = dict(
+        name=p["project_name"], customer_id=cust_id,
+        projectManagerId=pm_id,
+        startDate=p.get("startDate") or today,
+        fixedPriceAmount=p.get("fixedPriceAmount") or 0,
+    )
+    if p.get("isInternal"):
+        proj_kwargs["isInternal"] = True
+    proj = _call(ctx, tools, "create_project", **proj_kwargs)
     proj_id = _id(proj)
 
     # Invoice part (if product specified)
@@ -1580,11 +1915,15 @@ def _pipeline_project_lifecycle(tools, p, ctx):
         pm_id = _id(pm)
 
     # 3. Create project
-    proj = _call(ctx, tools, "create_project",
-                 name=p["project_name"], customer_id=cust_id,
-                 projectManagerId=pm_id,
-                 startDate=today,
-                 fixedPriceAmount=p.get("budget") or 0)
+    proj_kwargs = dict(
+        name=p["project_name"], customer_id=cust_id,
+        projectManagerId=pm_id,
+        startDate=today,
+        fixedPriceAmount=p.get("budget") or p.get("fixedPriceAmount") or 0,
+    )
+    if p.get("isInternal"):
+        proj_kwargs["isInternal"] = True
+    proj = _call(ctx, tools, "create_project", **proj_kwargs)
     proj_id = _id(proj)
 
     # 4. Register employee hours
@@ -1601,12 +1940,19 @@ def _pipeline_project_lifecycle(tools, p, ctx):
             # Non-PM employees need employment record
             _call(ctx, tools, "create_employment",
                   employee_id=emp_id, startDate="2026-01-01")
+            # Add non-PM employees as project participants
+            if "create_project_participant" in tools:
+                try:
+                    _call(ctx, tools, "create_project_participant",
+                          project_id=proj_id, employee_id=emp_id)
+                except Exception:
+                    pass  # best-effort, don't fail pipeline
 
         _call(ctx, tools, "create_timesheet_entry",
               employee_id=emp_id, date=today,
               hours=emp_spec.get("hours", 0), project_id=proj_id)
 
-    # 5. Register supplier cost
+    # 5. Register supplier cost (25% MVA default for Norwegian invoices)
     if p.get("supplier_name") and p.get("supplier_cost"):
         sup = _call(ctx, tools, "create_supplier",
                     name=p["supplier_name"],
@@ -1615,7 +1961,7 @@ def _pipeline_project_lifecycle(tools, p, ctx):
         _call(ctx, tools, "create_incoming_invoice",
               supplierId=sup_id, invoiceNumber=f"PROJECT_COST_{today}",
               amountIncludingVat=p["supplier_cost"],
-              expenseAccountNumber=4000, vatPercentage=0,
+              expenseAccountNumber=4000, vatPercentage=25,
               invoiceDate=today, projectId=proj_id)
 
     # 6. Customer invoice for the project
@@ -1663,13 +2009,33 @@ def _pipeline_salary(tools, p, ctx):
 
 def _pipeline_year_end(tools, p, ctx):
     vdate = p["voucher_date"]
+    is_monthly = p.get("is_monthly", False)
+
+    # Helper: resolve account number — look up if empty/missing
+    def _resolve_account(acct_str: str, prefix: str = "") -> str:
+        if acct_str and acct_str.strip():
+            return acct_str.strip()
+        if prefix and "get_ledger_accounts" in tools:
+            try:
+                result = _call(ctx, tools, "get_ledger_accounts", number=prefix)
+                accounts = result.get("values", []) if isinstance(result, dict) else []
+                if accounts:
+                    return str(accounts[0].get("number", ""))
+            except PipelineError:
+                pass
+        return acct_str
 
     # 1. Depreciation vouchers
     for asset in (p.get("assets") or []):
-        annual_depr = round(asset["cost"] / asset["years"])
+        if is_monthly:
+            depr = round(asset["cost"] / asset["years"] / 12)
+        else:
+            depr = round(asset["cost"] / asset["years"])
+        expense_acct = _resolve_account(str(asset.get("expense_account", "")), "60")
+        depr_acct = _resolve_account(str(asset.get("depreciation_account", "")), "10")
         postings = json.dumps([
-            {"accountNumber": str(asset["expense_account"]), "amount": annual_depr},
-            {"accountNumber": str(asset["depreciation_account"]), "amount": -annual_depr},
+            {"accountNumber": expense_acct, "amount": depr},
+            {"accountNumber": depr_acct, "amount": -depr},
         ])
         _call(ctx, tools, "create_voucher",
               date=vdate, description=f"Depreciation - {asset['name']}",
@@ -1677,7 +2043,7 @@ def _pipeline_year_end(tools, p, ctx):
 
     # 2. Prepaid expense reversals
     for prepaid in (p.get("prepaid_expenses") or []):
-        expense_acct = str(prepaid.get("expense_account", "6990"))
+        expense_acct = _resolve_account(str(prepaid.get("expense_account", "")), "69")
         postings = json.dumps([
             {"accountNumber": expense_acct, "amount": prepaid["amount"]},
             {"accountNumber": str(prepaid["prepaid_account"]), "amount": -prepaid["amount"]},
@@ -1686,10 +2052,25 @@ def _pipeline_year_end(tools, p, ctx):
               date=vdate, description="Prepaid expense reversal",
               postings=postings)
 
-    # 3. Tax provision
+    # 3. Salary provisions
+    for sal in (p.get("salary_provisions") or []):
+        sal_amount = sal.get("amount", 0)
+        if not sal_amount:
+            sal_amount = 45000  # Default monthly salary accrual
+        expense_acct = _resolve_account(str(sal.get("expense_account", "")), "50")
+        payable_acct = _resolve_account(str(sal.get("payable_account", "")), "29")
+        postings = json.dumps([
+            {"accountNumber": expense_acct, "amount": sal_amount},
+            {"accountNumber": payable_acct, "amount": -sal_amount},
+        ])
+        _call(ctx, tools, "create_voucher",
+              date=vdate, description="Salary provision",
+              postings=postings)
+
+    # 4. Tax provision (annual closing only, or when explicitly requested)
     taxable = p.get("taxable_profit") or 0
     tax_rate = p.get("tax_rate") or 0.22
-    if not taxable and "get_result_before_tax" in tools:
+    if not taxable and not is_monthly and "get_result_before_tax" in tools:
         year = vdate[:4]
         result = _call(ctx, tools, "get_result_before_tax",
                        dateFrom=f"{year}-01-01", dateTo=f"{year}-12-31")
@@ -1704,7 +2085,13 @@ def _pipeline_year_end(tools, p, ctx):
               date=vdate, description="Tax provision",
               postings=postings)
 
-    # 4. Year-end note
+    # 5. Verify trial balance (if requested)
+    if p.get("verify_balance") and "get_result_before_tax" in tools:
+        year = vdate[:4]
+        _call(ctx, tools, "get_result_before_tax",
+              dateFrom=f"{year}-01-01", dateTo=vdate)
+
+    # 6. Year-end note
     if p.get("year_end_note"):
         _call(ctx, tools, "create_year_end_note", note=p["year_end_note"])
 
@@ -1782,7 +2169,9 @@ def _parse_bank_csv(csv_text: str) -> list[dict]:
             txn["invoice_ref"] = m.group(2).strip()
         # Supplier payment: "Betaling/Paiement/Zahlung Fornecedor/Leverandør/Fournisseur/Proveedor/Lieferant X"
         elif re.search(r'(?:betaling|paiement|zahlung|pago|pagamento)\s+(?:til\s+|à\s+|a\s+)?(?:fornecedor|leverandør|leverandor|fournisseur|proveedor|supplier|lieferant)', desc, re.IGNORECASE):
-            m2 = re.search(r'(?:fornecedor|leverandør|leverandor|fournisseur|proveedor|supplier|lieferant)\s+(.+)', desc, re.IGNORECASE)
+            # Capture the FULL supplier name INCLUDING the prefix word (e.g. "Fournisseur Leroy SARL")
+            # because Tripletex supplier names typically include the prefix.
+            m2 = re.search(r'((?:fornecedor|leverandør|leverandor|fournisseur|proveedor|supplier|lieferant)\s+.+)', desc, re.IGNORECASE)
             txn["type"] = "supplier_payment"
             txn["supplier_name"] = m2.group(1).strip() if m2 else desc
         # Tax: Skattetrekk / Impôt / Steuer
@@ -1797,6 +2186,14 @@ def _parse_bank_csv(csv_text: str) -> list[dict]:
         elif any(kw in desc_lower for kw in ("renteinntekt", "rente", "interest", "juros", "intereses",
                                               "intérêt", "interet", "zinsen", "zinsertrag")):
             txn["type"] = "interest"
+        # Salary: Lønn / Salaire / Gehalt
+        elif any(kw in desc_lower for kw in ("lønn", "lonn", "lønnsutbetaling", "salary", "salario",
+                                              "salaire", "gehalt", "lohn", "nómina", "nomina")):
+            txn["type"] = "salary"
+        # VAT/MVA: Merverdiavgift / TVA / USt
+        elif any(kw in desc_lower for kw in ("mva", "merverdiavgift", "vat", "iva", "tva",
+                                              "umsatzsteuer", "mehrwertsteuer", "ust")):
+            txn["type"] = "vat"
         else:
             txn["type"] = "other"
 
@@ -1806,10 +2203,11 @@ def _parse_bank_csv(csv_text: str) -> list[dict]:
 
 
 def _pipeline_bank_reconciliation(tools, p, ctx):
-    # 1. Read and parse the CSV file
+    # 1. Read and parse the CSV file — reuse pre-extracted content if available
     filename = p.get("filename", "")
-    csv_text = ""
-    if filename and "extract_file_content" in tools:
+    csv_text = ctx.get("pre_extracted_files", {}).get(filename, "")
+
+    if not csv_text and filename and "extract_file_content" in tools:
         try:
             result = _call(ctx, tools, "extract_file_content", filename=filename)
             csv_text = result.get("text", "") if isinstance(result, dict) else ""
@@ -1824,7 +2222,7 @@ def _pipeline_bank_reconciliation(tools, p, ctx):
         raise PipelineError("No transactions found in bank statement")
 
     # 2. Cache: search all unique customers/suppliers up front to save API calls
-    customer_cache = {}  # name -> id
+    customer_cache = {}  # name -> [id1, id2, ...] (handles duplicate names)
     supplier_cache = {}  # name -> id
 
     for txn in transactions:
@@ -1840,44 +2238,69 @@ def _pipeline_bank_reconciliation(tools, p, ctx):
             cust_name = txn.get("customer_name", "")
             inv_ref = txn.get("invoice_ref", "")
             try:
-                # Find customer (cache lookup, with exact name matching)
+                # Find ALL customers with this name (handles duplicates)
                 if cust_name not in customer_cache:
                     cust_result = _call(ctx, tools, "search_customers", name=cust_name)
-                    cust = _first(cust_result, "customer", name_match=cust_name)
-                    customer_cache[cust_name] = cust["id"]
-                cust_id = customer_cache[cust_name]
+                    all_custs = cust_result.get("values", [])
+                    target_lower = cust_name.strip().lower()
+                    matching_ids = [c["id"] for c in all_custs
+                                    if c.get("name", "").strip().lower() == target_lower]
+                    if not matching_ids and all_custs:
+                        matching_ids = [all_custs[0]["id"]]
+                    customer_cache[cust_name] = matching_ids
 
-                # Find their invoices
-                inv_result = _call(ctx, tools, "search_invoices", customerId=cust_id)
-                invoices = inv_result.get("values", [])
+                cust_ids = customer_cache[cust_name]
 
-                # Match by invoice number if available
+                # Try each customer's invoices until we find a match
                 target_inv = None
-                if inv_ref:
+                bank_amt = abs(amount)
+                for cust_id in cust_ids:
+                    inv_result = _call(ctx, tools, "search_invoices", customerId=cust_id)
+                    invoices = inv_result.get("values", [])
+
+                    # Strategy 1: Match by amount (most reliable for full payments)
                     for inv in invoices:
-                        if str(inv.get("invoiceNumber", "")) == inv_ref:
+                        outstanding = inv.get("amountOutstanding", 0) or 0
+                        if outstanding > 0 and abs(outstanding - bank_amt) < 0.01:
                             target_inv = inv
                             break
-                # Fallback: first invoice with outstanding balance
-                if not target_inv:
+                    if target_inv:
+                        break
+
+                    # Strategy 2: Match by invoice number (exact or suffix match)
+                    # Bank refs like "1004" may correspond to Tripletex invoiceNumber "4"
+                    if inv_ref:
+                        for inv in invoices:
+                            inv_num = str(inv.get("invoiceNumber", ""))
+                            # Exact match or inv_ref ends with invoiceNumber (min 1 digit match)
+                            matched = (inv_num == inv_ref
+                                       or (len(inv_num) >= 1 and inv_ref.endswith(inv_num)
+                                           and len(inv_ref) > len(inv_num)))
+                            if matched and (inv.get("amountOutstanding", 0) or 0) > 0:
+                                target_inv = inv
+                                break
+                    if target_inv:
+                        break
+
+                    # Strategy 3: Any invoice with outstanding > 0 (for partial payments)
                     for inv in invoices:
                         if (inv.get("amountOutstanding", 0) or 0) > 0:
                             target_inv = inv
                             break
-                if not target_inv and invoices:
-                    target_inv = invoices[0]
+                    if target_inv:
+                        break
 
                 if target_inv:
                     # Use EXACT bank amount (handles partial payments correctly)
                     _call(ctx, tools, "register_payment",
                           invoice_id=target_inv["id"],
-                          amount=abs(amount),
+                          amount=bank_amt,
                           paymentDate=txn_date)
                     continue
             except PipelineError:
                 pass  # Fall through to generic voucher
 
-        # ── supplier_payment: search supplier → voucher with supplierId ──
+        # ── supplier_payment: search supplier → try supplier invoices → fallback to voucher ──
         if txn_type == "supplier_payment":
             supplier_name = txn.get("supplier_name", "")
             supplier_id = None
@@ -1893,6 +2316,34 @@ def _pipeline_bank_reconciliation(tools, p, ctx):
                 supplier_id = supplier_cache.get(supplier_name)
 
             pay_amt = abs(amount)
+
+            # Try to find and pay a matching supplier invoice first
+            if supplier_id and "search_supplier_invoices" in tools:
+                try:
+                    si_result = _call(ctx, tools, "search_supplier_invoices",
+                                      supplierId=supplier_id)
+                    sup_invoices = si_result.get("values", [])
+                    matched_si = None
+                    # Match by amount
+                    for si in sup_invoices:
+                        si_amt = abs(si.get("amount", 0) or 0)
+                        if si_amt > 0 and abs(si_amt - pay_amt) < 0.01:
+                            matched_si = si
+                            break
+                    # Fallback: any open supplier invoice
+                    if not matched_si and sup_invoices:
+                        matched_si = sup_invoices[0]
+
+                    if matched_si:
+                        si_voucher_id = matched_si.get("voucher", {}).get("id") or matched_si.get("id")
+                        if si_voucher_id and "add_supplier_invoice_payment" in tools:
+                            _call(ctx, tools, "add_supplier_invoice_payment",
+                                  invoice_id=si_voucher_id)
+                            continue
+                except PipelineError:
+                    pass  # Fall through to voucher
+
+            # Fallback: create voucher (debit 2400 Accounts Payable, credit 1920 Bank)
             postings = [
                 {"accountNumber": "2400", "amount": pay_amt},
                 {"accountNumber": "1920", "amount": -pay_amt},
@@ -1956,6 +2407,28 @@ def _pipeline_bank_reconciliation(tools, p, ctx):
                       ]))
             continue
 
+        # ── salary: debit 5000, credit 1920 ──
+        if txn_type == "salary":
+            sal_amt = abs(amount)
+            _call(ctx, tools, "create_voucher",
+                  date=txn_date, description=txn_desc,
+                  postings=json.dumps([
+                      {"accountNumber": "5000", "amount": sal_amt},
+                      {"accountNumber": "1920", "amount": -sal_amt},
+                  ]))
+            continue
+
+        # ── vat/mva: debit 2740, credit 1920 ──
+        if txn_type == "vat":
+            vat_amt = abs(amount)
+            _call(ctx, tools, "create_voucher",
+                  date=txn_date, description=txn_desc,
+                  postings=json.dumps([
+                      {"accountNumber": "2740", "amount": vat_amt},
+                      {"accountNumber": "1920", "amount": -vat_amt},
+                  ]))
+            continue
+
         # ── other / fallback: generic voucher ──
         if amount > 0:
             _call(ctx, tools, "create_voucher",
@@ -1976,11 +2449,12 @@ def _pipeline_bank_reconciliation(tools, p, ctx):
 
 def _pipeline_process_invoice_file(tools, p, ctx):
     # Same as create_invoice but may need file extraction first
-    if "extract_file_content" in tools:
-        try:
-            _call(ctx, tools, "extract_file_content", filename="invoice.pdf")
-        except PipelineError:
-            pass
+    for fname in ctx.get("file_names") or []:
+        if "extract_file_content" in tools:
+            try:
+                _call(ctx, tools, "extract_file_content", filename=fname)
+            except PipelineError:
+                pass
     return _pipeline_create_invoice(tools, p, ctx)
 
 
@@ -2005,6 +2479,7 @@ PIPELINES = {
     "create_invoice": _pipeline_create_invoice,
     "create_multi_line_invoice": _pipeline_create_multi_line_invoice,
     "invoice_with_payment": _pipeline_invoice_with_payment,
+    "order_to_invoice_with_payment": _pipeline_order_to_invoice_with_payment,
     "create_credit_note": _pipeline_create_credit_note,
     "delete_invoice": _pipeline_delete_invoice,
     # Group D
@@ -2021,6 +2496,7 @@ PIPELINES = {
     "delete_employee": _pipeline_delete_employee,
     "delete_travel_expense": _pipeline_delete_travel_expense,
     # Group F
+    "correct_ledger_errors": _pipeline_correct_ledger_errors,
     "create_ledger_voucher": _pipeline_create_ledger_voucher,
     "reverse_voucher": _pipeline_reverse_voucher,
     "reverse_payment": _pipeline_reverse_payment,
@@ -2031,6 +2507,7 @@ PIPELINES = {
     "create_project_with_pm": _pipeline_create_project,
     "project_invoice": _pipeline_project_invoice,
     "project_lifecycle": _pipeline_project_lifecycle,
+    "create_project_with_billing": _pipeline_project_lifecycle,
     "salary_with_bonus": _pipeline_salary,
     "year_end": _pipeline_year_end,
     "bank_reconciliation": _pipeline_bank_reconciliation,
@@ -2062,12 +2539,15 @@ def run_static(task_type: str, prompt: str, all_tools_dict: dict,
                  "task_type": task_type})
 
     # Pre-extract file content so LLM can see PDF/CSV data during extraction
+    # Also store in pre_extracted_files so pipelines can reuse without a second API call
     extraction_prompt = prompt
+    pre_extracted_files = {}
     if file_names and "extract_file_content" in all_tools_dict:
         for fname in file_names:
             try:
                 file_result = all_tools_dict["extract_file_content"](filename=fname)
                 if isinstance(file_result, dict) and file_result.get("text"):
+                    pre_extracted_files[fname] = file_result["text"]
                     extraction_prompt += f"\n\n--- File: {fname} ---\n{file_result['text']}"
                     log.info(f"[{request_id[:8]}] static: pre-extracted {fname} ({len(file_result['text'])} chars)")
             except Exception as e:
@@ -2097,7 +2577,8 @@ def run_static(task_type: str, prompt: str, all_tools_dict: dict,
     currency_info = extract_currency_info(prompt) if task_type == "invoice_with_payment" else None
 
     # 2. Run pipeline
-    ctx = {"steps": [], "emit_fn": emit_fn, "request_id": request_id, "client": client}
+    ctx = {"steps": [], "emit_fn": emit_fn, "request_id": request_id, "client": client,
+           "file_names": file_names or [], "pre_extracted_files": pre_extracted_files}
     if currency_info:
         ctx["currency_info"] = currency_info
         log.info(f"[{request_id[:8]}] static: currency detected: {currency_info}")

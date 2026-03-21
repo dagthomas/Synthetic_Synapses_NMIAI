@@ -29,7 +29,7 @@ def init_db():
     with closing(get_conn()) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         # Migrate: add columns if missing (solve_logs)
-        for col, ctype in [("tool_calls_json", "TEXT"), ("api_log_json", "TEXT"), ("task_type", "TEXT"), ("tool_count", "INTEGER"), ("source", "TEXT"), ("classification_level", "TEXT")]:
+        for col, ctype in [("tool_calls_json", "TEXT"), ("api_log_json", "TEXT"), ("task_type", "TEXT"), ("tool_count", "INTEGER"), ("source", "TEXT"), ("classification_level", "TEXT"), ("llm_task_type", "TEXT")]:
             try:
                 conn.execute(f"ALTER TABLE solve_logs ADD COLUMN {col} {ctype}")
             except Exception:
@@ -269,6 +269,16 @@ def create_solve_log(*, request_id, prompt, files_json, base_url,
              api_calls, api_errors, elapsed_seconds, agent_response,
              tool_calls_json, api_log_json, task_type or "", tool_count, source or "",
              classification_level or "", _now()),
+        )
+        conn.commit()
+
+
+def update_solve_log_llm_task_type(request_id: str, llm_task_type: str):
+    """Set the LLM-based independent classification for a solve log."""
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE solve_logs SET llm_task_type = ? WHERE request_id = ?",
+            (llm_task_type, request_id),
         )
         conn.commit()
 
@@ -541,6 +551,33 @@ def get_latest_snapshot() -> dict | None:
             if not t.get("mapped_task_type") and t["task_number"] in mappings:
                 t["mapped_task_type"] = mappings[t["task_number"]]
         return snap
+
+
+def get_snapshot_pair() -> tuple[dict | None, dict | None]:
+    """Return (latest, previous) snapshots with their tasks for diffing."""
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM score_snapshots ORDER BY id DESC LIMIT 2"
+        ).fetchall()
+        if not rows:
+            return None, None
+        mappings = _get_all_mappings(conn)
+
+        def _enrich(snap_row):
+            snap = dict(snap_row)
+            tasks = conn.execute(
+                "SELECT * FROM score_tasks WHERE snapshot_id = ? ORDER BY task_number",
+                (snap["id"],),
+            ).fetchall()
+            snap["tasks"] = [dict(t) for t in tasks]
+            for t in snap["tasks"]:
+                if not t.get("mapped_task_type") and t["task_number"] in mappings:
+                    t["mapped_task_type"] = mappings[t["task_number"]]
+            return snap
+
+        latest = _enrich(rows[0])
+        previous = _enrich(rows[1]) if len(rows) > 1 else None
+        return latest, previous
 
 
 def get_score_history(limit=50) -> list[dict]:

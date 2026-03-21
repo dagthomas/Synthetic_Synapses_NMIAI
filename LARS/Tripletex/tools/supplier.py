@@ -72,14 +72,21 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             organizationNumber: Filter by organization number.
 
         Returns:
-            A list of matching suppliers.
+            A list of matching suppliers with exact name matches first.
         """
         params = {"fields": "id,name,email,organizationNumber,phoneNumber"}
         if name:
             params["name"] = name
         if organizationNumber:
             params["organizationNumber"] = organizationNumber
-        return client.get("/supplier", params=params)
+        result = client.get("/supplier", params=params)
+        # Sort exact name matches first so the agent picks the right one
+        if name and "values" in result and len(result["values"]) > 1:
+            target = name.strip().lower()
+            result["values"].sort(
+                key=lambda s: (0 if s.get("name", "").strip().lower() == target else 1)
+            )
+        return result
 
     def update_supplier(supplier_id: int, name: str = "", email: str = "", phoneNumber: str = "", version: int = -1) -> dict:
         """Update an existing supplier.

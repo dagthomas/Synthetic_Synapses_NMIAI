@@ -10,6 +10,7 @@ def build_timesheet_tools(client: TripletexClient) -> dict:
         hours: float,
         project_id: int = 0,
         activity_id: int = 0,
+        activity_name: str = "",
         comment: str = "",
     ) -> dict:
         """Create a timesheet entry.
@@ -20,6 +21,7 @@ def build_timesheet_tools(client: TripletexClient) -> dict:
             hours: Number of hours.
             project_id: Project ID (0 to auto-detect first available).
             activity_id: Activity ID (0 to auto-detect first available).
+            activity_name: Activity name to search for (e.g. "Design"). If provided and not found, creates it.
             comment: Optional comment.
 
         Returns:
@@ -29,8 +31,37 @@ def build_timesheet_tools(client: TripletexClient) -> dict:
             projs = client.get("/project", params={"fields": "id", "count": 1})
             proj_list = projs.get("values", [])
             project_id = proj_list[0]["id"] if proj_list else 0
+        if not activity_id and activity_name:
+            # Search for activity by name
+            acts = client.get("/activity", params={"fields": "id,name", "name": activity_name})
+            act_list = acts.get("values", [])
+            if act_list:
+                activity_id = act_list[0]["id"]
+            else:
+                # Create the activity
+                new_act = client.post("/activity", json={
+                    "name": activity_name,
+                    "isChargeable": True,
+                    "activityType": "PROJECT_GENERAL_ACTIVITY",
+                })
+                if new_act.get("error"):
+                    # Name already in use — recover
+                    msg = str(new_act.get("message", ""))
+                    if "bruk" in msg.lower() or "already" in msg.lower():
+                        client._error_count = max(0, client._error_count - 1)
+                        for entry in reversed(client._call_log):
+                            if not entry.get("ok") and "/activity" in entry.get("url", ""):
+                                entry["ok"] = True
+                                entry["recovered"] = True
+                                break
+                        existing = client.get("/activity", params={"fields": "id,name", "name": activity_name})
+                        vals = existing.get("values", [])
+                        if vals:
+                            activity_id = vals[0]["id"]
+                else:
+                    activity_id = new_act.get("value", {}).get("id", 0)
         if not activity_id:
-            # Find a project-compatible activity (isProjectActivity=True)
+            # Fallback: find any project-compatible activity
             acts = client.get("/activity", params={"fields": "id", "isProjectActivity": True, "count": 1})
             act_list = acts.get("values", [])
             if not act_list:

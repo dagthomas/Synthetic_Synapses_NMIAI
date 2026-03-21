@@ -69,15 +69,20 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
             payables_id = payables_accts[0]["id"]
             client.set_cached("acct_2400", payables_id)
 
-        # Map VAT percentage to vatType ID
-        # 1 = Fradrag inngaaende avgift, hoey sats (25%)
-        # 11 = Fradrag inngaaende avgift, middels sats (15%)
-        # 13 = Fradrag inngaaende avgift, lav sats (12%)
-        # 0 = No VAT
-        vat_type_map = {25: 1, 15: 11, 12: 13, 0: 0}
-        vat_type_id = vat_type_map.get(vatPercentage)
-        if vat_type_id is None:
-            return {"error": True, "message": f"Unsupported VAT rate {vatPercentage}%. Use 25, 15, 12, or 0."}
+        # Resolve input VAT types by standard number (from prewarm cache or live lookup)
+        input_vat_map = client.get_cached("input_vat_type_map") or {}
+        if not input_vat_map and vatPercentage > 0:
+            _IN = {1: 25, 11: 15, 13: 12}
+            r = client.get("/ledger/vatType", params={"fields": "id,number"})
+            for vt in (r.get("values") or []):
+                n, vid = vt.get("number"), vt.get("id")
+                if n is not None and vid is not None and int(n) in _IN:
+                    input_vat_map[_IN[int(n)]] = vid
+            if input_vat_map:
+                client.set_cached("input_vat_type_map", input_vat_map)
+        vat_type_id = input_vat_map.get(vatPercentage, 0) if vatPercentage > 0 else 0
+        if vatPercentage > 0 and vat_type_id == 0:
+            return {"error": True, "message": f"No valid input VAT type for {vatPercentage}%. Available: {list(input_vat_map.keys())}"}
 
         amt = round(amountIncludingVat, 2)
 

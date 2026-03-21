@@ -4,8 +4,6 @@ from tripletex_client import TripletexClient
 def build_product_tools(client: TripletexClient) -> dict:
     """Build product-related tools."""
 
-    # Hardcoded fallback for output VAT (utgående MVA) type IDs
-    _OUTPUT_VAT_FALLBACK = {25: 3, 15: 31, 12: 33, 0: 6}
     _DYNAMIC_VAT_MAP = {}
     _VAT_MAP_INITIALIZED = False
 
@@ -21,45 +19,19 @@ def build_product_tools(client: TripletexClient) -> dict:
             _VAT_MAP_INITIALIZED = True
             return
 
-        # 2. Fetch from correct endpoint: /ledger/vatType (not /vatType)
-        #    Must filter for OUTPUT VAT types — input types have same percentages but different IDs
-        result = client.get("/ledger/vatType", params={"fields": "id,number,name,percentage"})
-        # Temporary storage for all VAT types found
-        all_vat_types_by_percentage = {}
-
-        if result and result.get("values"):
-            for vat_type in result["values"]:
-                percentage = vat_type.get("percentage")
-                vat_id = vat_type.get("id")
-                name = (vat_type.get("name") or "").lower()
-                if percentage is not None and vat_id is not None:
-                    percentage_int = int(percentage)
-                    if percentage_int not in all_vat_types_by_percentage:
-                        all_vat_types_by_percentage[percentage_int] = []
-                    all_vat_types_by_percentage[percentage_int].append({"id": vat_id, "name": name})
-
-        # Populate _DYNAMIC_VAT_MAP
-        for percentage, vat_types_list in all_vat_types_by_percentage.items():
-            # Prioritize "utgående" types for all percentages
-            found_id = None
-            for vt in vat_types_list:
-                if "utgående" in vt["name"] or "utg." in vt["name"]:
-                    found_id = vt["id"]
-                    break
-            
-            # If no "utgående" type found, take the first one for 25% (standard)
-            # This is a specific heuristic for the common 25% standard rate,
-            # as its name might not always contain "utgående".
-            if found_id is None and percentage == 25 and vat_types_list:
-                found_id = vat_types_list[0]["id"]
-
-            if found_id is not None:
-                _DYNAMIC_VAT_MAP[percentage] = found_id
-
-        # Fallback to hardcoded output VAT IDs for any percentages not dynamically mapped
-        for percentage, vat_id in _OUTPUT_VAT_FALLBACK.items():
-            if percentage not in _DYNAMIC_VAT_MAP:
-                _DYNAMIC_VAT_MAP[percentage] = vat_id
+        # 2. Fetch and match by standard VAT type NUMBER (stable across sandboxes)
+        #    Output: 3→25%, 31→15%, 33→12%, 5/6→0%
+        _OUT = {3: 25, 31: 15, 33: 12}
+        _ZERO = {6, 5}
+        result = client.get("/ledger/vatType", params={"fields": "id,number"})
+        for vt in (result.get("values") or []):
+            n, vid = vt.get("number"), vt.get("id")
+            if n is not None and vid is not None:
+                n = int(n)
+                if n in _OUT:
+                    _DYNAMIC_VAT_MAP[_OUT[n]] = vid
+                elif n in _ZERO:
+                    _DYNAMIC_VAT_MAP.setdefault(0, vid)
 
         _VAT_MAP_INITIALIZED = True
 
@@ -84,6 +56,16 @@ def build_product_tools(client: TripletexClient) -> dict:
         """
         _initialize_vat_map(client) # Ensure VAT map is initialized
 
+        # Search-first: avoid 422 errors when product already exists
+        if productNumber:
+            existing = client.get("/product", params={
+                "number": productNumber,
+                "fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency",
+            })
+            vals = existing.get("values", [])
+            if vals:
+                return {"value": vals[0], "_note": "Product number already existed, returning existing."}
+
         body = {"name": name}
         # Only send ONE price — sending both causes validation errors when they don't match the product's VAT type
         if priceExcludingVatCurrency:
@@ -100,15 +82,15 @@ def build_product_tools(client: TripletexClient) -> dict:
 
         result = client.post("/product", json=body)
 
-        # If product number already exists, fetch and return the existing product
-        if result.get("error") and result.get("status_code") == 422 and productNumber:
+        # If product name already exists (no number given), try to recover
+        if result.get("error") and result.get("status_code") == 422:
             existing = client.get("/product", params={
-                "number": productNumber,
+                "name": name,
                 "fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency",
             })
             vals = existing.get("values", [])
             if vals:
-                return {"value": vals[0], "_note": "Product number already existed, returning existing."}
+                return {"value": vals[0], "_note": "Product already existed, returning existing."}
 
         return result
 

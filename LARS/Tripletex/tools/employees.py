@@ -33,6 +33,16 @@ def build_employee_tools(client: TripletexClient) -> dict:
         Returns:
             The created employee with id and fields, or an error message.
         """
+        # Validate email FIRST — Tripletex rejects empty email with 422
+        if not email or not email.strip():
+            return {"error": True, "message": "email is required for creating an employee. Extract it from the prompt."}
+
+        # Search-first: avoid 422 on duplicate email (saves 1 API call vs POST+recover)
+        existing = client.get("/employee", params={"email": email.strip(), "fields": "id,firstName,lastName,email"})
+        vals = existing.get("values", [])
+        if vals:
+            return {"value": vals[0], "_note": "Employee already existed, returning existing."}
+
         # Tripletex requires a department — resolve it by ID, name, or default
         resolved_department_id = 0
 
@@ -77,7 +87,7 @@ def build_employee_tools(client: TripletexClient) -> dict:
         body = {
             "firstName": firstName,
             "lastName": lastName,
-            "email": email,
+            "email": email.strip(),
             "userType": userType,
         }
         if resolved_department_id: # Use the resolved ID
@@ -90,24 +100,7 @@ def build_employee_tools(client: TripletexClient) -> dict:
             body["nationalIdentityNumber"] = nationalIdentityNumber
         if bankAccountNumber:
             body["bankAccountNumber"] = bankAccountNumber
-        result = client.post("/employee", json=body)
-
-        # Auto-recover: if email already exists, find and return the existing employee
-        if (result.get("error") and result.get("status_code") == 422
-                and "e-postadress" in str(result.get("message", "")).lower()):
-            existing = client.get("/employee", params={"email": email, "fields": "id,firstName,lastName,email"})
-            vals = existing.get("values", [])
-            if vals:
-                # Undo the error count — recovery succeeded, don't penalize scoring
-                client._error_count = max(0, client._error_count - 1)
-                for entry in reversed(client._call_log):
-                    if not entry.get("ok") and "/employee" in entry.get("url", ""):
-                        entry["ok"] = True
-                        entry["recovered"] = True
-                        break
-                return {"value": vals[0], "_note": "Employee already existed, returning existing."}
-
-        return result
+        return client.post("/employee", json=body)
 
     def update_employee(employee_id: int, firstName: str = "", lastName: str = "", email: str = "", phoneNumberMobile: str = "", isInactive: bool = False, version: int = -1) -> dict:
         """Update an existing employee's fields. Set isInactive=True to deactivate.

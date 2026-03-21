@@ -22,7 +22,7 @@ from agent import create_agent
 from config import AGENT_API_KEY, GOOGLE_API_KEY, MAX_AGENT_TURNS, DEFAULT_MODE, GEMINI_MODEL
 from tripletex_client import TripletexClient
 from tools import build_tools_dict
-from tool_router import classify_task, classify_tasks, select_tools, extract_currency_info
+from tool_router import classify_task, classify_tasks, select_tools, extract_currency_info, llm_classify_task
 from static_runner import run_static, has_pipeline
 
 # Concurrency limiter — prevent Gemini API rate-limiting when competition
@@ -37,19 +37,32 @@ _AGENT_TIMEOUT = 270
 _has_dashboard = False
 _dashboard_inited = False
 create_solve_log = None
+_update_llm_task_type = None
 
 def _ensure_dashboard():
-    global _has_dashboard, _dashboard_inited, create_solve_log
+    global _has_dashboard, _dashboard_inited, create_solve_log, _update_llm_task_type
     if _dashboard_inited:
         return
     _dashboard_inited = True
     try:
-        from dashboard.db import init_db, create_solve_log as _csl
+        from dashboard.db import init_db, create_solve_log as _csl, update_solve_log_llm_task_type as _ult
         init_db()
         create_solve_log = _csl
+        _update_llm_task_type = _ult
         _has_dashboard = True
     except Exception:
         _has_dashboard = False
+
+
+def _run_llm_classify_bg(request_id: str, prompt: str):
+    """Run LLM classification in background thread and save to DB."""
+    try:
+        llm_type = llm_classify_task(prompt)
+        if llm_type and _update_llm_task_type:
+            _update_llm_task_type(request_id, llm_type)
+            log.debug(f"[{request_id[:8]}] LLM classify: {llm_type}")
+    except Exception as e:
+        log.debug(f"[{request_id[:8]}] LLM classify bg error: {e}")
 
 # ── Live Event Broadcasting ────────────────────────────────────────
 # Thread-safe pub/sub for SSE live activity streaming.
@@ -279,6 +292,8 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                         task_type=task_type, tool_count=len(tools),
                         source=source, classification_level=classification_level,
                     )
+                    # Fire-and-forget LLM classification in background
+                    threading.Thread(target=_run_llm_classify_bg, args=(request_id, prompt), daemon=True).start()
                 except Exception as e:
                     log.warning(f"Failed to save solve_log (static): {e}")
             return static_result
@@ -433,6 +448,8 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
                 source=source,
                 classification_level=classification_level,
             )
+            # Fire-and-forget LLM classification in background
+            threading.Thread(target=_run_llm_classify_bg, args=(request_id, prompt), daemon=True).start()
         except Exception as e:
             log.warning(f"Failed to save solve_log: {e}")
 
