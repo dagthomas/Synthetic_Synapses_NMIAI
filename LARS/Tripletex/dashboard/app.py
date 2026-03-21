@@ -372,7 +372,7 @@ async def auto_fix_run(req: AutoFixRequest):
         yield f"data: {json.dumps({'type': 'phase', 'phase': 'generating', 'message': 'Generating task prompt...'})}\n\n"
 
         try:
-            result = run_eval_with_logs(req.task_name, req.language, agent_url)
+            result = run_eval_with_logs(req.task_name, agent_url)
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
             yield "data: [DONE]\n\n"
@@ -432,6 +432,138 @@ async def auto_fix_apply(fixes: list[dict]):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     results = await asyncio.to_thread(apply_fixes, fixes, base_dir)
     return {"ok": True, "results": results}
+
+
+@app.get("/api/auto-fix/last-results")
+async def auto_fix_last_results():
+    """Return last eval_results.json data for task status display."""
+    results_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "eval_results.json")
+    if not os.path.exists(results_path):
+        return []
+    try:
+        with open(results_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+class BatchTaskFixRequest(BaseModel):
+    task_names: list[str]
+    language: str = ""
+    max_retries: int = Field(1, ge=1, le=5)
+    auto_apply: bool = True
+
+
+@app.post("/api/auto-fix/batch-tasks")
+async def auto_fix_batch_tasks(req: BatchTaskFixRequest):
+    """SSE stream: run selected tasks through eval + auto-fix pipeline."""
+    base_url, token, agent_url = _get_credentials()
+    if not base_url or not token:
+        return JSONResponse(
+            {"error": "Set TRIPLETEX_BASE_URL and TRIPLETEX_SESSION_TOKEN env vars"},
+            status_code=400,
+        )
+    unknown = [t for t in req.task_names if t not in ALL_TASKS]
+    if unknown:
+        return JSONResponse({"error": f"Unknown tasks: {', '.join(unknown)}"}, 400)
+    if not req.task_names:
+        return JSONResponse({"error": "No tasks selected"}, 400)
+
+    def _generate():
+        from auto_fixer import (
+            run_eval_with_logs, build_error_report,
+            get_fix_suggestions, parse_fixes, apply_fixes,
+            _find_relevant_sources,
+        )
+
+        task_names = req.task_names
+        total = len(task_names)
+        yield f"data: {json.dumps({'type': 'batch_start', 'total': total, 'task_names': task_names})}\n\n"
+
+        batch_results = []
+
+        for idx, task_name in enumerate(task_names):
+            td = ALL_TASKS[task_name]
+            yield f"data: {json.dumps({'type': 'task_start', 'index': idx, 'total': total, 'task_name': task_name, 'tier': td.tier})}\n\n"
+
+            best_result = None
+            passed = False
+
+            for attempt in range(1, req.max_retries + 1):
+                yield f"data: {json.dumps({'type': 'attempt_start', 'task_name': task_name, 'attempt': attempt, 'max_attempts': req.max_retries})}\n\n"
+
+                try:
+                    result = run_eval_with_logs(task_name, agent_url)
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'eval_error', 'task_name': task_name, 'attempt': attempt, 'error': str(e)})}\n\n"
+                    break
+
+                score = result["score"]
+                checks = result["verification"].get("checks", [])
+                failed_checks = [c for c in checks if not c["passed"]]
+                best_result = result
+
+                yield f"data: {json.dumps({'type': 'eval_result', 'task_name': task_name, 'attempt': attempt, 'correctness': score['correctness'], 'score': score['final_score'], 'max_possible': score['max_possible'], 'api_calls': result['api_calls'], 'api_errors': result['api_errors'], 'elapsed': round(result['elapsed'], 1), 'checks': checks, 'passed': score['correctness'] == 1.0, 'failed_count': len(failed_checks)}, default=str)}\n\n"
+
+                if score["correctness"] == 1.0:
+                    passed = True
+                    break
+
+                # Last attempt — no fix needed
+                if attempt == req.max_retries:
+                    break
+
+                # Analyze and fix
+                if req.auto_apply:
+                    yield f"data: {json.dumps({'type': 'analyzing', 'task_name': task_name, 'attempt': attempt, 'message': f'Analyzing {len(failed_checks)} failed checks...'})}\n\n"
+
+                    try:
+                        report = build_error_report(result)
+                        sources = _find_relevant_sources(result.get("tool_calls", []), task_name)
+                        fix_text = get_fix_suggestions(report, sources)
+                        fixes = parse_fixes(fix_text)
+                    except Exception as e:
+                        yield f"data: {json.dumps({'type': 'analyze_error', 'task_name': task_name, 'attempt': attempt, 'error': str(e)})}\n\n"
+                        break
+
+                    if not fixes:
+                        yield f"data: {json.dumps({'type': 'no_fixes', 'task_name': task_name, 'attempt': attempt})}\n\n"
+                        break
+
+                    yield f"data: {json.dumps({'type': 'applying_fixes', 'task_name': task_name, 'attempt': attempt, 'fix_count': len(fixes), 'fixes': fixes})}\n\n"
+
+                    try:
+                        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                        apply_results = apply_fixes(fixes, base_dir)
+                        applied_count = sum(1 for r in apply_results if r.get("applied"))
+                        yield f"data: {json.dumps({'type': 'fixes_applied', 'task_name': task_name, 'attempt': attempt, 'results': apply_results, 'applied': applied_count, 'total': len(fixes)})}\n\n"
+                    except Exception as e:
+                        yield f"data: {json.dumps({'type': 'apply_error', 'task_name': task_name, 'attempt': attempt, 'error': str(e)})}\n\n"
+                        break
+
+                    import time as _time
+                    _time.sleep(1)
+
+            # Task complete
+            task_result = {
+                "task_name": task_name,
+                "passed": passed,
+                "correctness": best_result["score"]["correctness"] if best_result else 0,
+                "score": best_result["score"]["final_score"] if best_result else 0,
+                "max_possible": best_result["score"]["max_possible"] if best_result else 0,
+                "api_calls": best_result["api_calls"] if best_result else 0,
+                "api_errors": best_result["api_errors"] if best_result else 0,
+            }
+            batch_results.append(task_result)
+            yield f"data: {json.dumps({'type': 'task_done', **task_result, 'index': idx, 'total': total})}\n\n"
+
+        # Batch complete
+        n_pass = sum(1 for r in batch_results if r["passed"])
+        n_fail = total - n_pass
+        yield f"data: {json.dumps({'type': 'batch_done', 'total': total, 'passed': n_pass, 'failed': n_fail, 'results': batch_results})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
 
 
 class BatchAutoFixRequest(BaseModel):
@@ -1433,6 +1565,241 @@ def _match_any(ref_cat: str, seen: set) -> bool:
         mapped = _match_ref_category(s, {ref_cat: []})
         if mapped == ref_cat:
             return True
+    return False
+
+
+# ── API: Auto Test ─────────────────────────────────────────────────
+
+@app.get("/api/auto-test/results")
+def auto_test_results(limit: int = Query(200, le=500)):
+    """Return scored auto-test results from DB."""
+    return db.get_auto_test_results(limit=limit)
+
+
+@app.get("/api/auto-test/logs")
+def auto_test_logs(limit: int = Query(200, le=500)):
+    """Return solve logs suitable for auto-testing (competition source with prompts)."""
+    logs = db.get_solve_logs(limit=limit, source="competition")
+    # Only include logs that have a prompt
+    return [l for l in logs if l.get("prompt")]
+
+
+class ScoreLogRequest(BaseModel):
+    solve_log_id: int
+
+
+@app.post("/api/auto-test/score-log")
+async def auto_test_score_log(req: ScoreLogRequest):
+    """Score a single solve_log: classify, extract expected fields, check tool calls, LLM verdict."""
+    solve_log = db.get_solve_log_by_id(req.solve_log_id)
+    if not solve_log:
+        return JSONResponse({"error": f"Solve log {req.solve_log_id} not found"}, 404)
+
+    result = await asyncio.to_thread(_score_single_log, solve_log)
+    return result
+
+
+class BatchScoreRequest(BaseModel):
+    log_ids: list[int] = []  # empty = all competition logs
+    limit: int = Field(100, ge=1, le=500)
+
+
+@app.post("/api/auto-test/batch")
+async def auto_test_batch(req: BatchScoreRequest):
+    """SSE stream: batch score competition logs."""
+    if req.log_ids:
+        logs = [db.get_solve_log_by_id(lid) for lid in req.log_ids]
+        logs = [l for l in logs if l is not None and l.get("prompt")]
+    else:
+        logs = db.get_solve_logs(limit=req.limit, source="competition")
+        logs = [l for l in logs if l.get("prompt")]
+
+    if not logs:
+        return JSONResponse({"error": "No competition logs with prompts found"}, 400)
+
+    def _generate():
+        total = len(logs)
+        yield f"data: {json.dumps({'type': 'batch_start', 'total': total})}\n\n"
+
+        passed_count = 0
+        failed_count = 0
+        scores = []
+
+        for idx, log_entry in enumerate(logs):
+            log_id = log_entry.get("id", 0)
+            task_type = log_entry.get("task_type", "unknown")
+            yield f"data: {json.dumps({'type': 'scoring', 'index': idx, 'total': total, 'log_id': log_id, 'task_type': task_type})}\n\n"
+
+            try:
+                result = _score_single_log(log_entry)
+                intent_passed = result.get("intent_passed", False)
+                correctness = result.get("correctness", 0)
+
+                if intent_passed:
+                    passed_count += 1
+                else:
+                    failed_count += 1
+                scores.append(correctness)
+
+                yield f"data: {json.dumps({'type': 'scored', 'log_id': log_id, 'task_type': task_type, 'correctness': correctness, 'intent_passed': intent_passed, 'total_points': result.get('total_points', 0), 'max_points': result.get('max_points', 0), 'checks': result.get('checks', []), 'intent_reasoning': result.get('intent_reasoning', '')}, default=str)}\n\n"
+            except Exception as e:
+                failed_count += 1
+                yield f"data: {json.dumps({'type': 'error', 'log_id': log_id, 'error': str(e)})}\n\n"
+
+        avg_score = sum(scores) / len(scores) if scores else 0
+        yield f"data: {json.dumps({'type': 'batch_done', 'total': total, 'passed': passed_count, 'failed': failed_count, 'avg_score': round(avg_score, 3)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
+@app.delete("/api/auto-test/results")
+def delete_auto_test_results():
+    """Delete all auto-test results."""
+    count = db.delete_all_auto_test_results()
+    return {"ok": True, "deleted": count}
+
+
+def _score_single_log(solve_log: dict) -> dict:
+    """Score a single solve_log entry. Returns result dict and saves to DB."""
+    from tool_router import classify_task
+
+    prompt = solve_log.get("prompt", "")
+    log_id = solve_log.get("id", 0)
+    tool_calls = json.loads(solve_log.get("tool_calls_json") or "[]")
+    api_log = json.loads(solve_log.get("api_log_json") or "[]")
+    agent_response = solve_log.get("agent_response", "")
+    api_calls = solve_log.get("api_calls", 0)
+    api_errors = solve_log.get("api_errors", 0)
+
+    # 1. Classify task type
+    task_type = solve_log.get("task_type") or classify_task(prompt) or "unknown"
+
+    # 2. Get task definition if available
+    td = ALL_TASKS.get(task_type)
+    field_checks = td.field_checks if td else []
+
+    # 3. Check tool calls against expected patterns
+    checks = []
+    total_points = 0
+    max_points = 0
+
+    if field_checks:
+        # Check each expected field against tool call args and API log
+        for fc in field_checks:
+            max_points += fc.points
+            field_found = _check_field_in_calls(fc.field, tool_calls, api_log, prompt)
+            if field_found:
+                total_points += fc.points
+            checks.append({
+                "field": fc.field,
+                "points": fc.points,
+                "max": fc.points,
+                "passed": field_found,
+                "detail": "Found in tool calls" if field_found else "Not found or mismatched",
+            })
+
+    # Also check for basic success signals
+    has_post = any(
+        e.get("method") == "POST" and e.get("ok")
+        for e in api_log
+    )
+    has_errors = any(
+        not e.get("ok")
+        for e in api_log
+    )
+
+    if not checks:
+        # No task definition — use generic scoring
+        max_points = 10
+        if has_post and not has_errors:
+            total_points = 10
+            checks.append({"field": "_api_success", "points": 10, "max": 10, "passed": True, "detail": "API calls succeeded"})
+        elif has_post:
+            total_points = 5
+            checks.append({"field": "_api_success", "points": 5, "max": 10, "passed": True, "detail": "POST succeeded but some errors"})
+        else:
+            checks.append({"field": "_api_success", "points": 0, "max": 10, "passed": False, "detail": "No successful POST found"})
+
+    correctness = total_points / max_points if max_points > 0 else 0
+
+    # 4. LLM intent verification
+    intent_passed = False
+    intent_reasoning = ""
+    issues = []
+    try:
+        from auto_fixer import llm_evaluate_logs
+        verdict = llm_evaluate_logs(prompt, tool_calls, api_log, agent_response)
+        intent_passed = verdict.get("passed", False)
+        intent_reasoning = verdict.get("reasoning", "")
+        issues = verdict.get("issues", [])
+    except Exception as e:
+        intent_reasoning = f"LLM evaluation failed: {e}"
+        issues = ["llm_eval_error"]
+
+    # 5. Save to DB
+    db.create_auto_test_result(
+        solve_log_id=log_id,
+        task_type=task_type,
+        prompt=prompt[:2000],
+        expected_fields=json.dumps([{"field": fc.field, "points": fc.points} for fc in field_checks]),
+        checks_json=json.dumps(checks),
+        total_points=total_points,
+        max_points=max_points,
+        correctness=round(correctness, 4),
+        intent_passed=intent_passed,
+        intent_reasoning=intent_reasoning,
+        issues=json.dumps(issues),
+        api_calls=api_calls,
+        api_errors=api_errors,
+    )
+
+    return {
+        "solve_log_id": log_id,
+        "task_type": task_type,
+        "prompt": prompt[:500],
+        "checks": checks,
+        "total_points": total_points,
+        "max_points": max_points,
+        "correctness": round(correctness, 4),
+        "intent_passed": intent_passed,
+        "intent_reasoning": intent_reasoning,
+        "issues": issues,
+        "api_calls": api_calls,
+        "api_errors": api_errors,
+    }
+
+
+def _check_field_in_calls(field_name: str, tool_calls: list, api_log: list, prompt: str) -> bool:
+    """Check if a field was set in tool calls or API log requests."""
+    # Check tool call args
+    for tc in tool_calls:
+        args = tc.get("args", {})
+        if field_name in args and args[field_name] is not None:
+            return True
+        # Check nested JSON args (some tools take json_data)
+        for v in args.values():
+            if isinstance(v, dict) and field_name in v:
+                return True
+            if isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, dict) and field_name in parsed:
+                        return True
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+    # Check API request bodies
+    for entry in api_log:
+        body = entry.get("request_body", {})
+        if isinstance(body, dict):
+            if field_name in body and body[field_name] is not None:
+                return True
+            # Check nested objects
+            for v in body.values():
+                if isinstance(v, dict) and field_name in v:
+                    return True
+
     return False
 
 

@@ -1,13 +1,18 @@
-"""Auto-fixer: run eval tasks, analyze failures, suggest and apply code fixes.
+"""Auto-fixer: replay real competition prompts, analyze failures, suggest and apply code fixes.
 
-Runs a tool/task through the eval pipeline, captures logs and errors,
-then uses Gemini to analyze failures and generate code fixes.
+Picks a random real prompt from solve_logs (competition source) for the given
+task type, runs it through the agent, evaluates with LLM, then uses Gemini
+to analyze failures and generate code fixes.
 
 Usage:
     python auto_fixer.py --task create_employee          # run + fix one task
     python auto_fixer.py --task create_invoice --apply    # auto-apply fixes
     python auto_fixer.py --task create_employee --retries 3  # retry after fixing
     python auto_fixer.py --list                           # list available tasks
+    python auto_fixer.py --pick                           # interactive task picker
+    python auto_fixer.py --pick --apply --retries 2       # pick + auto-fix batch
+    python auto_fixer.py --tasks create_employee create_invoice  # batch specific tasks
+    python auto_fixer.py --failed --apply                 # re-run all previously failed
 """
 
 import argparse
@@ -27,11 +32,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 load_dotenv()
 
 from tripletex_client import TripletexClient
-from sim.task_definitions import ALL_TASKS, LANGUAGES
-from sim.generator import generate_task
-from sim.verifier import verify_task
-from sim.scorer import calculate_score
+from sim.task_definitions import ALL_TASKS
 from dashboard.sandbox import ensure_sandbox_ready
+from dashboard.db import get_conn
 from tool_router import TASK_TOOL_MAP
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -73,6 +76,34 @@ _TOOL_FILE_MAP: dict[str, str] = {
     "search_year_ends": "year_end.py", "search_year_end_annexes": "year_end.py",
     "create_year_end_note": "year_end.py",
 }
+
+
+def _get_real_prompts(task_name: str, limit: int = 50) -> list[str]:
+    """Get real competition prompts for a task type from solve_logs."""
+    from contextlib import closing
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """SELECT prompt FROM solve_logs
+               WHERE task_type = ? AND source = 'competition'
+                 AND prompt IS NOT NULL AND prompt != ''
+               ORDER BY id DESC LIMIT ?""",
+            (task_name, limit),
+        ).fetchall()
+    return [r["prompt"] for r in rows]
+
+
+def _get_all_real_task_types() -> list[str]:
+    """Get all task types that have real competition logs."""
+    from contextlib import closing
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT task_type FROM solve_logs
+               WHERE source = 'competition'
+                 AND task_type IS NOT NULL AND task_type != ''
+                 AND prompt IS NOT NULL AND prompt != ''
+               ORDER BY task_type""",
+        ).fetchall()
+    return [r["task_type"] for r in rows]
 
 
 def _get_sandbox_client() -> TripletexClient:
@@ -130,9 +161,12 @@ def _find_relevant_sources(tool_calls: list, task_name: str) -> dict[str, str]:
     return sources
 
 
-def run_eval_with_logs(task_name: str, language: str = "",
+def run_eval_with_logs(task_name: str,
                        agent_url: str = "http://localhost:8000") -> dict:
-    """Run a single eval and capture detailed logs.
+    """Run a single eval using a real competition prompt and LLM-based evaluation.
+
+    Pulls a random real prompt from solve_logs for the given task type,
+    runs it through the agent, then uses LLM to evaluate success.
 
     Returns a dict with all diagnostic info:
         task_name, prompt, expected, agent_result, tool_calls, api_log,
@@ -141,24 +175,19 @@ def run_eval_with_logs(task_name: str, language: str = "",
     client = _get_sandbox_client()
     ensure_sandbox_ready(client)
 
-    task_def = ALL_TASKS[task_name]
+    task_def = ALL_TASKS.get(task_name)
 
-    # Generate task
-    generated = generate_task(task_def, language=language)
-    prompt = generated["prompt"]
-    expected = generated["expected"]
-    lang = generated["language"]
+    # Get real prompt from competition logs
+    real_prompts = _get_real_prompts(task_name)
+    if not real_prompts:
+        raise ValueError(f"No real competition prompts found for task '{task_name}'. "
+                         f"Available: {', '.join(_get_all_real_task_types())}")
 
-    log.info(f"[AUTO-FIX] Task: {task_name} ({lang})")
+    import random as _rnd
+    prompt = _rnd.choice(real_prompts)
+
+    log.info(f"[AUTO-FIX] Task: {task_name} (real prompt)")
     log.info(f"[AUTO-FIX] Prompt: {prompt[:120]}...")
-    log.info(f"[AUTO-FIX] Expected: {json.dumps(expected, ensure_ascii=False)}")
-
-    # Pre-create for deletion tasks
-    pre_created_id = 0
-    if task_def.pre_create:
-        from simulator import pre_create_for_deletion
-        pre_created_id = pre_create_for_deletion(client, task_def, expected)
-        log.info(f"[AUTO-FIX] Pre-created entity ID: {pre_created_id}")
 
     # Call agent via /solve-debug
     payload = {
@@ -190,23 +219,41 @@ def run_eval_with_logs(task_name: str, language: str = "",
     api_log = agent_result.get("api_log", [])
     api_calls = agent_result.get("api_calls", 0)
     api_errors = agent_result.get("api_errors", 0)
+    agent_response = agent_result.get("agent_response", "")
 
-    # Wait for propagation, then verify
-    time.sleep(1)
-    verify_client = TripletexClient(client.base_url, client.auth[1])
-    verification = verify_task(verify_client, task_def, expected, pre_created_id)
+    # LLM-based evaluation (no expected values needed)
+    llm_eval = llm_evaluate_logs(prompt, tool_calls, api_log, agent_response)
 
-    score = calculate_score(
-        verification["total_points"], verification["max_points"],
-        task_def.tier, api_calls, api_errors, task_def.baseline_calls,
-    )
+    # Build verification-compatible dict from LLM evaluation
+    passed = llm_eval["passed"]
+    checks = [
+        {"field": "_llm_eval", "passed": passed, "points": 10 if passed else 0,
+         "max": 10, "detail": llm_eval["reasoning"]},
+    ]
+    for issue in llm_eval.get("issues", []):
+        checks.append({"field": "_issue", "passed": False, "points": 0, "max": 0, "detail": issue})
+
+    verification = {
+        "total_points": 10 if passed else 0,
+        "max_points": 10,
+        "checks": checks,
+    }
+
+    tier = task_def.tier if task_def else 2
+    score = {
+        "correctness": 1.0 if passed else 0.0,
+        "base_score": tier if passed else 0,
+        "efficiency_bonus": 0,
+        "final_score": tier if passed else 0,
+        "max_possible": tier * 2,
+    }
 
     return {
         "task_name": task_name,
         "task_def": task_def,
-        "language": lang,
+        "language": "-",
         "prompt": prompt,
-        "expected": expected,
+        "expected": {},
         "agent_result": agent_result,
         "tool_calls": tool_calls,
         "api_log": api_log,
@@ -496,14 +543,13 @@ If passed, issues should be an empty list.
     }
 
 
-def run_and_fix(task_name: str, language: str = "",
+def run_and_fix(task_name: str,
                 agent_url: str = "http://localhost:8000",
                 max_attempts: int = 1, auto_apply: bool = False) -> dict:
     """Run eval, analyze failures, optionally fix and retry.
 
     Args:
         task_name: Task to evaluate (e.g. "create_employee").
-        language: Language code or "" for random.
         agent_url: Agent /solve-debug endpoint base URL.
         max_attempts: Max fix→retry cycles.
         auto_apply: If True, apply fixes without confirmation.
@@ -517,7 +563,7 @@ def run_and_fix(task_name: str, language: str = "",
         print(f"{'='*60}\n")
 
         # 1. Run eval
-        result = run_eval_with_logs(task_name, language, agent_url)
+        result = run_eval_with_logs(task_name, agent_url)
         score = result["score"]
 
         # 2. Print summary
@@ -574,10 +620,294 @@ def run_and_fix(task_name: str, language: str = "",
     return result
 
 
+def _load_last_results() -> dict[str, dict]:
+    """Load last eval results from eval_results.json.
+
+    Returns {task_name: {status, classifier_correct, lang, prompt_snippet}}.
+    """
+    results_path = os.path.join(os.path.dirname(__file__), "eval_results.json")
+    if not os.path.exists(results_path):
+        return {}
+    try:
+        with open(results_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    out = {}
+    for r in data:
+        name = r.get("task", "")
+        out[name] = {
+            "status": r.get("status", "?"),
+            "classifier_ok": r.get("classifier", {}).get("correct", None),
+            "lang": r.get("lang", "?"),
+        }
+    return out
+
+
+def _print_task_table(last_results: dict[str, dict]) -> list[str]:
+    """Print a numbered task table with status indicators. Returns ordered task names.
+
+    Only shows tasks that have real competition prompts in solve_logs.
+    """
+    real_types = set(_get_all_real_task_types())
+    task_names = [name for name in ALL_TASKS if name in real_types]
+    if not task_names:
+        print("\n  No tasks with real competition prompts found in solve_logs.")
+        return []
+
+    # Get prompt counts per task
+    from contextlib import closing
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """SELECT task_type, COUNT(*) as cnt FROM solve_logs
+               WHERE source = 'competition' AND task_type IS NOT NULL AND task_type != ''
+                 AND prompt IS NOT NULL AND prompt != ''
+               GROUP BY task_type""",
+        ).fetchall()
+    prompt_counts = {r["task_type"]: r["cnt"] for r in rows}
+
+    # Column widths
+    print(f"\n  Tasks with real competition prompts ({len(task_names)}/{len(ALL_TASKS)}):")
+    hdr = f"  {'#':>3}  {'Status':<6} {'Cls':<4} {'Tier':<5} {'Task':<35} {'Logs':>4}  {'Description'}"
+    print(f"\n{hdr}")
+    print(f"  {'-'*3}  {'-'*6} {'-'*4} {'-'*5} {'-'*35} {'-'*4}  {'-'*30}")
+
+    for i, name in enumerate(task_names, 1):
+        td = ALL_TASKS[name]
+        lr = last_results.get(name, {})
+
+        # Status indicator
+        st = lr.get("status", "-")
+        if st == "PASS":
+            status_str = " PASS"
+        elif st == "FAIL":
+            status_str = " FAIL"
+        elif st == "SKIP":
+            status_str = " SKIP"
+        else:
+            status_str = "  -  "
+
+        # Classifier correctness
+        cls_ok = lr.get("classifier_ok")
+        if cls_ok is True:
+            cls_str = " ok"
+        elif cls_ok is False:
+            cls_str = " X "
+        else:
+            cls_str = " - "
+
+        tier_str = f"T{td.tier}"
+        n_logs = prompt_counts.get(name, 0)
+        print(f"  {i:>3}  {status_str:<6} {cls_str:<4} {tier_str:<5} {name:<35} {n_logs:>4}  {td.description}")
+
+    return task_names
+
+
+def _parse_selection(selection_str: str, max_idx: int) -> list[int]:
+    """Parse user selection like '1,3,5-8,12' into a list of 0-based indices."""
+    indices = []
+    parts = selection_str.replace(" ", "").split(",")
+    for part in parts:
+        if not part:
+            continue
+        if "-" in part:
+            try:
+                start, end = part.split("-", 1)
+                start, end = int(start), int(end)
+                for i in range(start, end + 1):
+                    if 1 <= i <= max_idx:
+                        indices.append(i - 1)
+            except ValueError:
+                pass
+        else:
+            try:
+                i = int(part)
+                if 1 <= i <= max_idx:
+                    indices.append(i - 1)
+            except ValueError:
+                pass
+    # Deduplicate preserving order
+    seen = set()
+    result = []
+    for i in indices:
+        if i not in seen:
+            seen.add(i)
+            result.append(i)
+    return result
+
+
+def interactive_pick(last_results: dict[str, dict]) -> list[str]:
+    """Show task table and let user pick tasks interactively."""
+    task_names = _print_task_table(last_results)
+
+    task_set = set(task_names)
+    n_pass = sum(1 for n, r in last_results.items() if n in task_set and r.get("status") == "PASS")
+    n_fail = sum(1 for n, r in last_results.items() if n in task_set and r.get("status") == "FAIL")
+    n_skip = sum(1 for n, r in last_results.items() if n in task_set and r.get("status") == "SKIP")
+    n_none = len(task_set) - sum(1 for n in task_set if n in last_results)
+
+    print(f"\n  Summary: {n_pass} PASS, {n_fail} FAIL, {n_skip} SKIP, {n_none} untested")
+    print(f"\n  Select tasks to run:")
+    print(f"    Numbers:  1,3,5-8     (specific tasks)")
+    print(f"    Shortcuts: all | failed | skip | untested | pass")
+    print(f"    Tiers:     t1 | t2 | t3")
+    print(f"    Combine:   failed,t3  (all failed + all tier 3)")
+    print(f"    Enter 'q' to quit\n")
+
+    selection = input("  > ").strip().lower()
+    if selection in ("q", "quit", "exit"):
+        return []
+
+    selected_indices = set()
+
+    for token in selection.split(","):
+        token = token.strip()
+        if token == "all":
+            selected_indices.update(range(len(task_names)))
+        elif token == "failed":
+            for i, name in enumerate(task_names):
+                if last_results.get(name, {}).get("status") == "FAIL":
+                    selected_indices.add(i)
+        elif token == "pass":
+            for i, name in enumerate(task_names):
+                if last_results.get(name, {}).get("status") == "PASS":
+                    selected_indices.add(i)
+        elif token in ("skip", "skipped"):
+            for i, name in enumerate(task_names):
+                if last_results.get(name, {}).get("status") == "SKIP":
+                    selected_indices.add(i)
+        elif token == "untested":
+            for i, name in enumerate(task_names):
+                if name not in last_results:
+                    selected_indices.add(i)
+        elif token in ("t1", "tier1"):
+            for i, name in enumerate(task_names):
+                if ALL_TASKS[name].tier == 1:
+                    selected_indices.add(i)
+        elif token in ("t2", "tier2"):
+            for i, name in enumerate(task_names):
+                if ALL_TASKS[name].tier == 2:
+                    selected_indices.add(i)
+        elif token in ("t3", "tier3"):
+            for i, name in enumerate(task_names):
+                if ALL_TASKS[name].tier == 3:
+                    selected_indices.add(i)
+        else:
+            # Try as number/range
+            parsed = _parse_selection(token, len(task_names))
+            selected_indices.update(parsed)
+
+    selected = [task_names[i] for i in sorted(selected_indices)]
+
+    if selected:
+        print(f"\n  Selected {len(selected)} task(s):")
+        for name in selected:
+            td = ALL_TASKS[name]
+            st = last_results.get(name, {}).get("status", "-")
+            print(f"    {st:<6} T{td.tier}  {name}")
+        print()
+        confirm = input("  Proceed? [Y/n] ").strip().lower()
+        if confirm and confirm not in ("y", "yes", "ja"):
+            return []
+
+    return selected
+
+
+def run_batch_fix(task_names: list[str],
+                  agent_url: str = "http://localhost:8000",
+                  max_attempts: int = 1, auto_apply: bool = False,
+                  report_only: bool = False) -> list[dict]:
+    """Run eval+fix for multiple tasks, print summary at end."""
+    results = []
+    total = len(task_names)
+
+    for idx, task_name in enumerate(task_names, 1):
+        print(f"\n{'#'*60}")
+        print(f"  [{idx}/{total}] {task_name}")
+        print(f"{'#'*60}")
+
+        try:
+            if report_only:
+                result = run_eval_with_logs(task_name, agent_url)
+                report = build_error_report(result)
+                print(report)
+            else:
+                result = run_and_fix(
+                    task_name=task_name,
+                    agent_url=agent_url,
+                    max_attempts=max_attempts,
+                    auto_apply=auto_apply,
+                )
+            results.append({
+                "task": task_name,
+                "correctness": result["score"]["correctness"],
+                "score": result["score"]["final_score"],
+                "max": result["score"]["max_possible"],
+                "calls": result["api_calls"],
+                "errors": result["api_errors"],
+                "elapsed": result["elapsed"],
+            })
+        except Exception as e:
+            log.error(f"Error running {task_name}: {e}")
+            traceback.print_exc()
+            results.append({
+                "task": task_name,
+                "correctness": 0,
+                "score": 0,
+                "max": 0,
+                "calls": 0,
+                "errors": 0,
+                "elapsed": 0,
+                "error": str(e),
+            })
+
+    # Print summary
+    print(f"\n{'='*70}")
+    print(f"  BATCH SUMMARY ({len(results)} tasks)")
+    print(f"{'='*70}")
+    print(f"  {'Task':<35} {'Correct':>8} {'Score':>10} {'Calls':>6} {'Err':>4} {'Time':>6}")
+    print(f"  {'-'*35} {'-'*8} {'-'*10} {'-'*6} {'-'*4} {'-'*6}")
+
+    n_pass = 0
+    n_fail = 0
+    total_score = 0
+    total_max = 0
+
+    for r in results:
+        if r.get("error"):
+            print(f"  {r['task']:<35} {'ERROR':>8} {'':>10} {'':>6} {'':>4} {'':>6}  {r['error'][:40]}")
+            n_fail += 1
+            continue
+
+        corr_str = f"{r['correctness']:.0%}"
+        score_str = f"{r['score']}/{r['max']}"
+        time_str = f"{r['elapsed']:.0f}s"
+        status = "PASS" if r["correctness"] == 1.0 else "FAIL"
+
+        if status == "PASS":
+            n_pass += 1
+        else:
+            n_fail += 1
+
+        total_score += r["score"]
+        total_max += r["max"]
+
+        print(f"  {r['task']:<35} {corr_str:>8} {score_str:>10} {r['calls']:>6} {r['errors']:>4} {time_str:>6}")
+
+    print(f"  {'-'*35} {'-'*8} {'-'*10} {'-'*6} {'-'*4} {'-'*6}")
+    print(f"  {'TOTAL':<35} {n_pass}/{n_pass+n_fail}{'':>3} {total_score:.1f}/{total_max:.1f}")
+    print()
+
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Auto-fixer: run eval + fix code from logs")
     parser.add_argument("--task", "-t", help="Task type (e.g. create_employee)")
-    parser.add_argument("--lang", "-l", default="", help="Language code")
+    parser.add_argument("--tasks", nargs="+", help="Multiple task types for batch run")
+    parser.add_argument("--pick", "-p", action="store_true", help="Interactive task picker")
+    parser.add_argument("--failed", action="store_true", help="Re-run all previously failed tasks")
     parser.add_argument("--agent-url", "-u", default="http://localhost:8000", help="Agent URL")
     parser.add_argument("--retries", "-r", type=int, default=1, help="Max fix+retry cycles")
     parser.add_argument("--apply", "-a", action="store_true", help="Auto-apply fixes without confirmation")
@@ -586,28 +916,81 @@ def main():
     args = parser.parse_args()
 
     if args.list:
-        print("\nAvailable tasks:")
-        for name, td in ALL_TASKS.items():
-            print(f"  {name:<30} Tier {td.tier}  {td.description}")
+        last_results = _load_last_results()
+        _print_task_table(last_results)
         return
 
+    # Interactive picker mode
+    if args.pick:
+        last_results = _load_last_results()
+        selected = interactive_pick(last_results)
+        if not selected:
+            print("No tasks selected.")
+            return
+        run_batch_fix(
+            selected,
+            agent_url=args.agent_url,
+            max_attempts=args.retries,
+            auto_apply=args.apply,
+            report_only=args.report_only,
+        )
+        return
+
+    # Batch: --failed
+    if args.failed:
+        last_results = _load_last_results()
+        real_types = set(_get_all_real_task_types())
+        selected = [name for name, r in last_results.items()
+                    if r.get("status") == "FAIL" and name in real_types]
+        if not selected:
+            print("No previously failed tasks with real competition prompts found.")
+            return
+        print(f"Re-running {len(selected)} failed task(s): {', '.join(selected)}")
+        run_batch_fix(
+            selected,
+            agent_url=args.agent_url,
+            max_attempts=args.retries,
+            auto_apply=args.apply,
+            report_only=args.report_only,
+        )
+        return
+
+    # Batch: --tasks
+    if args.tasks:
+        real_types = set(_get_all_real_task_types())
+        missing = [t for t in args.tasks if t not in real_types]
+        if missing:
+            print(f"ERROR: No real competition prompts for: {', '.join(missing)}")
+            sys.exit(1)
+        run_batch_fix(
+            args.tasks,
+            agent_url=args.agent_url,
+            max_attempts=args.retries,
+            auto_apply=args.apply,
+            report_only=args.report_only,
+        )
+        return
+
+    # Single task mode
     if not args.task:
-        print("ERROR: --task required (use --list to see available tasks)")
+        print("ERROR: --task, --tasks, --pick, or --failed required (use --list to see tasks)")
         sys.exit(1)
 
-    if args.task not in ALL_TASKS:
-        print(f"ERROR: Unknown task '{args.task}'. Use --list to see available.")
+    real_types = set(_get_all_real_task_types())
+    if args.task not in real_types:
+        print(f"ERROR: No real competition prompts for '{args.task}'.")
+        if real_types:
+            print(f"  Available: {', '.join(sorted(real_types))}")
         sys.exit(1)
 
     if args.report_only:
-        result = run_eval_with_logs(args.task, args.lang, args.agent_url)
+        result = run_eval_with_logs(args.task, args.agent_url)
         report = build_error_report(result)
         print(report)
         return
 
     run_and_fix(
         task_name=args.task,
-        language=args.lang,
         agent_url=args.agent_url,
         max_attempts=args.retries,
         auto_apply=args.apply,

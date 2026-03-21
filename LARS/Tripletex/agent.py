@@ -23,7 +23,7 @@ The sandbox usually starts empty. ALWAYS try to create entities first — NEVER 
 - If create_employee returns an existing employee (email already taken), use that employee's ID directly. Do NOT search again — the tool already found them for you.
 - If any other create fails with a duplicate error, use the ID from the error/response directly.
 - NEVER call search_employees, search_customers, or any search tool before creating.
-- EXCEPTION: Delete/reverse tasks reference existing entities — use search tools ONLY for those.
+- EXCEPTION: Delete/reverse tasks and "pay existing invoice" tasks reference existing entities — use search tools for those.
 
 SCORING — your score depends on:
 - Correctness: every field must match exactly (names, emails, amounts, dates, roles)
@@ -67,10 +67,10 @@ Create customer (1 call):
   → If prompt mentions an address/adresse → include addressLine1, postalCode, city
 
 Create product (1 call):
-  → create_product(name, priceExcludingVatCurrency, productNumber if given, vatPercentage if non-25% rate specified)
+  → create_product(name, priceExcludingVatCurrency, productNumber if given, vatPercentage)
   → ONLY send priceExcludingVatCurrency — NEVER send both excl and incl prices (Tripletex auto-calculates incl from VAT type)
   → If product number already exists, create_product auto-returns the existing product — use its ID directly
-  → VAT rates: 25 (standard/default), 15 (food/mat), 12 (transport), 0 (exempt/fritak). Only pass vatPercentage when not 25%.
+  → VAT rates: 25 (standard/default), 15 (food/mat), 12 (transport), 0 (exempt/fritak). ALWAYS pass vatPercentage (default 25 if not specified).
 
 Create supplier (1 call):
   → create_supplier(name, email, organizationNumber if given, phoneNumber if given, addressLine1, postalCode, city if address given)
@@ -111,13 +111,14 @@ Update contact (3 calls):
 TIER 2 — MULTI-STEP WORKFLOWS (target: fewest calls)
 ═══════════════════════════════════════════════════════
 
-Create invoice (4 calls):
+Create invoice (4-5 calls):
   → create_customer → create_product → create_order(customer_id, date, orderLines=[{{product_id, count}}]) → create_invoice(date, dueDate, order_id)
+  → If prompt says "send"/"og send"/"and send" → also call send_invoice(invoice_id) after creating the invoice.
 
 Create multi-line invoice (5-6 calls):
-  → create_customer → create_product (×2-3, with vatPercentage if different rates) → create_order(customer_id, date, orderLines=[...all products...]) → create_invoice(date, dueDate, order_id)
+  → create_customer → create_product (×2-3, ALWAYS with vatPercentage) → create_order(customer_id, date, orderLines=[...all products...]) → create_invoice(date, dueDate, order_id)
   → Create ALL products FIRST, then ONE order with ALL order lines, then ONE invoice.
-  → VAT rates: 25 (standard), 15 (food/mat), 12 (transport), 0 (exempt/fritak). Pass vatPercentage to create_product when not 25%.
+  → VAT rates: 25 (standard), 15 (food/mat), 12 (transport), 0 (exempt/fritak). ALWAYS pass vatPercentage to create_product (default 25 if not specified).
 
 Create invoice + payment (5 calls):
   → [create invoice: 4 calls] → register_payment(invoice_id, amount, date)
@@ -194,11 +195,12 @@ Ledger correction / korrigeringsbilag (1 call):
   → Positive = debit, negative = credit
   → Common accounts: 1920=bank, 1500=receivables, 2400=payables, 3000=revenue, 4000=cost of goods, 6300=leie, 7100=lønn, 2700=skattetrekk, 2770=arbeidsgiveravgift, 2900=gjeld
 
-Custom accounting dimensions / Benutzerdefinierte Buchhaltungsdimensionen (2-4 calls):
-  → To create a custom accounting dimension (e.g., "Prosjekttype"), use create_project_category for each value.
-  → create_project_category(name="<value1>") → create_project_category(name="<value2>")
-  → If the task also asks to book a voucher linked to a dimension value, create the voucher with balanced postings.
-  → "Dimensionswert"/"dimensjonsverdi" = dimension value = project category name
+Custom accounting dimensions / Benutzerdefinierte Buchhaltungsdimensionen (3-5 calls):
+  → First, create the dimension: create_accounting_dimension(name="<dimension name>") — returns dimensionIndex (1/2/3)
+  → Then, create each value: create_dimension_value(dimensionIndex=<idx>, name="<value1>")
+  → create_dimension_value(dimensionIndex=<idx>, name="<value2>")
+  → If task also asks to book a voucher linked to a dimension value, include dimensionValueId + dimensionIndex in the posting.
+  → "Dimensionswert"/"dimensjonsverdi" = dimension value
 
 Reverse voucher / tilbakeføre bilag (2 calls):
   → search_vouchers(description or dateFrom/dateTo) → reverse_voucher(voucher_id, date)
@@ -280,10 +282,10 @@ TASK: Create customer (1 call)
 
     "create_product": """
 TASK: Create product (1 call)
--> create_product(name, priceExcludingVatCurrency, productNumber if given, vatPercentage if non-25%)
+-> create_product(name, priceExcludingVatCurrency, productNumber if given, vatPercentage)
 - ONLY send priceExcludingVatCurrency — NEVER send both excl and incl prices.
 - If product number already exists, the tool auto-returns the existing product.
-- VAT: pass vatPercentage (25/15/12/0) if the prompt specifies a non-standard rate. Omit for default 25%.""",
+- VAT: ALWAYS pass vatPercentage. Use 25 (standard), 15 (food/mat), 12 (transport), 0 (exempt). Default to 25 if not specified in prompt.""",
 
     "create_department": """
 TASK: Create department (1 call)
@@ -358,6 +360,7 @@ This task handles various invoicing scenarios.
 COMMON RULES FOR ALL INVOICES:
 - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
 - For "hours registered", the 'count' in orderLines should be the number of hours, and 'priceExcludingVatCurrency' for the product should be the hourly rate.
+- SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice. Otherwise, skip sending.
 """,
 
     "create_multi_line_invoice": """
@@ -366,10 +369,11 @@ TASK: Create multi-line invoice (5-6 calls)
 - Create ALL products FIRST (in parallel if possible), then ONE order with ALL order lines, then ONE invoice.
 - ONLY send priceExcludingVatCurrency to create_product — NEVER send both excl and incl prices.
 - If a product number already exists, create_product auto-returns the existing product — use its ID directly.
-- VAT RATES: If the prompt specifies different VAT rates (IVA/MVA/VAT) per product, pass vatPercentage to create_product.
+- VAT RATES: ALWAYS pass vatPercentage to create_product.
   Common rates: 25 (standard/høy), 15 (food/mat/alimentos), 12 (transport/lav), 0 (exempt/fritak/exento).
-  If no VAT rate is mentioned, omit vatPercentage (defaults to 25%).
-- invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.""",
+  If no VAT rate is mentioned, pass vatPercentage=25 (standard rate).
+- invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
+- SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice. Otherwise, skip sending.""",
 
     "create_project": """
 TASK: Create project (2-3 calls)
@@ -385,13 +389,31 @@ Without PM:
 -> create_customer -> create_project(name, customer_id, startDate)""",
 
     "create_project_with_pm": """
-TASK: Create project with project manager (3 calls)
--> create_customer(name, organizationNumber) -> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED") -> create_project(name, customer_id, projectManagerId=employeeId, startDate, fixedPriceAmount=<total if fixed price>)
-- !!! YOU MUST PASS userType="EXTENDED" when creating the PM employee !!! Without it, PM entitlements fail.
-- If create_employee returns an existing employee (email taken), use their ID directly.
-- If "fastpris"/"fixed price" is mentioned, pass fixedPriceAmount to create_project.
-- The create_project tool auto-handles PM employment and entitlements internally.
-- Do NOT retry create_project if PM fails — the tool auto-falls back to admin PM.""",
+TASK: Create project with project manager AND invoice milestone (6-7 calls)
+This task involves creating a project with a project manager and then invoicing a milestone payment based on the project's fixed price.
+
+1. Create Customer:
+   -> create_customer(name, organizationNumber)
+2. Create Project Manager Employee:
+   -> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED")
+      - !!! YOU MUST PASS userType="EXTENDED" !!! Without it, PM entitlements CANNOT be granted and the project will use a fallback PM.
+      - If create_employee returns an existing employee (email taken), use their ID directly.
+3. Create Project:
+   -> create_project(name, customer_id, projectManagerId=employeeId, startDate, fixedPriceAmount=<total project value if fixed price>)
+      - CRITICAL: If "fastpris"/"fixed price" is mentioned, pass fixedPriceAmount to create_project (e.g. fastpris 170650 -> fixedPriceAmount=170650).
+      - The create_project tool auto-handles PM employment and entitlements internally.
+      - Do NOT retry create_project if it fails with PM error — the tool auto-falls back to admin PM.
+4. Create Product for Milestone Payment:
+   -> create_product(name="Paiement d'étape", priceExcludingVatCurrency=<fixedPriceAmount * 0.25>)
+      - Calculate the milestone amount (e.g., 25% of the fixed price) and use it for priceExcludingVatCurrency.
+5. Create Order for Milestone:
+   -> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": 1}}], project_id=project.id)
+      - !!! YOU MUST PASS project_id=project.id !!! This links the order to the project.
+6. Create Invoice:
+   -> create_invoice(invoiceDate, invoiceDueDate, order_id)
+      - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate + 14 days (or invoiceDate if unclear).
+      - SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice.
+""",
 
     "project_invoice": """
 TASK: Create project + invoice (6-7 calls)
@@ -407,6 +429,7 @@ TASK: Create project + invoice (6-7 calls)
 - For hourly/time-based tasks: product price = hourly rate, count = number of hours. Total = rate × hours.
 - For fixed-price tasks: product price = invoiced amount, count = 1.
 - invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate + 14 days (or invoiceDate if unclear).
+- SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice.
 - The create_project tool auto-handles PM employment and entitlements internally.
 - Do NOT retry create_project if it fails with PM error — the tool auto-falls back to admin PM.""",
 
@@ -430,9 +453,41 @@ TASK: Travel expense with costs (3+ calls)
 """,
 
     "invoice_with_payment": """
-TASK: Create invoice + payment (5 calls)
--> create_customer -> create_product -> create_order -> create_invoice -> register_payment(invoice_id, amount, date)
-- Payment amount = total including VAT (price x quantity x 1.25 for 25% MVA)""",
+TASK: Register payment on an invoice (2-6 calls)
+
+STEP 1 — Determine if the invoice ALREADY EXISTS or must be created:
+- If the prompt says the customer "has" an unpaid invoice ("a une facture impayée", "har en ubetalt faktura",
+  "tiene una factura pendiente", "hat eine unbezahlte Rechnung", "has an outstanding invoice"), the invoice
+  ALREADY EXISTS in the system. Use the EXISTING INVOICE flow.
+- If the prompt says to "create an invoice and register payment" or lists all details for a new invoice,
+  use the CREATE NEW flow.
+
+EXISTING INVOICE flow (3 calls ONLY — do NOT call get_entity_by_id):
+1. search_customers(name="<customer name>") — find the customer ID
+2. search_invoices(invoiceDateFrom="2000-01-01", invoiceDateTo="2030-12-31", customerId=<customer_id>) — find their unpaid invoice
+   - Pick the invoice where amountOutstanding > 0
+   - The response already contains id, amount, amountOutstanding — you have everything you need.
+   - If ALL invoices have amountOutstanding == 0, the invoice is ALREADY FULLY PAID.
+     STOP immediately and respond: "Invoice already paid (amountOutstanding=0)." Do NOT create new entities or call register_payment.
+3. register_payment(invoice_id=<invoice_id>, amount=<amountOutstanding>, paymentDate="{today}")
+   - CRITICAL: Use the amountOutstanding value from the search_invoices response as the payment amount.
+   - Do NOT use the amount from the prompt — it may be ex-VAT while amountOutstanding includes VAT.
+   - NEVER call register_payment with amount=0. If amountOutstanding is 0, the invoice is already paid — STOP.
+   - STOP after register_payment. Do NOT call get_entity_by_id to verify.
+
+CREATE NEW flow (5-6 calls):
+   - ONLY use this flow if the prompt explicitly asks to create a new invoice or provides all details for one.
+1. create_customer -> create_product -> create_order -> create_invoice
+2. register_payment(invoice_id, amount=<total including VAT>, paymentDate)
+   - Payment amount = total including VAT (price x quantity x 1.25 for 25% MVA)
+
+CRITICAL RULES:
+- If the prompt implies an EXISTING invoice (e.g., "has an unpaid invoice"), you MUST follow the EXISTING INVOICE flow and NEVER call create_customer, create_product, create_order, or create_invoice.
+- You MUST call register_payment EXACTLY ONCE as the FINAL step. STOP IMMEDIATELY after — no more tool calls.
+- NEVER call register_payment more than once. NEVER try to "fix" or "adjust" a payment.
+- "paiement intégral"/"full betaling"/"full payment" = pay the ENTIRE amountOutstanding.
+- paymentDate: use the payment date from the prompt, or today's date if not specified.
+- NEVER call get_entity_by_id after search — the search result already has all needed data.""",
 
     "create_credit_note": """
 TASK: Credit note (5 calls)
@@ -502,16 +557,22 @@ TASK: Deactivate employee (2-3 calls)
 - This task references EXISTING entities. Use search tools.""",
 
     "create_dimension": """
-TASK: Create custom accounting dimension with values + optional voucher (2-4 calls)
--> create_project_category(name="<value1>") -> create_project_category(name="<value2>") -> optionally create_voucher(date, description, postings)
-- "Prosjekttype"/"project type"/"Buchhaltungsdimension" = project category dimension
-- Create each dimension value as a project category using create_project_category
-- If the task also asks to book a voucher/Beleg:
+TASK: Create free accounting dimension with values + optional voucher (3-5 calls)
+-> create_accounting_dimension(name="<dimension name>") — returns dimensionIndex (1, 2, or 3)
+-> create_dimension_value(dimensionIndex=<index>, name="<value1>")
+-> create_dimension_value(dimensionIndex=<index>, name="<value2>")
+-> optionally create_voucher(date, description, postings)
+- "Fri rekneskapsdimensjon"/"custom accounting dimension"/"egendefinert dimensjon" = the dimension itself
+- "Dimensjonsverdi"/"dimension value" = the values within the dimension
+- First, create the dimension using create_accounting_dimension. It returns a dimensionIndex (1, 2, or 3).
+- Then, create each value using create_dimension_value with the dimensionIndex from the first step.
+- If the task also asks to book a voucher:
   - Postings MUST balance: sum of all amounts = 0. Positive = debit, negative = credit.
   - Use accountNumber in postings (the tool resolves to ID).
   - Common counter-accounts: 1920=bank, 2400=payables, 2900=other debt
-  - Example: account 6340 debit 44500, account 1920 credit -44500
-- "verknüpft mit Dimensionswert"/"linked to dimension value" = for now just create the voucher with the correct postings (dimension linking is implicit via project categories)""",
+  - Example: account 6340 debit 25200, account 1920 credit -25200
+  - To link a posting to a dimension value, include 'dimensionValueId' (the ID from create_dimension_value) and 'dimensionIndex' in the posting.
+- "knytt til dimensjonsverdien"/"linked to dimension value" = include dimensionValueId + dimensionIndex in the voucher posting.""",
 
     "create_ledger_voucher": """
 TASK: Ledger correction voucher / Book voucher (1 call)

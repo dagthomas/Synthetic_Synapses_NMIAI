@@ -88,6 +88,30 @@ class TripletexClient:
                     self._cache["default_division"] = divs[0]["id"]
         except Exception:
             pass
+        # VAT type map (percentage -> id) for product creation — OUTPUT VAT only
+        try:
+            vat_result = requests.get(
+                f"{self.base_url}/ledger/vatType",
+                auth=self.auth,
+                params={"fields": "id,number,name,percentage", "count": 100},
+                timeout=10,
+            )
+            if vat_result.status_code == 200:
+                vat_map = {}
+                for vt in vat_result.json().get("values", []):
+                    pct = vt.get("percentage")
+                    vid = vt.get("id")
+                    name = (vt.get("name") or "").lower()
+                    if pct is not None and vid is not None:
+                        # Only output VAT types (utgående) for products/sales
+                        if "utgående" in name or "utg." in name:
+                            vat_map[int(pct)] = vid
+                        elif int(pct) == 0 and ("fri" in name or "uten" in name):
+                            vat_map[0] = vid
+                if vat_map:
+                    self._cache["vat_type_map"] = vat_map
+        except Exception:
+            pass
         # Payables account 2400 (used by supplier invoice tool)
         try:
             acct_result = requests.get(

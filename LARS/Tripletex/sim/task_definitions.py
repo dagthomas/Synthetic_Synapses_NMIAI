@@ -6,9 +6,7 @@ Each task defines:
 - Scoring weights per field
 - Baseline API call count for efficiency scoring
 
-Competition has 30 task types across 3 tiers. We cover the likely set based
-on the documented categories: employees, customers, products, invoicing,
-travel expenses, projects, departments, corrections.
+Only confirmed competition task types are included here (18 confirmed from payloads).
 """
 
 from dataclasses import dataclass, field
@@ -52,40 +50,6 @@ class TaskDef:
 # ═══════════════════════════════════════════════════════════════════════
 # TIER 1 — Basic entity creation (×1 multiplier)
 # ═══════════════════════════════════════════════════════════════════════
-
-CREATE_EMPLOYEE = TaskDef(
-    name="create_employee",
-    tier=1,
-    description="Create a new employee",
-    gen_instruction="""\
-Generate a task to create an employee in Tripletex.
-Always include: firstName, lastName, email.
-50% chance: include a mobile phone number (phoneNumberMobile, +47 format).
-40% chance: make the employee an administrator/kontoadministrator (userType should be "EXTENDED").
-30% chance: include dateOfBirth (YYYY-MM-DD, realistic adult age).
-Use varied, uncommon Scandinavian names to avoid collisions (avoid Lars, Erik, Henrik, Silje, Johansen, Olsen, Hansen).
-Examples: Tormod, Halvard, Bjarte, Solveig, Ragnhild, Astrid, Grønnli, Bergsland, Thorsnes, Kjærstad.
-Email domain: example.com or test.no.
-
-Expected fields:
-- firstName (string)
-- lastName (string)
-- email (string)
-- phoneNumberMobile (string, only if included)
-- userType (string, "EXTENDED" if admin, "STANDARD" otherwise — always include this field)
-- dateOfBirth (string YYYY-MM-DD, only if included)""",
-    entity_type="employee",
-    search_fields=["firstName", "lastName", "email"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("firstName", 2),
-        FieldCheck("lastName", 2),
-        FieldCheck("email", 2),
-        FieldCheck("phoneNumberMobile", 1),
-        FieldCheck("dateOfBirth", 1),
-    ],
-    baseline_calls=1,
-)
 
 CREATE_CUSTOMER = TaskDef(
     name="create_customer",
@@ -203,105 +167,6 @@ Expected fields:
     baseline_calls=1,
 )
 
-CREATE_CONTACT = TaskDef(
-    name="create_contact",
-    tier=1,
-    description="Create a contact person for a customer",
-    gen_instruction="""\
-Generate a task to create a contact person linked to an existing customer in Tripletex.
-The prompt should say to first create the customer, then add a contact person.
-
-Include ALL:
-- customer_name: company name ending in AS
-- firstName: contact's first name
-- lastName: contact's last name
-- email: contact's email
-
-Expected fields:
-- customer_name (string)
-- firstName (string)
-- lastName (string)
-- email (string)""",
-    entity_type="contact",
-    search_fields=["firstName", "lastName"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("firstName", 2),
-        FieldCheck("lastName", 2),
-        FieldCheck("email", 2),
-    ],
-    baseline_calls=2,  # POST customer + POST contact
-)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# TIER 1 — Update tasks (×1 multiplier)
-# ═══════════════════════════════════════════════════════════════════════
-
-UPDATE_EMPLOYEE = TaskDef(
-    name="update_employee",
-    tier=1,
-    description="Update an employee's phone number",
-    gen_instruction="""\
-Generate a task to update an existing employee's mobile phone number.
-The prompt should first instruct to create the employee, then update their phone.
-NOTE: Tripletex does NOT allow changing email after creation — only phone can be updated.
-
-Include ALL:
-- firstName: employee's first name
-- lastName: employee's last name
-- email: employee's email
-- new_phoneNumberMobile: the new phone number to set (+47 8-digit format, e.g. "+4791234567")
-
-Expected fields:
-- firstName (string)
-- lastName (string)
-- email (string)
-- new_phoneNumberMobile (string)""",
-    entity_type="employee",
-    search_fields=["firstName", "lastName"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("firstName", 1),
-        FieldCheck("lastName", 1),
-        FieldCheck("new_phoneNumberMobile", 3),
-    ],
-    baseline_calls=4,  # GET dept + POST employee + GET employee + PUT employee
-)
-
-UPDATE_CUSTOMER = TaskDef(
-    name="update_customer",
-    tier=1,
-    description="Update a customer's information",
-    gen_instruction="""\
-Generate a task to update an existing customer.
-The prompt should first instruct to create the customer, then update a field.
-
-Include ALL:
-- name: customer company name ending in AS
-- email: original email
-- new_email: the new email to set
-OR
-- new_phoneNumber: the new phone number to set (+47 format)
-
-Pick ONE field to update.
-
-Expected fields:
-- name (string)
-- email (string) - original
-- new_email (string, only if updating email)
-- new_phoneNumber (string, only if updating phone)""",
-    entity_type="customer",
-    search_fields=["name"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("name", 2),
-        FieldCheck("new_email", 3),
-        FieldCheck("new_phoneNumber", 3),
-    ],
-    baseline_calls=2,  # POST + PUT
-)
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # TIER 2 — Multi-step tasks (×2 multiplier)
@@ -407,37 +272,6 @@ Expected fields:
     baseline_calls=2,
 )
 
-CREATE_TRAVEL_EXPENSE = TaskDef(
-    name="create_travel_expense",
-    tier=2,
-    description="Create a travel expense report",
-    gen_instruction="""\
-Generate a task to create a travel expense report in Tripletex.
-Include ALL:
-- employee_firstName, employee_lastName, employee_email
-- title: travel expense title (e.g. "Kundebesøk Oslo")
-- departure_date: a date in 2026 (YYYY-MM-DD)
-- return_date: 1-5 days after departure (YYYY-MM-DD)
-
-Expected fields:
-- employee_firstName (string)
-- employee_lastName (string)
-- employee_email (string)
-- title (string)
-- departure_date (string, YYYY-MM-DD)
-- return_date (string, YYYY-MM-DD)""",
-    entity_type="travelExpense",
-    search_fields=["title"],
-    field_checks=[
-        FieldCheck("_employee_found", 1),
-        FieldCheck("_found", 2),
-        FieldCheck("title", 2),
-        FieldCheck("departure_date", 2),
-        FieldCheck("return_date", 2),
-    ],
-    baseline_calls=2,
-)
-
 INVOICE_WITH_PAYMENT = TaskDef(
     name="invoice_with_payment",
     tier=2,
@@ -538,312 +372,6 @@ Expected fields:
     ],
     baseline_calls=2,  # POST employee + POST employment
 )
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# TIER 3 — Advanced tasks (×3 multiplier)
-# ═══════════════════════════════════════════════════════════════════════
-
-DELETE_TRAVEL_EXPENSE = TaskDef(
-    name="delete_travel_expense",
-    tier=3,
-    description="Delete a travel expense report",
-    gen_instruction="""\
-Generate a task to delete a travel expense report from Tripletex.
-Reference it by title.
-
-Include:
-- title: travel expense title to delete
-
-Expected fields:
-- title (string)""",
-    entity_type="travelExpense",
-    search_fields=["title"],
-    field_checks=[
-        FieldCheck("_deleted", 5),
-        FieldCheck("title", 3),
-    ],
-    baseline_calls=2,
-    pre_create={"type": "travel_expense", "fields": ["title"]},
-)
-
-DELETE_CUSTOMER = TaskDef(
-    name="delete_customer",
-    tier=3,
-    description="Delete a customer",
-    gen_instruction="""\
-Generate a task to delete a customer from Tripletex.
-Reference them by company name.
-
-Include:
-- name: company name ending in AS
-
-Expected fields:
-- name (string)""",
-    entity_type="customer",
-    search_fields=["name"],
-    field_checks=[
-        FieldCheck("_deleted", 5),
-        FieldCheck("name", 3),
-    ],
-    baseline_calls=2,
-    pre_create={"type": "customer", "fields": ["name"]},
-)
-
-CREATE_LEDGER_VOUCHER = TaskDef(
-    name="create_ledger_voucher",
-    tier=3,
-    description="Create a correction voucher in the ledger",
-    gen_instruction="""\
-Generate a task to create a ledger correction voucher in Tripletex.
-Include ALL:
-- description: what the correction is for (e.g. "Korreksjon feilpostering mars")
-- date: voucher date in March 2026 (YYYY-MM-DD)
-- debit_account: account number to debit (e.g. 1920 for bank, 1500 for receivables)
-- credit_account: account number to credit (e.g. 3000 for revenue, 4000 for cost)
-- amount: the correction amount (100-50000)
-
-The prompt should instruct to create a voucher with debit and credit postings.
-
-Expected fields:
-- description (string)
-- date (string, YYYY-MM-DD)
-- debit_account (integer)
-- credit_account (integer)
-- amount (number)""",
-    entity_type="ledger/voucher",
-    search_fields=[],
-    field_checks=[
-        FieldCheck("_found", 3),
-        FieldCheck("description", 2),
-        FieldCheck("date", 2),
-        FieldCheck("amount", 3),
-    ],
-    baseline_calls=1,
-)
-
-REVERSE_VOUCHER = TaskDef(
-    name="reverse_voucher",
-    tier=3,
-    description="Reverse a ledger voucher",
-    gen_instruction="""\
-Generate a task to reverse (tilbakeføre) a ledger voucher.
-The prompt should reference a voucher by its description.
-
-Include:
-- description: voucher description to find and reverse
-- reverse_date: the date for the reversal (YYYY-MM-DD, March 2026)
-
-Expected fields:
-- description (string)
-- reverse_date (string, YYYY-MM-DD)""",
-    entity_type="ledger/voucher",
-    search_fields=[],
-    field_checks=[
-        FieldCheck("_reversed", 5),
-        FieldCheck("description", 3),
-    ],
-    baseline_calls=2,  # GET search + PUT reverse
-    pre_create={"type": "voucher", "fields": ["description"]},
-)
-
-DELETE_INVOICE = TaskDef(
-    name="delete_invoice",
-    tier=3,
-    description="Credit/reverse an invoice",
-    gen_instruction="""\
-Generate a task to create an invoice and then credit (kreditere) it.
-The task is essentially: make an invoice, then issue a credit note to cancel it.
-
-Include ALL:
-- customer_name: company name ending in AS
-- customer_email: email for the customer
-- product_name: product name
-- product_price: price (100-5000)
-- invoice_date: March 2026 (YYYY-MM-DD)
-
-Expected fields:
-- customer_name (string)
-- customer_email (string)
-- product_name (string)
-- invoice_date (string, YYYY-MM-DD)""",
-    entity_type="invoice",
-    search_fields=[],
-    field_checks=[
-        FieldCheck("_customer_found", 1),
-        FieldCheck("_invoice_found", 1),
-        FieldCheck("_credit_note_found", 4),
-        FieldCheck("customer_name", 1),
-    ],
-    baseline_calls=5,
-)
-
-CREATE_OPENING_BALANCE = TaskDef(
-    name="create_opening_balance",
-    tier=3,
-    description="Set opening balance for an account",
-    gen_instruction="""\
-Generate a task to create an opening balance voucher in Tripletex.
-This sets the starting balance for a specific ledger account.
-
-Include ALL:
-- account_number: a standard Norwegian account (e.g. 1920 for bank, 1500 for receivables)
-- amount: the opening balance amount (10000-500000)
-- date: January 1, 2026 (2026-01-01)
-- description: e.g. "Inngående balanse bank" or "Åpningsbalanse kundefordringer"
-
-Expected fields:
-- account_number (integer)
-- amount (number)
-- date (string, YYYY-MM-DD)
-- description (string)""",
-    entity_type="ledger/voucher",
-    search_fields=[],
-    field_checks=[
-        FieldCheck("_found", 3),
-        FieldCheck("description", 2),
-        FieldCheck("amount", 3),
-        FieldCheck("date", 2),
-    ],
-    baseline_calls=1,
-)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# TIER 1 — Additional (update/delete for basic entities)
-# ═══════════════════════════════════════════════════════════════════════
-
-UPDATE_DEPARTMENT = TaskDef(
-    name="update_department",
-    tier=1,
-    description="Update a department's name or number",
-    gen_instruction="""\
-Generate a task to update an existing department in Tripletex.
-The prompt should first instruct to create the department, then update a field.
-
-Include ALL:
-- name: original department name
-Pick ONE to update:
-- new_name: a new department name
-- new_departmentNumber: a new department number (1-3 digit string)
-
-Expected fields:
-- name (string)
-- new_name (string, only if updating name)
-- new_departmentNumber (string, only if updating number)""",
-    entity_type="department",
-    search_fields=["name"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("name", 2),
-        FieldCheck("new_name", 3),
-        FieldCheck("new_departmentNumber", 3),
-    ],
-    baseline_calls=2,
-)
-
-UPDATE_CONTACT = TaskDef(
-    name="update_contact",
-    tier=1,
-    description="Update a contact person's information",
-    gen_instruction="""\
-Generate a task to update an existing contact person in Tripletex.
-The prompt should first instruct to create a customer, add a contact person, then update the contact.
-
-Include ALL:
-- customer_name: company name ending in AS
-- firstName: contact's first name
-- lastName: contact's last name
-- email: contact's original email
-Pick ONE to update:
-- new_email: the new email to set
-- new_phoneNumberMobile: the new phone number (+47 format)
-
-Expected fields:
-- customer_name (string)
-- firstName (string)
-- lastName (string)
-- email (string)
-- new_email (string, only if updating email)
-- new_phoneNumberMobile (string, only if updating phone)""",
-    entity_type="contact",
-    search_fields=["firstName", "lastName"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("firstName", 1),
-        FieldCheck("lastName", 1),
-        FieldCheck("new_email", 3),
-        FieldCheck("new_phoneNumberMobile", 3),
-    ],
-    baseline_calls=3,  # POST customer + POST contact + PUT contact
-)
-
-UPDATE_PRODUCT = TaskDef(
-    name="update_product",
-    tier=1,
-    description="Update a product's price or name",
-    gen_instruction="""\
-Generate a task to update an existing product in Tripletex.
-The prompt should first instruct to create the product, then update a field.
-
-Include ALL:
-- name: original product name
-- priceExcludingVatCurrency: original price (100-10000)
-Pick ONE to update (50/50):
-- new_name: a new product name
-- new_priceExcludingVatCurrency: a new price
-
-Expected fields:
-- name (string)
-- priceExcludingVatCurrency (number)
-- new_name (string, only if updating name)
-- new_priceExcludingVatCurrency (number, only if updating price)""",
-    entity_type="product",
-    search_fields=["name"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("name", 2),
-        FieldCheck("new_name", 3),
-        FieldCheck("new_priceExcludingVatCurrency", 3),
-    ],
-    baseline_calls=2,
-)
-
-UPDATE_SUPPLIER = TaskDef(
-    name="update_supplier",
-    tier=1,
-    description="Update a supplier's information",
-    gen_instruction="""\
-Generate a task to update an existing supplier in Tripletex.
-The prompt should first instruct to create the supplier, then update a field.
-
-Include ALL:
-- name: supplier company name ending in AS
-- email: original email
-Pick ONE to update:
-- new_email: the new email to set
-- new_phoneNumber: the new phone number (+47 format)
-
-Expected fields:
-- name (string)
-- email (string)
-- new_email (string, only if updating email)
-- new_phoneNumber (string, only if updating phone)""",
-    entity_type="supplier",
-    search_fields=["name"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("name", 2),
-        FieldCheck("new_email", 3),
-        FieldCheck("new_phoneNumber", 3),
-    ],
-    baseline_calls=2,
-)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# TIER 2 — Additional multi-step tasks
-# ═══════════════════════════════════════════════════════════════════════
 
 CREATE_SUPPLIER_INVOICE = TaskDef(
     name="create_supplier_invoice",
@@ -952,173 +480,6 @@ Expected fields:
     baseline_calls=3,
 )
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# TIER 3 — Additional advanced tasks
-# ═══════════════════════════════════════════════════════════════════════
-
-DELETE_SUPPLIER = TaskDef(
-    name="delete_supplier",
-    tier=3,
-    description="Delete a supplier",
-    gen_instruction="""\
-Generate a task to delete a supplier from Tripletex.
-Reference them by company name.
-
-Include:
-- name: company name ending in AS
-
-Expected fields:
-- name (string)""",
-    entity_type="supplier",
-    search_fields=["name"],
-    field_checks=[
-        FieldCheck("_deleted", 5),
-        FieldCheck("name", 3),
-    ],
-    baseline_calls=2,
-    pre_create={"type": "supplier", "fields": ["name"]},
-)
-
-DELETE_PRODUCT = TaskDef(
-    name="delete_product",
-    tier=3,
-    description="Delete a product",
-    gen_instruction="""\
-Generate a task to delete a product from Tripletex.
-Reference it by name.
-
-Include:
-- name: product name
-
-Expected fields:
-- name (string)""",
-    entity_type="product",
-    search_fields=["name"],
-    field_checks=[
-        FieldCheck("_deleted", 5),
-        FieldCheck("name", 3),
-    ],
-    baseline_calls=2,
-    pre_create={"type": "product", "fields": ["name"]},
-)
-
-DELETE_DEPARTMENT = TaskDef(
-    name="delete_department",
-    tier=3,
-    description="Delete a department",
-    gen_instruction="""\
-Generate a task to delete a department from Tripletex.
-Reference it by name.
-
-Include:
-- name: department name (e.g. "Salg", "IT-avdeling")
-
-Expected fields:
-- name (string)""",
-    entity_type="department",
-    search_fields=["name"],
-    field_checks=[
-        FieldCheck("_deleted", 5),
-        FieldCheck("name", 3),
-    ],
-    baseline_calls=2,
-    pre_create={"type": "department", "fields": ["name"]},
-)
-
-DELETE_CONTACT = TaskDef(
-    name="delete_contact",
-    tier=3,
-    description="Delete a contact person",
-    gen_instruction="""\
-Generate a task to delete a contact person from Tripletex.
-Reference them by first and last name.
-
-Include:
-- firstName: contact's first name
-- lastName: contact's last name
-
-Expected fields:
-- firstName (string)
-- lastName (string)""",
-    entity_type="contact",
-    search_fields=["firstName", "lastName"],
-    field_checks=[
-        FieldCheck("_deleted", 5),
-        FieldCheck("firstName", 2),
-        FieldCheck("lastName", 1),
-    ],
-    baseline_calls=2,
-    pre_create={"type": "contact", "fields": ["firstName", "lastName"]},
-)
-
-DELETE_EMPLOYEE = TaskDef(
-    name="delete_employee",
-    tier=3,
-    description="Deactivate an employee",
-    sandbox_broken=False,  # Agent deactivates via update_employee(isInactive=True)
-    gen_instruction="""\
-Generate a task to deactivate/remove an employee from Tripletex.
-NOTE: Tripletex does not allow deleting employees with employments.
-The agent should search for the employee and either delete or deactivate them.
-
-Include:
-- firstName: employee's first name
-- lastName: employee's last name
-
-Expected fields:
-- firstName (string)
-- lastName (string)""",
-    entity_type="employee",
-    search_fields=["firstName", "lastName"],
-    field_checks=[
-        FieldCheck("_deleted", 5),
-        FieldCheck("firstName", 2),
-        FieldCheck("lastName", 1),
-    ],
-    baseline_calls=2,
-    pre_create={"type": "employee", "fields": ["firstName", "lastName"]},
-)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# TIER 3 — Task types from router but missing from eval framework
-# ═══════════════════════════════════════════════════════════════════════
-
-SALARY = TaskDef(
-    name="salary",
-    tier=3,
-    description="Run a salary transaction for an employee",
-    gen_instruction="""\
-Generate a task to process a salary/payroll transaction for an employee in Tripletex.
-Include ALL:
-- firstName: employee's first name
-- lastName: employee's last name
-- email: employee's email
-- salary_type: type of salary (e.g. "Fastlønn", "Timelønn", "Bonus")
-- year: salary year (2026)
-- month: salary month (1-12)
-- amount: salary amount (10000-80000 NOK)
-
-The prompt should instruct to create the employee (with employment), then register a salary transaction.
-
-Expected fields:
-- firstName (string)
-- lastName (string)
-- email (string)
-- year (integer)
-- month (integer)""",
-    entity_type="employee",
-    search_fields=["firstName", "lastName", "email"],
-    field_checks=[
-        FieldCheck("_found", 2),
-        FieldCheck("firstName", 1),
-        FieldCheck("lastName", 1),
-        FieldCheck("_salary_found", 4),
-    ],
-    baseline_calls=4,  # employee + employment + search_salary_types + salary_transaction
-)
-
 PROJECT_INVOICE = TaskDef(
     name="project_invoice",
     tier=2,
@@ -1157,6 +518,76 @@ Expected fields:
     baseline_calls=6,  # customer + employee + project + product + order + invoice
 )
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# TIER 3 — Advanced tasks (×3 multiplier)
+# ═══════════════════════════════════════════════════════════════════════
+
+DELETE_INVOICE = TaskDef(
+    name="delete_invoice",
+    tier=3,
+    description="Credit/reverse an invoice",
+    gen_instruction="""\
+Generate a task to create an invoice and then credit (kreditere) it.
+The task is essentially: make an invoice, then issue a credit note to cancel it.
+
+Include ALL:
+- customer_name: company name ending in AS
+- customer_email: email for the customer
+- product_name: product name
+- product_price: price (100-5000)
+- invoice_date: March 2026 (YYYY-MM-DD)
+
+Expected fields:
+- customer_name (string)
+- customer_email (string)
+- product_name (string)
+- invoice_date (string, YYYY-MM-DD)""",
+    entity_type="invoice",
+    search_fields=[],
+    field_checks=[
+        FieldCheck("_customer_found", 1),
+        FieldCheck("_invoice_found", 1),
+        FieldCheck("_credit_note_found", 4),
+        FieldCheck("customer_name", 1),
+    ],
+    baseline_calls=5,
+)
+
+SALARY = TaskDef(
+    name="salary",
+    tier=3,
+    description="Run a salary transaction for an employee",
+    gen_instruction="""\
+Generate a task to process a salary/payroll transaction for an employee in Tripletex.
+Include ALL:
+- firstName: employee's first name
+- lastName: employee's last name
+- email: employee's email
+- salary_type: type of salary (e.g. "Fastlønn", "Timelønn", "Bonus")
+- year: salary year (2026)
+- month: salary month (1-12)
+- amount: salary amount (10000-80000 NOK)
+
+The prompt should instruct to create the employee (with employment), then register a salary transaction.
+
+Expected fields:
+- firstName (string)
+- lastName (string)
+- email (string)
+- year (integer)
+- month (integer)""",
+    entity_type="employee",
+    search_fields=["firstName", "lastName", "email"],
+    field_checks=[
+        FieldCheck("_found", 2),
+        FieldCheck("firstName", 1),
+        FieldCheck("lastName", 1),
+        FieldCheck("_salary_found", 4),
+    ],
+    baseline_calls=4,  # employee + employment + search_salary_types + salary_transaction
+)
+
 REVERSE_PAYMENT = TaskDef(
     name="reverse_payment",
     tier=3,
@@ -1183,133 +614,66 @@ Expected fields:
     pre_create={"type": "paid_invoice", "fields": ["customer_name"]},
 )
 
-BANK_RECONCILIATION = TaskDef(
-    name="bank_reconciliation",
+CREATE_DIMENSION = TaskDef(
+    name="create_dimension",
     tier=3,
-    description="Perform bank reconciliation from a file",
-    sandbox_broken=True,  # Requires file attachment
+    description="Create a custom accounting dimension with values and post a voucher linked to it",
     gen_instruction="""\
-Generate a task to perform bank reconciliation (bankavstemming) from an attached bank statement.
-Include:
-- bank_account: bank account number (e.g. "1920")
-- date: reconciliation date in March 2026 (YYYY-MM-DD)
-- description: description of the reconciliation
+Generate a task to create a custom accounting dimension in Tripletex, add values to it,
+then create a voucher posting linked to one of the dimension values.
+
+Include ALL:
+- dimension_name: name of the dimension (e.g. "Region", "Prosjekttype", "Marked")
+- dimension_values: list of 2 values (e.g. ["Sør-Norge", "Nord-Norge"])
+- account_number: ledger account to post to (e.g. 6340, 7140, 6860, 7300)
+- amount: voucher amount in NOK (10000-50000)
+- linked_value: which dimension value to link the posting to (one of dimension_values)
 
 Expected fields:
-- bank_account (string)
-- date (string, YYYY-MM-DD)
-- description (string)""",
+- dimension_name (string)
+- dimension_value_1 (string)
+- dimension_value_2 (string)
+- account_number (integer)
+- amount (number)
+- linked_value (string)""",
     entity_type="ledger/voucher",
     search_fields=[],
     field_checks=[
-        FieldCheck("_found", 3),
-        FieldCheck("date", 3),
-        FieldCheck("description", 2),
+        FieldCheck("_dimension_found", 3),
+        FieldCheck("dimension_name", 2),
+        FieldCheck("_voucher_found", 3),
+        FieldCheck("amount", 2),
     ],
-    baseline_calls=3,
-)
-
-PROCESS_INVOICE_FILE = TaskDef(
-    name="process_invoice_file",
-    tier=3,
-    description="Create an invoice from an attached file",
-    sandbox_broken=True,  # Requires file attachment
-    gen_instruction="""\
-Generate a task to create an invoice based on an attached invoice file (PDF).
-Include:
-- customer_name: company name ending in AS
-- invoice_date: March 2026 (YYYY-MM-DD)
-- due_date: 14-30 days after invoice_date
-
-Expected fields:
-- customer_name (string)
-- invoice_date (string, YYYY-MM-DD)
-- due_date (string, YYYY-MM-DD)""",
-    entity_type="invoice",
-    search_fields=[],
-    field_checks=[
-        FieldCheck("_customer_found", 1),
-        FieldCheck("_invoice_found", 2),
-        FieldCheck("customer_name", 1),
-        FieldCheck("invoice_date", 2),
-        FieldCheck("due_date", 2),
-    ],
-    baseline_calls=5,
-)
-
-YEAR_END = TaskDef(
-    name="year_end",
-    tier=3,
-    description="Perform year-end closing tasks",
-    sandbox_broken=True,  # Year-end entities may not exist in sandbox
-    gen_instruction="""\
-Generate a task to perform year-end closing (årsoppgjør) in Tripletex.
-Include:
-- year: the year to close (2025)
-- description: description of year-end notes
-
-Expected fields:
-- year (integer)
-- description (string)""",
-    entity_type="yearEnd",
-    search_fields=[],
-    field_checks=[
-        FieldCheck("_found", 4),
-        FieldCheck("year", 2),
-        FieldCheck("description", 2),
-    ],
-    baseline_calls=2,
+    baseline_calls=4,  # create dimension + 2 values + voucher
 )
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Registry
+# Registry — only confirmed competition tasks (18 types)
 # ═══════════════════════════════════════════════════════════════════════
 
 ALL_TASKS: dict[str, TaskDef] = {
     # Tier 1 — basic
-    "create_employee": CREATE_EMPLOYEE,
     "create_customer": CREATE_CUSTOMER,
     "create_product": CREATE_PRODUCT,
     "create_department": CREATE_DEPARTMENT,
     "create_supplier": CREATE_SUPPLIER,
-    "create_contact": CREATE_CONTACT,
-    "update_employee": UPDATE_EMPLOYEE,
-    "update_customer": UPDATE_CUSTOMER,
-    "update_product": UPDATE_PRODUCT,
-    "update_supplier": UPDATE_SUPPLIER,
-    "update_department": UPDATE_DEPARTMENT,
-    "update_contact": UPDATE_CONTACT,
     # Tier 2 — multi-step
     "create_invoice": CREATE_INVOICE,
     "create_multi_line_invoice": CREATE_MULTI_LINE_INVOICE,
     "create_project": CREATE_PROJECT,
-    "create_travel_expense": CREATE_TRAVEL_EXPENSE,
     "invoice_with_payment": INVOICE_WITH_PAYMENT,
     "create_credit_note": CREATE_CREDIT_NOTE,
     "create_employee_with_employment": CREATE_EMPLOYEE_WITH_EMPLOYMENT,
     "create_supplier_invoice": CREATE_SUPPLIER_INVOICE,
     "create_travel_expense_with_costs": CREATE_TRAVEL_EXPENSE_WITH_COSTS,
     "create_project_with_pm": CREATE_PROJECT_WITH_PM,
-    # Tier 3 — advanced
-    "delete_travel_expense": DELETE_TRAVEL_EXPENSE,
-    "delete_customer": DELETE_CUSTOMER,
-    "create_ledger_voucher": CREATE_LEDGER_VOUCHER,
-    "reverse_voucher": REVERSE_VOUCHER,
-    "delete_invoice": DELETE_INVOICE,
-    "create_opening_balance": CREATE_OPENING_BALANCE,
-    "delete_supplier": DELETE_SUPPLIER,
-    "delete_product": DELETE_PRODUCT,
-    "delete_department": DELETE_DEPARTMENT,
-    "delete_contact": DELETE_CONTACT,
-    "delete_employee": DELETE_EMPLOYEE,
-    # Missing from eval framework (in router but not here)
-    "salary": SALARY,
     "project_invoice": PROJECT_INVOICE,
+    # Tier 3 — advanced
+    "delete_invoice": DELETE_INVOICE,
+    "salary": SALARY,
     "reverse_payment": REVERSE_PAYMENT,
-    "bank_reconciliation": BANK_RECONCILIATION,
-    "process_invoice_file": PROCESS_INVOICE_FILE,
-    "year_end": YEAR_END,
+    "create_dimension": CREATE_DIMENSION,
 }
 
 TIER1_TASKS = [t for t in ALL_TASKS.values() if t.tier == 1]

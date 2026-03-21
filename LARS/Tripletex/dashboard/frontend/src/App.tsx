@@ -15,6 +15,7 @@ import { CoveragePanel } from "@/components/panels/coverage-panel"
 import { LogsPanel } from "@/components/panels/logs-panel"
 import { TasksPanel } from "@/components/panels/tasks-panel"
 import { AutoFixPanel } from "@/components/panels/auto-fix-panel"
+import { AutoTestPanel } from "@/components/panels/auto-test-panel"
 import { useRuns } from "@/hooks/use-api"
 import type { EvalRun } from "@/types/api"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -111,6 +112,7 @@ function Dashboard() {
             {activePanel === "replay" && <ReplayPanel />}
             {activePanel === "explorer" && <ToolExplorerPanel />}
             {activePanel === "autofix" && <AutoFixPanel />}
+            {activePanel === "autotest" && <AutoTestPanel />}
             {activePanel === "tasks" && <TasksPanel onRunEval={handleRunEvalFromTasks} />}
             {activePanel === "logs" && <LogsPanel />}
             {activePanel === "report" && <ReportPanel batchRuns={batchRuns} />}

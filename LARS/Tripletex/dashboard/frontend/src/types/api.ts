@@ -262,6 +262,69 @@ export type BatchAutoFixEvent =
   | { type: "batch_done"; iterations: number; total_passed: number; total_failed: number; total_logs: number; message: string; failed_logs?: { log_id: number; task_type: string }[] }
   | { type: "error"; message: string }
 
+// Batch task fix types (task picker auto-fix)
+export interface LastEvalResult {
+  task: string
+  lang: string
+  status: "PASS" | "FAIL" | "SKIP"
+  classifier: {
+    task: string
+    predicted: string
+    correct: boolean
+  }
+  prompt?: string
+}
+
+export type BatchTaskFixEvent =
+  | { type: "batch_start"; total: number; task_names: string[] }
+  | { type: "task_start"; index: number; total: number; task_name: string; tier: number }
+  | { type: "attempt_start"; task_name: string; attempt: number; max_attempts: number }
+  | { type: "eval_result"; task_name: string; attempt: number; correctness: number; score: number; max_possible: number; api_calls: number; api_errors: number; elapsed: number; checks: FieldCheck[]; passed: boolean; failed_count: number }
+  | { type: "eval_error"; task_name: string; attempt: number; error: string }
+  | { type: "analyzing"; task_name: string; attempt: number; message: string }
+  | { type: "analyze_error"; task_name: string; attempt: number; error: string }
+  | { type: "no_fixes"; task_name: string; attempt: number }
+  | { type: "applying_fixes"; task_name: string; attempt: number; fix_count: number; fixes: AutoFixParsedFix[] }
+  | { type: "fixes_applied"; task_name: string; attempt: number; results: AutoFixApplyResult[]; applied: number; total: number }
+  | { type: "apply_error"; task_name: string; attempt: number; error: string }
+  | { type: "task_done"; task_name: string; passed: boolean; correctness: number; score: number; max_possible: number; api_calls: number; api_errors: number; index: number; total: number }
+  | { type: "batch_done"; total: number; passed: number; failed: number; results: { task_name: string; passed: boolean; correctness: number; score: number; max_possible: number; api_calls: number; api_errors: number }[] }
+  | { type: "error"; message: string }
+
+// Auto Test types
+export interface AutoTestFieldCheck {
+  field: string
+  points: number
+  max: number
+  passed: boolean
+  detail: string
+}
+
+export interface AutoTestResult {
+  id: number
+  solve_log_id: number
+  task_type: string
+  prompt: string
+  expected_fields: string
+  checks_json: string
+  total_points: number
+  max_points: number
+  correctness: number
+  intent_passed: number
+  intent_reasoning: string
+  issues: string
+  api_calls: number
+  api_errors: number
+  created_at: string
+}
+
+export type AutoTestEvent =
+  | { type: "batch_start"; total: number }
+  | { type: "scoring"; index: number; total: number; log_id: number; task_type: string }
+  | { type: "scored"; log_id: number; task_type: string; correctness: number; intent_passed: boolean; total_points: number; max_points: number; checks: AutoTestFieldCheck[]; intent_reasoning: string }
+  | { type: "error"; log_id: number; error: string }
+  | { type: "batch_done"; total: number; passed: number; failed: number; avg_score: number }
+
 // Log evaluation types
 export type LogEvalEvent =
   | { type: "phase"; phase: string; message: string }

@@ -1,0 +1,398 @@
+[
+  {
+    "task": "create_employee",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_employee",
+      "predicted": "create_employee",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_customer",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_customer",
+      "predicted": "create_customer",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_product",
+    "lang": "no",
+    "status": "FAIL",
+    "classifier": {
+      "task": "create_product",
+      "predicted": "update_department",
+      "correct": false
+    },
+    "prompt": "Hei! Kan du opprette et nytt produkt i systemet for oss? Produktet skal hete 'Konsulenttime - Senior'. Prisen eksklusiv mva er 1850,50 NOK, og vi vil gjerne at du bruker produktnummer 'KONS-001'."
+  },
+  {
+    "task": "create_department",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_department",
+      "predicted": "create_department",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_supplier",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_supplier",
+      "predicted": "create_supplier",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_contact",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_contact",
+      "predicted": "create_contact",
+      "correct": true
+    }
+  },
+  {
+    "task": "update_employee",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "update_employee",
+      "predicted": "update_employee",
+      "correct": true
+    }
+  },
+  {
+    "task": "update_customer",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "update_customer",
+      "predicted": "update_customer",
+      "correct": true
+    }
+  },
+  {
+    "task": "update_product",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "update_product",
+      "predicted": "update_product",
+      "correct": true
+    }
+  },
+  {
+    "task": "update_supplier",
+    "lang": "no",
+    "status": "FAIL",
+    "classifier": {
+      "task": "update_supplier",
+      "predicted": "(fallback)",
+      "correct": false
+    },
+    "prompt": "I forbindelse med et innkjøp gjort 15. mars 2026, ber jeg deg først opprette en ny leverandør med navnet Fjell og Fjord AS og e-postadressen kontakt@fjellogfjord.test.no. Rett etter at leverandøren er opprettet fikk vi en oppdatering fra dem, så du må gå inn og oppdatere kortet deres med det nye tel"
+  },
+  {
+    "task": "update_department",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "update_department",
+      "predicted": "update_department",
+      "correct": true
+    }
+  },
+  {
+    "task": "update_contact",
+    "lang": "no",
+    "status": "FAIL",
+    "classifier": {
+      "task": "update_contact",
+      "predicted": "update_employee",
+      "correct": false
+    },
+    "prompt": "Vi trenger at du registrerer en ny kunde i systemet med navnet Fjordtech AS. Opprett deretter en kontaktperson for denne kunden med navn Lars Hansen og e-postadressen lars.hansen@fjordtech.no. Vi har nettopp fått beskjed om at han foretrekker å bli kontaktet på mobil, så vennligst oppdater kontaktin"
+  },
+  {
+    "task": "create_invoice",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_invoice",
+      "predicted": "create_invoice",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_multi_line_invoice",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_multi_line_invoice",
+      "predicted": "create_multi_line_invoice",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_project",
+    "lang": "no",
+    "status": "FAIL",
+    "classifier": {
+      "task": "create_project",
+      "predicted": "update_department",
+      "correct": false
+    },
+    "prompt": "Hei! Kan du opprette et nytt prosjekt for kunden Fjordkraft IT AS? Prosjektet skal hete 'Oppgradering av nettverk' og har oppstartsdato 10. mars 2026. Legg også inn følgende beskrivelse: Utskifting av alle svitsjer og rutere på hovedkontoret. Takk!"
+  },
+  {
+    "task": "create_travel_expense",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_travel_expense",
+      "predicted": "create_travel_expense",
+      "correct": true
+    }
+  },
+  {
+    "task": "invoice_with_payment",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "invoice_with_payment",
+      "predicted": "invoice_with_payment",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_credit_note",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_credit_note",
+      "predicted": "create_credit_note",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_employee_with_employment",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_employee_with_employment",
+      "predicted": "create_employee_with_employment",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_supplier_invoice",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_supplier_invoice",
+      "predicted": "create_supplier_invoice",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_travel_expense_with_costs",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_travel_expense_with_costs",
+      "predicted": "create_travel_expense_with_costs",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_project_with_pm",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_project_with_pm",
+      "predicted": "create_project_with_pm",
+      "correct": true
+    }
+  },
+  {
+    "task": "delete_travel_expense",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "delete_travel_expense",
+      "predicted": "delete_travel_expense",
+      "correct": true
+    }
+  },
+  {
+    "task": "delete_customer",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "delete_customer",
+      "predicted": "delete_customer",
+      "correct": true
+    }
+  },
+  {
+    "task": "create_ledger_voucher",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_ledger_voucher",
+      "predicted": "create_ledger_voucher",
+      "correct": true
+    }
+  },
+  {
+    "task": "reverse_voucher",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "reverse_voucher",
+      "predicted": "reverse_voucher",
+      "correct": true
+    }
+  },
+  {
+    "task": "delete_invoice",
+    "lang": "no",
+    "status": "FAIL",
+    "classifier": {
+      "task": "delete_invoice",
+      "predicted": "create_credit_note",
+      "correct": false
+    },
+    "prompt": "Vi har dessverre hatt en feilbestilling. Kan du opprette en faktura for kunden Fjellvind AS med e-post kontakt@fjellvind.firma.no for 'Lisensavgift' til 2500 NOK med fakturadato 2026-03-15? Så snart den er opprettet, ber jeg om at du krediterer hele fakturaen umiddelbart, slik at salget reverseres i"
+  },
+  {
+    "task": "create_opening_balance",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "create_opening_balance",
+      "predicted": "create_opening_balance",
+      "correct": true
+    }
+  },
+  {
+    "task": "delete_supplier",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "delete_supplier",
+      "predicted": "delete_supplier",
+      "correct": true
+    }
+  },
+  {
+    "task": "delete_product",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "delete_product",
+      "predicted": "delete_product",
+      "correct": true
+    }
+  },
+  {
+    "task": "delete_department",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "delete_department",
+      "predicted": "delete_department",
+      "correct": true
+    }
+  },
+  {
+    "task": "delete_contact",
+    "lang": "no",
+    "status": "FAIL",
+    "classifier": {
+      "task": "delete_contact",
+      "predicted": "(fallback)",
+      "correct": false
+    },
+    "prompt": "Hei! Henrik Solberg sluttet hos kunden nå i mars 2026, så vi trenger ikke lenger å ha ham oppført som kontaktperson. Vennligst slett ham fra systemet."
+  },
+  {
+    "task": "delete_employee",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "delete_employee",
+      "predicted": "delete_employee",
+      "correct": true
+    }
+  },
+  {
+    "task": "salary",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "salary",
+      "predicted": "salary",
+      "correct": true
+    }
+  },
+  {
+    "task": "project_invoice",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "project_invoice",
+      "predicted": "project_invoice",
+      "correct": true
+    }
+  },
+  {
+    "task": "reverse_payment",
+    "lang": "no",
+    "status": "PASS",
+    "classifier": {
+      "task": "reverse_payment",
+      "predicted": "reverse_payment",
+      "correct": true
+    }
+  },
+  {
+    "task": "bank_reconciliation",
+    "lang": "-",
+    "status": "SKIP",
+    "classifier": {
+      "task": "bank_reconciliation",
+      "predicted": "-",
+      "correct": true
+    }
+  },
+  {
+    "task": "process_invoice_file",
+    "lang": "-",
+    "status": "SKIP",
+    "classifier": {
+      "task": "process_invoice_file",
+      "predicted": "-",
+      "correct": true
+    }
+  },
+  {
+    "task": "year_end",
+    "lang": "-",
+    "status": "SKIP",
+    "classifier": {
+      "task": "year_end",
+      "predicted": "-",
+      "correct": true
+    }
+  }
+]

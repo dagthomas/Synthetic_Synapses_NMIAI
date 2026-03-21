@@ -15,6 +15,11 @@ def build_project_tools(client: TripletexClient) -> dict:
         import logging
         _log = logging.getLogger("projects")
 
+        # Fast path: already ensured in this request
+        cache_key = f"pm_ready_{employee_id}"
+        if client.get_cached(cache_key):
+            return True
+
         _WRITABLE = {
             "id", "version", "firstName", "lastName", "email",
             "phoneNumberMobile", "phoneNumberHome", "phoneNumberWork",
@@ -25,28 +30,30 @@ def build_project_tools(client: TripletexClient) -> dict:
         emp = client.get(f"/employee/{employee_id}", params={"fields": "*"})
         emp_val = emp.get("value", {})
 
-        # Check if employee needs updating (dateOfBirth, userType)
-        needs_update = False
-        body = {k: v for k, v in emp_val.items() if k in _WRITABLE and v is not None}
-        if isinstance(body.get("department"), dict):
-            body["department"] = {"id": body["department"]["id"]}
+        has_dob = bool(emp_val.get("dateOfBirth"))
+        has_extended = emp_val.get("userType") == "EXTENDED"
+        # employments is included in the full employee GET response
+        has_employment = bool(emp_val.get("employments"))
 
-        if not body.get("dateOfBirth"):
-            body["dateOfBirth"] = "1990-01-01"
-            needs_update = True
+        # Already fully set up → skip all setup, cache result
+        if has_dob and has_extended and has_employment:
+            client.set_cached(cache_key, True)
+            return True
 
-        if body.get("userType") not in ("EXTENDED",):
-            body["userType"] = "EXTENDED"
-            needs_update = True
-
-        if needs_update:
+        # Build update body if needed
+        if not has_dob or not has_extended:
+            body = {k: v for k, v in emp_val.items() if k in _WRITABLE and v is not None}
+            if isinstance(body.get("department"), dict):
+                body["department"] = {"id": body["department"]["id"]}
+            if not has_dob:
+                body["dateOfBirth"] = "1990-01-01"
+            if not has_extended:
+                body["userType"] = "EXTENDED"
             client.put(f"/employee/{employee_id}", json=body)
 
-        # Create employment (always needed for fresh employees)
-        today = date.today().isoformat()
-        emp_result = client.get("/employee/employment", params={"employeeId": employee_id, "fields": "id", "count": 1})
-        if not emp_result.get("values"):
-            # Need division for employment — use cache or fetch
+        # Create employment if needed (checked from employee GET, no extra call)
+        if not has_employment:
+            today = date.today().isoformat()
             division_id = client.get_cached("default_division")
             if division_id is None:
                 div_result = client.get("/company/divisions", params={"fields": "id", "count": 1})
@@ -85,11 +92,12 @@ def build_project_tools(client: TripletexClient) -> dict:
             })
             if r.get("error"):
                 msg = str(r.get("message", ""))
-                # If employee lacks EXTENDED userType, all entitlements will fail — stop immediately
                 if "utvidet tilgang" in msg.lower():
                     _log.warning(f"Cannot grant PM entitlements to {employee_id} — needs EXTENDED userType (not settable via PUT)")
                     return False
                 _log.warning(f"Entitlement {eid} failed for employee {employee_id}: {msg}")
+
+        client.set_cached(cache_key, True)
         return True
 
     def create_project(
@@ -122,15 +130,6 @@ def build_project_tools(client: TripletexClient) -> dict:
 
         # Resolve project manager
         pm_id = projectManagerId
-        if pm_id:
-            pm_ready = _ensure_employee_ready(pm_id)
-            if not pm_ready:
-                # PM entitlements failed (e.g. userType not EXTENDED) — fall back to admin
-                import logging
-                logging.getLogger("projects").warning(
-                    f"PM {pm_id} entitlements failed, falling back to admin employee")
-                pm_id = 0
-
         if not pm_id:
             emp_result = client.get("/employee", params={"fields": "id", "count": 1})
             emps = emp_result.get("values", [])
@@ -146,18 +145,35 @@ def build_project_tools(client: TripletexClient) -> dict:
             body["isFixedPrice"] = True
             body["fixedprice"] = fixedPriceAmount
 
+        # Try creating the project first — skip _ensure_employee_ready unless needed
         result = client.post("/project", json=body)
 
-        # If PM access still denied, fall back to admin employee (single retry, no re-entitlement)
-        if (result.get("error")
-                and "prosjektleder" in str(result.get("message", "")).lower()):
-            import logging
-            logging.getLogger("projects").warning("PM access denied, retrying with admin employee")
-            emp_result = client.get("/employee", params={"fields": "id", "count": 1})
-            emps = emp_result.get("values", [])
-            if emps:
-                body["projectManager"] = {"id": emps[0]["id"]}
-                result = client.post("/project", json=body)
+        # If PM access denied, ensure employee is ready and retry once
+        if result.get("error") and pm_id:
+            msg = str(result.get("message", "")).lower()
+            if "prosjektleder" in msg or "tilgang" in msg or "entitlement" in msg:
+                import logging
+                logging.getLogger("projects").warning(
+                    f"PM {pm_id} access denied, running _ensure_employee_ready")
+                # Undo the error count — this is a recoverable retry
+                client._error_count = max(0, client._error_count - 1)
+                for entry in reversed(client._call_log):
+                    if not entry.get("ok") and "/project" in entry.get("url", ""):
+                        entry["ok"] = True
+                        entry["recovered"] = True
+                        break
+                pm_ready = _ensure_employee_ready(pm_id)
+                if pm_ready:
+                    result = client.post("/project", json=body)
+                else:
+                    # Fall back to admin employee
+                    logging.getLogger("projects").warning(
+                        f"PM {pm_id} entitlements failed, falling back to admin employee")
+                    emp_result = client.get("/employee", params={"fields": "id", "count": 1})
+                    emps = emp_result.get("values", [])
+                    if emps:
+                        body["projectManager"] = {"id": emps[0]["id"]}
+                        result = client.post("/project", json=body)
 
         return result
 

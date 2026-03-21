@@ -115,12 +115,15 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
 
         Args:
             invoice_id: The ID of the invoice being paid.
-            amount: The payment amount (including VAT).
+            amount: The payment amount (including VAT). Must be non-zero. Use positive for payment, negative to reverse.
             paymentDate: Payment date in YYYY-MM-DD format.
 
         Returns:
             Confirmation of payment or an error message.
         """
+        if amount == 0:
+            return {"error": True, "message": "Payment amount cannot be 0. The invoice may already be fully paid (amountOutstanding=0). Check amountOutstanding from search_invoices before registering payment."}
+
         # Resolve paymentTypeId (e.g. "Betalt til bank")
         pt_result = client.get("/invoice/paymentType", params={"fields": "id,description", "count": 10})
         payment_types = pt_result.get("values", [])
@@ -132,6 +135,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
                 "paymentDate": paymentDate,
                 "paymentTypeId": payment_type_id,
                 "paidAmount": amount,
+                "paidAmountCurrency": amount,
             },
         )
 
@@ -156,18 +160,16 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         """Search for invoices.
 
         Args:
-            invoiceDateFrom: Filter from date YYYY-MM-DD.
-            invoiceDateTo: Filter to date YYYY-MM-DD.
+            invoiceDateFrom: Filter from date YYYY-MM-DD (defaults to 2000-01-01).
+            invoiceDateTo: Filter to date YYYY-MM-DD (defaults to 2030-12-31).
             customerId: Filter by customer ID (0 for all).
 
         Returns:
             A list of invoices.
         """
-        params = {"fields": "id,invoiceNumber,invoiceDate,invoiceDueDate,customer,amount,amountOutstanding"}
-        if invoiceDateFrom:
-            params["invoiceDateFrom"] = invoiceDateFrom
-        if invoiceDateTo:
-            params["invoiceDateTo"] = invoiceDateTo
+        params = {"fields": "id,invoiceNumber,invoiceDate,invoiceDueDate,customer(id,name),amount,amountOutstanding,amountCurrencyOutstanding,invoiceLines(description,product(name))"}
+        params["invoiceDateFrom"] = invoiceDateFrom or "2000-01-01"
+        params["invoiceDateTo"] = invoiceDateTo or "2030-12-31"
         if customerId:
             params["customerId"] = customerId
         return client.get("/invoice", params=params)

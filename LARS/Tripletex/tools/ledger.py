@@ -50,7 +50,7 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Args:
             date: Voucher date in YYYY-MM-DD format.
             description: Description of the voucher.
-            postings: JSON string of postings, each with 'accountId' (ledger account ID) and 'amount' (positive=debit, negative=credit). Example: '[{"accountId": 123, "amount": 1000}, {"accountId": 456, "amount": -1000}]'. You can also use 'accountNumber' and the tool will look up the account ID. Optionally include 'projectId' or 'departmentId' to link a posting to a project or department dimension.
+            postings: JSON string of postings, each with 'accountId' (ledger account ID) and 'amount' (positive=debit, negative=credit). Example: '[{"accountId": 123, "amount": 1000}, {"accountId": 456, "amount": -1000}]'. You can also use 'accountNumber' and the tool will look up the account ID. Optionally include 'projectId' or 'departmentId' to link a posting to a project or department dimension. For free accounting dimensions, include 'dimensionValueId' (the ID from create_dimension_value) and 'dimensionIndex' (1, 2, or 3) — or just 'dimensionValueId' if already known.
 
         Returns:
             The created voucher with id, or an error message.
@@ -105,6 +105,11 @@ def build_ledger_tools(client: TripletexClient) -> dict:
                 entry["project"] = {"id": p["projectId"]}
             if p.get("departmentId"):
                 entry["department"] = {"id": p["departmentId"]}
+            # Free accounting dimension reference
+            dim_val_id = p.get("dimensionValueId")
+            if dim_val_id:
+                dim_idx = p.get("dimensionIndex", 1)
+                entry[f"freeAccountingDimension{dim_idx}"] = {"id": dim_val_id}
             formatted.append(entry)
         body = {
             "date": date,
@@ -241,6 +246,70 @@ def build_ledger_tools(client: TripletexClient) -> dict:
             body["description"] = description
         return client.put(f"/ledger/voucher/{voucher_id}", json=body)
 
+    # ── Free accounting dimension tools ──────────────────────────────
+
+    def create_accounting_dimension(name: str, description: str = "") -> dict:
+        """Create a free (user-defined) accounting dimension.
+
+        Tripletex supports up to 3 free dimensions (index 1, 2, 3).
+        The next available index is assigned automatically.
+
+        Args:
+            name: The dimension name (e.g. "Marked", "Region").
+            description: Optional description.
+
+        Returns:
+            The created dimension with id and dimensionIndex, or error.
+        """
+        body: dict = {"dimensionName": name}
+        if description:
+            body["description"] = description
+        return client.post("/ledger/accountingDimensionName", json=body)
+
+    def create_dimension_value(dimensionIndex: int, name: str, number: str = "") -> dict:
+        """Create a value for a free accounting dimension.
+
+        Args:
+            dimensionIndex: The dimension index (1, 2, or 3) from create_accounting_dimension.
+            name: Display name (e.g. "Offentlig", "Privat").
+            number: Optional value number/code.
+
+        Returns:
+            The created dimension value with id, or error.
+        """
+        body: dict = {
+            "displayName": name,
+            "dimensionIndex": dimensionIndex,
+            "active": True,
+            "showInVoucherRegistration": True,
+        }
+        if number:
+            body["number"] = number
+        return client.post("/ledger/accountingDimensionValue", json=body)
+
+    def search_accounting_dimensions() -> dict:
+        """List all free accounting dimensions.
+
+        Returns:
+            A list of accounting dimension names with id, dimensionName, dimensionIndex.
+        """
+        return client.get("/ledger/accountingDimensionName",
+                          params={"fields": "id,dimensionName,description,dimensionIndex,active"})
+
+    def search_dimension_values(dimensionIndex: int = 0) -> dict:
+        """Search for dimension values, optionally filtered by dimension index.
+
+        Args:
+            dimensionIndex: Filter by dimension index (1, 2, or 3). 0 for all.
+
+        Returns:
+            A list of dimension values.
+        """
+        params: dict = {"fields": "id,displayName,dimensionIndex,number,active"}
+        if dimensionIndex:
+            params["dimensionIndex"] = dimensionIndex
+        return client.get("/ledger/accountingDimensionValue/search", params=params)
+
     return {
         "get_ledger_accounts": get_ledger_accounts,
         "get_ledger_postings": get_ledger_postings,
@@ -251,4 +320,8 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         "create_opening_balance": create_opening_balance,
         "search_vouchers": search_vouchers,
         "update_voucher": update_voucher,
+        "create_accounting_dimension": create_accounting_dimension,
+        "create_dimension_value": create_dimension_value,
+        "search_accounting_dimensions": search_accounting_dimensions,
+        "search_dimension_values": search_dimension_values,
     }

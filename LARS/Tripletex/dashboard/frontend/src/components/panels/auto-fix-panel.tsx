@@ -1,12 +1,14 @@
-import { useState, useRef, useCallback, useMemo } from "react"
+import { useState, useRef, useCallback, useMemo, useEffect } from "react"
 import { useTasks, useLanguages } from "@/hooks/use-api"
-import { streamAutoFix, applyFixes, streamBatchAutoFix } from "@/lib/api"
+import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix } from "@/lib/api"
 import type {
   AutoFixEvent,
   AutoFixScore,
   AutoFixParsedFix,
   AutoFixApplyResult,
   BatchAutoFixEvent,
+  BatchTaskFixEvent,
+  LastEvalResult,
   FieldCheck,
   ToolCall,
 } from "@/types/api"
@@ -31,20 +33,33 @@ import {
   Copy,
   Check,
   Rocket,
+  ListChecks,
 } from "lucide-react"
 
-type Mode = "single" | "batch"
+type Mode = "tasks" | "batch" | "single"
 
 export function AutoFixPanel() {
-  const [mode, setMode] = useState<Mode>("batch")
+  const [mode, setMode] = useState<Mode>("tasks")
 
   return (
     <div>
       <PageHeader
         title="Auto Fix"
-        description="Replay real solve logs, evaluate with LLM, and auto-fix code until everything passes."
+        description="Pick tasks, run evals, and auto-fix code until everything passes."
       >
         <div className="flex items-center bg-muted/60 rounded-lg p-0.5">
+          <button
+            onClick={() => setMode("tasks")}
+            className={cn(
+              "h-7 px-3 rounded-md text-[12px] font-medium transition-all duration-150 flex items-center gap-1",
+              mode === "tasks"
+                ? "bg-blue-500/20 text-blue-700 shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <ListChecks className="h-3 w-3" />
+            Tasks
+          </button>
           <button
             onClick={() => setMode("batch")}
             className={cn(
@@ -72,8 +87,442 @@ export function AutoFixPanel() {
         </div>
       </PageHeader>
 
-      {mode === "batch" ? <BatchAutoFixView /> : <SingleAutoFixView />}
+      {mode === "tasks" ? <TaskPickerView /> : mode === "batch" ? <BatchAutoFixView /> : <SingleAutoFixView />}
     </div>
+  )
+}
+
+// ── Task Picker View ─────────────────────────────────────────────────
+
+interface TaskRunResult {
+  task_name: string
+  passed: boolean
+  correctness: number
+  score: number
+  max_possible: number
+  api_calls: number
+  api_errors: number
+  currentAttempt?: number
+  status: "pending" | "running" | "done" | "error"
+  error?: string
+}
+
+function TaskPickerView() {
+  const { data: tasks, isLoading } = useTasks()
+  const { data: languages } = useLanguages()
+  const [lastResults, setLastResults] = useState<LastEvalResult[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [language, setLanguage] = useState("")
+  const [maxRetries, setMaxRetries] = useState(2)
+  const [autoApply, setAutoApply] = useState(true)
+  const [running, setRunning] = useState(false)
+  const controllerRef = useRef<AbortController | null>(null)
+
+  // Run state
+  const [runResults, setRunResults] = useState<Map<string, TaskRunResult>>(new Map())
+  const [currentTask, setCurrentTask] = useState("")
+  const [progress, setProgress] = useState(0)
+  const [doneMessage, setDoneMessage] = useState("")
+  const [fixHistory, setFixHistory] = useState<{ task: string; fixes: AutoFixApplyResult[] }[]>([])
+
+  // Load last results on mount
+  useEffect(() => {
+    fetchLastEvalResults().then(setLastResults).catch(() => {})
+  }, [])
+
+  const lastResultsMap = useMemo(() => {
+    const m = new Map<string, LastEvalResult>()
+    for (const r of lastResults) m.set(r.task, r)
+    return m
+  }, [lastResults])
+
+  // Counts
+  const nPass = useMemo(() => [...lastResultsMap.values()].filter(r => r.status === "PASS").length, [lastResultsMap])
+  const nFail = useMemo(() => [...lastResultsMap.values()].filter(r => r.status === "FAIL").length, [lastResultsMap])
+  const nSkip = useMemo(() => [...lastResultsMap.values()].filter(r => r.status === "SKIP").length, [lastResultsMap])
+
+  // Quick select helpers
+  const selectAll = useCallback(() => {
+    if (tasks) setSelected(new Set(tasks.map(t => t.name)))
+  }, [tasks])
+  const selectNone = useCallback(() => setSelected(new Set()), [])
+  const selectFailed = useCallback(() => {
+    setSelected(new Set([...lastResultsMap.entries()].filter(([, r]) => r.status === "FAIL").map(([k]) => k)))
+  }, [lastResultsMap])
+  const selectTier = useCallback((tier: number) => {
+    if (tasks) setSelected(new Set(tasks.filter(t => t.tier === tier).map(t => t.name)))
+  }, [tasks])
+  const toggleTask = useCallback((name: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }, [])
+
+  const handleStart = useCallback(() => {
+    if (selected.size === 0) {
+      toast.error("Select at least one task")
+      return
+    }
+    const taskNames = [...selected]
+    setRunning(true)
+    setDoneMessage("")
+    setFixHistory([])
+    setRunResults(new Map(taskNames.map(n => [n, { task_name: n, passed: false, correctness: 0, score: 0, max_possible: 0, api_calls: 0, api_errors: 0, status: "pending" }])))
+
+    controllerRef.current = streamBatchTaskFix(
+      taskNames,
+      language,
+      maxRetries,
+      autoApply,
+      (event: BatchTaskFixEvent) => {
+        switch (event.type) {
+          case "task_start":
+            setCurrentTask(event.task_name)
+            setProgress(((event.index) / event.total) * 100)
+            setRunResults(prev => {
+              const next = new Map(prev)
+              next.set(event.task_name, { ...next.get(event.task_name)!, status: "running" })
+              return next
+            })
+            break
+
+          case "eval_result":
+            setRunResults(prev => {
+              const next = new Map(prev)
+              const existing = next.get(event.task_name)!
+              next.set(event.task_name, {
+                ...existing,
+                correctness: event.correctness,
+                score: event.score,
+                max_possible: event.max_possible,
+                api_calls: event.api_calls,
+                api_errors: event.api_errors,
+                passed: event.passed,
+                currentAttempt: event.attempt,
+              })
+              return next
+            })
+            break
+
+          case "fixes_applied":
+            setFixHistory(prev => [...prev, { task: event.task_name, fixes: event.results }])
+            break
+
+          case "task_done":
+            setProgress(((event.index + 1) / event.total) * 100)
+            setRunResults(prev => {
+              const next = new Map(prev)
+              next.set(event.task_name, {
+                task_name: event.task_name,
+                passed: event.passed,
+                correctness: event.correctness,
+                score: event.score,
+                max_possible: event.max_possible,
+                api_calls: event.api_calls,
+                api_errors: event.api_errors,
+                status: "done",
+              })
+              return next
+            })
+            break
+
+          case "batch_done":
+            setDoneMessage(`Done: ${event.passed}/${event.total} passed`)
+            setCurrentTask("")
+            break
+
+          case "eval_error":
+            setRunResults(prev => {
+              const next = new Map(prev)
+              next.set(event.task_name, { ...next.get(event.task_name)!, status: "error", error: event.error })
+              return next
+            })
+            break
+
+          case "error":
+            toast.error(event.message)
+            break
+        }
+      },
+      () => setRunning(false),
+      (err) => {
+        toast.error(err)
+        setRunning(false)
+      }
+    )
+  }, [selected, language, maxRetries, autoApply])
+
+  const handleStop = useCallback(() => {
+    controllerRef.current?.abort()
+    setRunning(false)
+  }, [])
+
+  if (isLoading) {
+    return <div className="space-y-4"><Skeleton className="h-8 w-48" /><Skeleton className="h-80 w-full rounded-xl" /></div>
+  }
+
+  const tierGroups = [1, 2, 3].map(tier => ({
+    tier,
+    tasks: (tasks ?? []).filter(t => t.tier === tier),
+  }))
+
+  const runResultsList = [...runResults.values()]
+  const rPass = runResultsList.filter(r => r.passed).length
+  const rFail = runResultsList.filter(r => r.status === "done" && !r.passed).length
+
+  return (
+    <div className="space-y-4">
+      {/* Controls bar */}
+      <Card className="shadow-premium">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                <ListChecks className="h-4 w-4 text-blue-700" />
+              </div>
+              <div>
+                <p className="text-[13px] font-semibold">Task Picker</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Last eval: {nPass} pass, {nFail} fail, {nSkip} skip
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Language */}
+              <select
+                value={language}
+                onChange={e => setLanguage(e.target.value)}
+                disabled={running}
+                className="h-7 px-2 rounded-md border text-[11px] bg-background"
+              >
+                <option value="">Random lang</option>
+                {languages && Object.entries(languages).map(([code]) => (
+                  <option key={code} value={code}>{code}</option>
+                ))}
+              </select>
+              {/* Retries */}
+              <div className="flex items-center gap-1">
+                <label className="text-[11px] text-muted-foreground">Retries</label>
+                <input
+                  type="number" min={1} max={5} value={maxRetries}
+                  onChange={e => setMaxRetries(Math.max(1, parseInt(e.target.value) || 1))}
+                  disabled={running}
+                  className="w-10 h-7 text-[11px] text-center tabular-nums border rounded-md bg-background"
+                />
+              </div>
+              {/* Auto-apply toggle */}
+              <label className="flex items-center gap-1 text-[11px]">
+                <input
+                  type="checkbox" checked={autoApply}
+                  onChange={e => setAutoApply(e.target.checked)}
+                  disabled={running}
+                  className="rounded"
+                />
+                Auto-fix
+              </label>
+              {/* Run button */}
+              {running ? (
+                <Button variant="destructive" size="sm" onClick={handleStop}>Stop</Button>
+              ) : (
+                <Button
+                  onClick={handleStart}
+                  disabled={selected.size === 0}
+                  size="sm"
+                  className="h-8 px-4 font-semibold bg-gradient-to-r from-blue-500 to-cyan-500 hover:shadow-lg hover:shadow-blue-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  <Wrench className="h-3.5 w-3.5 mr-1.5" />
+                  Run {selected.size} task{selected.size !== 1 ? "s" : ""}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Quick select buttons */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] text-muted-foreground mr-1">Select:</span>
+            <button onClick={selectAll} className="h-6 px-2 rounded text-[11px] bg-muted hover:bg-muted/80 transition-colors">All</button>
+            <button onClick={selectNone} className="h-6 px-2 rounded text-[11px] bg-muted hover:bg-muted/80 transition-colors">None</button>
+            <button onClick={selectFailed} disabled={nFail === 0} className="h-6 px-2 rounded text-[11px] bg-red-100 text-red-700 hover:bg-red-200 transition-colors disabled:opacity-40">Failed ({nFail})</button>
+            <span className="text-muted-foreground">|</span>
+            <button onClick={() => selectTier(1)} className="h-6 px-2 rounded text-[11px] bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors">T1</button>
+            <button onClick={() => selectTier(2)} className="h-6 px-2 rounded text-[11px] bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors">T2</button>
+            <button onClick={() => selectTier(3)} className="h-6 px-2 rounded text-[11px] bg-red-100 text-red-700 hover:bg-red-200 transition-colors">T3</button>
+          </div>
+
+          {/* Progress bar when running */}
+          {(running || doneMessage) && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[12px]">
+                <div className="flex items-center gap-2">
+                  {running && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />}
+                  {doneMessage ? (
+                    <span className="font-medium">{doneMessage}</span>
+                  ) : currentTask ? (
+                    <span className="text-muted-foreground">Running <span className="font-medium text-foreground">{currentTask}</span>...</span>
+                  ) : (
+                    <span className="text-muted-foreground">Starting...</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 tabular-nums">
+                  {rPass > 0 && <span className="text-emerald-600 font-semibold">{rPass} pass</span>}
+                  {rFail > 0 && <span className="text-red-600 font-semibold">{rFail} fail</span>}
+                </div>
+              </div>
+              <Progress value={progress} className="h-1.5" />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Task grid by tier */}
+      {tierGroups.map(({ tier, tasks: tierTasks }) => (
+        <Card key={tier}>
+          <CardContent className="p-0">
+            <div className="px-4 py-2 border-b bg-muted/20 flex items-center justify-between">
+              <span className="text-[12px] font-semibold">
+                Tier {tier}
+                <span className="text-muted-foreground font-normal ml-1.5">
+                  ({tierTasks.length} tasks)
+                </span>
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                {tierTasks.filter(t => selected.has(t.name)).length} selected
+              </span>
+            </div>
+            <div className="divide-y">
+              {tierTasks.map(task => {
+                const lr = lastResultsMap.get(task.name)
+                const rr = runResults.get(task.name)
+                const isSelected = selected.has(task.name)
+                return (
+                  <TaskRow
+                    key={task.name}
+                    name={task.name}
+                    tier={tier}
+                    description={task.description}
+                    maxPoints={task.max_points}
+                    lastStatus={lr?.status}
+                    classifierOk={lr?.classifier?.correct}
+                    runResult={rr}
+                    isSelected={isSelected}
+                    onToggle={() => toggleTask(task.name)}
+                    disabled={running}
+                  />
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+
+      {/* Fix history */}
+      {fixHistory.length > 0 && (
+        <Card className="shadow-premium border-orange-200">
+          <CardContent className="p-4 space-y-3">
+            <h3 className="text-[14px] font-semibold flex items-center gap-2">
+              <FileCode className="h-4 w-4 text-orange-500" />
+              Applied Fixes ({fixHistory.reduce((s, f) => s + f.fixes.filter(a => a.applied).length, 0)})
+            </h3>
+            <div className="space-y-2">
+              {fixHistory.map((fh, i) => (
+                <div key={i} className="rounded-lg border p-3 space-y-1.5">
+                  <span className="text-[12px] font-medium">{fh.task}</span>
+                  {fh.fixes.map((a, j) => (
+                    <div key={j} className={cn("text-[11px] px-2 py-1 rounded", a.applied ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
+                      {a.applied ? <><CheckCircle2 className="h-3 w-3 inline mr-1" />{a.file}: {a.reason}</> : <><AlertTriangle className="h-3 w-3 inline mr-1" />{a.file}: {a.error}</>}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+function TaskRow({
+  name, tier, description, maxPoints,
+  lastStatus, classifierOk, runResult, isSelected, onToggle, disabled,
+}: {
+  name: string
+  tier: number
+  description: string
+  maxPoints: number
+  lastStatus?: "PASS" | "FAIL" | "SKIP"
+  classifierOk?: boolean
+  runResult?: TaskRunResult
+  isSelected: boolean
+  onToggle: () => void
+  disabled: boolean
+}) {
+  const tierColor = tier === 1 ? "emerald" : tier === 2 ? "amber" : "red"
+
+  // Determine status badge from run result or last result
+  let statusBadge: React.ReactNode = null
+  if (runResult?.status === "running") {
+    statusBadge = (
+      <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-600">
+        <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
+        {runResult.currentAttempt && runResult.currentAttempt > 1 ? `Retry ${runResult.currentAttempt}` : "Running"}
+      </Badge>
+    )
+  } else if (runResult?.status === "done") {
+    statusBadge = runResult.passed ? (
+      <Badge className="text-[10px] bg-emerald-500">
+        <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+        {(runResult.correctness * 100).toFixed(0)}%
+      </Badge>
+    ) : (
+      <Badge variant="destructive" className="text-[10px]">
+        <XCircle className="h-2.5 w-2.5 mr-0.5" />
+        {(runResult.correctness * 100).toFixed(0)}%
+      </Badge>
+    )
+  } else if (runResult?.status === "error") {
+    statusBadge = <Badge variant="destructive" className="text-[10px]">Error</Badge>
+  } else if (lastStatus === "PASS") {
+    statusBadge = <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-600">PASS</Badge>
+  } else if (lastStatus === "FAIL") {
+    statusBadge = <Badge variant="outline" className="text-[10px] border-red-300 text-red-600">FAIL</Badge>
+  } else if (lastStatus === "SKIP") {
+    statusBadge = <Badge variant="outline" className="text-[10px] text-muted-foreground">SKIP</Badge>
+  }
+
+  return (
+    <button
+      onClick={onToggle}
+      disabled={disabled}
+      className={cn(
+        "w-full flex items-center gap-3 px-4 py-2 text-left text-[12px] transition-colors",
+        isSelected ? "bg-blue-50/80" : "hover:bg-muted/30",
+        disabled && "opacity-60"
+      )}
+    >
+      <input
+        type="checkbox"
+        checked={isSelected}
+        readOnly
+        className="rounded border-gray-300 pointer-events-none"
+      />
+      <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", `bg-${tierColor}-500`)} />
+      <span className="font-medium w-[260px] truncate">{name.replace(/_/g, " ")}</span>
+      <span className="text-muted-foreground flex-1 truncate">{description}</span>
+      <span className="tabular-nums text-muted-foreground w-[50px] text-right shrink-0">{maxPoints}p</span>
+      {classifierOk === false && (
+        <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600 shrink-0">cls</Badge>
+      )}
+      <div className="w-[70px] flex justify-end shrink-0">{statusBadge}</div>
+      {runResult?.status === "done" && (
+        <span className="tabular-nums text-[11px] text-muted-foreground w-[80px] text-right shrink-0">
+          {runResult.score}/{runResult.max_possible} | {runResult.api_calls}c
+        </span>
+      )}
+    </button>
   )
 }
 

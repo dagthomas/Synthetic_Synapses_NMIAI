@@ -82,6 +82,26 @@ def init_db():
             source TEXT
         );
         """)
+        # auto_test_results table
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS auto_test_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            solve_log_id INTEGER,
+            task_type TEXT,
+            prompt TEXT,
+            expected_fields TEXT,
+            checks_json TEXT,
+            total_points INTEGER DEFAULT 0,
+            max_points INTEGER DEFAULT 0,
+            correctness REAL DEFAULT 0,
+            intent_passed INTEGER DEFAULT 0,
+            intent_reasoning TEXT,
+            issues TEXT,
+            api_calls INTEGER DEFAULT 0,
+            api_errors INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+        """)
         conn.commit()
 
 
@@ -346,3 +366,79 @@ def get_solve_log_by_id(log_id: int) -> dict | None:
         if not row:
             return None
         return dict(row)
+
+
+# ── auto_test_results CRUD ─────────────────────────────────────────
+
+def init_auto_test_table():
+    """Create auto_test_results table if not exists."""
+    with closing(get_conn()) as conn:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS auto_test_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            solve_log_id INTEGER,
+            task_type TEXT,
+            prompt TEXT,
+            expected_fields TEXT,
+            checks_json TEXT,
+            total_points INTEGER DEFAULT 0,
+            max_points INTEGER DEFAULT 0,
+            correctness REAL DEFAULT 0,
+            intent_passed INTEGER DEFAULT 0,
+            intent_reasoning TEXT,
+            issues TEXT,
+            api_calls INTEGER DEFAULT 0,
+            api_errors INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+        """)
+        conn.commit()
+
+
+def create_auto_test_result(*, solve_log_id, task_type, prompt, expected_fields,
+                            checks_json, total_points, max_points, correctness,
+                            intent_passed, intent_reasoning, issues,
+                            api_calls=0, api_errors=0):
+    with closing(get_conn()) as conn:
+        cur = conn.execute(
+            """INSERT INTO auto_test_results
+               (solve_log_id, task_type, prompt, expected_fields, checks_json,
+                total_points, max_points, correctness, intent_passed,
+                intent_reasoning, issues, api_calls, api_errors, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (solve_log_id, task_type, prompt, expected_fields, checks_json,
+             total_points, max_points, correctness, int(intent_passed),
+             intent_reasoning, issues, api_calls, api_errors, _now()),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_auto_test_results(limit=200):
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM auto_test_results ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_auto_test_result_by_log_id(solve_log_id: int) -> dict | None:
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT * FROM auto_test_results WHERE solve_log_id = ? ORDER BY id DESC LIMIT 1",
+            (solve_log_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def delete_auto_test_result(result_id: int):
+    with closing(get_conn()) as conn:
+        conn.execute("DELETE FROM auto_test_results WHERE id = ?", (result_id,))
+        conn.commit()
+
+
+def delete_all_auto_test_results():
+    with closing(get_conn()) as conn:
+        cur = conn.execute("DELETE FROM auto_test_results")
+        conn.commit()
+        return cur.rowcount

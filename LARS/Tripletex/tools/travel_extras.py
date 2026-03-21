@@ -38,6 +38,8 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
             "amountCurrencyIncVat": amount,
             "paymentType": {"id": paymentType_id},
         }
+        if description:
+            body["description"] = description
         if date:
             body["date"] = date
         if category:
@@ -120,6 +122,8 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
             "travelExpense": {"id": travel_expense_id},
             "location": location,
         }
+        if date:
+            body["date"] = date
         if rateType_id:
             body["rateType"] = {"id": rateType_id}
         if accommodation:

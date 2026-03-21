@@ -14,6 +14,7 @@ import {
   Wrench,
   Radio,
   FlaskConical,
+  ClipboardCheck,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -28,6 +29,7 @@ export type PanelId =
   | "replay"
   | "explorer"
   | "autofix"
+  | "autotest"
   | "tasks"
   | "logs"
   | "report"
@@ -47,8 +49,9 @@ interface NavItem {
 const LIVE_NAV: NavItem[] = [
   { id: "logs", label: "Solve Logs", icon: ScrollText, shortcut: "1" },
   { id: "tasks", label: "Tasks", icon: ListChecks, shortcut: "2" },
-  { id: "coverage", label: "API Coverage", icon: Shield, shortcut: "3" },
-  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "4" },
+  { id: "autotest", label: "Auto Tester", icon: ClipboardCheck, shortcut: "3" },
+  { id: "coverage", label: "API Coverage", icon: Shield, shortcut: "4" },
+  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "5" },
 ]
 
 const EVAL_NAV: NavItem[] = [

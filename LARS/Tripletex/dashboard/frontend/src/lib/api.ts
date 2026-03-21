@@ -120,7 +120,60 @@ export const deleteAllLogs = () =>
 export const fetchLogJson = (logId: number) =>
   request<Record<string, unknown>>(`/api/logs/${logId}/json`)
 
-// Auto Fix
+// Auto Fix — Last Results
+export const fetchLastEvalResults = () =>
+  request<import("@/types/api").LastEvalResult[]>("/api/auto-fix/last-results")
+
+// Auto Fix — Batch Task Fix
+export function streamBatchTaskFix(
+  taskNames: string[],
+  language: string,
+  maxRetries: number,
+  autoApply: boolean,
+  onEvent: (event: import("@/types/api").BatchTaskFixEvent) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+): AbortController {
+  const controller = new AbortController()
+  fetch("/api/auto-fix/batch-tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_names: taskNames, language, max_retries: maxRetries, auto_apply: autoApply }),
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }))
+        onError(body.error || res.statusText)
+        return
+      }
+      const reader = res.body?.getReader()
+      if (!reader) { onError("No response body"); return }
+      const decoder = new TextDecoder()
+      let buffer = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data === "[DONE]") { onDone(); return }
+            try { onEvent(JSON.parse(data)) } catch { /* skip malformed */ }
+          }
+        }
+      }
+      onDone()
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError(String(err))
+    })
+  return controller
+}
+
+// Auto Fix — Single Task
 export function streamAutoFix(
   taskName: string,
   language: string,
@@ -250,6 +303,65 @@ export function subscribeLiveEvents(
       source?.close()
     },
   }
+}
+
+// Auto Test
+export const fetchAutoTestResults = (limit = 200) =>
+  request<import("@/types/api").AutoTestResult[]>(`/api/auto-test/results?limit=${limit}`)
+
+export const fetchAutoTestLogs = (limit = 200) =>
+  request<import("@/types/api").SolveLog[]>(`/api/auto-test/logs?limit=${limit}`)
+
+export const scoreAutoTestLog = (solveLogId: number) =>
+  post<Record<string, unknown>>("/api/auto-test/score-log", { solve_log_id: solveLogId })
+
+export const deleteAutoTestResults = () =>
+  request<{ ok: boolean; deleted: number }>("/api/auto-test/results", { method: "DELETE" })
+
+export function streamAutoTestBatch(
+  logIds: number[],
+  limit: number,
+  onEvent: (event: import("@/types/api").AutoTestEvent) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+): AbortController {
+  const controller = new AbortController()
+  fetch("/api/auto-test/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ log_ids: logIds, limit }),
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }))
+        onError(body.error || res.statusText)
+        return
+      }
+      const reader = res.body?.getReader()
+      if (!reader) { onError("No response body"); return }
+      const decoder = new TextDecoder()
+      let buffer = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data === "[DONE]") { onDone(); return }
+            try { onEvent(JSON.parse(data)) } catch { /* skip malformed */ }
+          }
+        }
+      }
+      onDone()
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError(String(err))
+    })
+  return controller
 }
 
 // Log Evaluation
