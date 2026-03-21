@@ -3,6 +3,7 @@ __pycache__/
 .env
 .pytest_cache/
 dashboard/dashboard.db
+dashboard/.ainm_cookie
 dashboard/frontend/node_modules/
 dashboard/frontend/dist/
 payloads/
