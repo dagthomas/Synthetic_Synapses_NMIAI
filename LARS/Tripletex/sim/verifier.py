@@ -1106,9 +1106,9 @@ def verify_supplier_invoice(
 ) -> dict:
     """Verify a supplier invoice creation task.
 
-    The tool creates a ledger voucher (since POST /supplierInvoice is broken).
-    Verifies: supplier exists, voucher with matching description/date exists,
-    and postings include the supplier reference.
+    The tool creates a ledger voucher (POST /supplierInvoice doesn't exist).
+    Verifies: supplier exists with correct fields, voucher with matching
+    description/date exists, and postings include correct amounts.
     """
     checks = []
     entity_ids = []
@@ -1139,14 +1139,24 @@ def verify_supplier_invoice(
         search_params["dateTo"] = "2026-12-31"
 
     vouchers = _search_entity(client, "ledger/voucher", search_params)
-    # Match voucher by invoice number in description
+    # Match voucher by invoice number in description or vendorInvoiceNumber
     voucher = None
     if inv_number:
         for v in vouchers:
             desc = (v.get("description") or "").lower()
-            if inv_number.lower() in desc:
+            vendor_inv = (v.get("vendorInvoiceNumber") or "").lower()
+            if inv_number.lower() in desc or inv_number.lower() == vendor_inv:
                 voucher = v
                 break
+
+    # Get voucher detail with postings if found
+    voucher_detail = None
+    if voucher:
+        voucher_detail = client.get(
+            f"/ledger/voucher/{voucher['id']}",
+            params={"fields": "id,postings(*)"},
+        )
+        voucher_detail = voucher_detail.get("value", voucher_detail)
 
     for fc in task_def.field_checks:
         if fc.field == "_supplier_found":
@@ -1177,6 +1187,32 @@ def verify_supplier_invoice(
             ))
             continue
 
+        if fc.field == "supplier_org_number" and "supplier_org_number" in expected:
+            passed = False
+            if supplier:
+                passed = _fields_match(supplier.get("organizationNumber"), expected["supplier_org_number"])
+            checks.append(_make_check(
+                "supplier_org_number", fc.points if passed else 0, fc.points, passed,
+                f"expected={expected['supplier_org_number']}",
+            ))
+            continue
+
+        if fc.field == "supplier_bank_account" and "supplier_bank_account" in expected:
+            passed = False
+            if supplier:
+                bank_accounts = supplier.get("bankAccountPresentation", [])
+                for ba in bank_accounts:
+                    if isinstance(ba, dict):
+                        acct_num = ba.get("bankAccountNumber", "")
+                        if _fields_match(acct_num, expected["supplier_bank_account"]):
+                            passed = True
+                            break
+            checks.append(_make_check(
+                "supplier_bank_account", fc.points if passed else 0, fc.points, passed,
+                f"expected={expected['supplier_bank_account']}",
+            ))
+            continue
+
         if fc.field == "invoice_date" and "invoice_date" in expected:
             passed = False
             if voucher:
@@ -1187,11 +1223,52 @@ def verify_supplier_invoice(
             ))
             continue
 
+        if fc.field == "due_date" and "due_date" in expected:
+            passed = False
+            if voucher_detail:
+                # Check postings for termOfPayment matching due date
+                for p in voucher_detail.get("postings", []):
+                    term = p.get("termOfPayment", "")
+                    if term and _fields_match(term, expected["due_date"]):
+                        passed = True
+                        break
+            checks.append(_make_check(
+                "due_date", fc.points if passed else 0, fc.points, passed,
+                f"expected={expected['due_date']}",
+            ))
+            continue
+
         if fc.field == "invoice_number" and "invoice_number" in expected:
             passed = voucher is not None  # already matched by description
             checks.append(_make_check(
                 "invoice_number", fc.points if passed else 0, fc.points, passed,
                 f"expected={expected['invoice_number']}",
+            ))
+            continue
+
+        if fc.field == "line_description" and "line_description" in expected:
+            passed = False
+            if voucher:
+                desc = (voucher.get("description") or "").lower()
+                if expected["line_description"].lower() in desc:
+                    passed = True
+            checks.append(_make_check(
+                "line_description", fc.points if passed else 0, fc.points, passed,
+                f"expected={expected['line_description']}",
+            ))
+            continue
+
+        if fc.field == "amount" and "amount_including_vat" in expected:
+            passed = False
+            if voucher_detail:
+                for p in voucher_detail.get("postings", []):
+                    amt_gross = abs(float(p.get("amountGross", 0) or 0))
+                    if _fields_match(amt_gross, expected["amount_including_vat"]):
+                        passed = True
+                        break
+            checks.append(_make_check(
+                "amount", fc.points if passed else 0, fc.points, passed,
+                f"expected={expected.get('amount_including_vat')}",
             ))
             continue
 
@@ -1536,7 +1613,8 @@ def verify_task(
 
     # Invoice tasks (Tier 2)
     if name in ("create_invoice", "create_multi_line_invoice",
-                 "invoice_with_payment", "create_credit_note", "delete_invoice"):
+                 "invoice_with_payment", "order_to_invoice_with_payment",
+                 "create_credit_note", "delete_invoice"):
         return verify_invoice(client, task_def, expected)
 
     # Project creation (Tier 2)
@@ -1580,8 +1658,8 @@ def verify_task(
     if name == "reverse_voucher":
         return verify_reverse_voucher(client, task_def, expected, pre_created_id)
 
-    # Salary (Tier 3)
-    if name == "salary":
+    # Salary with bonus (Tier 3)
+    if name == "salary_with_bonus":
         return verify_salary(client, task_def, expected)
 
     # Project invoice (Tier 2)

@@ -107,6 +107,7 @@ def build_project_tools(client: TripletexClient) -> dict:
         startDate: str = "",
         description: str = "",
         fixedPriceAmount: float = 0.0,
+        isInternal: bool = False, # Added parameter
     ) -> dict:
         """Create a project in Tripletex.
 
@@ -144,6 +145,8 @@ def build_project_tools(client: TripletexClient) -> dict:
         if fixedPriceAmount > 0:
             body["isFixedPrice"] = True
             body["fixedprice"] = fixedPriceAmount
+        if isInternal: # Added logic to set isInternal
+            body["isInternal"] = True
 
         # Try creating the project first — skip _ensure_employee_ready unless needed
         result = client.post("/project", json=body)
@@ -317,6 +320,23 @@ def build_project_tools(client: TripletexClient) -> dict:
         }
         return client.post("/voucher", json=body)
 
+    def create_activity(name: str, project_id: int) -> dict:
+        """Create an activity for a project.
+
+        Args:
+            name: Name of the activity.
+            project_id: ID of the project this activity belongs to.
+
+        Returns:
+            The created activity or an error message.
+        """
+        body = {
+            "name": name,
+            "project": {"id": project_id},
+            "isInactive": False, # Activities are typically active by default
+        }
+        return client.post("/project/activity", json=body)
+
     return {
         "create_project": create_project,
         "search_projects": search_projects,
@@ -325,4 +345,5 @@ def build_project_tools(client: TripletexClient) -> dict:
         "create_project_category": create_project_category,
         "search_project_categories": search_project_categories,
         "create_project_participant": create_project_participant,
+        "create_activity": create_activity, # Add the new tool
     }

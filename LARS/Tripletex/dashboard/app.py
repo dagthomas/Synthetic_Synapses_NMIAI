@@ -8,7 +8,7 @@ import sys
 from contextlib import asynccontextmanager
 from glob import glob
 
-from fastapi import FastAPI, Query
+from fastapi import Body, FastAPI, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -1402,11 +1402,13 @@ def tasks_live_summary():
     live_stats = db.get_live_task_stats()
     live_by_type = {s["task_type"]: s for s in live_stats}
     sample_prompts = db.get_sample_prompts_by_task()
+    manual_checks = db.get_all_manual_checks()
 
     result = []
     seen_types = set()
     for name, td in ALL_TASKS.items():
         seen_types.add(name)
+        mc = manual_checks.get(name, {})
         entry = {
             "name": name,
             "tier": td.tier,
@@ -1414,6 +1416,8 @@ def tasks_live_summary():
             "baseline_calls": td.baseline_calls,
             "field_count": len(td.field_checks),
             "max_points": sum(fc.points for fc in td.field_checks),
+            "manual_checks_passed": mc.get("checks_passed"),
+            "manual_checks_total": mc.get("checks_total"),
         }
         stats = live_by_type.get(name, {})
         entry["live_runs"] = stats.get("run_count", 0)
@@ -1430,6 +1434,7 @@ def tasks_live_summary():
     for task_type, stats in live_by_type.items():
         if task_type in seen_types:
             continue
+        mc = manual_checks.get(task_type, {})
         result.append({
             "name": task_type,
             "tier": 0,  # unknown tier
@@ -1437,6 +1442,8 @@ def tasks_live_summary():
             "baseline_calls": 0,
             "field_count": 0,
             "max_points": 0,
+            "manual_checks_passed": mc.get("checks_passed"),
+            "manual_checks_total": mc.get("checks_total"),
             "live_runs": stats.get("run_count", 0),
             "avg_api_calls": stats.get("avg_api_calls"),
             "avg_api_errors": stats.get("avg_api_errors"),
@@ -1447,6 +1454,15 @@ def tasks_live_summary():
             "sample_prompt": sample_prompts.get(task_type),
         })
     return result
+
+
+@app.put("/api/tasks/{task_name}/checks")
+def update_task_manual_checks(task_name: str, body: dict = Body(...)):
+    """Set manual test checks (e.g. 4/8) for a task."""
+    passed = body.get("checks_passed", 0)
+    total = body.get("checks_total", 0)
+    db.set_manual_checks(task_name, int(passed), int(total))
+    return {"ok": True, "task_name": task_name, "checks_passed": passed, "checks_total": total}
 
 
 # ── API: Classification Stats ──────────────────────────────────────
@@ -2078,7 +2094,7 @@ _META_CHECKS: dict[str, tuple[str, str, str | None]] = {
     "_customer_found":    ("/customer",                   "POST", None),
     "_invoice_found":     ("/invoice",                    "POST", None),
     "_payment_found":     ("/:payment",                   "PUT",  None),
-    "_credit_note_found": ("/:createCreditNote",          "POST", None),
+    "_credit_note_found": ("/:createCreditNote",          "PUT",  None),
     "_supplier_found":    ("/supplier",                   "POST", None),
     "_employee_found":    ("/employee",                   "POST", None),
     "_cost_found":        ("/travelExpense/cost",         "POST", None),
@@ -2407,6 +2423,30 @@ async def fetch_scores_from_api(req: FetchScoresRequest):
         "total_score": total_score,
         "rank": rank,
     }
+
+
+# ── Translation ──────────────────────────────────────────────────
+
+class TranslateRequest(BaseModel):
+    text: str
+    target_lang: str = "no"
+
+
+@app.post("/api/translate")
+async def translate_text(req: TranslateRequest):
+    """Translate a prompt to the target language using Gemini Flash."""
+    from google import genai
+    from config import GOOGLE_API_KEY
+
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+    lang_names = {"no": "Norwegian (bokmål)", "en": "English", "de": "German", "fr": "French", "es": "Spanish", "pt": "Portuguese", "nn": "Nynorsk"}
+    lang_name = lang_names.get(req.target_lang, req.target_lang)
+
+    resp = client.models.generate_content(
+        model="gemini-2.0-flash-001",
+        contents=f"Translate the following text to {lang_name}. Return ONLY the translation, nothing else.\n\n{req.text}",
+    )
+    return {"translation": resp.text.strip()}
 
 
 # ── SPA catch-all ─────────────────────────────────────────────────

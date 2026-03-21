@@ -101,6 +101,13 @@ export const fetchCoverage = () =>
 export const fetchTasksLiveSummary = () =>
   request<TaskLiveSummary[]>("/api/tasks/live-summary")
 
+export const updateTaskManualChecks = (taskName: string, checksPassed: number, checksTotal: number) =>
+  request<{ ok: boolean }>(`/api/tasks/${encodeURIComponent(taskName)}/checks`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ checks_passed: checksPassed, checks_total: checksTotal }),
+  })
+
 // Seed Data (export/import)
 export const exportSeedData = () =>
   post<{ ok: boolean; total: number; tables: Record<string, number> }>("/api/seed/export", {})
@@ -439,6 +446,10 @@ export const fetchScoreAuthStatus = () =>
 
 export const fetchScoreMappings = () =>
   request<Record<string, import("@/types/api").TaskMapping>>("/api/scores/mappings")
+
+// Translation
+export const translatePrompt = (text: string, targetLang = "no") =>
+  post<{ translation: string }>("/api/translate", { text, target_lang: targetLang })
 
 // Log Evaluation
 export function streamLogEval(

@@ -183,7 +183,7 @@ Every 4xx error costs 0.15 from the efficiency bonus. Fewer API calls = higher b
 - `bank_reconciliation` (2-4 calls) — extract file + bank accounts + vouchers
 - `process_invoice_file` (4-5 calls) — extract file + create invoice
 - `year_end` (2-4 calls)
-- `salary` (2-3 calls)
+- `salary_with_bonus` (3-4 calls)
 
 ## Key Design Decisions
 

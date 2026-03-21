@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react"
 import { useTasksLiveSummary, useLanguages } from "@/hooks/use-api"
-import { startBatch } from "@/lib/api"
+import { startBatch, translatePrompt, updateTaskManualChecks } from "@/lib/api"
 import type { TaskLiveSummary } from "@/types/api"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent } from "@/components/ui/card"
@@ -30,6 +30,7 @@ import {
   Square,
   CheckSquare,
   Download,
+  Languages,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -48,7 +49,7 @@ interface TasksPanelProps {
 }
 
 export function TasksPanel({ onRunEval }: TasksPanelProps) {
-  const { data: tasks, isLoading } = useTasksLiveSummary()
+  const { data: tasks, isLoading, mutate } = useTasksLiveSummary()
   const { data: languages } = useLanguages()
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all")
   const [tierFilter, setTierFilter] = useState<TierFilter>("all")
@@ -112,6 +113,15 @@ export function TasksPanel({ onRunEval }: TasksPanelProps) {
     }
     onRunEval?.([...selectedForEval])
   }, [selectedForEval, onRunEval])
+
+  const handleChecksUpdate = useCallback(async (taskName: string, passed: number, total: number) => {
+    try {
+      await updateTaskManualChecks(taskName, passed, total)
+      mutate()
+    } catch (err) {
+      toast.error("Failed to save: " + (err as Error).message)
+    }
+  }, [mutate])
 
   const handleExport = useCallback(() => {
     if (!tasks || tasks.length === 0) {
@@ -404,6 +414,7 @@ export function TasksPanel({ onRunEval }: TasksPanelProps) {
                 <TableHead className="w-20 font-semibold text-right">Baseline</TableHead>
                 <TableHead className="w-20 font-semibold text-right">Errors</TableHead>
                 <TableHead className="w-20 font-semibold text-right">Avg Time</TableHead>
+                <TableHead className="w-20 font-semibold text-center">Tests</TableHead>
                 <TableHead className="w-24 font-semibold text-right">Last Run</TableHead>
               </TableRow>
             </TableHeader>
@@ -416,7 +427,7 @@ export function TasksPanel({ onRunEval }: TasksPanelProps) {
                   <>
                     {showSep && (
                       <TableRow key="separator" className="border-0">
-                        <TableCell colSpan={10} className="py-3 px-4">
+                        <TableCell colSpan={11} className="py-3 px-4">
                           <div className="flex items-center gap-2">
                             <div className="h-px flex-1 bg-border" />
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
@@ -433,6 +444,7 @@ export function TasksPanel({ onRunEval }: TasksPanelProps) {
                       task={t}
                       selected={selectedForEval.has(t.name)}
                       onToggle={() => toggleEvalTask(t.name)}
+                      onChecksUpdate={handleChecksUpdate}
                     />
                   </>
                 )
@@ -445,8 +457,13 @@ export function TasksPanel({ onRunEval }: TasksPanelProps) {
   )
 }
 
-function TaskRow({ task: t, selected, onToggle }: { task: TaskLiveSummary; selected: boolean; onToggle: () => void }) {
+function TaskRow({ task: t, selected, onToggle, onChecksUpdate }: { task: TaskLiveSummary; selected: boolean; onToggle: () => void; onChecksUpdate: (taskName: string, passed: number, total: number) => void }) {
   const [expanded, setExpanded] = useState(false)
+  const [translation, setTranslation] = useState<string | null>(null)
+  const [translating, setTranslating] = useState(false)
+  const [checksInput, setChecksInput] = useState(
+    t.manual_checks_total != null ? `${t.manual_checks_passed ?? 0}/${t.manual_checks_total}` : ""
+  )
   const isReal = t.live_runs > 0
   const avgCalls = t.avg_api_calls != null ? t.avg_api_calls.toFixed(1) : "-"
   const efficiency =
@@ -557,17 +574,70 @@ function TaskRow({ task: t, selected, onToggle }: { task: TaskLiveSummary; selec
           "-"
         )}
       </TableCell>
+      <TableCell className="py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+        <Input
+          value={checksInput}
+          onChange={(e) => setChecksInput(e.target.value)}
+          onBlur={() => {
+            const m = checksInput.trim().match(/^(\d+)\s*\/\s*(\d+)$/)
+            if (m) {
+              onChecksUpdate(t.name, parseInt(m[1]), parseInt(m[2]))
+            } else if (checksInput.trim() === "") {
+              onChecksUpdate(t.name, 0, 0)
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+          }}
+          placeholder="0/0"
+          className={cn(
+            "w-16 h-6 text-[11px] text-center tabular-nums px-1 mx-auto",
+            t.manual_checks_total != null && t.manual_checks_total > 0 && t.manual_checks_passed === t.manual_checks_total
+              ? "border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold"
+              : t.manual_checks_total != null && t.manual_checks_total > 0
+              ? "border-amber-300 bg-amber-50 text-amber-700 font-semibold"
+              : ""
+          )}
+        />
+      </TableCell>
       <TableCell className="py-2.5 text-right text-[10px] text-muted-foreground">
         {t.last_run ? formatRelative(t.last_run) : "-"}
       </TableCell>
     </TableRow>
     {expanded && t.sample_prompt && (
       <TableRow className="bg-muted/30">
-        <TableCell colSpan={10} className="py-3 px-6">
+        <TableCell colSpan={11} className="py-3 px-6">
           <div className="text-[11px]">
-            <span className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">
-              Sample prompt from competition:
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">
+                Sample prompt from competition:
+              </span>
+              {!translation && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setTranslating(true)
+                    translatePrompt(t.sample_prompt!).then(r => {
+                      setTranslation(r.translation)
+                      setTranslating(false)
+                    }).catch(() => setTranslating(false))
+                  }}
+                  disabled={translating}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
+                >
+                  {translating ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Languages className="h-2.5 w-2.5" />}
+                  Oversett
+                </button>
+              )}
+            </div>
+            {translation && (
+              <div className="mt-2 rounded border border-blue-200 bg-blue-50/50 p-2">
+                <span className="font-semibold text-blue-600 uppercase tracking-wider text-[10px]">Norsk oversettelse:</span>
+                <pre className="mt-1 whitespace-pre-wrap text-blue-900/80 font-mono text-[11px] leading-relaxed max-h-40 overflow-y-auto">
+                  {translation}
+                </pre>
+              </div>
+            )}
             <pre className="mt-1.5 whitespace-pre-wrap text-foreground/80 font-mono text-[11px] leading-relaxed max-h-40 overflow-y-auto">
               {t.sample_prompt}
             </pre>

@@ -1,0 +1,2126 @@
+"""Static pipeline runner — deterministic task execution with LLM extraction.
+
+Instead of running a multi-turn LLM agent (4-10 round-trips), static mode:
+1. Classifies the task type (reuses tool_router.classify_task)
+2. Extracts structured parameters in ONE Gemini call
+3. Executes a hardcoded pipeline of tool calls deterministically
+4. Falls back to agent mode on any error
+"""
+
+import json
+import logging
+import os
+from datetime import date
+
+log = logging.getLogger(__name__)
+
+# ── Configuration ────────────────────────────────────────────────
+EXTRACTION_MODEL = "gemini-2.5-flash"
+EXTRACTION_TEMPERATURE = 0.0
+
+# ── Exceptions ───────────────────────────────────────────────────
+
+class ExtractionError(Exception):
+    """LLM extraction failed — required field missing or invalid JSON."""
+
+
+class PipelineError(Exception):
+    """A tool call in the pipeline failed."""
+
+
+# ── Helpers ──────────────────────────────────────────────────────
+
+def _val(result):
+    """Extract value dict from tool result, raise on error."""
+    if isinstance(result, dict) and result.get("error"):
+        raise PipelineError(result.get("message", str(result)))
+    return result.get("value", result) if isinstance(result, dict) else result
+
+
+def _id(result):
+    """Get entity ID from tool result."""
+    v = _val(result)
+    return v["id"] if isinstance(v, dict) and "id" in v else None
+
+
+def _version(result):
+    """Get entity version from tool result."""
+    v = _val(result)
+    return v.get("version", -1) if isinstance(v, dict) else -1
+
+
+def _first(result, entity="entity", name_match: str = ""):
+    """Get first result from a search response, raise if empty.
+
+    If name_match is provided, filters results by exact name (case-insensitive)
+    before picking the first. This is critical because Tripletex search APIs
+    sometimes return ALL entities instead of filtering by name.
+    """
+    if isinstance(result, dict) and result.get("error"):
+        raise PipelineError(result.get("message", str(result)))
+    vals = result.get("values", [])
+    if not vals:
+        raise PipelineError(f"No {entity} found")
+    if name_match:
+        target = name_match.strip().lower()
+        for v in vals:
+            if v.get("name", "").strip().lower() == target:
+                return v
+    return vals[0]
+
+
+def _today():
+    return date.today().isoformat()
+
+
+def _call(ctx, tools, tool_name, **kwargs):
+    """Call a tool, track step, emit event, raise on error."""
+    turn = len(ctx["steps"]) + 1
+    # Filter None values from kwargs so tools use their defaults
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    if ctx.get("emit_fn"):
+        ctx["emit_fn"]({"type": "tool_call", "request_id": ctx.get("request_id", ""),
+                        "turn": turn, "tool": tool_name, "args": kwargs})
+    result = tools[tool_name](**kwargs)
+    is_err = isinstance(result, dict) and result.get("error")
+    ctx["steps"].append({
+        "tool": tool_name,
+        "args": kwargs,
+        "result": {"ok": not is_err, "data": str(result)[:500]},
+    })
+    if ctx.get("emit_fn"):
+        ctx["emit_fn"]({"type": "tool_result", "request_id": ctx.get("request_id", ""),
+                        "turn": turn, "tool": tool_name, "ok": not is_err,
+                        "error": result.get("message", "") if is_err else ""})
+    if is_err:
+        raise PipelineError(f"{tool_name}: {result.get('message', result)}")
+    return result
+
+
+# ── Extraction Schemas ──────────────────────────────────────────
+# Per task type: fields to extract + context hints for the LLM.
+
+SCHEMAS = {
+    # ── Group A: Single-call creates ────────────────────────────
+    "create_employee": {
+        "fields": {
+            "firstName": {"type": "str", "required": True},
+            "lastName": {"type": "str", "required": True},
+            "email": {"type": "str", "required": True},
+            "userType": {"type": "str", "required": False, "default": "STANDARD",
+                         "hint": "EXTENDED if kontoadministrator/administrator, NO_ACCESS if ingen tilgang"},
+            "dateOfBirth": {"type": "date", "required": False, "default": ""},
+            "phoneNumberMobile": {"type": "str", "required": False, "default": ""},
+        },
+        "context": "kontoadministrator/administrator -> userType=EXTENDED. ingen tilgang/no login -> NO_ACCESS.",
+    },
+    "create_customer": {
+        "fields": {
+            "name": {"type": "str", "required": True},
+            "email": {"type": "str", "required": False, "default": ""},
+            "organizationNumber": {"type": "str", "required": False, "default": ""},
+            "phoneNumber": {"type": "str", "required": False, "default": ""},
+            "addressLine1": {"type": "str", "required": False, "default": ""},
+            "postalCode": {"type": "str", "required": False, "default": ""},
+            "city": {"type": "str", "required": False, "default": ""},
+        },
+    },
+    "create_product": {
+        "fields": {
+            "name": {"type": "str", "required": True},
+            "priceExcludingVatCurrency": {"type": "float", "required": True,
+                                          "hint": "Price EXCLUDING VAT"},
+            "productNumber": {"type": "str", "required": False, "default": ""},
+            "vatPercentage": {"type": "int", "required": False, "default": 25,
+                              "hint": "25=standard, 15=food/mat, 12=transport, 0=exempt"},
+        },
+        "context": "Extract ONLY priceExcludingVatCurrency. If only incl VAT given, divide by (1 + rate/100).",
+    },
+    "create_supplier": {
+        "fields": {
+            "name": {"type": "str", "required": True},
+            "email": {"type": "str", "required": False, "default": ""},
+            "organizationNumber": {"type": "str", "required": False, "default": ""},
+            "phoneNumber": {"type": "str", "required": False, "default": ""},
+            "addressLine1": {"type": "str", "required": False, "default": ""},
+            "postalCode": {"type": "str", "required": False, "default": ""},
+            "city": {"type": "str", "required": False, "default": ""},
+        },
+    },
+    "create_department": {
+        "fields": {
+            "name": {"type": "str", "required": True},
+            "departmentNumber": {"type": "str", "required": False, "default": ""},
+        },
+    },
+
+    # ── Group B: Updates + contacts ─────────────────────────────
+    "create_contact": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True, "hint": "Company/customer name"},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "firstName": {"type": "str", "required": True, "hint": "Contact person first name"},
+            "lastName": {"type": "str", "required": True, "hint": "Contact person last name"},
+            "email": {"type": "str", "required": True, "hint": "Contact person email"},
+            "phoneNumberMobile": {"type": "str", "required": False, "default": ""},
+        },
+    },
+    "update_employee": {
+        "fields": {
+            "firstName": {"type": "str", "required": True, "hint": "Employee first name"},
+            "lastName": {"type": "str", "required": True, "hint": "Employee last name"},
+            "email": {"type": "str", "required": True, "hint": "Employee email (for lookup)"},
+            "new_phoneNumberMobile": {"type": "str", "required": False, "default": "",
+                                      "hint": "New phone number to set"},
+        },
+    },
+    "update_customer": {
+        "fields": {
+            "name": {"type": "str", "required": True, "hint": "Customer name (for lookup/create)"},
+            "email": {"type": "str", "required": False, "default": "",
+                       "hint": "Customer email (for create)"},
+            "new_email": {"type": "str", "required": False, "default": ""},
+            "new_phoneNumber": {"type": "str", "required": False, "default": ""},
+        },
+    },
+    "update_product": {
+        "fields": {
+            "name": {"type": "str", "required": True, "hint": "Product name (for lookup/create)"},
+            "priceExcludingVatCurrency": {"type": "float", "required": False, "default": 0,
+                                          "hint": "Original price excl VAT for create"},
+            "new_name": {"type": "str", "required": False, "default": ""},
+            "new_priceExcludingVatCurrency": {"type": "float", "required": False, "default": 0,
+                                               "hint": "New price excl VAT"},
+        },
+    },
+    "update_supplier": {
+        "fields": {
+            "name": {"type": "str", "required": True, "hint": "Supplier name (for lookup/create)"},
+            "email": {"type": "str", "required": False, "default": ""},
+            "new_email": {"type": "str", "required": False, "default": ""},
+            "new_phoneNumber": {"type": "str", "required": False, "default": ""},
+        },
+    },
+    "update_department": {
+        "fields": {
+            "name": {"type": "str", "required": True, "hint": "Department name (for lookup/create)"},
+            "departmentNumber": {"type": "str", "required": False, "default": ""},
+            "new_name": {"type": "str", "required": False, "default": ""},
+            "new_departmentNumber": {"type": "str", "required": False, "default": ""},
+        },
+    },
+    "update_contact": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "firstName": {"type": "str", "required": True, "hint": "Contact first name"},
+            "lastName": {"type": "str", "required": True, "hint": "Contact last name"},
+            "email": {"type": "str", "required": True, "hint": "Contact email (for create)"},
+            "new_email": {"type": "str", "required": False, "default": ""},
+            "new_phoneNumberMobile": {"type": "str", "required": False, "default": ""},
+        },
+    },
+
+    # ── Group C: Invoice workflows ──────────────────────────────
+    "create_invoice": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "product_name": {"type": "str", "required": True},
+            "product_number": {"type": "str", "required": False, "default": "",
+                              "hint": "Product number/SKU if given."},
+            "product_price": {"type": "float", "required": True, "hint": "Price EXCLUDING VAT"},
+            "quantity": {"type": "int", "required": False, "default": 1},
+            "vat_percentage": {"type": "int", "required": False, "default": 25},
+            "invoice_date": {"type": "date", "required": False, "hint": "Default today"},
+            "due_date": {"type": "date", "required": False, "hint": "Default = invoice_date"},
+            "send_invoice": {"type": "bool", "required": False, "default": False,
+                            "hint": "True if prompt says send/og send/enviar/senden/envoyer"},
+        },
+        "context": "VAT: 25=standard, 15=food/mat, 12=transport, 0=exempt. Only extract priceExcludingVat.",
+    },
+    "create_multi_line_invoice": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "products": {"type": "list", "required": True,
+                         "hint": "Array of objects: [{name: str, price: float (excl VAT), quantity: int, vat_percentage: int}]"},
+            "invoice_date": {"type": "date", "required": False, "hint": "Default today"},
+            "due_date": {"type": "date", "required": False, "hint": "Default = invoice_date"},
+            "send_invoice": {"type": "bool", "required": False, "default": False,
+                            "hint": "True if prompt says send/og send/enviar/senden/envoyer"},
+        },
+        "context": "VAT: 25=standard, 15=food/mat, 12=transport, 0=exempt. Only extract priceExcludingVat per product.",
+    },
+    "invoice_with_payment": {
+        "fields": {
+            "is_existing_invoice": {"type": "bool", "required": True,
+                                    "hint": "True if prompt says customer HAS an unpaid invoice. False if creating new."},
+            "customer_name": {"type": "str", "required": True},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "product_name": {"type": "str", "required": False, "default": "",
+                            "hint": "Single product name. Ignore if multiple products (use 'products' list instead)."},
+            "product_number": {"type": "str", "required": False, "default": "",
+                              "hint": "Product number/SKU if given."},
+            "product_price": {"type": "float", "required": False, "default": 0},
+            "products": {"type": "list", "required": False, "default": None,
+                        "hint": "Array of product objects when prompt lists MULTIPLE products: [{name, number, price, quantity, vat_percentage}]. null if single product."},
+            "quantity": {"type": "int", "required": False, "default": 1},
+            "vat_percentage": {"type": "int", "required": False, "default": 25},
+            "invoice_date": {"type": "date", "required": False, "hint": "Default today"},
+            "due_date": {"type": "date", "required": False, "hint": "Default = invoice_date"},
+            "payment_date": {"type": "date", "required": False, "hint": "Default today"},
+            "foreign_currency": {"type": "str", "required": False, "default": "",
+                                "hint": "Currency code (EUR/USD/GBP) if prompt involves foreign currency. Empty if NOK only."},
+            "foreign_amount": {"type": "float", "required": False, "default": 0,
+                              "hint": "Invoice amount in foreign currency (e.g. 12301 for '12301 EUR'). 0 if NOK."},
+            "old_exchange_rate": {"type": "float", "required": False, "default": 0,
+                                 "hint": "Exchange rate at invoice time (e.g. 10.83 for 'kursen var 10.83 NOK/EUR'). 0 if NOK."},
+            "new_exchange_rate": {"type": "float", "required": False, "default": 0,
+                                 "hint": "Exchange rate at payment time (e.g. 11.83 for 'kursen er 11.83 NOK/EUR'). 0 if NOK."},
+        },
+        "context": "If prompt says 'has unpaid invoice'/'har en ubetalt faktura'/'facture impayee' -> is_existing_invoice=true. "
+                   "If prompt lists MULTIPLE products, use the 'products' array and leave product_name/product_price empty. "
+                   "VAT: 25=standard, 15=food/mat, 12=transport, 0=exempt. Only extract priceExcludingVat. "
+                   "CURRENCY: If prompt mentions EUR/USD/GBP + exchange rates + agio/disagio/valutadifferanse, "
+                   "extract foreign_currency, foreign_amount, old_exchange_rate, new_exchange_rate.",
+    },
+    "create_credit_note": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "product_name": {"type": "str", "required": True},
+            "product_price": {"type": "float", "required": True},
+            "quantity": {"type": "int", "required": False, "default": 1},
+            "vat_percentage": {"type": "int", "required": False, "default": 25},
+            "invoice_date": {"type": "date", "required": False},
+            "due_date": {"type": "date", "required": False},
+        },
+    },
+    "delete_invoice": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "product_name": {"type": "str", "required": True},
+            "product_price": {"type": "float", "required": True},
+            "quantity": {"type": "int", "required": False, "default": 1},
+            "vat_percentage": {"type": "int", "required": False, "default": 25},
+            "invoice_date": {"type": "date", "required": False},
+            "due_date": {"type": "date", "required": False},
+        },
+    },
+
+    # ── Group D: Employment/travel/supplier ─────────────────────
+    "create_travel_expense": {
+        "fields": {
+            "firstName": {"type": "str", "required": True},
+            "lastName": {"type": "str", "required": True},
+            "email": {"type": "str", "required": True},
+            "title": {"type": "str", "required": True, "hint": "Travel expense title/description"},
+            "departureDate": {"type": "date", "required": True},
+            "returnDate": {"type": "date", "required": True},
+        },
+    },
+    "create_travel_expense_with_costs": {
+        "fields": {
+            "firstName": {"type": "str", "required": True},
+            "lastName": {"type": "str", "required": True},
+            "email": {"type": "str", "required": True},
+            "title": {"type": "str", "required": True},
+            "departureDate": {"type": "date", "required": True},
+            "returnDate": {"type": "date", "required": True},
+            "per_diem_rate": {"type": "float", "required": False, "default": 0,
+                              "hint": "Daily allowance rate (diett/Tagegeld/per diem)"},
+            "costs": {"type": "list", "required": False, "default": [],
+                       "hint": "Array of {amount: float, category: str (transport/food/other)}"},
+            "mileage_km": {"type": "float", "required": False, "default": 0,
+                           "hint": "Kilometers for mileage allowance (kjoeregodtgjoerelse)"},
+        },
+        "context": "Tagegeld/diett = per diem. Auslagen/utlegg = expense costs. ONE per diem call covers the full trip.",
+    },
+    "create_employee_with_employment": {
+        "fields": {
+            "firstName": {"type": "str", "required": True},
+            "lastName": {"type": "str", "required": True},
+            "email": {"type": "str", "required": True},
+            "dateOfBirth": {"type": "date", "required": False, "default": "",
+                           "hint": "Date of birth (fodselsdato/né le/geboren am) in YYYY-MM-DD"},
+            "startDate": {"type": "date", "required": True, "hint": "Employment start date"},
+            "annualSalary": {"type": "float", "required": False, "default": 0},
+            "hoursPerDay": {"type": "float", "required": False, "default": 0},
+            "leave_startDate": {"type": "date", "required": False, "default": ""},
+            "leave_endDate": {"type": "date", "required": False, "default": ""},
+            "leave_type": {"type": "str", "required": False, "default": "",
+                          "hint": "MILITARY_SERVICE, PARENTAL_LEAVE, EDUCATION, COMPASSIONATE, FURLOUGH, OTHER"},
+            "leave_percentage": {"type": "float", "required": False, "default": 100},
+            "jobTitle": {"type": "str", "required": False, "default": ""},
+            "occupationCode": {"type": "str", "required": False, "default": ""},
+        },
+    },
+    "create_supplier_invoice": {
+        "fields": {
+            "supplier_name": {"type": "str", "required": True},
+            "supplier_org_number": {"type": "str", "required": False, "default": ""},
+            "invoice_number": {"type": "str", "required": False, "default": ""},
+            "amount_including_vat": {"type": "float", "required": True},
+            "expense_account": {"type": "int", "required": True,
+                                "hint": "Expense account number e.g. 6590, 4000, 6300, 6800"},
+            "vat_percentage": {"type": "int", "required": False, "default": 25},
+            "invoice_date": {"type": "date", "required": True},
+        },
+        "context": "Common accounts: 4000=varekostnad, 6300=leie, 6590=annet driftsmateriale, 6800=kontorrekvisita.",
+    },
+
+    # ── Group E: Delete tasks ───────────────────────────────────
+    "delete_customer": {
+        "fields": {"name": {"type": "str", "required": True, "hint": "Customer name to delete"}},
+    },
+    "delete_supplier": {
+        "fields": {"name": {"type": "str", "required": True, "hint": "Supplier name to delete"}},
+    },
+    "delete_product": {
+        "fields": {"name": {"type": "str", "required": True, "hint": "Product name to delete"}},
+    },
+    "delete_department": {
+        "fields": {"name": {"type": "str", "required": True, "hint": "Department name to delete"}},
+    },
+    "delete_contact": {
+        "fields": {
+            "firstName": {"type": "str", "required": True},
+            "lastName": {"type": "str", "required": True},
+        },
+    },
+    "delete_employee": {
+        "fields": {
+            "firstName": {"type": "str", "required": True},
+            "lastName": {"type": "str", "required": True},
+        },
+    },
+    "delete_travel_expense": {
+        "fields": {
+            "employee_firstName": {"type": "str", "required": False, "default": ""},
+            "employee_lastName": {"type": "str", "required": False, "default": ""},
+            "title": {"type": "str", "required": False, "default": "",
+                       "hint": "Travel expense title to identify it"},
+        },
+    },
+
+    # ── Group F: Complex tasks ──────────────────────────────────
+    "create_ledger_voucher": {
+        "fields": {
+            "date": {"type": "date", "required": True, "hint": "Voucher date. Use the last day of the period mentioned (e.g. Feb -> 2026-02-28)."},
+            "corrections": {"type": "list", "required": True,
+                            "hint": "Array of correction objects. EACH error = one SEPARATE object. "
+                                    "Format: [{description: str, postings: [{accountNumber: str, amount: float}]}]. "
+                                    "Each object's postings must balance (sum=0). Positive=debit, negative=credit. "
+                                    "CRITICAL: N errors in the prompt = N objects in this array. NEVER combine."},
+        },
+        "context": """CRITICAL: Each error becomes ONE separate correction object. N errors = N objects in the array.
+
+CORRECTION PATTERNS (apply these rules to compute postings):
+
+1. WRONG ACCOUNT (e.g. "Konto 7300 statt 7000, Betrag 7300"):
+   The amount was booked to wrong account, should be on correct account.
+   Postings: [{accountNumber: CORRECT, amount: +AMOUNT}, {accountNumber: WRONG, amount: -AMOUNT}]
+   Example: [{accountNumber: "7000", amount: 7300}, {accountNumber: "7300", amount: -7300}]
+   Description: "Korreksjon: feil konto WRONG→CORRECT"
+
+2. DUPLICATE ENTRY (e.g. "doppelter Beleg, Konto 7000, Betrag 4600"):
+   An entry was booked twice, reverse the duplicate.
+   Postings: [{accountNumber: EXPENSE, amount: -AMOUNT}, {accountNumber: "1920", amount: +AMOUNT}]
+   Example: [{accountNumber: "7000", amount: -4600}, {accountNumber: "1920", amount: 4600}]
+   Description: "Korreksjon: duplikat konto EXPENSE"
+
+3. MISSING VAT LINE (e.g. "fehlende MwSt, Konto 6540, Betrag ohne MwSt 15600, fehlende MwSt auf 2710"):
+   Net amount was booked but the VAT line (25%) is missing. Bank was underpaid by VAT amount.
+   VAT = net_amount * 0.25
+   Postings: [{accountNumber: "2710", amount: +VAT}, {accountNumber: "1920", amount: -VAT}]
+   Example (net=15600, VAT=3900): [{accountNumber: "2710", amount: 3900}, {accountNumber: "1920", amount: -3900}]
+   Description: "Korreksjon: manglende MVA konto EXPENSE"
+
+4. WRONG AMOUNT (e.g. "falscher Betrag, Konto 6540, 15200 gebucht statt 13400"):
+   Too much was booked. Reverse the excess (booked - correct).
+   EXCESS = booked_amount - correct_amount
+   Postings: [{accountNumber: EXPENSE, amount: -EXCESS}, {accountNumber: "1920", amount: +EXCESS}]
+   Example (15200-13400=1800): [{accountNumber: "6540", amount: -1800}, {accountNumber: "1920", amount: 1800}]
+   Description: "Korreksjon: feil beløp konto EXPENSE"
+
+Counter-account is usually 1920 (bank). Use 1500 for receivables, 2400 for payables.""",
+    },
+    "reverse_voucher": {
+        "fields": {
+            "search_description": {"type": "str", "required": False, "default": "",
+                                   "hint": "Voucher description to search for"},
+            "search_dateFrom": {"type": "date", "required": False, "default": ""},
+            "search_dateTo": {"type": "date", "required": False, "default": ""},
+            "reversal_date": {"type": "date", "required": False, "hint": "Date for the reversal"},
+        },
+    },
+    "reverse_payment": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True},
+            "payment_date": {"type": "date", "required": False, "hint": "Date for the reversal"},
+        },
+        "context": "Reverse by registering NEGATIVE payment amount. Search invoices to find the one to reverse.",
+    },
+    "create_opening_balance": {
+        "fields": {
+            "date": {"type": "date", "required": True, "hint": "Opening balance date (first day of month)"},
+            "postings": {"type": "list", "required": True,
+                         "hint": "Array of {accountNumber: str, amount: float}"},
+        },
+    },
+    "create_dimension": {
+        "fields": {
+            "dimension_name": {"type": "str", "required": True, "hint": "Name of the accounting dimension"},
+            "values": {"type": "list", "required": True,
+                       "hint": "Array of dimension value names (strings)"},
+            "voucher_date": {"type": "date", "required": False, "default": ""},
+            "voucher_description": {"type": "str", "required": False, "default": ""},
+            "voucher_postings": {"type": "list", "required": False, "default": [],
+                                 "hint": "Array of {accountNumber: str, amount: float, dimensionValueName: str}"},
+        },
+        "context": "Fri rekneskapsdimensjon/custom accounting dimension. Create dimension, then values, then optionally a voucher linked to a value.",
+    },
+    "create_project": {
+        "fields": {
+            "project_name": {"type": "str", "required": True},
+            "customer_name": {"type": "str", "required": True},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "pm_firstName": {"type": "str", "required": False, "default": ""},
+            "pm_lastName": {"type": "str", "required": False, "default": ""},
+            "pm_email": {"type": "str", "required": False, "default": ""},
+            "startDate": {"type": "date", "required": False},
+            "fixedPriceAmount": {"type": "float", "required": False, "default": 0},
+        },
+    },
+    "create_project_with_pm": {
+        "fields": {
+            "project_name": {"type": "str", "required": True},
+            "customer_name": {"type": "str", "required": True},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "pm_firstName": {"type": "str", "required": True},
+            "pm_lastName": {"type": "str", "required": True},
+            "pm_email": {"type": "str", "required": True},
+            "startDate": {"type": "date", "required": False},
+            "fixedPriceAmount": {"type": "float", "required": False, "default": 0},
+        },
+    },
+    "project_invoice": {
+        "fields": {
+            "project_name": {"type": "str", "required": True},
+            "customer_name": {"type": "str", "required": True},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "pm_firstName": {"type": "str", "required": False, "default": ""},
+            "pm_lastName": {"type": "str", "required": False, "default": ""},
+            "pm_email": {"type": "str", "required": False, "default": ""},
+            "startDate": {"type": "date", "required": False},
+            "fixedPriceAmount": {"type": "float", "required": False, "default": 0},
+            "product_name": {"type": "str", "required": False, "default": ""},
+            "product_price": {"type": "float", "required": False, "default": 0},
+            "invoice_date": {"type": "date", "required": False},
+            "due_date": {"type": "date", "required": False},
+            "send_invoice": {"type": "bool", "required": False, "default": False},
+        },
+    },
+    "project_lifecycle": {
+        "fields": {
+            "project_name": {"type": "str", "required": True},
+            "customer_name": {"type": "str", "required": True},
+            "customer_org_number": {"type": "str", "required": False, "default": ""},
+            "pm_firstName": {"type": "str", "required": False, "default": ""},
+            "pm_lastName": {"type": "str", "required": False, "default": ""},
+            "pm_email": {"type": "str", "required": False, "default": ""},
+            "budget": {"type": "float", "required": False, "default": 0},
+            "employees": {"type": "list", "required": False, "default": [],
+                          "hint": "Array of {firstName, lastName, email, hours}"},
+            "supplier_name": {"type": "str", "required": False, "default": ""},
+            "supplier_org_number": {"type": "str", "required": False, "default": ""},
+            "supplier_cost": {"type": "float", "required": False, "default": 0},
+            "create_customer_invoice": {"type": "bool", "required": False, "default": False},
+        },
+    },
+    "salary_with_bonus": {
+        "fields": {
+            "firstName": {"type": "str", "required": True},
+            "lastName": {"type": "str", "required": True},
+            "email": {"type": "str", "required": False, "default": "",
+                      "hint": "Employee email. Generate as firstname.lastname@example.com if not given"},
+            "dateOfBirth": {"type": "date", "required": False, "default": "",
+                            "hint": "Date of birth YYYY-MM-DD"},
+            "department_name": {"type": "str", "required": False, "default": "",
+                                "hint": "Department/avdeling name"},
+            "startDate": {"type": "date", "required": False, "default": "",
+                          "hint": "Employment start date (tiltredelse) YYYY-MM-DD"},
+            "annualSalary": {"type": "float", "required": False, "default": 0,
+                             "hint": "Annual salary (arslonn)"},
+            "percentageOfFullTimeEquivalent": {"type": "float", "required": False, "default": 100,
+                                               "hint": "FTE percentage (stillingsprosent)"},
+            "hoursPerDay": {"type": "float", "required": False, "default": 0,
+                            "hint": "Standard working hours per day (arbeidstid)"},
+            "year": {"type": "int", "required": True,
+                     "hint": "Salary year — derive from startDate or current year"},
+            "month": {"type": "int", "required": True,
+                      "hint": "Salary month 1-12 — derive from startDate month"},
+            "base_salary": {"type": "float", "required": False, "default": 0,
+                            "hint": "Monthly base salary (Fastlonn). If 0, auto-derived from annualSalary/12"},
+            "bonus": {"type": "float", "required": False, "default": 0,
+                      "hint": "Bonus amount"},
+        },
+        "context": "Extract employee data from offer letter (tilbudsbrev) or salary prompt. "
+                   "If email is missing, generate as firstname.lastname@example.com (lowercase). "
+                   "year and month should come from startDate if present. "
+                   "If only annualSalary is given (no explicit base_salary), set base_salary to 0 — it will be auto-derived.",
+    },
+    "year_end": {
+        "fields": {
+            "voucher_date": {"type": "date", "required": True, "hint": "Year-end date e.g. 2025-12-31"},
+            "assets": {"type": "list", "required": False, "default": [],
+                       "hint": "Array of {name, cost, years, expense_account, depreciation_account}"},
+            "prepaid_expenses": {"type": "list", "required": False, "default": [],
+                                 "hint": "Array of {amount, prepaid_account, expense_account}"},
+            "tax_rate": {"type": "float", "required": False, "default": 0.22},
+            "tax_expense_account": {"type": "str", "required": False, "default": "8700"},
+            "tax_liability_account": {"type": "str", "required": False, "default": "2920"},
+            "taxable_profit": {"type": "float", "required": False, "default": 0},
+            "year_end_note": {"type": "str", "required": False, "default": ""},
+        },
+    },
+    "reminder_fee": {
+        "fields": {
+            "fee_amount": {"type": "float", "required": True, "hint": "Reminder fee amount in NOK (e.g. 35)"},
+            "debit_account": {"type": "str", "required": False, "default": "1500",
+                              "hint": "Debit account number (e.g. 1500 kundefordringer)"},
+            "credit_account": {"type": "str", "required": False, "default": "3400",
+                               "hint": "Credit account number (e.g. 3400 purregebyr-inntekt)"},
+            "partial_payment_amount": {"type": "float", "required": False, "default": 0,
+                                       "hint": "Partial payment amount on the overdue invoice (0 if none)"},
+            "send_invoice": {"type": "bool", "required": False, "default": False,
+                            "hint": "True if prompt says send/envoyer/senden/enviar"},
+        },
+        "context": "Reminder fee task. Extract fee amount and account numbers. "
+                   "partial_payment_amount = any partial payment on the overdue invoice (delbetaling/paiement partiel). "
+                   "send_invoice = true if prompt says to send the reminder fee invoice.",
+    },
+    "bank_reconciliation": {
+        "fields": {
+            "filename": {"type": "str", "required": True,
+                         "hint": "Filename of the CSV/PDF bank statement attachment"},
+        },
+        "context": "Extract ONLY the filename of the bank statement attachment. "
+                   "The pipeline will read and parse the CSV content itself.",
+    },
+    "process_invoice_file": {
+        "fields": {
+            "customer_name": {"type": "str", "required": True},
+            "customer_email": {"type": "str", "required": False, "default": ""},
+            "product_name": {"type": "str", "required": True},
+            "product_price": {"type": "float", "required": True},
+            "quantity": {"type": "int", "required": False, "default": 1},
+            "vat_percentage": {"type": "int", "required": False, "default": 25},
+            "invoice_date": {"type": "date", "required": False},
+            "due_date": {"type": "date", "required": False},
+        },
+    },
+}
+
+
+# ── Parameter Extraction (ONE Gemini call) ──────────────────────
+
+_genai_client = None
+
+
+def _get_genai_client():
+    global _genai_client
+    if _genai_client is None:
+        from google import genai
+        _genai_client = genai.Client()
+    return _genai_client
+
+
+def extract_params(prompt: str, task_type: str) -> dict:
+    """Extract structured parameters from a prompt using Gemini Flash.
+
+    Returns dict of parameter values. Raises ExtractionError on failure.
+    """
+    schema = SCHEMAS.get(task_type)
+    if not schema:
+        raise ExtractionError(f"No schema for task type: {task_type}")
+
+    today = _today()
+
+    # Build field descriptions for the extraction prompt
+    field_lines = []
+    for name, spec in schema["fields"].items():
+        line = f'  "{name}": {spec["type"]}'
+        if spec.get("hint"):
+            line += f'  // {spec["hint"]}'
+        if spec.get("required"):
+            line += " [REQUIRED]"
+        else:
+            default = spec.get("default")
+            if default is not None:
+                line += f" [default: {json.dumps(default)}]"
+        field_lines.append(line)
+
+    context = schema.get("context", "")
+
+    system_prompt = f"""You extract structured data from Norwegian/multilingual accounting task prompts.
+Return ONLY a JSON object with these fields:
+{{
+{chr(10).join(field_lines)}
+}}
+
+{context}
+
+RULES:
+- Extract values EXACTLY as written in the prompt (preserve Norwegian characters)
+- Dates: YYYY-MM-DD format. If no date given, use "{today}"
+- Numbers: extract as numbers (not strings)
+- Booleans: true/false
+- For missing optional fields, use the default value
+- For missing required fields, set to null
+- Return ONLY a valid JSON object, nothing else"""
+
+    from google import genai as _genai
+
+    try:
+        client = _get_genai_client()
+        response = client.models.generate_content(
+            model=EXTRACTION_MODEL,
+            contents=prompt,
+            config=_genai.types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                response_mime_type="application/json",
+                temperature=EXTRACTION_TEMPERATURE,
+            ),
+        )
+        raw = response.text
+        params = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ExtractionError(f"Invalid JSON from extraction: {e}")
+    except Exception as e:
+        raise ExtractionError(f"Extraction call failed: {e}")
+
+    # Post-process: apply defaults and coerce types
+    for name, spec in schema["fields"].items():
+        val = params.get(name)
+
+        # Apply defaults for missing/null fields
+        if val is None or val == "":
+            if spec.get("required"):
+                raise ExtractionError(f"Required field '{name}' not found in prompt")
+            params[name] = spec.get("default")
+            continue
+
+        # Coerce types
+        try:
+            if spec["type"] == "int" and not isinstance(val, int):
+                params[name] = int(float(val))
+            elif spec["type"] == "float" and not isinstance(val, (int, float)):
+                params[name] = float(val)
+            elif spec["type"] == "bool" and isinstance(val, str):
+                params[name] = val.lower() in ("true", "1", "yes", "ja")
+            elif spec["type"] == "date" and isinstance(val, str):
+                if val.lower() in ("today", "i dag", "hoy", "aujourd'hui", "heute", "hoje"):
+                    params[name] = today
+        except (ValueError, TypeError):
+            pass  # keep original value, pipeline will fail if it's wrong
+
+    # Fill in date defaults
+    for name, spec in schema["fields"].items():
+        if spec["type"] == "date" and not params.get(name):
+            params[name] = today
+
+    return params
+
+
+# ── Pipeline Functions ──────────────────────────────────────────
+
+# --- Group A: Single-call creates ---
+
+def _pipeline_create_employee(tools, p, ctx):
+    return _call(ctx, tools, "create_employee",
+                 firstName=p["firstName"], lastName=p["lastName"],
+                 email=p["email"], userType=p.get("userType") or "STANDARD",
+                 dateOfBirth=p.get("dateOfBirth") or "",
+                 phoneNumberMobile=p.get("phoneNumberMobile") or "")
+
+
+def _pipeline_create_customer(tools, p, ctx):
+    return _call(ctx, tools, "create_customer",
+                 name=p["name"], email=p.get("email") or "",
+                 organizationNumber=p.get("organizationNumber") or "",
+                 phoneNumber=p.get("phoneNumber") or "",
+                 addressLine1=p.get("addressLine1") or "",
+                 postalCode=p.get("postalCode") or "",
+                 city=p.get("city") or "")
+
+
+def _pipeline_create_product(tools, p, ctx):
+    return _call(ctx, tools, "create_product",
+                 name=p["name"],
+                 priceExcludingVatCurrency=p["priceExcludingVatCurrency"],
+                 productNumber=p.get("productNumber") or "",
+                 vatPercentage=p.get("vat_percentage") if "vat_percentage" in p else p.get("vatPercentage", 25))
+
+
+def _pipeline_create_supplier(tools, p, ctx):
+    return _call(ctx, tools, "create_supplier",
+                 name=p["name"], email=p.get("email") or "",
+                 organizationNumber=p.get("organizationNumber") or "",
+                 phoneNumber=p.get("phoneNumber") or "",
+                 addressLine1=p.get("addressLine1") or "",
+                 postalCode=p.get("postalCode") or "",
+                 city=p.get("city") or "")
+
+
+def _pipeline_create_department(tools, p, ctx):
+    return _call(ctx, tools, "create_department",
+                 name=p["name"], departmentNumber=p.get("departmentNumber") or "")
+
+
+# --- Group B: Updates + contacts ---
+
+def _pipeline_create_contact(tools, p, ctx):
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["customer_name"], email=p.get("customer_email") or "")
+    cust_id = _id(cust)
+    return _call(ctx, tools, "create_contact",
+                 firstName=p["firstName"], lastName=p["lastName"],
+                 email=p["email"], customer_id=cust_id,
+                 phoneNumberMobile=p.get("phoneNumberMobile") or "")
+
+
+def _pipeline_update_employee(tools, p, ctx):
+    emp = _call(ctx, tools, "create_employee",
+                firstName=p["firstName"], lastName=p["lastName"], email=p["email"])
+    emp_id = _id(emp)
+    ver = _version(emp)
+    return _call(ctx, tools, "update_employee",
+                 employee_id=emp_id, firstName=p["firstName"], lastName=p["lastName"],
+                 phoneNumberMobile=p.get("new_phoneNumberMobile") or "",
+                 version=ver)
+
+
+def _pipeline_update_customer(tools, p, ctx):
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["name"], email=p.get("email") or "")
+    cust_id = _id(cust)
+    ver = _version(cust)
+    return _call(ctx, tools, "update_customer",
+                 customer_id=cust_id, name=p["name"],
+                 email=p.get("new_email") or "",
+                 phoneNumber=p.get("new_phoneNumber") or "",
+                 version=ver)
+
+
+def _pipeline_update_product(tools, p, ctx):
+    prod = _call(ctx, tools, "create_product",
+                 name=p["name"],
+                 priceExcludingVatCurrency=p.get("priceExcludingVatCurrency") or 0)
+    prod_id = _id(prod)
+    ver = _version(prod)
+    return _call(ctx, tools, "update_product",
+                 product_id=prod_id, name=p.get("new_name") or p["name"],
+                 priceExcludingVatCurrency=p.get("new_priceExcludingVatCurrency") or 0,
+                 version=ver)
+
+
+def _pipeline_update_supplier(tools, p, ctx):
+    sup = _call(ctx, tools, "create_supplier",
+                name=p["name"], email=p.get("email") or "")
+    sup_id = _id(sup)
+    ver = _version(sup)
+    return _call(ctx, tools, "update_supplier",
+                 supplier_id=sup_id, name=p["name"],
+                 email=p.get("new_email") or "",
+                 phoneNumber=p.get("new_phoneNumber") or "",
+                 version=ver)
+
+
+def _pipeline_update_department(tools, p, ctx):
+    dept = _call(ctx, tools, "create_department",
+                 name=p["name"], departmentNumber=p.get("departmentNumber") or "")
+    dept_id = _id(dept)
+    ver = _version(dept)
+    return _call(ctx, tools, "update_department",
+                 department_id=dept_id,
+                 name=p.get("new_name") or p["name"],
+                 departmentNumber=p.get("new_departmentNumber") or "",
+                 version=ver)
+
+
+def _pipeline_update_contact(tools, p, ctx):
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["customer_name"], email=p.get("customer_email") or "")
+    cust_id = _id(cust)
+    contact = _call(ctx, tools, "create_contact",
+                    firstName=p["firstName"], lastName=p["lastName"],
+                    email=p["email"], customer_id=cust_id)
+    contact_id = _id(contact)
+    ver = _version(contact)
+    return _call(ctx, tools, "update_contact",
+                 contact_id=contact_id,
+                 firstName=p["firstName"], lastName=p["lastName"],
+                 email=p.get("new_email") or "",
+                 phoneNumberMobile=p.get("new_phoneNumberMobile") or "",
+                 version=ver, customer_id=cust_id)
+
+
+# --- Group C: Invoice workflows ---
+
+def _create_invoice_common(tools, p, ctx):
+    """Shared logic: create customer + product + order + invoice. Returns invoice result."""
+    today = _today()
+    inv_date = p.get("invoice_date") or today
+    due_date = p.get("due_date") or inv_date
+
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["customer_name"], email=p.get("customer_email") or "",
+                 organizationNumber=p.get("customer_org_number") or "")
+    cust_id = _id(cust)
+
+    prod = _call(ctx, tools, "create_product",
+                 name=p["product_name"],
+                 priceExcludingVatCurrency=p["product_price"],
+                 vatPercentage=p.get("vat_percentage", 25),
+                 productNumber=p.get("product_number") or "")
+    prod_id = _id(prod)
+
+    order_lines = json.dumps([{"product_id": prod_id, "count": p.get("quantity", 1)}])
+    order = _call(ctx, tools, "create_order",
+                  customer_id=cust_id, deliveryDate=inv_date, orderLines=order_lines)
+    order_id = _id(order)
+
+    inv = _call(ctx, tools, "create_invoice",
+                invoiceDate=inv_date, invoiceDueDate=due_date, order_id=order_id)
+    return inv
+
+
+def _pipeline_create_invoice(tools, p, ctx):
+    inv = _create_invoice_common(tools, p, ctx)
+    if p.get("send_invoice"):
+        _call(ctx, tools, "send_invoice", invoice_id=_id(inv))
+    return inv
+
+
+def _pipeline_create_multi_line_invoice(tools, p, ctx):
+    today = _today()
+    inv_date = p.get("invoice_date") or today
+    due_date = p.get("due_date") or inv_date
+
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["customer_name"], email=p.get("customer_email") or "",
+                 organizationNumber=p.get("customer_org_number") or "")
+    cust_id = _id(cust)
+
+    # Create all products
+    order_lines = []
+    for prod_spec in p["products"]:
+        prod = _call(ctx, tools, "create_product",
+                     name=prod_spec["name"],
+                     priceExcludingVatCurrency=prod_spec.get("price", 0),
+                     vatPercentage=prod_spec.get("vat_percentage", 25))
+        prod_id = _id(prod)
+        order_lines.append({"product_id": prod_id, "count": prod_spec.get("quantity", 1)})
+
+    order = _call(ctx, tools, "create_order",
+                  customer_id=cust_id, deliveryDate=inv_date,
+                  orderLines=json.dumps(order_lines))
+    order_id = _id(order)
+
+    inv = _call(ctx, tools, "create_invoice",
+                invoiceDate=inv_date, invoiceDueDate=due_date, order_id=order_id)
+
+    if p.get("send_invoice"):
+        _call(ctx, tools, "send_invoice", invoice_id=_id(inv))
+    return inv
+
+
+def _create_multi_product_invoice(tools, p, ctx):
+    """Create an invoice with multiple products. Returns invoice result."""
+    today = _today()
+    inv_date = p.get("invoice_date") or today
+    due_date = p.get("due_date") or inv_date
+
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["customer_name"], email=p.get("customer_email") or "",
+                 organizationNumber=p.get("customer_org_number") or "")
+    cust_id = _id(cust)
+
+    order_lines = []
+    for prod_spec in p["products"]:
+        prod = _call(ctx, tools, "create_product",
+                     name=prod_spec.get("name", ""),
+                     priceExcludingVatCurrency=prod_spec.get("price", 0),
+                     vatPercentage=prod_spec.get("vat_percentage", 25),
+                     productNumber=prod_spec.get("number", ""))
+        prod_id = _id(prod)
+        order_lines.append({"product_id": prod_id, "count": prod_spec.get("quantity", 1)})
+
+    order = _call(ctx, tools, "create_order",
+                  customer_id=cust_id, deliveryDate=inv_date,
+                  orderLines=json.dumps(order_lines))
+    order_id = _id(order)
+
+    return _call(ctx, tools, "create_invoice",
+                 invoiceDate=inv_date, invoiceDueDate=due_date, order_id=order_id)
+
+
+def _pipeline_invoice_with_payment(tools, p, ctx):
+    today = _today()
+    payment_date = p.get("payment_date") or today
+
+    # Detect foreign currency from extracted params OR from regex pre-computation
+    foreign_amount = p.get("foreign_amount", 0) or 0
+    old_rate = p.get("old_exchange_rate", 0) or 0
+    new_rate = p.get("new_exchange_rate", 0) or 0
+    has_currency = foreign_amount > 0 and old_rate > 0 and new_rate > 0
+
+    # Also check ctx for pre-computed currency info (from tool_router.extract_currency_info)
+    if not has_currency and ctx.get("currency_info"):
+        ci = ctx["currency_info"]
+        foreign_amount = ci["amount"]
+        old_rate = ci["old_rate"]
+        new_rate = ci["new_rate"]
+        has_currency = True
+
+    if p.get("is_existing_invoice"):
+        # Existing invoice flow: search → pay (optionally with currency/agio)
+        cust_result = _call(ctx, tools, "search_customers", name=p["customer_name"])
+        cust = _first(cust_result, "customer")
+        cust_id = cust["id"]
+
+        inv_result = _call(ctx, tools, "search_invoices",
+                           invoiceDateFrom="2000-01-01", invoiceDateTo="2030-12-31",
+                           customerId=cust_id)
+        invoices = inv_result.get("values", [])
+        # Find unpaid invoice
+        unpaid = next((i for i in invoices if i.get("amountOutstanding", 0) > 0), None)
+        if not unpaid:
+            raise PipelineError("No unpaid invoice found for customer")
+
+        if has_currency:
+            # Foreign currency flow: pay at new rate + book agio/disagio
+            invoice_nok = round(foreign_amount * old_rate, 2)
+            payment_nok = round(foreign_amount * new_rate, 2)
+            diff = round(payment_nok - invoice_nok, 2)
+
+            # Use amountOutstanding as invoiceNOK if it doesn't match our calculation
+            # (handles VAT differences in the system)
+            amount_outstanding = float(unpaid.get("amountOutstanding", 0))
+            if abs(amount_outstanding - invoice_nok) > 1.0 and amount_outstanding > 0:
+                # System amount differs — recalculate using the system's outstanding
+                ratio = new_rate / old_rate if old_rate else 1
+                payment_nok = round(amount_outstanding * ratio, 2)
+                diff = round(payment_nok - amount_outstanding, 2)
+
+            _call(ctx, tools, "register_payment",
+                  invoice_id=unpaid["id"], amount=payment_nok,
+                  paymentDate=payment_date, paidAmountCurrency=foreign_amount)
+
+            # Book agio/disagio voucher
+            if abs(diff) > 0.01:
+                if diff > 0:
+                    # Agio (exchange gain): debit 1500, credit 8060
+                    postings = json.dumps([
+                        {"accountNumber": "1500", "amount": diff, "customerId": cust_id},
+                        {"accountNumber": "8060", "amount": -diff},
+                    ])
+                    desc = "Agio valutadifferanse"
+                else:
+                    # Disagio (exchange loss): debit 8160, credit 1500
+                    postings = json.dumps([
+                        {"accountNumber": "8160", "amount": abs(diff)},
+                        {"accountNumber": "1500", "amount": -abs(diff), "customerId": cust_id},
+                    ])
+                    desc = "Disagio valutadifferanse"
+                return _call(ctx, tools, "create_voucher",
+                             date=payment_date, description=desc, postings=postings)
+            return None
+        else:
+            # Simple NOK payment
+            amount = unpaid["amountOutstanding"]
+            return _call(ctx, tools, "register_payment",
+                         invoice_id=unpaid["id"], amount=amount, paymentDate=payment_date)
+    else:
+        # New invoice flow: create → pay
+        products = p.get("products")
+        if products and isinstance(products, list) and len(products) > 0:
+            # Multi-product invoice with payment
+            inv = _create_multi_product_invoice(tools, p, ctx)
+        else:
+            inv = _create_invoice_common(tools, p, ctx)
+
+        inv_id = _id(inv)
+        # Use actual invoice amount from response (handles multi-product + VAT correctly)
+        inv_val = _val(inv)
+        amount = inv_val.get("amount", 0)
+        if not amount:
+            # Fallback: calculate from extracted params
+            vat = p.get("vat_percentage", 25) or 25
+            amount = p.get("product_price", 0) * p.get("quantity", 1) * (1 + vat / 100)
+        return _call(ctx, tools, "register_payment",
+                     invoice_id=inv_id, amount=round(amount, 2), paymentDate=payment_date)
+
+
+def _pipeline_create_credit_note(tools, p, ctx):
+    inv = _create_invoice_common(tools, p, ctx)
+    return _call(ctx, tools, "create_credit_note", invoice_id=_id(inv))
+
+
+def _pipeline_delete_invoice(tools, p, ctx):
+    inv = _create_invoice_common(tools, p, ctx)
+    return _call(ctx, tools, "create_credit_note", invoice_id=_id(inv))
+
+
+# --- Group D: Employment/travel/supplier ---
+
+def _pipeline_create_travel_expense(tools, p, ctx):
+    emp = _call(ctx, tools, "create_employee",
+                firstName=p["firstName"], lastName=p["lastName"], email=p["email"])
+    emp_id = _id(emp)
+    return _call(ctx, tools, "create_travel_expense",
+                 employee_id=emp_id, title=p["title"],
+                 departureDate=p["departureDate"], returnDate=p["returnDate"])
+
+
+def _pipeline_create_travel_expense_with_costs(tools, p, ctx):
+    emp = _call(ctx, tools, "create_employee",
+                firstName=p["firstName"], lastName=p["lastName"], email=p["email"])
+    emp_id = _id(emp)
+    te = _call(ctx, tools, "create_travel_expense",
+               employee_id=emp_id, title=p["title"],
+               departureDate=p["departureDate"], returnDate=p["returnDate"])
+    te_id = _id(te)
+
+    # Per diem: one call covers the full travel period
+    if p.get("per_diem_rate") and p.get("per_diem_rate") > 0:
+        _call(ctx, tools, "create_per_diem_compensation",
+              travel_expense_id=te_id, location="Norge")
+
+    # Additional costs (hotel, taxi, etc.)
+    for cost in (p.get("costs") or []):
+        _call(ctx, tools, "create_travel_expense_cost",
+              travel_expense_id=te_id,
+              amount=cost.get("amount", 0),
+              category=cost.get("category", ""))
+
+    # Mileage allowance
+    if p.get("mileage_km") and p["mileage_km"] > 0:
+        _call(ctx, tools, "create_mileage_allowance",
+              travel_expense_id=te_id, date=p["departureDate"],
+              km=p["mileage_km"])
+    return te
+
+
+def _pipeline_create_employee_with_employment(tools, p, ctx):
+    emp_kwargs = dict(firstName=p["firstName"], lastName=p["lastName"], email=p["email"])
+    if p.get("dateOfBirth"):
+        emp_kwargs["dateOfBirth"] = p["dateOfBirth"]
+    emp = _call(ctx, tools, "create_employee", **emp_kwargs)
+    emp_id = _id(emp)
+
+    employment = _call(ctx, tools, "create_employment",
+                       employee_id=emp_id, startDate=p["startDate"])
+    employment_id = _id(employment)
+
+    # Optional: employment details (salary)
+    if p.get("annualSalary") and p["annualSalary"] > 0:
+        _call(ctx, tools, "create_employment_details",
+              employment_id=employment_id, date=p["startDate"],
+              annualSalary=p["annualSalary"])
+
+    # Optional: standard time
+    if p.get("hoursPerDay") and p["hoursPerDay"] > 0:
+        _call(ctx, tools, "create_standard_time",
+              employee_id=emp_id, fromDate=p["startDate"],
+              hoursPerDay=p["hoursPerDay"])
+
+    # Optional: leave of absence
+    if p.get("leave_type") and p.get("leave_startDate"):
+        _call(ctx, tools, "create_leave_of_absence",
+              employment_id=employment_id,
+              startDate=p["leave_startDate"],
+              endDate=p.get("leave_endDate") or "",
+              leaveType=p["leave_type"],
+              percentage=p.get("leave_percentage", 100))
+
+    return employment
+
+
+def _pipeline_create_supplier_invoice(tools, p, ctx):
+    # If files are present, try to extract content first
+    if "extract_file_content" in tools:
+        try:
+            _call(ctx, tools, "extract_file_content", filename="invoice.pdf")
+        except PipelineError:
+            pass  # file extraction is best-effort; data may be in prompt
+
+    sup = _call(ctx, tools, "create_supplier",
+                name=p["supplier_name"],
+                organizationNumber=p.get("supplier_org_number") or "")
+    sup_id = _id(sup)
+    return _call(ctx, tools, "create_incoming_invoice",
+                 supplierId=sup_id,
+                 invoiceNumber=p.get("invoice_number") or "",
+                 amountIncludingVat=p["amount_including_vat"],
+                 expenseAccountNumber=p["expense_account"],
+                 vatPercentage=p.get("vat_percentage", 25),
+                 invoiceDate=p["invoice_date"])
+
+
+# --- Group E: Delete tasks ---
+
+def _pipeline_delete_customer(tools, p, ctx):
+    result = _call(ctx, tools, "search_customers", name=p["name"])
+    entity = _first(result, "customer")
+    return _call(ctx, tools, "delete_customer", customer_id=entity["id"])
+
+
+def _pipeline_delete_supplier(tools, p, ctx):
+    result = _call(ctx, tools, "search_suppliers", name=p["name"])
+    entity = _first(result, "supplier")
+    return _call(ctx, tools, "delete_supplier", supplier_id=entity["id"])
+
+
+def _pipeline_delete_product(tools, p, ctx):
+    result = _call(ctx, tools, "search_products", name=p["name"])
+    entity = _first(result, "product")
+    return _call(ctx, tools, "delete_product", product_id=entity["id"])
+
+
+def _pipeline_delete_department(tools, p, ctx):
+    result = _call(ctx, tools, "search_departments", name=p["name"])
+    entity = _first(result, "department")
+    return _call(ctx, tools, "delete_department", department_id=entity["id"])
+
+
+def _pipeline_delete_contact(tools, p, ctx):
+    result = _call(ctx, tools, "search_contacts",
+                   firstName=p["firstName"], lastName=p["lastName"])
+    entity = _first(result, "contact")
+    try:
+        return _call(ctx, tools, "delete_contact", contact_id=entity["id"])
+    except PipelineError:
+        # Fallback: deactivate if delete fails
+        return _call(ctx, tools, "update_contact",
+                     contact_id=entity["id"], isInactive=True)
+
+
+def _pipeline_delete_employee(tools, p, ctx):
+    result = _call(ctx, tools, "search_employees",
+                   firstName=p["firstName"], lastName=p["lastName"])
+    entity = _first(result, "employee")
+    return _call(ctx, tools, "update_employee",
+                 employee_id=entity["id"], isInactive=True)
+
+
+def _pipeline_delete_travel_expense(tools, p, ctx):
+    result = _call(ctx, tools, "search_travel_expenses")
+    entities = result.get("values", [])
+    if not entities:
+        raise PipelineError("No travel expenses found")
+    # Try to match by title or employee name
+    target = entities[0]  # default to first
+    title = (p.get("title") or "").lower()
+    fname = (p.get("employee_firstName") or "").lower()
+    lname = (p.get("employee_lastName") or "").lower()
+    for e in entities:
+        if title and title in (e.get("title") or "").lower():
+            target = e
+            break
+        emp = e.get("employee", {})
+        if fname and fname in (emp.get("firstName") or "").lower():
+            target = e
+            break
+    return _call(ctx, tools, "delete_travel_expense", travel_expense_id=target["id"])
+
+
+# --- Group F: Complex tasks ---
+
+def _pipeline_create_ledger_voucher(tools, p, ctx):
+    import re as _re
+
+    corrections = p.get("corrections", [])
+    # Backward compat: if old-style flat postings, wrap in single correction
+    if not corrections and p.get("postings"):
+        corrections = [{"description": p.get("description", "Correction"), "postings": p["postings"]}]
+    vdate = p["date"]
+    year = vdate[:4]
+
+    # ── STEP 0: Search existing vouchers to find actual counter-accounts ──
+    # The extraction assumes 1920 (bank) as counter, but the original entries
+    # may use 2400 (payables), etc.  Search + fix before creating corrections.
+    acct_counter = {}   # (debit_acct_number, abs_amount) -> credit_acct_number
+    expense_counter = {}  # expense_acct_number -> counter_acct_number (latest)
+    client = ctx.get("client")
+    if client:
+        try:
+            raw = client.get("/ledger/voucher", params={
+                "dateFrom": f"{year}-01-01",
+                "dateTo": vdate,
+                "fields": "id,postings(account(id,number),amount)",
+                "count": 200,
+            })
+            for v in (raw.get("values") or []):
+                plist = v.get("postings") or []
+                if len(plist) != 2:
+                    continue
+                a0 = str((plist[0].get("account") or {}).get("number", ""))
+                a1 = str((plist[1].get("account") or {}).get("number", ""))
+                m0 = float(plist[0].get("amount") or 0)
+                m1 = float(plist[1].get("amount") or 0)
+                if not a0 or not a1:
+                    continue
+                # debit is positive, credit is negative
+                if m0 > 0:
+                    debit_acct, credit_acct, debit_amt = a0, a1, abs(m0)
+                else:
+                    debit_acct, credit_acct, debit_amt = a1, a0, abs(m1)
+                acct_counter[(debit_acct, round(debit_amt, 2))] = credit_acct
+                expense_counter[debit_acct] = credit_acct
+        except Exception:
+            pass
+
+    # ── STEP 1: Fix counter-accounts in extracted corrections ──
+    for corr in corrections:
+        posts = corr.get("postings") or []
+        if len(posts) != 2:
+            continue
+        # Identify the assumed-counter (1920) and the main posting
+        p_counter = p_main = None
+        for pp in posts:
+            if str(pp.get("accountNumber", "")) == "1920":
+                p_counter = pp
+            else:
+                p_main = pp
+        if not p_counter or not p_main:
+            continue
+
+        main_acct = str(p_main.get("accountNumber", ""))
+        main_amt = round(abs(float(p_main.get("amount", 0))), 2)
+
+        # Case A: Direct match — duplicate or wrong-amount reversal
+        real = acct_counter.get((main_acct, main_amt))
+        if real and real != main_acct:
+            p_counter["accountNumber"] = real
+            continue
+
+        # Case B: MVA correction (main acct is 2710)
+        if main_acct == "2710":
+            # Find the expense account from the description (e.g. "konto 7000")
+            desc = corr.get("description", "")
+            m = _re.search(r'konto\s+(\d{4})', desc, _re.IGNORECASE)
+            if m:
+                expense_acct = m.group(1)
+                # Check if the original was booked net or gross
+                net_amount = main_amt * 4   # MVA 25% → net = MVA × 4
+                gross_amount = net_amount * 1.25
+                # Look for original posting on the expense account
+                for (ea, ea_amt), counter in acct_counter.items():
+                    if ea == expense_acct:
+                        if abs(ea_amt - gross_amount) < 1:
+                            # Gross was booked to expense → move MVA from expense to 2710
+                            p_counter["accountNumber"] = expense_acct
+                        else:
+                            # Net was booked, bank underpaid → adjust counter
+                            p_counter["accountNumber"] = counter
+                        break
+                else:
+                    # Expense account not found in map, try generic lookup
+                    if expense_acct in expense_counter:
+                        p_counter["accountNumber"] = expense_counter[expense_acct]
+            continue
+
+        # Case C: Wrong-amount correction where amount doesn't match exactly
+        # (the correction amount is the EXCESS, not the original amount)
+        # Try to find the expense account's counter from any posting
+        if main_acct in expense_counter:
+            real = expense_counter[main_acct]
+            if real != main_acct:
+                p_counter["accountNumber"] = real
+
+    # ── STEP 2: Create each correction voucher ──
+    last = None
+    for corr in corrections:
+        desc = corr.get("description", "Correction")
+        postings = corr.get("postings", [])
+        if not postings:
+            continue
+        last = _call(ctx, tools, "create_voucher",
+                     date=vdate, description=desc,
+                     postings=json.dumps(postings))
+    return last
+
+
+def _pipeline_reverse_voucher(tools, p, ctx):
+    result = _call(ctx, tools, "search_vouchers",
+                   dateFrom=p.get("search_dateFrom") or "",
+                   dateTo=p.get("search_dateTo") or "")
+    vouchers = result.get("values", [])
+    if not vouchers:
+        raise PipelineError("No vouchers found")
+    # Match by description if provided
+    target = vouchers[0]
+    desc = (p.get("search_description") or "").lower()
+    if desc:
+        for v in vouchers:
+            if desc in (v.get("description") or "").lower():
+                target = v
+                break
+    return _call(ctx, tools, "reverse_voucher",
+                 voucher_id=target["id"], date=p.get("reversal_date") or "")
+
+
+def _pipeline_reverse_payment(tools, p, ctx):
+    cust_result = _call(ctx, tools, "search_customers", name=p["customer_name"])
+    cust = _first(cust_result, "customer")
+    inv_result = _call(ctx, tools, "search_invoices",
+                       invoiceDateFrom="2000-01-01", invoiceDateTo="2030-12-31",
+                       customerId=cust["id"])
+    invoices = inv_result.get("values", [])
+    if not invoices:
+        raise PipelineError("No invoices found for customer")
+    # Find the paid invoice (amountOutstanding < amount, meaning some was paid)
+    target = invoices[0]
+    for inv in invoices:
+        amt = inv.get("amount", 0)
+        outstanding = inv.get("amountOutstanding", 0)
+        if amt > 0 and outstanding < amt:
+            target = inv
+            break
+    # Reverse = negative payment
+    paid_amount = target.get("amount", 0) - target.get("amountOutstanding", 0)
+    if paid_amount <= 0:
+        raise PipelineError("Invoice has no payment to reverse")
+    return _call(ctx, tools, "register_payment",
+                 invoice_id=target["id"], amount=-paid_amount,
+                 paymentDate=p.get("payment_date") or _today())
+
+
+def _pipeline_reminder_fee(tools, p, ctx):
+    today = _today()
+
+    # 1. Find overdue invoice (due date < today, amountOutstanding > 0)
+    inv_result = _call(ctx, tools, "search_invoices",
+                       invoiceDateFrom="2000-01-01", invoiceDateTo="2030-12-31")
+    invoices = inv_result.get("values", [])
+    overdue = None
+    for inv in invoices:
+        due = inv.get("invoiceDueDate", "9999-12-31")
+        outstanding = inv.get("amountOutstanding", 0)
+        if due < today and outstanding > 0:
+            if overdue is None or due < overdue.get("invoiceDueDate", "9999-12-31"):
+                overdue = inv
+    if not overdue:
+        raise PipelineError("No overdue invoice found")
+
+    cust_id = overdue["customer"]["id"]
+    overdue_id = overdue["id"]
+    fee = p["fee_amount"]
+    debit = p.get("debit_account") or "1500"
+    credit = p.get("credit_account") or "3400"
+
+    # 2. Book reminder fee voucher
+    postings = json.dumps([
+        {"accountNumber": debit, "amount": fee, "customerId": cust_id},
+        {"accountNumber": credit, "amount": -fee},
+    ])
+    _call(ctx, tools, "create_voucher",
+          date=today, description="Purregebyr", postings=postings)
+
+    # 3. Create reminder fee product + order + invoice
+    prod = _call(ctx, tools, "create_product",
+                 name="Purregebyr", priceExcludingVatCurrency=fee, vatPercentage=0)
+    prod_id = _id(prod)
+
+    order_lines = json.dumps([{"product_id": prod_id, "count": 1}])
+    order = _call(ctx, tools, "create_order",
+                  customer_id=cust_id, deliveryDate=today, orderLines=order_lines)
+    order_id = _id(order)
+
+    inv = _call(ctx, tools, "create_invoice",
+                invoiceDate=today, invoiceDueDate=today, order_id=order_id)
+    inv_id = _id(inv)
+
+    # 4. Send invoice if requested
+    if p.get("send_invoice"):
+        _call(ctx, tools, "send_invoice", invoice_id=inv_id)
+
+    # 5. Register partial payment on overdue invoice if requested
+    if p.get("partial_payment_amount") and p["partial_payment_amount"] > 0:
+        _call(ctx, tools, "register_payment",
+              invoice_id=overdue_id, amount=p["partial_payment_amount"],
+              paymentDate=today)
+
+    return inv
+
+
+def _pipeline_create_opening_balance(tools, p, ctx):
+    postings_json = json.dumps(p["postings"])
+    return _call(ctx, tools, "create_opening_balance",
+                 voucherDate=p["date"], balancePostings=postings_json)
+
+
+def _pipeline_create_dimension(tools, p, ctx):
+    dim = _call(ctx, tools, "create_accounting_dimension", name=p["dimension_name"])
+    dim_val = _val(dim)
+    dim_index = dim_val.get("dimensionIndex", 1) if isinstance(dim_val, dict) else 1
+
+    value_ids = {}
+    for val_name in p["values"]:
+        dv = _call(ctx, tools, "create_dimension_value",
+                   dimensionIndex=dim_index, name=val_name)
+        value_ids[val_name] = _id(dv)
+
+    # Optional voucher linked to dimension
+    if p.get("voucher_postings") and p.get("voucher_date"):
+        postings = []
+        for posting in p["voucher_postings"]:
+            entry = {
+                "accountNumber": str(posting["accountNumber"]),
+                "amount": posting["amount"],
+            }
+            dv_name = posting.get("dimensionValueName")
+            if dv_name and dv_name in value_ids:
+                entry["dimensionValueId"] = value_ids[dv_name]
+                entry["dimensionIndex"] = dim_index
+            postings.append(entry)
+        _call(ctx, tools, "create_voucher",
+              date=p["voucher_date"],
+              description=p.get("voucher_description") or f"Voucher for {p['dimension_name']}",
+              postings=json.dumps(postings))
+    return dim
+
+
+def _pipeline_create_project(tools, p, ctx):
+    today = _today()
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["customer_name"],
+                 organizationNumber=p.get("customer_org_number") or "")
+    cust_id = _id(cust)
+
+    pm_id = 0
+    if p.get("pm_email"):
+        emp = _call(ctx, tools, "create_employee",
+                    firstName=p["pm_firstName"], lastName=p["pm_lastName"],
+                    email=p["pm_email"], userType="EXTENDED")
+        pm_id = _id(emp)
+
+    return _call(ctx, tools, "create_project",
+                 name=p["project_name"], customer_id=cust_id,
+                 projectManagerId=pm_id,
+                 startDate=p.get("startDate") or today,
+                 fixedPriceAmount=p.get("fixedPriceAmount") or 0)
+
+
+def _pipeline_project_invoice(tools, p, ctx):
+    today = _today()
+    inv_date = p.get("invoice_date") or today
+    due_date = p.get("due_date") or inv_date
+
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["customer_name"],
+                 organizationNumber=p.get("customer_org_number") or "")
+    cust_id = _id(cust)
+
+    pm_id = 0
+    if p.get("pm_email"):
+        emp = _call(ctx, tools, "create_employee",
+                    firstName=p["pm_firstName"], lastName=p["pm_lastName"],
+                    email=p["pm_email"], userType="EXTENDED")
+        pm_id = _id(emp)
+
+    proj = _call(ctx, tools, "create_project",
+                 name=p["project_name"], customer_id=cust_id,
+                 projectManagerId=pm_id,
+                 startDate=p.get("startDate") or today,
+                 fixedPriceAmount=p.get("fixedPriceAmount") or 0)
+    proj_id = _id(proj)
+
+    # Invoice part (if product specified)
+    if p.get("product_name") and p.get("product_price"):
+        prod = _call(ctx, tools, "create_product",
+                     name=p["product_name"],
+                     priceExcludingVatCurrency=p["product_price"],
+                     vatPercentage=25)
+        prod_id = _id(prod)
+        order_lines = json.dumps([{"product_id": prod_id, "count": 1}])
+        order = _call(ctx, tools, "create_order",
+                      customer_id=cust_id, deliveryDate=inv_date,
+                      orderLines=order_lines, project_id=proj_id)
+        order_id = _id(order)
+        inv = _call(ctx, tools, "create_invoice",
+                    invoiceDate=inv_date, invoiceDueDate=due_date, order_id=order_id)
+        if p.get("send_invoice"):
+            _call(ctx, tools, "send_invoice", invoice_id=_id(inv))
+    return proj
+
+
+def _pipeline_project_lifecycle(tools, p, ctx):
+    today = _today()
+
+    # 1. Create customer
+    cust = _call(ctx, tools, "create_customer",
+                 name=p["customer_name"],
+                 organizationNumber=p.get("customer_org_number") or "")
+    cust_id = _id(cust)
+
+    # 2. Create PM (if specified)
+    pm_id = 0
+    if p.get("pm_email"):
+        pm = _call(ctx, tools, "create_employee",
+                   firstName=p["pm_firstName"], lastName=p["pm_lastName"],
+                   email=p["pm_email"], userType="EXTENDED")
+        pm_id = _id(pm)
+
+    # 3. Create project
+    proj = _call(ctx, tools, "create_project",
+                 name=p["project_name"], customer_id=cust_id,
+                 projectManagerId=pm_id,
+                 startDate=today,
+                 fixedPriceAmount=p.get("budget") or 0)
+    proj_id = _id(proj)
+
+    # 4. Register employee hours
+    for emp_spec in (p.get("employees") or []):
+        # Skip PM (already created)
+        if emp_spec.get("email") == p.get("pm_email") and pm_id:
+            emp_id = pm_id
+        else:
+            emp = _call(ctx, tools, "create_employee",
+                        firstName=emp_spec["firstName"],
+                        lastName=emp_spec["lastName"],
+                        email=emp_spec.get("email", ""))
+            emp_id = _id(emp)
+            # Non-PM employees need employment record
+            _call(ctx, tools, "create_employment",
+                  employee_id=emp_id, startDate="2026-01-01")
+
+        _call(ctx, tools, "create_timesheet_entry",
+              employee_id=emp_id, date=today,
+              hours=emp_spec.get("hours", 0), project_id=proj_id)
+
+    # 5. Register supplier cost
+    if p.get("supplier_name") and p.get("supplier_cost"):
+        sup = _call(ctx, tools, "create_supplier",
+                    name=p["supplier_name"],
+                    organizationNumber=p.get("supplier_org_number") or "")
+        sup_id = _id(sup)
+        _call(ctx, tools, "create_incoming_invoice",
+              supplierId=sup_id, invoiceNumber=f"PROJECT_COST_{today}",
+              amountIncludingVat=p["supplier_cost"],
+              expenseAccountNumber=4000, vatPercentage=0,
+              invoiceDate=today, projectId=proj_id)
+
+    # 6. Customer invoice for the project
+    if p.get("create_customer_invoice") and p.get("budget"):
+        prod = _call(ctx, tools, "create_product",
+                     name=f"Project Services - {p['project_name']}",
+                     priceExcludingVatCurrency=p["budget"],
+                     vatPercentage=25)
+        prod_id = _id(prod)
+        order_lines = json.dumps([{"product_id": prod_id, "count": 1}])
+        order = _call(ctx, tools, "create_order",
+                      customer_id=cust_id, deliveryDate=today,
+                      orderLines=order_lines, project_id=proj_id)
+        order_id = _id(order)
+        _call(ctx, tools, "create_invoice",
+              invoiceDate=today, invoiceDueDate=today, order_id=order_id)
+
+    return proj
+
+
+def _pipeline_salary(tools, p, ctx):
+    # Generate email if missing
+    email = p.get("email") or ""
+    if not email:
+        fn = p["firstName"].lower().replace(" ", ".")
+        ln = p["lastName"].lower().replace(" ", ".")
+        email = f"{fn}.{ln}@example.com"
+
+    # Use compound process_salary tool — handles employee, division, employment, salary
+    return _call(ctx, tools, "process_salary",
+                 firstName=p["firstName"],
+                 lastName=p["lastName"],
+                 email=email,
+                 year=p["year"],
+                 month=p["month"],
+                 base_salary=p.get("base_salary", 0),
+                 bonus=p.get("bonus", 0),
+                 dateOfBirth=p.get("dateOfBirth") or "",
+                 department_name=p.get("department_name") or "",
+                 startDate=p.get("startDate") or "",
+                 hoursPerDay=p.get("hoursPerDay", 0),
+                 percentageOfFullTimeEquivalent=p.get("percentageOfFullTimeEquivalent", 100),
+                 annualSalary=p.get("annualSalary", 0))
+
+
+def _pipeline_year_end(tools, p, ctx):
+    vdate = p["voucher_date"]
+
+    # 1. Depreciation vouchers
+    for asset in (p.get("assets") or []):
+        annual_depr = round(asset["cost"] / asset["years"])
+        postings = json.dumps([
+            {"accountNumber": str(asset["expense_account"]), "amount": annual_depr},
+            {"accountNumber": str(asset["depreciation_account"]), "amount": -annual_depr},
+        ])
+        _call(ctx, tools, "create_voucher",
+              date=vdate, description=f"Depreciation - {asset['name']}",
+              postings=postings)
+
+    # 2. Prepaid expense reversals
+    for prepaid in (p.get("prepaid_expenses") or []):
+        expense_acct = str(prepaid.get("expense_account", "6990"))
+        postings = json.dumps([
+            {"accountNumber": expense_acct, "amount": prepaid["amount"]},
+            {"accountNumber": str(prepaid["prepaid_account"]), "amount": -prepaid["amount"]},
+        ])
+        _call(ctx, tools, "create_voucher",
+              date=vdate, description="Prepaid expense reversal",
+              postings=postings)
+
+    # 3. Tax provision
+    taxable = p.get("taxable_profit") or 0
+    tax_rate = p.get("tax_rate") or 0.22
+    if not taxable and "get_result_before_tax" in tools:
+        year = vdate[:4]
+        result = _call(ctx, tools, "get_result_before_tax",
+                       dateFrom=f"{year}-01-01", dateTo=f"{year}-12-31")
+        taxable = result.get("result_before_tax", 0) if isinstance(result, dict) else 0
+    if taxable > 0:
+        tax_amount = round(taxable * tax_rate, 2)
+        postings = json.dumps([
+            {"accountNumber": str(p.get("tax_expense_account", "8700")), "amount": tax_amount},
+            {"accountNumber": str(p.get("tax_liability_account", "2920")), "amount": -tax_amount},
+        ])
+        _call(ctx, tools, "create_voucher",
+              date=vdate, description="Tax provision",
+              postings=postings)
+
+    # 4. Year-end note
+    if p.get("year_end_note"):
+        _call(ctx, tools, "create_year_end_note", note=p["year_end_note"])
+
+
+def _parse_bank_csv(csv_text: str) -> list[dict]:
+    """Parse a bank statement CSV into transaction dicts.
+
+    Handles semicolon and comma separators.
+    Returns list of {date, description, amount (positive=in, negative=out)}.
+    """
+    import re
+    lines = csv_text.strip().splitlines()
+    if not lines:
+        return []
+
+    # Detect separator
+    sep = ";" if ";" in lines[0] else ","
+
+    # Parse header to find columns
+    header = [h.strip().lower() for h in lines[0].split(sep)]
+    col_date = col_desc = col_in = col_out = col_amount = -1
+    for i, h in enumerate(header):
+        if h in ("dato", "date", "fecha", "data", "datum"):
+            col_date = i
+        elif h in ("forklaring", "beskrivelse", "description", "descripción", "descrição", "tekst",
+                    "beschreibung", "libellé", "libelle"):
+            col_desc = i
+        elif h in ("inn", "innskudd", "credit", "crédito", "créditos", "entrada",
+                    "eingang", "haben", "crédit"):
+            col_in = i
+        elif h in ("ut", "uttak", "debit", "débito", "saída",
+                    "ausgang", "soll", "débit"):
+            col_out = i
+        elif h in ("beløp", "belop", "amount", "monto", "valor", "betrag", "montant"):
+            col_amount = i
+
+    transactions = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        cols = line.split(sep)
+
+        # Date
+        txn_date = cols[col_date].strip() if col_date >= 0 and col_date < len(cols) else ""
+
+        # Description
+        desc = cols[col_desc].strip() if col_desc >= 0 and col_desc < len(cols) else ""
+
+        # Amount: try Inn/Ut columns, then single amount column
+        amount = 0.0
+        if col_in >= 0 and col_out >= 0:
+            inn = cols[col_in].strip().replace(",", ".").replace(" ", "") if col_in < len(cols) else ""
+            ut = cols[col_out].strip().replace(",", ".").replace(" ", "") if col_out < len(cols) else ""
+            if inn and inn.lstrip("-").replace(".", "", 1).isdigit():
+                amount = float(inn)
+            elif ut and ut.lstrip("-").replace(".", "", 1).isdigit():
+                amount = float(ut) if float(ut) < 0 else -float(ut)
+        elif col_amount >= 0 and col_amount < len(cols):
+            raw = cols[col_amount].strip().replace(",", ".").replace(" ", "")
+            if raw and raw.lstrip("-").replace(".", "", 1).isdigit():
+                amount = float(raw)
+
+        if not amount:
+            continue
+
+        # Classify transaction
+        desc_lower = desc.lower()
+        txn = {"date": txn_date, "description": desc, "amount": amount}
+
+        # Customer payment: "Innbetaling fra X / Faktura Y" (+ French/German variants)
+        m = re.search(r'(?:innbetaling fra|pago de|pagamento de|payment from|paiement de|encaissement de|virement de|zahlung von|einzahlung von)\s+(.+?)\s*/\s*(?:faktura|factura|invoice|fatura|facture|rechnung)\s*(\d+)', desc, re.IGNORECASE)
+        if m and amount > 0:
+            txn["type"] = "customer_payment"
+            txn["customer_name"] = m.group(1).strip()
+            txn["invoice_ref"] = m.group(2).strip()
+        # Supplier payment: "Betaling/Paiement/Zahlung Fornecedor/Leverandør/Fournisseur/Proveedor/Lieferant X"
+        elif re.search(r'(?:betaling|paiement|zahlung|pago|pagamento)\s+(?:til\s+|à\s+|a\s+)?(?:fornecedor|leverandør|leverandor|fournisseur|proveedor|supplier|lieferant)', desc, re.IGNORECASE):
+            m2 = re.search(r'(?:fornecedor|leverandør|leverandor|fournisseur|proveedor|supplier|lieferant)\s+(.+)', desc, re.IGNORECASE)
+            txn["type"] = "supplier_payment"
+            txn["supplier_name"] = m2.group(1).strip() if m2 else desc
+        # Tax: Skattetrekk / Impôt / Steuer
+        elif any(kw in desc_lower for kw in ("skattetrekk", "skatt", "impuesto", "tax", "imposto",
+                                              "impôt", "retenue", "steuer", "lohnsteuer")):
+            txn["type"] = "tax"
+        # Bank fee: Bankgebyr / Frais bancaires / Bankgebühren
+        elif any(kw in desc_lower for kw in ("bankgebyr", "bank fee", "comisión", "comision", "tarifa",
+                                              "frais bancaire", "frais de banque", "bankgebühr")):
+            txn["type"] = "bank_fee"
+        # Interest income: Rente / Intérêts / Zinsen
+        elif any(kw in desc_lower for kw in ("renteinntekt", "rente", "interest", "juros", "intereses",
+                                              "intérêt", "interet", "zinsen", "zinsertrag")):
+            txn["type"] = "interest"
+        else:
+            txn["type"] = "other"
+
+        transactions.append(txn)
+
+    return transactions
+
+
+def _pipeline_bank_reconciliation(tools, p, ctx):
+    # 1. Read and parse the CSV file
+    filename = p.get("filename", "")
+    csv_text = ""
+    if filename and "extract_file_content" in tools:
+        try:
+            result = _call(ctx, tools, "extract_file_content", filename=filename)
+            csv_text = result.get("text", "") if isinstance(result, dict) else ""
+        except PipelineError:
+            pass
+
+    if not csv_text:
+        raise PipelineError("Could not read bank statement file")
+
+    transactions = _parse_bank_csv(csv_text)
+    if not transactions:
+        raise PipelineError("No transactions found in bank statement")
+
+    # 2. Cache: search all unique customers/suppliers up front to save API calls
+    customer_cache = {}  # name -> id
+    supplier_cache = {}  # name -> id
+
+    for txn in transactions:
+        txn_type = txn.get("type", "other")
+        txn_date = txn.get("date", _today())
+        txn_desc = txn.get("description", "Bank transaction")
+        amount = txn.get("amount", 0)
+        if not amount:
+            continue
+
+        # ── customer_payment: search customer → search invoices → register_payment ──
+        if txn_type == "customer_payment":
+            cust_name = txn.get("customer_name", "")
+            inv_ref = txn.get("invoice_ref", "")
+            try:
+                # Find customer (cache lookup, with exact name matching)
+                if cust_name not in customer_cache:
+                    cust_result = _call(ctx, tools, "search_customers", name=cust_name)
+                    cust = _first(cust_result, "customer", name_match=cust_name)
+                    customer_cache[cust_name] = cust["id"]
+                cust_id = customer_cache[cust_name]
+
+                # Find their invoices
+                inv_result = _call(ctx, tools, "search_invoices", customerId=cust_id)
+                invoices = inv_result.get("values", [])
+
+                # Match by invoice number if available
+                target_inv = None
+                if inv_ref:
+                    for inv in invoices:
+                        if str(inv.get("invoiceNumber", "")) == inv_ref:
+                            target_inv = inv
+                            break
+                # Fallback: first invoice with outstanding balance
+                if not target_inv:
+                    for inv in invoices:
+                        if (inv.get("amountOutstanding", 0) or 0) > 0:
+                            target_inv = inv
+                            break
+                if not target_inv and invoices:
+                    target_inv = invoices[0]
+
+                if target_inv:
+                    # Use EXACT bank amount (handles partial payments correctly)
+                    _call(ctx, tools, "register_payment",
+                          invoice_id=target_inv["id"],
+                          amount=abs(amount),
+                          paymentDate=txn_date)
+                    continue
+            except PipelineError:
+                pass  # Fall through to generic voucher
+
+        # ── supplier_payment: search supplier → voucher with supplierId ──
+        if txn_type == "supplier_payment":
+            supplier_name = txn.get("supplier_name", "")
+            supplier_id = None
+            # Find supplier (cache lookup)
+            if supplier_name and "search_suppliers" in tools:
+                if supplier_name not in supplier_cache:
+                    try:
+                        sup_result = _call(ctx, tools, "search_suppliers", name=supplier_name)
+                        sup = _first(sup_result, "supplier", name_match=supplier_name)
+                        supplier_cache[supplier_name] = sup["id"]
+                    except PipelineError:
+                        pass
+                supplier_id = supplier_cache.get(supplier_name)
+
+            pay_amt = abs(amount)
+            postings = [
+                {"accountNumber": "2400", "amount": pay_amt},
+                {"accountNumber": "1920", "amount": -pay_amt},
+            ]
+            if supplier_id:
+                postings[0]["supplierId"] = supplier_id
+            _call(ctx, tools, "create_voucher",
+                  date=txn_date,
+                  description=txn_desc,
+                  postings=json.dumps(postings))
+            continue
+
+        # ── bank_fee: debit 7770 (bankgebyr), credit 1920 (bank) ──
+        if txn_type == "bank_fee":
+            fee = abs(amount)
+            _call(ctx, tools, "create_voucher",
+                  date=txn_date, description=txn_desc,
+                  postings=json.dumps([
+                      {"accountNumber": "7770", "amount": fee},
+                      {"accountNumber": "1920", "amount": -fee},
+                  ]))
+            continue
+
+        # ── tax (Skattetrekk): incoming = debit 1920, credit 2600 ──
+        if txn_type == "tax":
+            if amount > 0:
+                # Incoming tax refund/adjustment
+                _call(ctx, tools, "create_voucher",
+                      date=txn_date, description=txn_desc,
+                      postings=json.dumps([
+                          {"accountNumber": "1920", "amount": amount},
+                          {"accountNumber": "2600", "amount": -amount},
+                      ]))
+            else:
+                # Outgoing tax deduction
+                tax_amt = abs(amount)
+                _call(ctx, tools, "create_voucher",
+                      date=txn_date, description=txn_desc,
+                      postings=json.dumps([
+                          {"accountNumber": "2600", "amount": tax_amt},
+                          {"accountNumber": "1920", "amount": -tax_amt},
+                      ]))
+            continue
+
+        # ── interest income: debit 1920, credit 8040 ──
+        if txn_type == "interest":
+            if amount > 0:
+                _call(ctx, tools, "create_voucher",
+                      date=txn_date, description=txn_desc,
+                      postings=json.dumps([
+                          {"accountNumber": "1920", "amount": amount},
+                          {"accountNumber": "8040", "amount": -amount},
+                      ]))
+            else:
+                int_amt = abs(amount)
+                _call(ctx, tools, "create_voucher",
+                      date=txn_date, description=txn_desc,
+                      postings=json.dumps([
+                          {"accountNumber": "8040", "amount": int_amt},
+                          {"accountNumber": "1920", "amount": -int_amt},
+                      ]))
+            continue
+
+        # ── other / fallback: generic voucher ──
+        if amount > 0:
+            _call(ctx, tools, "create_voucher",
+                  date=txn_date, description=txn_desc,
+                  postings=json.dumps([
+                      {"accountNumber": "1920", "amount": amount},
+                      {"accountNumber": "3000", "amount": -amount},
+                  ]))
+        else:
+            out_amt = abs(amount)
+            _call(ctx, tools, "create_voucher",
+                  date=txn_date, description=txn_desc,
+                  postings=json.dumps([
+                      {"accountNumber": "7700", "amount": out_amt},
+                      {"accountNumber": "1920", "amount": -out_amt},
+                  ]))
+
+
+def _pipeline_process_invoice_file(tools, p, ctx):
+    # Same as create_invoice but may need file extraction first
+    if "extract_file_content" in tools:
+        try:
+            _call(ctx, tools, "extract_file_content", filename="invoice.pdf")
+        except PipelineError:
+            pass
+    return _pipeline_create_invoice(tools, p, ctx)
+
+
+# ── Pipeline Registry ───────────────────────────────────────────
+
+PIPELINES = {
+    # Group A
+    "create_employee": _pipeline_create_employee,
+    "create_customer": _pipeline_create_customer,
+    "create_product": _pipeline_create_product,
+    "create_supplier": _pipeline_create_supplier,
+    "create_department": _pipeline_create_department,
+    # Group B
+    "create_contact": _pipeline_create_contact,
+    "update_employee": _pipeline_update_employee,
+    "update_customer": _pipeline_update_customer,
+    "update_product": _pipeline_update_product,
+    "update_supplier": _pipeline_update_supplier,
+    "update_department": _pipeline_update_department,
+    "update_contact": _pipeline_update_contact,
+    # Group C
+    "create_invoice": _pipeline_create_invoice,
+    "create_multi_line_invoice": _pipeline_create_multi_line_invoice,
+    "invoice_with_payment": _pipeline_invoice_with_payment,
+    "create_credit_note": _pipeline_create_credit_note,
+    "delete_invoice": _pipeline_delete_invoice,
+    # Group D
+    "create_travel_expense": _pipeline_create_travel_expense,
+    "create_travel_expense_with_costs": _pipeline_create_travel_expense_with_costs,
+    "create_employee_with_employment": _pipeline_create_employee_with_employment,
+    "create_supplier_invoice": _pipeline_create_supplier_invoice,
+    # Group E
+    "delete_customer": _pipeline_delete_customer,
+    "delete_supplier": _pipeline_delete_supplier,
+    "delete_product": _pipeline_delete_product,
+    "delete_department": _pipeline_delete_department,
+    "delete_contact": _pipeline_delete_contact,
+    "delete_employee": _pipeline_delete_employee,
+    "delete_travel_expense": _pipeline_delete_travel_expense,
+    # Group F
+    "create_ledger_voucher": _pipeline_create_ledger_voucher,
+    "reverse_voucher": _pipeline_reverse_voucher,
+    "reverse_payment": _pipeline_reverse_payment,
+    "reminder_fee": _pipeline_reminder_fee,
+    "create_opening_balance": _pipeline_create_opening_balance,
+    "create_dimension": _pipeline_create_dimension,
+    "create_project": _pipeline_create_project,
+    "create_project_with_pm": _pipeline_create_project,
+    "project_invoice": _pipeline_project_invoice,
+    "project_lifecycle": _pipeline_project_lifecycle,
+    "salary_with_bonus": _pipeline_salary,
+    "year_end": _pipeline_year_end,
+    "bank_reconciliation": _pipeline_bank_reconciliation,
+    "process_invoice_file": _pipeline_process_invoice_file,
+}
+
+
+# ── Public API ──────────────────────────────────────────────────
+
+def has_pipeline(task_type: str) -> bool:
+    """Check if a static pipeline exists for this task type."""
+    return task_type in PIPELINES and task_type in SCHEMAS
+
+
+def run_static(task_type: str, prompt: str, all_tools_dict: dict,
+               client, emit_fn=None, request_id: str = "",
+               file_names: list[str] | None = None) -> dict:
+    """Run a static pipeline for the given task type.
+
+    Returns dict compatible with _run_agent() output.
+    Raises ExtractionError or PipelineError on failure (caller should fallback to agent).
+    """
+    import time as _time
+
+    t_start = _time.time()
+
+    if emit_fn:
+        emit_fn({"type": "static_start", "request_id": request_id,
+                 "task_type": task_type})
+
+    # Pre-extract file content so LLM can see PDF/CSV data during extraction
+    extraction_prompt = prompt
+    if file_names and "extract_file_content" in all_tools_dict:
+        for fname in file_names:
+            try:
+                file_result = all_tools_dict["extract_file_content"](filename=fname)
+                if isinstance(file_result, dict) and file_result.get("text"):
+                    extraction_prompt += f"\n\n--- File: {fname} ---\n{file_result['text']}"
+                    log.info(f"[{request_id[:8]}] static: pre-extracted {fname} ({len(file_result['text'])} chars)")
+            except Exception as e:
+                log.warning(f"[{request_id[:8]}] static: file extraction failed for {fname}: {e}")
+                extraction_prompt += f"\n\nAttached files: {', '.join(file_names)}"
+                break
+    elif file_names:
+        extraction_prompt += f"\n\nAttached files: {', '.join(file_names)}"
+
+    # 1. Extract parameters (ONE Gemini call)
+    log.info(f"[{request_id[:8]}] static: extracting params for {task_type}")
+    params = extract_params(extraction_prompt, task_type)
+    log.info(f"[{request_id[:8]}] static: extracted {len(params)} params")
+
+    # Override filename with actual attached file if extraction missed it
+    if file_names and task_type in ("bank_reconciliation", "process_invoice_file"):
+        extracted_fn = params.get("filename", "")
+        if not extracted_fn or extracted_fn not in file_names:
+            params["filename"] = file_names[0]
+
+    if emit_fn:
+        emit_fn({"type": "static_extracted", "request_id": request_id,
+                 "params": {k: str(v)[:100] for k, v in params.items()}})
+
+    # 2. Pre-compute currency info (regex-based, no LLM call) for agio tasks
+    from tool_router import extract_currency_info
+    currency_info = extract_currency_info(prompt) if task_type == "invoice_with_payment" else None
+
+    # 2. Run pipeline
+    ctx = {"steps": [], "emit_fn": emit_fn, "request_id": request_id, "client": client}
+    if currency_info:
+        ctx["currency_info"] = currency_info
+        log.info(f"[{request_id[:8]}] static: currency detected: {currency_info}")
+    pipeline_fn = PIPELINES[task_type]
+    pipeline_fn(all_tools_dict, params, ctx)
+
+    elapsed = _time.time() - t_start
+    log.info(f"[{request_id[:8]}] static: done in {elapsed:.1f}s, "
+             f"{len(ctx['steps'])} tool calls, {client._call_count} API calls")
+
+    if emit_fn:
+        emit_fn({"type": "static_done", "request_id": request_id,
+                 "elapsed": round(elapsed, 2),
+                 "tool_calls": len(ctx["steps"]),
+                 "api_calls": client._call_count})
+
+    return {
+        "agent_response": "Done.",
+        "tool_calls": ctx["steps"],
+        "api_calls": client._call_count,
+        "api_errors": client._error_count,
+        "api_log": client._call_log,
+        "elapsed": round(elapsed, 2),
+        "task_types": [task_type],
+        "mode": "static",
+    }

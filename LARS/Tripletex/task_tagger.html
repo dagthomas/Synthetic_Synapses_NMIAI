@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synthetic Synapses - Task Tagger</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #e8d5e8, #d5e8e8, #e8e8d5);
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container {
+    max-width: 1050px;
+    margin: 0 auto;
+    background: rgba(255,255,255,0.6);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    padding: 14px 20px;
+    gap: 20px;
+    font-size: 14px;
+    color: #333;
+    border-bottom: 1px solid rgba(0,0,0,0.06);
+  }
+  .header .rank { font-weight: 600; font-size: 16px; min-width: 30px; }
+  .header .name { font-weight: 700; font-size: 17px; flex-shrink: 0; }
+  .header .badge {
+    background: #555; color: #fff; font-size: 10px;
+    padding: 2px 6px; border-radius: 3px; font-weight: 600;
+  }
+  .header .star { color: #2196F3; font-size: 18px; }
+  .header .stat { min-width: 50px; text-align: center; color: #555; }
+  .header .total { font-size: 28px; font-weight: 700; color: #333; margin-left: auto; }
+  .header .chevron { cursor: pointer; font-size: 18px; color: #999; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 10px;
+    padding: 16px;
+  }
+  .task-card {
+    border-radius: 10px;
+    padding: 10px 6px 8px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+    position: relative;
+    min-height: 100px;
+  }
+  .task-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  }
+  .task-card.has-score {
+    background: linear-gradient(135deg, #c8ede0, #d4f0e8);
+    border: 1px solid #a8d8c4;
+  }
+  .task-card.no-score {
+    background: rgba(255,255,255,0.7);
+    border: 1px solid #ddd;
+  }
+  .task-card .task-num { font-size: 11px; color: #666; margin-bottom: 2px; }
+  .task-card .task-name {
+    font-size: 9px; color: #2196F3; font-weight: 600;
+    margin-bottom: 1px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .task-card .score { font-size: 20px; font-weight: 700; color: #1a6b4a; }
+  .task-card.no-score .score { color: #999; }
+  .task-card .tries { font-size: 10px; color: #888; margin-top: 1px; }
+  .task-card .tests {
+    font-size: 10px; color: #555; margin-top: 2px;
+    font-weight: 600;
+  }
+  .task-card .tests.all-pass { color: #1a6b4a; }
+  .task-card .tests.some-fail { color: #e67e22; }
+  .task-card .tests.all-fail { color: #e74c3c; }
+
+  /* Modal */
+  .modal-overlay {
+    display: none; position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4); z-index: 100;
+    justify-content: center; align-items: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: #fff; border-radius: 12px;
+    padding: 24px; min-width: 360px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  }
+  .modal h3 { margin-bottom: 16px; color: #333; }
+  .modal label {
+    display: block; font-size: 12px; font-weight: 600;
+    color: #555; margin-bottom: 4px; margin-top: 10px;
+  }
+  .modal label:first-of-type { margin-top: 0; }
+  .modal input {
+    width: 100%; padding: 8px 10px;
+    border: 2px solid #ddd; border-radius: 8px;
+    font-size: 14px; outline: none;
+    transition: border-color 0.2s;
+  }
+  .modal input:focus { border-color: #2196F3; }
+  .modal .row { display: flex; gap: 10px; }
+  .modal .row > div { flex: 1; }
+  .modal .btn-row {
+    display: flex; gap: 8px; margin-top: 16px;
+    justify-content: flex-end;
+  }
+  .modal button {
+    padding: 8px 18px; border: none; border-radius: 6px;
+    cursor: pointer; font-size: 13px; font-weight: 600;
+  }
+  .modal .btn-save { background: #1a6b4a; color: #fff; }
+  .modal .btn-save:hover { background: #15583d; }
+  .modal .btn-clear { background: #e74c3c; color: #fff; }
+  .modal .btn-clear:hover { background: #c0392b; }
+  .modal .btn-cancel { background: #eee; color: #555; }
+  .modal .btn-cancel:hover { background: #ddd; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <span class="rank">174</span>
+    <span class="name">Synthetic Synapses</span>
+    <span class="badge">NO</span>
+    <span class="star">&#9733;</span>
+    <span class="stat">30/30</span>
+    <span class="stat">163</span>
+    <span class="stat">10.3</span>
+    <span class="stat">8.2</span>
+    <span class="stat">12.6</span>
+    <span class="total">31.05</span>
+    <span class="chevron">&#x25BC;</span>
+  </div>
+  <div class="grid" id="taskGrid"></div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h3 id="modalTitle">Tag Task 01</h3>
+    <label for="nameInput">Name</label>
+    <input type="text" id="nameInput" placeholder="e.g. create_employee" autocomplete="off">
+    <div class="row">
+      <div>
+        <label for="testsPassedInput">Tests Passed</label>
+        <input type="number" id="testsPassedInput" placeholder="0" min="0">
+      </div>
+      <div>
+        <label for="totalTestsInput">Total Tests</label>
+        <input type="number" id="totalTestsInput" placeholder="0" min="0">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-clear" id="btnClear">Clear All</button>
+      <button class="btn-cancel" id="btnCancel">Cancel</button>
+      <button class="btn-save" id="btnSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const tasks = [
+  { num: 1,  score: 1.50, tries: 6 },
+  { num: 2,  score: 2.00, tries: 5 },
+  { num: 3,  score: 2.00, tries: 9 },
+  { num: 4,  score: 2.00, tries: 8 },
+  { num: 5,  score: 1.33, tries: 8 },
+  { num: 6,  score: 1.20, tries: 7 },
+  { num: 7,  score: 0.29, tries: 9 },
+  { num: 8,  score: null, tries: 7 },
+  { num: 9,  score: null, tries: 7 },
+  { num: 10, score: null, tries: 7 },
+  { num: 11, score: null, tries: 8 },
+  { num: 12, score: null, tries: 6 },
+  { num: 13, score: 1.13, tries: 9 },
+  { num: 14, score: 0.25, tries: 7 },
+  { num: 15, score: 0.50, tries: 8 },
+  { num: 16, score: null, tries: 8 },
+  { num: 17, score: 3.50, tries: 7 },
+  { num: 18, score: 2.80, tries: 6 },
+  { num: 19, score: 2.05, tries: 3 },
+  { num: 20, score: 0.60, tries: 4 },
+  { num: 21, score: 1.71, tries: 1 },
+  { num: 22, score: null, tries: 1 },
+  { num: 23, score: null, tries: 1 },
+  { num: 24, score: 2.25, tries: 4 },
+  { num: 25, score: null, tries: 3 },
+  { num: 26, score: 2.40, tries: 3 },
+  { num: 27, score: 1.50, tries: 2 },
+  { num: 28, score: 1.50, tries: 2 },
+  { num: 29, score: 0.55, tries: 1 },
+  { num: 30, score: null, tries: 4 },
+];
+
+const STORAGE_KEY = 'synth_synapses_task_data';
+let taskData = {};
+try { taskData = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch(e) {}
+
+function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(taskData)); }
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function render() {
+  const grid = document.getElementById('taskGrid');
+  grid.innerHTML = '';
+  tasks.forEach(t => {
+    const hasScore = t.score !== null;
+    const card = document.createElement('div');
+    card.className = 'task-card ' + (hasScore ? 'has-score' : 'no-score');
+    const d = taskData[t.num] || {};
+    const name = d.name || '';
+    const tp = d.testsPassed;
+    const tt = d.totalTests;
+    const hasTests = tp !== undefined && tt !== undefined && tt > 0;
+
+    let testsHtml = '';
+    if (hasTests) {
+      const cls = tp === tt ? 'all-pass' : tp === 0 ? 'all-fail' : 'some-fail';
+      testsHtml = `<div class="tests ${cls}">${tp}/${tt} tests</div>`;
+    }
+
+    card.innerHTML = `
+      <div class="task-num">Task ${pad(t.num)}</div>
+      ${name ? `<div class="task-name" title="${name}">${name}</div>` : ''}
+      <div class="score">${hasScore ? t.score.toFixed(2) : '\u2014'}</div>
+      <div class="tries">${t.tries} ${t.tries === 1 ? 'try' : 'tries'}</div>
+      ${testsHtml}
+    `;
+    card.addEventListener('click', () => openModal(t.num));
+    grid.appendChild(card);
+  });
+}
+
+let currentTask = null;
+const overlay = document.getElementById('modalOverlay');
+const nameInput = document.getElementById('nameInput');
+const tpInput = document.getElementById('testsPassedInput');
+const ttInput = document.getElementById('totalTestsInput');
+
+function openModal(num) {
+  currentTask = num;
+  document.getElementById('modalTitle').textContent = `Tag Task ${pad(num)}`;
+  const d = taskData[num] || {};
+  nameInput.value = d.name || '';
+  tpInput.value = d.testsPassed !== undefined ? d.testsPassed : '';
+  ttInput.value = d.totalTests !== undefined ? d.totalTests : '';
+  overlay.classList.add('active');
+  setTimeout(() => nameInput.focus(), 50);
+}
+
+function closeModal() {
+  overlay.classList.remove('active');
+  currentTask = null;
+}
+
+document.getElementById('btnSave').addEventListener('click', () => {
+  if (currentTask !== null) {
+    const name = nameInput.value.trim();
+    const tp = tpInput.value.trim();
+    const tt = ttInput.value.trim();
+    const d = {};
+    if (name) d.name = name;
+    if (tp !== '') d.testsPassed = parseInt(tp) || 0;
+    if (tt !== '') d.totalTests = parseInt(tt) || 0;
+    if (Object.keys(d).length > 0) taskData[currentTask] = d;
+    else delete taskData[currentTask];
+    save();
+    render();
+  }
+  closeModal();
+});
+
+document.getElementById('btnClear').addEventListener('click', () => {
+  if (currentTask !== null) {
+    delete taskData[currentTask];
+    save();
+    render();
+  }
+  closeModal();
+});
+
+document.getElementById('btnCancel').addEventListener('click', closeModal);
+overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+
+document.addEventListener('keydown', e => {
+  if (!overlay.classList.contains('active')) return;
+  if (e.key === 'Enter') document.getElementById('btnSave').click();
+  if (e.key === 'Escape') closeModal();
+});
+
+render();
+</script>
+</body>
+</html>

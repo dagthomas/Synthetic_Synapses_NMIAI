@@ -7,8 +7,6 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
     def create_travel_expense_cost(
         travel_expense_id: int,
         amount: float,
-        description: str = "",
-        date: str = "",
         category: str = "",
         paymentType_id: int = 0,
         vatType_id: int = 0,
@@ -19,8 +17,6 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
         Args:
             travel_expense_id: ID of the travel expense report.
             amount: Cost amount including VAT.
-            description: Description of the cost.
-            date: Date of the cost YYYY-MM-DD.
             category: Cost category (e.g. 'other', 'food', 'transport').
             paymentType_id: Payment type ID (0 to auto-detect first available).
             vatType_id: VAT type ID (0 for default).
@@ -38,10 +34,6 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
             "amountCurrencyIncVat": amount,
             "paymentType": {"id": paymentType_id},
         }
-        if description:
-            body["description"] = description
-        if date:
-            body["date"] = date
         if category:
             body["category"] = category
         if vatType_id:
@@ -99,17 +91,18 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
 
     def create_per_diem_compensation(
         travel_expense_id: int,
-        date: str = "",
         location: str = "",
         rateType_id: int = 0,
         accommodation: str = "",
     ) -> dict:
         """Create a per diem compensation on a travel expense.
 
+        Per diem covers the full travel period (departureDate to returnDate).
+        One call creates per diem for the entire trip — do NOT call per day.
+
         Args:
             travel_expense_id: ID of the travel expense.
-            date: Date YYYY-MM-DD (used as location fallback if location empty).
-            location: Travel location.
+            location: Travel location (default 'Norge').
             rateType_id: Rate type ID (0 for default).
             accommodation: Accommodation type.
 
@@ -122,8 +115,6 @@ def build_travel_extras_tools(client: TripletexClient) -> dict:
             "travelExpense": {"id": travel_expense_id},
             "location": location,
         }
-        if date:
-            body["date"] = date
         if rateType_id:
             body["rateType"] = {"id": rateType_id}
         if accommodation:

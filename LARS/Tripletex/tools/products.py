@@ -84,16 +84,6 @@ def build_product_tools(client: TripletexClient) -> dict:
         """
         _initialize_vat_map(client) # Ensure VAT map is initialized
 
-        # Check if product number already exists before POSTing (avoids 422 error)
-        if productNumber:
-            existing = client.get("/product", params={
-                "number": productNumber,
-                "fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency",
-            })
-            vals = existing.get("values", [])
-            if vals:
-                return {"value": vals[0], "_note": "Product number already existed, returning existing."}
-
         body = {"name": name}
         # Only send ONE price — sending both causes validation errors when they don't match the product's VAT type
         if priceExcludingVatCurrency:

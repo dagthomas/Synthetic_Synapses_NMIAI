@@ -135,6 +135,14 @@ def init_db():
             updated_at TEXT
         )
         """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_manual_checks (
+            task_name TEXT PRIMARY KEY,
+            checks_passed INTEGER DEFAULT 0,
+            checks_total INTEGER DEFAULT 0,
+            updated_at TEXT
+        )
+        """)
         conn.commit()
 
 
@@ -564,6 +572,26 @@ def set_task_number_mapping(task_number: int, task_type: str, confidence: str = 
                  confidence = excluded.confidence,
                  updated_at = excluded.updated_at""",
             (task_number, task_type, confidence, _now()),
+        )
+        conn.commit()
+
+
+def get_all_manual_checks() -> dict[str, dict]:
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT * FROM task_manual_checks ORDER BY task_name").fetchall()
+        return {r["task_name"]: dict(r) for r in rows}
+
+
+def set_manual_checks(task_name: str, checks_passed: int, checks_total: int):
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """INSERT INTO task_manual_checks (task_name, checks_passed, checks_total, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(task_name) DO UPDATE SET
+                 checks_passed = excluded.checks_passed,
+                 checks_total = excluded.checks_total,
+                 updated_at = excluded.updated_at""",
+            (task_name, checks_passed, checks_total, _now()),
         )
         conn.commit()
 

@@ -110,13 +110,15 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         invoice_id: int,
         amount: float,
         paymentDate: str,
+        paidAmountCurrency: float = 0.0,
     ) -> dict:
         """Register a payment for an invoice.
 
         Args:
             invoice_id: The ID of the invoice being paid.
-            amount: The payment amount (including VAT). Must be non-zero. Use positive for payment, negative to reverse.
+            amount: The payment amount in NOK (accounting currency). Must be non-zero. Use positive for payment, negative to reverse.
             paymentDate: Payment date in YYYY-MM-DD format.
+            paidAmountCurrency: The payment amount in the invoice's currency (e.g. EUR). If 0, defaults to same as amount (NOK invoices).
 
         Returns:
             Confirmation of payment or an error message.
@@ -124,10 +126,16 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         if amount == 0:
             return {"error": True, "message": "Payment amount cannot be 0. The invoice may already be fully paid (amountOutstanding=0). Check amountOutstanding from search_invoices before registering payment."}
 
-        # Resolve paymentTypeId (e.g. "Betalt til bank")
+        # Resolve paymentTypeId — prefer "Betalt til bank" over "Kontant"
         pt_result = client.get("/invoice/paymentType", params={"fields": "id,description", "count": 10})
         payment_types = pt_result.get("values", [])
-        payment_type_id = payment_types[0]["id"] if payment_types else 0
+        payment_type_id = 0
+        for pt in payment_types:
+            if "bank" in pt.get("description", "").lower():
+                payment_type_id = pt["id"]
+                break
+        if not payment_type_id and payment_types:
+            payment_type_id = payment_types[0]["id"]
 
         return client.put(
             f"/invoice/{invoice_id}/:payment",
@@ -135,7 +143,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
                 "paymentDate": paymentDate,
                 "paymentTypeId": payment_type_id,
                 "paidAmount": amount,
-                "paidAmountCurrency": amount,
+                "paidAmountCurrency": paidAmountCurrency if paidAmountCurrency else amount,
             },
         )
 
@@ -167,7 +175,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         Returns:
             A list of invoices.
         """
-        params = {"fields": "id,invoiceNumber,invoiceDate,invoiceDueDate,customer(id,name),amount,amountOutstanding,amountCurrencyOutstanding,invoiceLines(description,product(name))"}
+        params = {"fields": "id,invoiceNumber,invoiceDate,invoiceDueDate,customer(id,name),amount,amountOutstanding,amountCurrencyOutstanding"}
         params["invoiceDateFrom"] = invoiceDateFrom or "2000-01-01"
         params["invoiceDateTo"] = invoiceDateTo or "2030-12-31"
         if customerId:

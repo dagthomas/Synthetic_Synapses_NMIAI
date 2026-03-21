@@ -10,7 +10,11 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
         amountIncludingVat: float = 0.0,
         expenseAccountNumber: int = 0,
         vatPercentage: int = 25,
-        invoiceDate: str = "", # Make invoiceDate optional with a default empty string
+        invoiceDate: str = "",
+        dueDate: str = "",
+        lineDescription: str = "",
+        departmentId: int = 0,
+        projectId: int = 0,
     ) -> dict:
         """Create an incoming/supplier invoice (leverandoerfaktura) with VAT postings.
 
@@ -25,11 +29,15 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
             expenseAccountNumber: Expense account number (e.g. 6590 for office services).
             vatPercentage: VAT rate: 25 (high/hoey), 15 (medium), 12 (low), or 0 (none). Default 25.
             invoiceDate: Invoice date YYYY-MM-DD. REQUIRED.
+            dueDate: Payment due date YYYY-MM-DD (forfallsdato). Optional.
+            lineDescription: Description of what the invoice is for (e.g. "Nettverkstjenester"). Optional.
+            departmentId: Department ID to link the expense posting to (from create_department). Optional.
+            projectId: Project ID to link the expense to (from create_project). Optional.
 
         Returns:
             Created voucher with postings, or error.
         """
-        if not invoiceDate: # Add explicit check for invoiceDate
+        if not invoiceDate:
             return {"error": True, "message": "invoiceDate is required (YYYY-MM-DD). It must be provided in the prompt."}
         if not expenseAccountNumber:
             return {"error": True, "message": "expenseAccountNumber is required (e.g. 6590 for office services)"}
@@ -72,36 +80,62 @@ def build_incoming_invoice_tools(client: TripletexClient) -> dict:
             return {"error": True, "message": f"Unsupported VAT rate {vatPercentage}%. Use 25, 15, 12, or 0."}
 
         amt = round(amountIncludingVat, 2)
-        description = f"{invoiceNumber} - supplier invoice" if invoiceNumber else "Supplier invoice"
+
+        # Build description: include line description if available
+        if lineDescription and invoiceNumber:
+            description = f"{invoiceNumber} - {lineDescription}"
+        elif invoiceNumber:
+            description = f"{invoiceNumber} - supplier invoice"
+        elif lineDescription:
+            description = lineDescription
+        else:
+            description = "Supplier invoice"
 
         # Build voucher with two postings:
         # 1. Expense account (debit, gross amount, with vatType for auto-VAT split)
         # 2. Payables 2400 (credit, gross amount, linked to supplier)
-        postings = [
-            {
-                "row": 1,
-                "account": {"id": expense_id},
-                "amountGross": amt,
-                "amountGrossCurrency": amt,
-            },
-            {
-                "row": 2,
-                "account": {"id": payables_id},
-                "amountGross": -amt,
-                "amountGrossCurrency": -amt,
-                "supplier": {"id": supplierId},
-            },
-        ]
+        expense_posting = {
+            "row": 1,
+            "account": {"id": expense_id},
+            "amountGross": amt,
+            "amountGrossCurrency": amt,
+            "description": description,
+        }
+        if departmentId:
+            expense_posting["department"] = {"id": departmentId}
+        if projectId:
+            expense_posting["project"] = {"id": projectId}
+        credit_posting = {
+            "row": 2,
+            "account": {"id": payables_id},
+            "amountGross": -amt,
+            "amountGrossCurrency": -amt,
+            "supplier": {"id": supplierId},
+            "description": description,
+        }
+
+        # Set invoice number on the credit posting for traceability
+        if invoiceNumber:
+            credit_posting["invoiceNumber"] = invoiceNumber
 
         # Add vatType to expense posting if VAT applies
         if vat_type_id > 0:
-            postings[0]["vatType"] = {"id": vat_type_id}
+            expense_posting["vatType"] = {"id": vat_type_id}
 
         body = {
             "date": invoiceDate,
             "description": description,
-            "postings": postings,
+            "postings": [expense_posting, credit_posting],
         }
+
+        # Set vendor invoice number on the voucher itself
+        if invoiceNumber:
+            body["vendorInvoiceNumber"] = invoiceNumber
+
+        # Set due date on the credit posting if provided
+        if dueDate:
+            credit_posting["termOfPayment"] = dueDate
+
         return client.post("/ledger/voucher", json=body)
 
     def search_incoming_invoices(

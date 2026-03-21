@@ -186,7 +186,7 @@ def pre_create_for_deletion(client: TripletexClient, task_def, expected: dict) -
             log.error(f"Failed to pre-create customer for reverse_payment: {cust}")
             return 0
         prod = client.post("/product", json={
-            "name": "Reverseringsprodukt",
+            "name": f"Reverseringsprodukt-{_uuid.uuid4().hex[:8]}",
             "priceExcludingVatCurrency": 1000,
         })
         prod_id = prod.get("value", {}).get("id", 0)
@@ -212,13 +212,17 @@ def pre_create_for_deletion(client: TripletexClient, task_def, expected: dict) -
         if not inv_id:
             log.error(f"Failed to pre-create invoice for reverse_payment: {inv}")
             return 0
-        # Register payment to make it fully paid
+        # Register payment to make it fully paid (use PUT /:payment endpoint)
         inv_detail = client.get(f"/invoice/{inv_id}", params={"fields": "id,amount"})
         amount = float(inv_detail.get("value", {}).get("amount", 1000))
-        pay = client.post("/invoice/payment", json={
-            "invoice": {"id": inv_id},
-            "amount": amount,
+        # Resolve payment type
+        pt_result = client.get("/invoice/paymentType", params={"fields": "id", "count": 1})
+        pt_id = pt_result.get("values", [{}])[0].get("id", 0)
+        pay = client.put(f"/invoice/{inv_id}/:payment", params={
             "paymentDate": "2026-03-02",
+            "paymentTypeId": pt_id,
+            "paidAmount": amount,
+            "paidAmountCurrency": amount,
         })
         if "error" in pay:
             log.error(f"Failed to register payment for reverse_payment: {pay}")

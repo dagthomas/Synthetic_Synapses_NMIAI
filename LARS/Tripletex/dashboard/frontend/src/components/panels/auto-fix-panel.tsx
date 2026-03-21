@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react"
 import { useTasks, useLanguages } from "@/hooks/use-api"
-import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix, subscribeLiveEvents, streamLogEval, fetchLogJson, fetchLatestScores, mapTaskNumber, fetchScoresFromApi, setScoreAuth } from "@/lib/api"
+import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix, subscribeLiveEvents, streamLogEval, fetchLogJson, fetchLatestScores, mapTaskNumber, fetchScoresFromApi, setScoreAuth, translatePrompt } from "@/lib/api"
 import type {
   AutoFixEvent,
   AutoFixScore,
@@ -57,9 +57,46 @@ import {
   Hash,
   RefreshCw,
   Terminal,
+  Languages,
 } from "lucide-react"
 
 type Mode = "tasks" | "live" | "batch" | "single"
+
+function PromptWithTranslation({ prompt, className }: { prompt: string; className?: string }) {
+  const [translation, setTranslation] = useState<string | null>(null)
+  const [translating, setTranslating] = useState(false)
+
+  return (
+    <div className={className}>
+      <div className="flex items-center gap-2 mb-1">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Prompt</p>
+        {!translation && (
+          <button
+            onClick={() => {
+              setTranslating(true)
+              translatePrompt(prompt).then(r => {
+                setTranslation(r.translation)
+                setTranslating(false)
+              }).catch(() => setTranslating(false))
+            }}
+            disabled={translating}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
+          >
+            {translating ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Languages className="h-2.5 w-2.5" />}
+            Oversett
+          </button>
+        )}
+      </div>
+      {translation && (
+        <div className="rounded border border-blue-200 bg-blue-50/50 p-2 mb-2">
+          <span className="font-semibold text-blue-600 uppercase tracking-wider text-[10px]">Norsk oversettelse:</span>
+          <p className="mt-1 text-[12px] whitespace-pre-wrap break-words text-blue-900/80">{translation}</p>
+        </div>
+      )}
+      <p className="text-[12px] whitespace-pre-wrap break-words">{prompt}</p>
+    </div>
+  )
+}
 
 export function AutoFixPanel() {
   const [mode, setMode] = useState<Mode>("tasks")
@@ -1049,8 +1086,7 @@ function LiveFixRequestCard({
           {req.prompt && (
             <div className="px-3 pt-2">
               <div className="bg-muted/50 rounded p-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Prompt</p>
-                <p className="text-[12px] whitespace-pre-wrap break-words">{req.prompt}</p>
+                <PromptWithTranslation prompt={req.prompt} />
               </div>
             </div>
           )}
@@ -2481,10 +2517,8 @@ function SingleAutoFixView() {
 
             {/* Prompt */}
             <div className="bg-muted/50 rounded-lg p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                Prompt ({evalResult.language})
-              </p>
-              <p className="text-[13px]">{evalResult.prompt}</p>
+              <PromptWithTranslation prompt={evalResult.prompt} className="" />
+              <p className="text-[10px] text-muted-foreground mt-1">Language: {evalResult.language}</p>
             </div>
 
             {/* Explanation — only on failure */}

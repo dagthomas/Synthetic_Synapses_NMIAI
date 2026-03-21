@@ -16,7 +16,9 @@ log = logging.getLogger(__name__)
 class ToolSelection(NamedTuple):
     """Result of select_tools(): the tools list + how we classified."""
     tools: list
-    classification_level: str  # "exact" | "category" | "fallback"
+    classification_level: str  # "exact" | "multi" | "category" | "fallback"
+    task_types: list = []
+    missing_tools: list = []
 
 
 def _strip_accents(s: str) -> str:
@@ -51,20 +53,33 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "create_invoice":              ["create_customer", "create_product", "create_order", "create_invoice", "send_invoice"],
     "create_multi_line_invoice":   ["create_customer", "create_product", "create_order", "create_invoice", "send_invoice"],
     "create_project":              ["create_customer", "create_employee", "create_project",
-                                    "get_ledger_postings", "get_ledger_accounts", "create_activity"],
+                                    "get_ledger_postings", "get_ledger_accounts",
+                                    "analyze_ledger_changes", "create_activity"],
     "create_travel_expense":       ["create_employee", "create_travel_expense"],
     "create_travel_expense_with_costs": ["create_employee", "create_travel_expense", "create_travel_expense_cost",
                                         "create_mileage_allowance", "create_per_diem_compensation", "update_travel_expense"],
+    "order_to_invoice_with_payment": ["search_customers", "search_products", "create_customer", "create_product",
+                                     "create_order", "create_invoice", "register_payment"],
     "invoice_with_payment":        ["search_customers", "search_invoices", "create_customer", "create_product",
-                                    "create_order", "create_invoice", "register_payment"],
+                                    "create_order", "create_invoice", "register_payment",
+                                    "create_voucher", "get_ledger_accounts"],
     "create_credit_note":          ["create_customer", "create_product", "create_order", "create_invoice",
                                     "create_credit_note"],
     "create_employee_with_employment": ["create_employee", "create_employment", "create_employment_details",
                                        "create_standard_time", "create_leave_of_absence"],
-    "create_supplier_invoice":     ["create_supplier", "create_incoming_invoice"],
+    "create_supplier_invoice":     ["create_supplier", "create_incoming_invoice",
+                                    "create_department", "get_ledger_accounts"],
     "project_invoice":             ["create_customer", "create_employee", "create_project",
-                                    "create_product", "create_order", "create_invoice", "send_invoice"],
-    # create_project_with_pm merged into project_invoice (identical tools)
+                                    "create_product", "create_order", "create_invoice", "send_invoice",
+                                    "create_activity", "create_timesheet_entry", "create_employment"],
+    "create_project_with_pm":      ["create_customer", "create_employee", "create_project",
+                                    "get_ledger_postings", "get_ledger_accounts",
+                                    "analyze_ledger_changes", "create_activity"],
+    "project_lifecycle":           ["create_customer", "create_employee", "create_project",
+                                    "create_employment", "create_timesheet_entry", "create_activity",
+                                    "create_supplier", "create_incoming_invoice",
+                                    "create_product", "create_order", "create_invoice", "send_invoice",
+                                    "search_projects"],
     # Tier 3 — complex
     "delete_travel_expense":  ["search_travel_expenses", "delete_travel_expense"],
     "delete_customer":        ["search_customers", "delete_customer"],
@@ -73,21 +88,30 @@ TASK_TOOL_MAP: dict[str, list[str]] = {
     "delete_department":      ["search_departments", "delete_department"],
     "delete_contact":         ["search_contacts", "delete_contact", "update_contact"],
     "delete_employee":        ["search_employees", "update_employee"],
-    "create_ledger_voucher":  ["create_voucher", "get_ledger_accounts"],
+    "create_ledger_voucher":  ["create_voucher", "get_ledger_accounts", "get_ledger_postings", "search_vouchers",
+                               "create_department"],
     "reverse_voucher":        ["search_vouchers", "reverse_voucher"],
-    "reverse_payment":        ["search_invoices", "register_payment"],
+    "reverse_payment":        ["search_customers", "search_invoices", "register_payment"],
+    "reminder_fee":           ["search_invoices", "search_customers", "create_voucher", "get_ledger_accounts",
+                               "create_product", "create_order", "create_invoice", "send_invoice",
+                               "register_payment"],
     "delete_invoice":         ["create_customer", "create_product", "create_order", "create_invoice",
                                "create_credit_note"],
     "create_opening_balance": ["create_opening_balance", "get_ledger_accounts"],
     "create_dimension":       ["create_accounting_dimension", "create_dimension_value",
                                "search_accounting_dimensions", "search_dimension_values",
                                "create_voucher", "get_ledger_accounts"],
-    "bank_reconciliation":    ["extract_file_content", "search_bank_accounts", "create_voucher"],
+    "bank_reconciliation":    ["extract_file_content", "search_bank_accounts", "create_voucher",
+                               "get_ledger_accounts",
+                               "search_customers", "search_invoices", "register_payment",
+                               "search_suppliers", "create_incoming_invoice",
+                               "create_supplier", "create_customer"],
     "process_invoice_file":   ["extract_file_content", "create_customer", "create_product", "create_order",
                                "create_invoice"],
     "year_end":               ["create_voucher", "get_ledger_accounts", "get_ledger_postings",
+                               "get_result_before_tax",
                                "search_year_end_annexes", "create_year_end_note"],
-    "salary":                 ["create_employee", "create_employment", "search_salary_types", "create_salary_transaction"],
+    "salary_with_bonus":      ["process_salary"],
 }
 
 # Universal tool always included
@@ -204,6 +228,17 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                           "zahlung zurückgewiesen",
                           "reverta o pagamento", "reverter o pagamento"], [], 10),
 
+    # ── Reminder fee / purregebyr (before invoice_with_payment — compound workflow) ──
+    ("reminder_fee", ["purregebyr", "forfalt faktura", "forfalte fakturaen", "forfalt fakturaen",
+                      "overdue invoice", "reminder fee", "late fee", "late payment fee",
+                      "betalingspaminnelse", "inkassogebyr", "inkassovarsel",
+                      "purring", "purregebyr pa",
+                      "frais de rappel", "frais de retard",
+                      "recargo por mora", "cargo por mora",
+                      "mahngebühr", "mahnkosten", "zahlungserinnerung",
+                      "taxa de lembrete", "multa por atraso"],
+     [], 10),
+
     # ── Credit note (before invoice — "kreditnota" overrides "faktura") ──
     ("create_credit_note", ["kreditnota", "kreditere", "credit note", "kreditér",
                             "nota de crédito", "note de crédit", "gutschrift",
@@ -227,6 +262,26 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                         "storniert", "stornieren",
                         "rechnung stornieren", "rechnung löschen"], [], 10),
 
+    # ── Order to invoice with payment (before invoice_with_payment — "pedido"/"bestilling" overrides) ──
+    ("order_to_invoice_with_payment", [
+        # Multi-word patterns (highest priority — word_count × bonus)
+        "convierte el pedido en factura", "convertir pedido en factura",
+        "convierte el pedido", "convertir el pedido",
+        "pedido en factura", "pedido a factura",
+        "convert order to invoice", "order to invoice",
+        "bestilling til faktura", "konverter bestilling til faktura",
+        "konverter bestillingen", "gjor om bestilling",
+        "gjor om bestillingen til faktura",
+        "commande en facture", "convertir commande en facture",
+        "convertir la commande", "transformer commande en facture",
+        "bestellung in rechnung", "bestellung umwandeln",
+        "bestellung zur rechnung",
+        "pedido para fatura", "converter pedido em fatura",
+        "converter o pedido em fatura",
+        # Single-word signals (order-first workflow)
+        "pedido", "bestilling",
+    ], [], 10),
+
     # ── Invoice with payment ──
     ("invoice_with_payment", ["faktura betaling", "invoice payment", "registrer betaling",
                               "register payment", "betal faktura",
@@ -242,7 +297,18 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                               "enregistrez le paiement", "paiement intégral",
                               "paiement complet", "facture et paiement",
                               "zahlung registrieren", "rechnung und zahlung",
-                              "paiement"], [], 9),
+                              "vollstandige zahlung", "zahlung",
+                              "paiement",
+                              # Currency / agio keywords
+                              "agio", "disagio", "agiogevinst", "agiotap",
+                              "valutadifferanse", "valutagevinst", "valutatap",
+                              "exchange rate", "exchange gain", "exchange loss",
+                              "kurs", "kursdifferanse",
+                              "gain de change", "perte de change",
+                              "diferencia cambiaria", "diferença cambial",
+                              "wechselkursdifferenz", "kursgewinn", "kursverlust"],
+     # Negative: order-first signals belong to order_to_invoice_with_payment
+     ["pedido", "bestilling"], 9),
 
     # ── Multi-line invoice ──
     ("create_multi_line_invoice", ["flere produkter", "multiple products", "flere linjer",
@@ -276,9 +342,16 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
     # ── Bank reconciliation ──
     ("bank_reconciliation", ["bankavstemming", "bank reconciliation", "avstemming",
                              "reconciliación bancaria", "conciliación bancaria",
+                             "concilia el extracto", "extracto bancario",
+                             "conciliar el extracto", "conciliar extracto",
+                             "concilia", "estado de cuenta bancario",
                              "reconciliação bancária", "conciliação bancária",
+                             "conciliar o extrato", "extrato bancário", "extrato bancario",
                              "rapprochement bancaire", "réconciliation bancaire",
-                             "bankabstimmung", "kontoavstemming"], [], 8),
+                             "relevé bancaire", "rapprocher le relevé",
+                             "bankabstimmung", "kontoavstemming",
+                             "kontoauszug", "bankkontoauszug",
+                             "bank statement", "reconcile bank"], [], 8),
 
     # ── Opening balance ──
     ("create_opening_balance", ["åpningsbalanse", "opening balance", "inngående balanse",
@@ -289,15 +362,31 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                 "opningsbalanse"], [], 8),
 
     # ── Year-end ──
-    ("year_end", ["årsoppgjør", "year-end", "year end", "årsavslutning",
+    ("year_end", ["årsoppgjør", "årsoppgjer", "year-end", "year end",
+                  "årsavslutning", "årsavslutt",
+                  "avskrivning", "avskrivningar", "avskrivningar",
+                  "avskrivninger", "avskrivingar", "depreciation",
+                  "forskuddsbetalt", "forskuddsbetalte", "forskotsbetalt",
+                  "forskotsbetaling", "prepaid expenses",
+                  "skattekostnad", "tax provision", "tax expense",
+                  "akkumulerte avskrivingar", "akkumulerte avskrivninger",
                   "cierre de año", "cierre del ejercicio",
                   "encerramento do ano", "fechamento do exercício",
                   "clôture annuelle", "clôture de l'exercice",
-                  "jahresabschluss", "jahresende"], [], 8),
+                  "clôture mensuelle", "clôture du mois",
+                  "monatsabschluss", "månedsslutt", "månedsavslutning",
+                  "monthly closing", "monthly close", "cierre mensual",
+                  "fechamento mensal", "encerramento mensal",
+                  "régularisation", "periodisering", "rechnungsabgrenzung",
+                  "provision pour salaires", "lønnsavsetning", "gehaltsrückstellung",
+                  "jahresabschluss", "jahresende",
+                  "abschreibung", "amortissement", "depreciación", "depreciação"],
+     ["opprett ansatt", "create employee", "faktura", "invoice", "reiseregning"], 10),
 
-    # ── Salary ──
-    ("salary", ["lønnskjøring", "payroll", "lønnstransaksjon", "salary transaction",
-                "lønnsslipp", "salary slip", "lønn", "salary",
+    # ── Salary with bonus ──
+    ("salary_with_bonus", ["lønnskjøring", "payroll", "lønnstransaksjon", "salary transaction",
+                "lønnsslipp", "salary slip", "lønn", "løn", "salary",
+                "grunnløn", "grunnlønn", "bonus", "eingongsbonus",
                 "salário", "processar salário", "processamento salarial", "bónus salarial",
                 "salario", "procesar salario", "procesar nómina", "nómina",
                 "salaire", "traitement salarial", "fiche de paie", "bulletin de paie",
@@ -332,9 +421,11 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                    "indemnité journalière", "frais de taxi",
                                    "viáticos", "gastos diarios"],
      ["leverandør", "supplier", "leverandørfaktura", "inngående faktura",
-      "proveedor", "fornecedor", "fournisseur", "lieferant"], 9),
+      "proveedor", "fornecedor", "fournisseur", "lieferant",
+      "avskriv", "årsoppgj", "depreciation", "year-end", "year end",
+      "skattekostnad", "bilag", "voucher", "periodisering"], 9),
 
-    # ── Supplier invoice ──
+    # ── Supplier invoice / expense receipt ──
     ("create_supplier_invoice", ["leverandørfaktura", "supplier invoice", "inngående faktura",
                                 "incoming invoice",
                           "factura de proveedor", "factura del proveedor",
@@ -343,7 +434,16 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                           "lieferantenrechnung", "eingangsrechnung",
                           "bokføre leverandør", "bokfør leverandør",
                           "regning fra leverandør", "mottatt regning",
-                          "leverandørfaktura"], [], 8),
+                          "leverandørfaktura",
+                          # English expense/receipt keywords
+                          "expense from this receipt", "expense account",
+                          "posted to department", "posted to avdeling",
+                          "bokføre utgift", "bokfør utgift",
+                          "receipt posted", "expense posted",
+                          "vat treatment", "mva-behandling",
+                          "utgift fra kvittering", "kvittering bokføres",
+                          # Generic expense-to-department patterns
+                          "expense from", "utgift fra"], [], 8),
 
     # ── Employee with employment ──
     ("create_employee_with_employment", ["ansettelsesforhold", "employment", "arbeidsforhold",
@@ -367,6 +467,20 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                          "occupation code", "yrkeskode"],
      ["prosjekt", "project", "proyecto", "projeto", "projet", "projekt"], 7),
 
+    # ── Project lifecycle (before project_invoice — matches lifecycle + hours + supplier cost) ──
+    ("project_lifecycle", ["ciclo de vida", "project lifecycle", "prosjektlivssyklus",
+                           "prosjektets livsløp", "cycle de vie du projet",
+                           "ciclo de vida del proyecto", "lebenszyklus des projekts",
+                           "custo de fornecedor", "supplier cost", "leverandørkostnad",
+                           "coût fournisseur", "coste de proveedor", "lieferantenkosten",
+                           "registe horas", "registrer timer", "register hours",
+                           "registrar horas", "enregistrer les heures", "stunden registrieren",
+                           "registre horas", "registre timer",
+                           # Individual keywords for "registe N horas" patterns (number between words)
+                           "horas", "timesheet", "timeregistrering", "timeforing",
+                           "taxa horaria", "hourly rate", "timepris", "taux horaire",
+                           "stundensatz", "tarifa por hora"], [], 12),
+
     # ── Project + invoice (before pure project — matches project + invoice keywords) ──
     ("project_invoice", ["prosjekt faktura", "project invoice", "proyecto factura",
                          "projet facture", "projekt rechnung", "projeto fatura",
@@ -383,10 +497,11 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                          "facturar el proyecto", "faturar o projeto",
                          "facturer le projet"], [], 10),
 
-    # ── Create project with PM (routes to project_invoice — same tools) ──
-    ("project_invoice", ["prosjektleder", "project manager",
+    # ── Create project with PM ──
+    ("create_project_with_pm", ["prosjektleder", "project manager",
                          "jefe de proyecto", "gerente de projeto", "chef de projet", "projektleiter"],
-     [], 10),
+     ["faktura", "invoice", "factura", "fatura", "facture", "rechnung",
+      "horas", "hours", "timer", "heures", "stunden", "timesheet"], 10),
 
     # ── Create project ──
     ("create_project", ["prosjekt", "project", "proyecto", "projet", "projekt", "projeto"],
@@ -428,7 +543,7 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
       "registrar pago", "registra el pago", "registra pago", "pago completo",
       "registrar pagamento", "registra o pagamento",
       "enregistrer paiement",
-      "zahlung registrieren"], 4),
+      "zahlung registrieren", "zahlung", "vollstandige zahlung"], 4),
 
     # ── Contact ──
     ("create_contact", ["kontaktperson", "contact person",
@@ -571,7 +686,22 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
                                "saldenbilanz", "monatsabschluss", "kontenrahmen",
                                "hauptbuch", "gegenkonto", "sollkonto", "habenkonto",
                                "journal entries", "journal entry",
-                               "kontieren", "verbuchen"],
+                               "kontieren", "verbuchen",
+                               # Norwegian expense/receipt keywords
+                               "kvittering", "utgift", "utgiftskonto",
+                               "bokføre utgift", "bokfør utgift",
+                               # Portuguese expense keywords
+                               "despesa", "conta de despesas", "recibo",
+                               "registar despesa",
+                               # Spanish expense keywords
+                               "gasto", "cuenta de gastos",
+                               "registrar gasto", "registrar el gasto",
+                               # French expense keywords
+                               "dépense", "compte de charges", "reçu",
+                               "enregistrer la dépense",
+                               # German expense keywords
+                               "aufwand", "aufwandskonto", "quittung",
+                               "ausgabe", "ausgabenkonto"],
      ["tilbakeføre", "reversere", "reverse", "slett", "delete",
       "åpningsbalanse", "opening balance", "revertir", "reverter",
       "contrepasser", "stornieren"], 7),
@@ -590,7 +720,11 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
       "supplier invoice", "incoming invoice", "inngående",
       "eliminar", "excluir", "supprimer", "löschen", "oppdater", "update", "endre",
       "actualizar", "atualizar", "modifier", "ändern", "aktualisieren",
-      "mettre a jour", "mettre à jour"], 4),
+      "mettre a jour", "mettre à jour",
+      # Prevent misclassification of complex multi-step prompts
+      "horas", "hours", "timer", "heures", "stunden", "timesheet",
+      "orçamento", "budget", "budsjett",
+      "ciclo de vida", "lifecycle", "livsløp"], 4),
     ("create_department", ["opprett avdeling", "opprette avdeling", "ny avdeling",
                            "create department", "new department",
                            "crear departamento", "nuevo departamento",
@@ -602,7 +736,11 @@ _PATTERNS: list[tuple[str, list[str], list[str], int]] = [
      ["slett", "delete", "eliminar", "excluir", "supprimer", "löschen",
       "oppdater", "update", "endre", "actualizar", "atualizar", "modifier", "ändern",
       "aktualisieren", "mettre a jour", "mettre à jour",
-      "ansatt", "employee", "empleado", "funcionário", "mitarbeiter"], 4),
+      "ansatt", "employee", "empleado", "funcionário", "mitarbeiter",
+      # Prevent expense/receipt prompts from matching create_department
+      "expense", "receipt", "utgift", "kvittering", "mva", "vat",
+      "posted to", "bokføre", "bokfør", "expense account", "utgiftskonto",
+      "regning", "faktura", "invoice"], 4),
     ("create_employee", ["ansatt", "employee", "empleado", "employé",
                          "mitarbeiter", "funcionário", "tilsett",
                          "kollega", "medarbeider", "ny kollega", "new colleague",
@@ -685,6 +823,54 @@ def classify_task(prompt: str) -> str | None:
     return None
 
 
+# ── Multi-intent splitting ──────────────────────────────────────────
+# Conservative patterns: only split on strong multi-intent signals.
+# We do NOT split on simple "og"/"and" because those often join sub-parts
+# of a single intent (e.g., "name and email").
+
+_INTENT_SPLIT_RE = re.compile(
+    r'(?:\.\s+(?=[A-ZÆØÅÜÖÄÉÈ]))'   # Period + capital letter (new sentence)
+    r'|(?:\n\s*\n)'                    # Double newline (paragraph break)
+    r'|(?:\n\s*[-•*]\s+)'             # Bullet points
+    r'|(?:\n\s*\d+[\.\)]\s+)',        # Numbered list items
+    re.UNICODE
+)
+
+
+def classify_tasks(prompt: str) -> list[str]:
+    """Classify a prompt into one or more task types (multi-intent aware).
+
+    Uses sentence splitting to detect prompts with multiple independent tasks.
+    Returns list of matched task types. Empty list means fallback to all tools.
+    """
+    # Primary classification on full prompt (existing behavior)
+    primary = classify_task(prompt)
+
+    # Split into segments for multi-intent detection
+    segments = _INTENT_SPLIT_RE.split(prompt)
+    segments = [s.strip() for s in segments if s and len(s.strip()) >= 15]
+
+    if len(segments) <= 1:
+        return [primary] if primary else []
+
+    # Classify each segment independently
+    types: list[str] = []
+    if primary:
+        types.append(primary)
+
+    for seg in segments:
+        tt = classify_task(seg)
+        if tt and tt not in types:
+            types.append(tt)
+
+    if types:
+        if len(types) > 1:
+            log.info(f"Multi-intent detected: {types}")
+        return types
+
+    return [primary] if primary else []
+
+
 # ── Category-level fallback (between exact classification and all-tools) ──
 # When classify_task() returns None, detect broad categories to narrow from 118 to ~10-25 tools.
 
@@ -711,11 +897,12 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
                  "comprobante", "comprovante", "pièce comptable", "buchungsbeleg",
                  "asiento", "lançamento"],
     "department": ["avdeling", "department", "departamento", "département", "abteilung", "avdelinga"],
-    "salary":   ["lønn", "salary", "lønnskjøring", "payroll",
+    "salary_with_bonus": ["lønn", "løn", "salary", "lønnskjøring", "payroll",
+                 "grunnløn", "grunnlønn", "bonus", "eingongsbonus",
                  "salário", "salario", "salaire", "gehalt", "lohn",
                  "nómina", "gehaltsabrechnung", "folha de pagamento",
                  "fiche de paie", "bulletin de paie", "lohnabrechnung",
-                 "bónus", "bonus"],
+                 "bónus"],
     "contact":  ["kontaktperson", "contact person", "kontakt",
                  "persona de contacto", "pessoa de contato", "contato",
                  "personne de contact", "ansprechpartner"],
@@ -746,12 +933,14 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
                  "delete_travel_expense", "create_travel_expense_cost",
                  "create_mileage_allowance", "create_per_diem_compensation",
                  "update_travel_expense"],
-    "project":  ["create_customer", "create_employee", "create_project"],
+    "project":  ["create_customer", "create_employee", "create_project",
+                 "create_employment", "create_timesheet_entry", "create_activity",
+                 "search_projects"],
     "ledger":   ["create_voucher", "get_ledger_accounts", "search_vouchers",
                  "reverse_voucher", "create_opening_balance"],
     "department": ["create_department", "update_department", "search_departments",
                    "delete_department"],
-    "salary":   ["search_salary_types", "create_salary_transaction", "create_employee"],
+    "salary_with_bonus": ["process_salary"],
     "contact":  ["create_customer", "create_contact", "update_contact",
                  "search_contacts", "delete_contact"],
     "dimension": ["create_project_category", "search_project_categories",
@@ -775,20 +964,26 @@ def detect_categories(prompt: str) -> list[str]:
     return matched
 
 
-def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = False,
-                 prompt: str = "") -> ToolSelection:
-    """Select tools for a given task type.
+def select_tools(task_types: list[str] | str | None, all_tools_dict: dict,
+                 has_files: bool = False, prompt: str = "") -> ToolSelection:
+    """Select tools for given task type(s).
 
     Args:
-        task_type: Classified task type, or None for all tools.
+        task_types: Classified task type(s) — str, list[str], or None for fallback.
         all_tools_dict: Dict of {tool_name: tool_function}.
         has_files: Whether the request has file attachments.
-        prompt: Original prompt text (used for category fallback when task_type is None).
+        prompt: Original prompt text (used for category fallback when no types matched).
 
     Returns:
-        ToolSelection(tools, classification_level).
+        ToolSelection(tools, classification_level, task_types, missing_tools).
     """
-    if task_type is None:
+    # Normalize to list
+    if isinstance(task_types, str):
+        task_types = [task_types]
+    elif task_types is None:
+        task_types = []
+
+    if not task_types:
         # Try category-level fallback before returning all tools
         if prompt:
             categories = detect_categories(prompt)
@@ -796,7 +991,6 @@ def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = 
                 required_names = set()
                 for cat in categories:
                     required_names.update(CATEGORY_TOOLS.get(cat, []))
-                # Add universal tools
                 for name in _UNIVERSAL_TOOLS:
                     required_names.add(name)
                 if has_files:
@@ -804,11 +998,13 @@ def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = 
                 selected = [all_tools_dict[n] for n in required_names if n in all_tools_dict]
                 if selected:
                     log.info(f"Category fallback: {categories} -> {len(selected)} tools")
-                    return ToolSelection(selected, "category")
-        return ToolSelection(list(all_tools_dict.values()), "fallback")
+                    return ToolSelection(selected, "category", [], [])
+        return ToolSelection(list(all_tools_dict.values()), "fallback", [], [])
 
-    # Get required tool names for this task type
-    required_names = set(TASK_TOOL_MAP.get(task_type, []))
+    # Union tools from all task types
+    required_names: set[str] = set()
+    for tt in task_types:
+        required_names.update(TASK_TOOL_MAP.get(tt, []))
 
     # Add universal tools
     for name in _UNIVERSAL_TOOLS:
@@ -818,17 +1014,126 @@ def select_tools(task_type: str | None, all_tools_dict: dict, has_files: bool = 
     if has_files:
         required_names.add("extract_file_content")
 
-    # Resolve names to actual tool functions
+    # Resolve names to actual tool functions, tracking missing ones
     selected = []
-    for name in required_names:
+    missing = []
+    for name in sorted(required_names):
         if name in all_tools_dict:
             selected.append(all_tools_dict[name])
         else:
-            log.warning(f"Tool '{name}' not found in tools dict")
+            missing.append(name)
+            log.warning(f"MISSING TOOL: '{name}' required by {task_types} but not found in tools dict")
 
     # Safety: if we resolved very few tools, fall back to all
     if len(selected) < 1:
-        log.warning(f"No tools resolved for task_type='{task_type}', falling back to all")
-        return ToolSelection(list(all_tools_dict.values()), "fallback")
+        log.warning(f"No tools resolved for task_types={task_types}, falling back to all")
+        return ToolSelection(list(all_tools_dict.values()), "fallback", task_types, missing)
 
-    return ToolSelection(selected, "exact")
+    level = "exact" if len(task_types) == 1 else "multi"
+    return ToolSelection(selected, level, task_types, missing)
+
+
+# ── Currency / Agio pre-computation ──────────────────────────────
+
+_CURRENCY_CODES = r"(?:EUR|USD|GBP|CHF|SEK|DKK)"
+
+def extract_currency_info(prompt: str) -> dict | None:
+    """Parse foreign currency amount and exchange rates from prompt text.
+
+    Returns dict with pre-computed values if currency signals found, else None.
+    Keys: currency, amount, old_rate, new_rate, invoice_nok, payment_nok,
+          diff, is_agio, agio_account.
+    """
+    text = _strip_accents(prompt.lower())
+
+    # Must have currency signals
+    has_currency = bool(re.search(r'\b(?:eur|usd|gbp|chf|sek|dkk)\b', text))
+    has_rate = bool(re.search(r'kurs|exchange.?rate|taux|wechselkurs|cambio|agio|disagio|valutadifferanse', text))
+    if not has_currency or not has_rate:
+        return None
+
+    # Extract currency code (from original prompt to preserve case)
+    m = re.search(r'\b(' + _CURRENCY_CODES + r')\b', prompt)
+    if not m:
+        return None
+    currency = m.group(1)
+
+    # Extract currency amount: "<number> EUR" or "EUR <number>"
+    amount = None
+    # Pattern: number before currency code
+    for pat in [
+        r'([\d]+[\d\s]*(?:[.,]\d+)?)\s*' + currency,
+        currency + r'\s*([\d]+[\d\s]*(?:[.,]\d+)?)',
+    ]:
+        m = re.search(pat, prompt)
+        if m:
+            raw = m.group(1).replace(' ', '').replace(',', '.')
+            try:
+                amount = float(raw)
+                break
+            except ValueError:
+                continue
+    if not amount:
+        return None
+
+    # Extract exchange rates — find all decimal numbers near rate keywords
+    # Look for patterns like "kursen var 10.83", "kurs 10.83", "10.83 NOK/EUR"
+    rates = []
+    # Pattern: rate keyword + up to 2 optional words + number (handles "kursen er nå 9.80", "Wechselkurs war 11.20")
+    for m in re.finditer(
+        r'(?:kurs(?:en)?|rate|taux|wechselkurs|cambio|tipo\s+de\s+cambio)'
+        r'\s+(?:\w+\s+){0,2}(\d+[.,]\d+)',
+        text
+    ):
+        try:
+            val = float(m.group(1).replace(',', '.'))
+            if val not in rates:
+                rates.append(val)
+        except ValueError:
+            pass
+    # Pattern: number NOK/CUR
+    for m in re.finditer(r'(\d+[.,]\d+)\s*(?:nok[/\\]|kr[/\\])', text):
+        try:
+            val = float(m.group(1).replace(',', '.'))
+            if val not in rates:
+                rates.append(val)
+        except ValueError:
+            pass
+    # Pattern: standalone decimals near "var/was/war" and "er/is/ist" (multi-language)
+    if len(rates) < 2:
+        for m in re.finditer(r'(?:var|was|war|etait|era)\s+(\d+[.,]\d+)', text):
+            try:
+                r = float(m.group(1).replace(',', '.'))
+                if r not in rates:
+                    rates.append(r)
+            except ValueError:
+                pass
+        for m in re.finditer(r'(?:\ber\b|\bis\b|\bist\b|\best\b|\bes\b)\s+(?:\w+\s+)?(\d+[.,]\d+)', text):
+            try:
+                r = float(m.group(1).replace(',', '.'))
+                if r not in rates:
+                    rates.append(r)
+            except ValueError:
+                pass
+
+    if len(rates) < 2:
+        return None
+
+    old_rate = rates[0]  # First mentioned = invoice-time rate
+    new_rate = rates[1]  # Second mentioned = payment-time rate
+
+    invoice_nok = round(amount * old_rate, 2)
+    payment_nok = round(amount * new_rate, 2)
+    diff = round(payment_nok - invoice_nok, 2)
+
+    return {
+        "currency": currency,
+        "amount": amount,
+        "old_rate": old_rate,
+        "new_rate": new_rate,
+        "invoice_nok": invoice_nok,
+        "payment_nok": payment_nok,
+        "diff": diff,
+        "is_agio": diff > 0,
+        "agio_account": "8060" if diff > 0 else "8160",
+    }

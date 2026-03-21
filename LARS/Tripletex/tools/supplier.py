@@ -12,6 +12,7 @@ def build_supplier_tools(client: TripletexClient) -> dict:
         addressLine1: str = "",
         postalCode: str = "",
         city: str = "",
+        bankAccountNumber: str = "",
     ) -> dict:
         """Create a new supplier.
 
@@ -23,6 +24,7 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             addressLine1: Street address (e.g. "Storgata 1").
             postalCode: Postal/zip code (e.g. "0182").
             city: City name (e.g. "Oslo").
+            bankAccountNumber: Supplier bank account number (e.g. "19048571614").
 
         Returns:
             The created supplier with id, or an error message.
@@ -34,6 +36,8 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             body["phoneNumber"] = phoneNumber
         if organizationNumber:
             body["organizationNumber"] = organizationNumber
+        if bankAccountNumber:
+            body["bankAccountPresentation"] = [{"bankAccountNumber": bankAccountNumber}]
         if addressLine1 or postalCode or city:
             addr = {}
             if addressLine1:

@@ -50,7 +50,7 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Args:
             date: Voucher date in YYYY-MM-DD format.
             description: Description of the voucher.
-            postings: JSON string of postings, each with 'accountId' (ledger account ID) and 'amount' (positive=debit, negative=credit). Example: '[{"accountId": 123, "amount": 1000}, {"accountId": 456, "amount": -1000}]'. Alternatively, within each posting object, you can use 'accountNumber' instead of 'accountId', and the tool will look up the account ID. Optionally include 'projectId' or 'departmentId' to link a posting to a project or department dimension. For free accounting dimensions, include 'dimensionValueId' (the ID from create_dimension_value) and 'dimensionIndex' (1, 2, or 3) — or just 'dimensionValueId' if already known.
+            postings: JSON string of postings, each with 'accountId' (ledger account ID) and 'amount' (positive=debit, negative=credit). Example: '[{"accountId": 123, "amount": 1000}, {"accountId": 456, "amount": -1000}]'. Alternatively, within each posting object, you can use 'accountNumber' instead of 'accountId', and the tool will look up the account ID. Optionally include 'customerId' to link a posting to a customer (REQUIRED for accounts 1500-1599 kundefordringer), or 'supplierId' for supplier link (REQUIRED for accounts 2400-2499 leverandørgjeld). Optionally include 'projectId' or 'departmentId' to link a posting to a project or department dimension. For free accounting dimensions, include 'dimensionValueId' (the ID from create_dimension_value) and 'dimensionIndex' (1, 2, or 3) — or just 'dimensionValueId' if already known.
 
         Returns:
             The created voucher with id, or an error message.
@@ -85,6 +85,8 @@ def build_ledger_tools(client: TripletexClient) -> dict:
                     entry["account"] = {"id": acct_cache[acct_num]}
                 else:
                     acct_result = client.get("/ledger/account", params={"number": acct_num, "fields": "id", "count": 1})
+                    if acct_result.get("error"):
+                        return acct_result  # Propagate API error (e.g. 403)
                     accts = acct_result.get("values", [])
                     if accts:
                         acct_cache[acct_num] = accts[0]["id"]
@@ -100,6 +102,11 @@ def build_ledger_tools(client: TripletexClient) -> dict:
                 amount = debit - credit
             entry["amountGross"] = amount
             entry["amountGrossCurrency"] = amount
+            # Optional customer/supplier references (required for receivables/payables accounts)
+            if p.get("customerId"):
+                entry["customer"] = {"id": p["customerId"]}
+            if p.get("supplierId"):
+                entry["supplier"] = {"id": p["supplierId"]}
             # Optional dimension references
             if p.get("projectId"):
                 entry["project"] = {"id": p["projectId"]}
@@ -193,6 +200,8 @@ def build_ledger_tools(client: TripletexClient) -> dict:
                     entry["account"] = {"id": acct_cache[acct_num]}
                 else:
                     acct = client.get("/ledger/account", params={"number": acct_num, "fields": "id", "count": 1})
+                    if acct.get("error"):
+                        return acct  # Propagate API error (e.g. 403)
                     accts = acct.get("values", [])
                     if accts:
                         acct_cache[acct_num] = accts[0]["id"]
@@ -310,9 +319,67 @@ def build_ledger_tools(client: TripletexClient) -> dict:
             params["dimensionIndex"] = dimensionIndex
         return client.get("/ledger/accountingDimensionValue/search", params=params)
 
+    def analyze_ledger_changes(periodA_from: str, periodA_to: str,
+                               periodB_from: str, periodB_to: str,
+                               top_n: int = 10) -> dict:
+        """Compare ledger posting totals between two periods, grouped by account.
+
+        Returns accounts sorted by largest increase first.
+        Useful for identifying which expense accounts grew the most.
+
+        Args:
+            periodA_from: Start date of first period (YYYY-MM-DD), e.g. "2026-01-01".
+            periodA_to: End date of first period (YYYY-MM-DD), e.g. "2026-01-31".
+            periodB_from: Start date of second period (YYYY-MM-DD), e.g. "2026-02-01".
+            periodB_to: End date of second period (YYYY-MM-DD), e.g. "2026-02-28".
+            top_n: Number of top accounts to return (default 10).
+
+        Returns:
+            A sorted list of accounts with periodA total, periodB total, and change amount.
+        """
+        from collections import defaultdict
+        a_resp = client.get("/ledger/posting", params={
+            "dateFrom": periodA_from, "dateTo": periodA_to,
+            "fields": "amount,account",
+        })
+        b_resp = client.get("/ledger/posting", params={
+            "dateFrom": periodB_from, "dateTo": periodB_to,
+            "fields": "amount,account",
+        })
+        totals_a: dict[str, float] = defaultdict(float)
+        totals_b: dict[str, float] = defaultdict(float)
+        names: dict[str, str] = {}
+        for p in a_resp.get("values", []):
+            acct = p.get("account") or {}
+            num = str(acct.get("number", ""))
+            totals_a[num] += p.get("amount", 0)
+            if num and num not in names:
+                names[num] = acct.get("name", "")
+        for p in b_resp.get("values", []):
+            acct = p.get("account") or {}
+            num = str(acct.get("number", ""))
+            totals_b[num] += p.get("amount", 0)
+            if num and num not in names:
+                names[num] = acct.get("name", "")
+        rows = []
+        for num in set(totals_a) | set(totals_b):
+            a_tot = round(totals_a.get(num, 0), 2)
+            b_tot = round(totals_b.get(num, 0), 2)
+            rows.append({
+                "accountNumber": num,
+                "accountName": names.get(num, ""),
+                "periodA_total": a_tot,
+                "periodB_total": b_tot,
+                "change": round(b_tot - a_tot, 2),
+            })
+        rows.sort(key=lambda r: r["change"], reverse=True)
+        top_n = max(1, min(top_n, len(rows)))
+        return {"accounts": rows[:top_n], "total_accounts": len(rows)}
+
     return {
         "get_ledger_accounts": get_ledger_accounts,
         "get_ledger_postings": get_ledger_postings,
+        "analyze_ledger_changes": analyze_ledger_changes,
         "create_voucher": create_voucher,
         "delete_voucher": delete_voucher,
         "create_ledger_account": create_ledger_account,

@@ -16,6 +16,7 @@ import { LogsPanel } from "@/components/panels/logs-panel"
 import { TasksPanel } from "@/components/panels/tasks-panel"
 import { AutoFixPanel } from "@/components/panels/auto-fix-panel"
 import { AutoTestPanel } from "@/components/panels/auto-test-panel"
+import { ScoreOverviewPanel } from "@/components/panels/score-overview-panel"
 import { useRuns } from "@/hooks/use-api"
 import type { EvalRun } from "@/types/api"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -117,6 +118,7 @@ function Dashboard() {
             {activePanel === "logs" && <LogsPanel />}
             {activePanel === "report" && <ReportPanel batchRuns={batchRuns} />}
             {activePanel === "errors" && <ErrorsPanel source={errorsSource} />}
+            {activePanel === "scores" && <ScoreOverviewPanel />}
             {activePanel === "coverage" && <CoveragePanel />}
             {activePanel === "results" && (
               <ResultsPanel defaultSource={activeTab === "eval" ? "simulator" : "all"} />

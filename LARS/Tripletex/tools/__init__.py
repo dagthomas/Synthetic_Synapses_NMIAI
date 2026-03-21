@@ -26,6 +26,7 @@ from tools.year_end import build_year_end_tools
 from tools.employee_extras import build_employee_extras_tools
 from tools.travel_extras import build_travel_extras_tools
 from tools.incoming_invoice import build_incoming_invoice_tools
+from tools.process_salary import build_process_salary_tools
 
 
 def build_tools_dict(client: TripletexClient, files_dir: str = "") -> dict:
@@ -57,6 +58,7 @@ def build_tools_dict(client: TripletexClient, files_dir: str = "") -> dict:
     all_tools.update(build_employee_extras_tools(client))
     all_tools.update(build_travel_extras_tools(client))
     all_tools.update(build_incoming_invoice_tools(client))
+    all_tools.update(build_process_salary_tools(client))
     if files_dir:
         all_tools.update(build_file_tools(files_dir))
     return all_tools

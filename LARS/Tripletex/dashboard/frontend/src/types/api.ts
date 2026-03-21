@@ -170,6 +170,8 @@ export interface TaskLiveSummary {
   max_api_calls: number | null
   last_run: string | null
   sample_prompt: string | null
+  manual_checks_passed: number | null
+  manual_checks_total: number | null
 }
 
 export type Languages = Record<string, string>

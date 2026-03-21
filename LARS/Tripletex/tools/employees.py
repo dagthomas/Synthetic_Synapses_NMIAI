@@ -12,6 +12,9 @@ def build_employee_tools(client: TripletexClient) -> dict:
         userType: str = "STANDARD",
         department_id: int = 0,
         dateOfBirth: str = "",
+        department_name: str = "",
+        nationalIdentityNumber: str = "",
+        bankAccountNumber: str = "",
     ) -> dict:
         """Create a new employee in Tripletex.
 
@@ -23,20 +26,42 @@ def build_employee_tools(client: TripletexClient) -> dict:
             userType: User access type. Use "EXTENDED" for account administrator, "STANDARD" for normal users, "NO_ACCESS" for no login.
             department_id: Optional department ID to assign the employee to (0 to skip).
             dateOfBirth: Date of birth in YYYY-MM-DD format (optional).
+            department_name: Optional department name to assign the employee to. If provided, the tool will search for or create the department.
+            nationalIdentityNumber: The employee's national identity number (e.g., Norwegian 'fødselsnummer' or 'personnummer').
+            bankAccountNumber: The employee's bank account number (e.g., Norwegian 11-digit account number).
 
         Returns:
             The created employee with id and fields, or an error message.
         """
-        # Tripletex requires a department — use cache or auto-resolve
-        if not department_id:
+        # Tripletex requires a department — resolve it by ID, name, or default
+        resolved_department_id = 0
+
+        if department_id: # If department_id is explicitly provided and not 0
+            resolved_department_id = department_id
+        elif department_name: # If department_name is provided
+            # Search for department by name
+            dept_search_result = client.get("/department", params={"name": department_name, "fields": "id"})
+            depts = dept_search_result.get("values", [])
+            if depts:
+                resolved_department_id = depts[0]["id"]
+            else:
+                # Department not found, create it
+                new_dept = client.post("/department", json={
+                    "name": department_name,
+                    "departmentNumber": "AUTO_" + department_name.upper().replace(" ", "_").replace("-", "_"), # Generate a unique number
+                })
+                dept_val = new_dept.get("value", {})
+                if dept_val.get("id"):
+                    resolved_department_id = dept_val["id"]
+        else: # Neither ID nor name provided, or ID was 0
             cached = client.get_cached("default_department")
             if cached:
-                department_id = cached
+                resolved_department_id = cached
             else:
                 dept_result = client.get("/department", params={"fields": "id", "count": 1})
                 depts = dept_result.get("values", [])
                 if depts:
-                    department_id = depts[0]["id"]
+                    resolved_department_id = depts[0]["id"]
                 else:
                     # Fresh sandbox with no departments — create a default one
                     new_dept = client.post("/department", json={
@@ -45,9 +70,9 @@ def build_employee_tools(client: TripletexClient) -> dict:
                     })
                     dept_val = new_dept.get("value", {})
                     if dept_val.get("id"):
-                        department_id = dept_val["id"]
-                if department_id:
-                    client.set_cached("default_department", department_id)
+                        resolved_department_id = dept_val["id"]
+                if resolved_department_id:
+                    client.set_cached("default_department", resolved_department_id)
 
         body = {
             "firstName": firstName,
@@ -55,12 +80,16 @@ def build_employee_tools(client: TripletexClient) -> dict:
             "email": email,
             "userType": userType,
         }
-        if department_id:
-            body["department"] = {"id": department_id}
+        if resolved_department_id: # Use the resolved ID
+            body["department"] = {"id": resolved_department_id}
         if phoneNumberMobile:
             body["phoneNumberMobile"] = phoneNumberMobile
         if dateOfBirth:
             body["dateOfBirth"] = dateOfBirth
+        if nationalIdentityNumber:
+            body["nationalIdentityNumber"] = nationalIdentityNumber
+        if bankAccountNumber:
+            body["bankAccountNumber"] = bankAccountNumber
         result = client.post("/employee", json=body)
 
         # Auto-recover: if email already exists, find and return the existing employee

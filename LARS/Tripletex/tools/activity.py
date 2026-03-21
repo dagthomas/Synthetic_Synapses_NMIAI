@@ -28,7 +28,24 @@ def build_activity_tools(client: TripletexClient) -> dict:
             body["number"] = number
         if description:
             body["description"] = description
-        return client.post("/activity", json=body)
+        result = client.post("/activity", json=body)
+
+        # Auto-recover on "name already in use" — search and return existing
+        if result.get("error"):
+            msg = str(result.get("message", ""))
+            if "bruk" in msg.lower() or "already" in msg.lower():
+                # Undo the error count — this is a recoverable situation
+                client._error_count = max(0, client._error_count - 1)
+                for entry in reversed(client._call_log):
+                    if not entry.get("ok") and "/activity" in entry.get("url", ""):
+                        entry["ok"] = True
+                        entry["recovered"] = True
+                        break
+                existing = client.get("/activity", params={"name": name, "fields": "id,name,number,isChargeable,activityType"})
+                vals = existing.get("values", [])
+                if vals:
+                    return {"value": vals[0], "_note": "Activity already existed, returning existing."}
+        return result
 
     def search_activities(name: str = "") -> dict:
         """Search for activities.

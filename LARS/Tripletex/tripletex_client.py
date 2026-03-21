@@ -102,8 +102,8 @@ class TripletexClient:
                         # Only output VAT types (utgående) for products/sales
                         if "utgående" in name or "utg." in name:
                             vat_map[int(pct)] = vid
-                        elif int(pct) == 0 and ("fri" in name or "uten" in name):
-                            vat_map[0] = vid
+                        elif int(pct) == 0 and ("fritatt" in name or "uten" in name):
+                            vat_map.setdefault(0, vid)
                 if vat_map:
                     self._cache["vat_type_map"] = vat_map
         except Exception:

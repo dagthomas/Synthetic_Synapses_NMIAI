@@ -303,7 +303,7 @@ def build_error_report(result: dict) -> str:
         "reverse_voucher": 1, "reverse_payment": 1,
         "delete_invoice": 5, "create_opening_balance": 1,
         "create_dimension": 3, "bank_reconciliation": 2,
-        "process_invoice_file": 4, "salary": 3,
+        "process_invoice_file": 4, "salary_with_bonus": 3,
     }
     optimal = _OPTIMAL_WRITES.get(result["task_name"])
     if optimal:

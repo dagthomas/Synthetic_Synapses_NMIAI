@@ -380,12 +380,16 @@ CREATE_SUPPLIER_INVOICE = TaskDef(
     gen_instruction="""\
 Generate a task to create an incoming invoice (leverandørfaktura) in Tripletex.
 Include ALL:
-- supplier_name: company name ending in AS or Ltd
+- supplier_name: company name ending in AS, SARL, or Ltd
 - supplier_org_number: 9-digit Norwegian org number
-- invoice_date: March 2026 (YYYY-MM-DD)
+- supplier_bank_account: 11-digit bank account number
+- supplier_address: street address, postal code, and city
+- invoice_date: June 2026 (YYYY-MM-DD)
+- due_date: 30 days after invoice_date (YYYY-MM-DD)
 - invoice_number: a vendor invoice number (e.g. "INV-2026-001")
 - amount_including_vat: total amount INCLUDING VAT in NOK
-- expense_account: the account number for the expense (e.g. 6590 for office services)
+- line_description: what the invoice is for (e.g. "Nettverkstjenester", "Konsulenttjenester")
+- expense_account: the account number for the expense (e.g. 6300, 6590)
 - vat_percentage: 25 (standard rate)
 
 The prompt should instruct to first create the supplier, then register the supplier invoice
@@ -394,19 +398,27 @@ with the correct input VAT (inngående MVA).
 Expected fields:
 - supplier_name (string)
 - supplier_org_number (string)
+- supplier_bank_account (string)
 - invoice_date (string, YYYY-MM-DD)
+- due_date (string, YYYY-MM-DD)
 - invoice_number (string)
 - amount_including_vat (float)
+- line_description (string)
 - expense_account (int)
 - vat_percentage (int)""",
     entity_type="voucher",
     search_fields=[],
     field_checks=[
-        FieldCheck("_supplier_found", 2),
-        FieldCheck("_found", 2),
+        FieldCheck("_supplier_found", 1),
+        FieldCheck("_found", 1),
         FieldCheck("supplier_name", 1),
-        FieldCheck("invoice_date", 2),
-        FieldCheck("invoice_number", 2),
+        FieldCheck("supplier_org_number", 1),
+        FieldCheck("supplier_bank_account", 1),
+        FieldCheck("invoice_date", 1),
+        FieldCheck("due_date", 1),
+        FieldCheck("invoice_number", 1),
+        FieldCheck("line_description", 1),
+        FieldCheck("amount", 1),
     ],
     baseline_calls=3,
 )
@@ -478,6 +490,49 @@ Expected fields:
         FieldCheck("start_date", 2),
     ],
     baseline_calls=3,
+)
+
+ORDER_TO_INVOICE_WITH_PAYMENT = TaskDef(
+    name="order_to_invoice_with_payment",
+    tier=2,
+    description="Create an order for an existing customer with existing products, convert to invoice, and register payment",
+    gen_instruction="""\
+Generate a task to create an order for an EXISTING customer, convert it to an invoice, and register full payment.
+The prompt should reference entities as if they already exist (by name, org number, product number).
+Include ALL:
+- customer_name: company name ending in AS, SL, or SA
+- customer_email: email for the customer
+- customer_org_number: 9-digit organization number
+- products: list of 2-3 products, each with name, product_number (4-digit), and price excluding VAT
+- invoice_date: March 2026 (YYYY-MM-DD)
+- due_date: 14-30 days after invoice_date (YYYY-MM-DD)
+- payment_date: same as or a few days after invoice_date (YYYY-MM-DD)
+- payment_amount: sum of all product prices (NO VAT — sandbox products have no VAT by default)
+
+The prompt MUST say "create an order" (or "pedido"/"bestilling"/"commande") first,
+then "convert the order to an invoice" (or equivalent), then "register full payment".
+
+Expected fields:
+- customer_name (string)
+- customer_email (string)
+- product_count (integer, number of distinct products: 2 or 3)
+- invoice_date (string, YYYY-MM-DD)
+- due_date (string, YYYY-MM-DD)
+- payment_date (string, YYYY-MM-DD)
+- payment_amount (number)""",
+    entity_type="invoice",
+    search_fields=[],
+    field_checks=[
+        FieldCheck("_customer_found", 1),
+        FieldCheck("_invoice_found", 2),
+        FieldCheck("_payment_found", 2),
+        FieldCheck("customer_name", 1),
+        FieldCheck("product_count", 2),
+        FieldCheck("invoice_date", 1),
+        FieldCheck("due_date", 1),
+        FieldCheck("payment_amount", 2),
+    ],
+    baseline_calls=6,  # search/create customer + 2 products + order + invoice + payment
 )
 
 PROJECT_INVOICE = TaskDef(
@@ -554,10 +609,10 @@ Expected fields:
     baseline_calls=5,
 )
 
-SALARY = TaskDef(
-    name="salary",
+SALARY_WITH_BONUS = TaskDef(
+    name="salary_with_bonus",
     tier=3,
-    description="Run a salary transaction for an employee",
+    description="Run a salary transaction with bonus for an employee",
     gen_instruction="""\
 Generate a task to process a salary/payroll transaction for an employee in Tripletex.
 Include ALL:
@@ -663,6 +718,7 @@ ALL_TASKS: dict[str, TaskDef] = {
     "create_multi_line_invoice": CREATE_MULTI_LINE_INVOICE,
     "create_project": CREATE_PROJECT,
     "invoice_with_payment": INVOICE_WITH_PAYMENT,
+    "order_to_invoice_with_payment": ORDER_TO_INVOICE_WITH_PAYMENT,
     "create_credit_note": CREATE_CREDIT_NOTE,
     "create_employee_with_employment": CREATE_EMPLOYEE_WITH_EMPLOYMENT,
     "create_supplier_invoice": CREATE_SUPPLIER_INVOICE,
@@ -671,7 +727,7 @@ ALL_TASKS: dict[str, TaskDef] = {
     "project_invoice": PROJECT_INVOICE,
     # Tier 3 — advanced
     "delete_invoice": DELETE_INVOICE,
-    "salary": SALARY,
+    "salary_with_bonus": SALARY_WITH_BONUS,
     "reverse_payment": REVERSE_PAYMENT,
     "create_dimension": CREATE_DIMENSION,
 }

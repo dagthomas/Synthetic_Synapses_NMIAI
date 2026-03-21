@@ -15,6 +15,7 @@ import {
   Radio,
   FlaskConical,
   ClipboardCheck,
+  LayoutGrid,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -36,6 +37,7 @@ export type PanelId =
   | "errors"
   | "coverage"
   | "results"
+  | "scores"
 
 export type TabId = "live" | "eval"
 
@@ -51,7 +53,8 @@ const LIVE_NAV: NavItem[] = [
   { id: "tasks", label: "Tasks", icon: ListChecks, shortcut: "2" },
   { id: "autotest", label: "Auto Tester", icon: ClipboardCheck, shortcut: "3" },
   { id: "coverage", label: "API Coverage", icon: Shield, shortcut: "4" },
-  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "5" },
+  { id: "scores", label: "Score Overview", icon: LayoutGrid, shortcut: "6" },
+  { id: "errors", label: "Errors", icon: AlertTriangle, shortcut: "7" },
 ]
 
 const EVAL_NAV: NavItem[] = [

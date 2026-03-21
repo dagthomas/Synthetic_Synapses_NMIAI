@@ -19,10 +19,11 @@ from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 from agent import create_agent
-from config import AGENT_API_KEY, GOOGLE_API_KEY, MAX_AGENT_TURNS
+from config import AGENT_API_KEY, GOOGLE_API_KEY, MAX_AGENT_TURNS, DEFAULT_MODE, GEMINI_MODEL
 from tripletex_client import TripletexClient
 from tools import build_tools_dict
-from tool_router import classify_task, select_tools
+from tool_router import classify_task, classify_tasks, select_tools, extract_currency_info
+from static_runner import run_static, has_pipeline
 
 # Concurrency limiter — prevent Gemini API rate-limiting when competition
 # sends many tasks at once.  Allow up to 10 agents running in parallel.
@@ -159,7 +160,7 @@ async def live_events():
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str = "") -> dict:
+async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str = "", mode: str = "") -> dict:
     """Shared agent execution logic. Returns full details dict."""
     import time as _time
 
@@ -216,20 +217,79 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
     await asyncio.get_running_loop().run_in_executor(None, client._prewarm_caches)
 
     all_tools_dict = build_tools_dict(client, files_dir=files_dir if files else "")
-    task_type = classify_task(prompt)
-    tool_selection = select_tools(task_type, all_tools_dict, has_files=bool(files), prompt=prompt)
+    task_types = classify_tasks(prompt)
+    task_type = task_types[0] if task_types else None  # primary type for backward compat
+    tool_selection = select_tools(task_types, all_tools_dict, has_files=bool(files), prompt=prompt)
     tools = tool_selection.tools
     classification_level = tool_selection.classification_level
-    log.info(f"[{request_id[:8]}] classify: {task_type or '?'} ({classification_level}) | {len(tools)}/{len(all_tools_dict)} tools")
+    missing_tools = tool_selection.missing_tools
+    log.info(f"[{request_id[:8]}] classify: {task_types or '?'} ({classification_level}) | {len(tools)}/{len(all_tools_dict)} tools")
+    if missing_tools:
+        log.warning(f"[{request_id[:8]}] MISSING TOOLS for {task_types}: {missing_tools}")
 
     # Emit: classification result
     _emit_event({"type": "classify", "request_id": request_id,
-                 "task_type": task_type or "", "classification_level": classification_level,
+                 "task_type": task_type or "", "task_types": task_types,
+                 "classification_level": classification_level,
                  "tool_count": len(tools), "total_tools": len(all_tools_dict),
+                 "missing_tools": missing_tools,
                  "tools": [t.__name__ if hasattr(t, '__name__') else str(t) for t in tools[:20]]})
 
+    # ── Static pipeline shortcut ────────────────────────────────────
+    effective_mode = mode or DEFAULT_MODE
+    t_start = _time.time()
+    if effective_mode == "static" and task_type and has_pipeline(task_type):
+        try:
+            _emit_event({"type": "static_start", "request_id": request_id,
+                         "task_type": task_type})
+            loop = asyncio.get_running_loop()
+            static_result = await loop.run_in_executor(
+                None, run_static, task_type, prompt, all_tools_dict, client,
+                _emit_event, request_id, file_names,
+            )
+            elapsed = _time.time() - t_start
+            static_result["elapsed"] = round(elapsed, 2)
+            static_result["task_types"] = task_types
+            static_result["mode"] = "static"
+            log.info(f"[{request_id[:8]}] ── STATIC DONE ── {elapsed:.1f}s | {static_result.get('api_calls', 0)} API calls")
+            _emit_event({"type": "request_done", "request_id": request_id,
+                         "elapsed": round(elapsed, 2),
+                         "api_calls": static_result.get("api_calls", 0),
+                         "api_errors": static_result.get("api_errors", 0),
+                         "response": static_result.get("agent_response", "")[:300],
+                         "task_type": task_type, "task_types": task_types,
+                         "mode": "static"})
+            # Cleanup temp files
+            if files_dir and os.path.exists(files_dir):
+                shutil.rmtree(files_dir, ignore_errors=True)
+            # Save to dashboard
+            _ensure_dashboard()
+            if _has_dashboard:
+                try:
+                    create_solve_log(
+                        request_id=request_id, prompt=prompt,
+                        files_json=json.dumps([f.filename for f in files]),
+                        base_url=creds.base_url,
+                        api_calls=static_result.get("api_calls", 0),
+                        api_errors=static_result.get("api_errors", 0),
+                        elapsed_seconds=elapsed,
+                        agent_response=static_result.get("agent_response", ""),
+                        tool_calls_json=json.dumps(static_result.get("tool_calls", []), default=str),
+                        api_log_json=json.dumps(static_result.get("api_log", []), default=str),
+                        task_type=task_type, tool_count=len(tools),
+                        source=source, classification_level=classification_level,
+                    )
+                except Exception as e:
+                    log.warning(f"Failed to save solve_log (static): {e}")
+            return static_result
+        except Exception as e:
+            log.warning(f"[{request_id[:8]}] Static pipeline failed ({type(e).__name__}: {e}), falling back to agent")
+            _emit_event({"type": "static_fallback", "request_id": request_id,
+                         "error": str(e)})
+
     # Build agent and runner
-    agent = create_agent(tools, task_type=task_type)
+    agent = create_agent(tools, task_types=task_types or None,
+                         missing_tools=missing_tools or None)
     runner = InMemoryRunner(agent=agent, app_name="tripletex_agent")
 
     # Create session for this request
@@ -244,6 +304,25 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
     if file_names:
         user_text += f"\n\nAttached files: {', '.join(file_names)}"
         user_text += "\nUse extract_file_content to read file contents."
+
+    # Inject pre-computed currency calculations for agio tasks
+    if task_type == "invoice_with_payment":
+        ci = extract_currency_info(prompt)
+        if ci:
+            diff_label = "agio (gain)" if ci["is_agio"] else "disagio (loss)"
+            user_text += (
+                f"\n\n[PRE-COMPUTED CURRENCY CALCULATION — use these exact values]"
+                f"\nForeign amount: {ci['amount']} {ci['currency']}"
+                f"\nInvoice NOK (old rate {ci['old_rate']}): {ci['amount']} × {ci['old_rate']} = {ci['invoice_nok']}"
+                f"\nPayment NOK (new rate {ci['new_rate']}): {ci['amount']} × {ci['new_rate']} = {ci['payment_nok']}"
+                f"\n{diff_label}: {abs(ci['diff'])}"
+                f"\n→ register_payment(amount={ci['payment_nok']}, paidAmountCurrency={ci['amount']})"
+                f"\n→ create_voucher: account 1500 amount={ci['diff']} (customerId!), "
+                f"account {ci['agio_account']} amount={-ci['diff']}"
+                f"\nDo NOT skip the create_voucher step!"
+            )
+            log.info(f"[{request_id[:8]}] currency note injected: {ci['currency']} {ci['amount']}, "
+                     f"rates {ci['old_rate']}->{ci['new_rate']}, diff={ci['diff']}")
 
     user_message = genai_types.Content(
         role="user",
@@ -327,7 +406,8 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
     _emit_event({"type": "request_done", "request_id": request_id,
                  "elapsed": round(elapsed, 2), "api_calls": client._call_count,
                  "api_errors": client._error_count, "response": (final_text or "")[:300],
-                 "task_type": task_type or "", "turns": turn_count})
+                 "task_type": task_type or "", "task_types": task_types,
+                 "missing_tools": missing_tools, "turns": turn_count})
 
     # Cleanup temp files
     if files_dir and os.path.exists(files_dir):
@@ -356,18 +436,24 @@ async def _run_agent(body: SolveRequest, save_payload: bool = False, source: str
         except Exception as e:
             log.warning(f"Failed to save solve_log: {e}")
 
-    return {
+    result = {
         "agent_response": final_text or "",
         "tool_calls": tool_calls,
         "api_calls": client._call_count,
         "api_errors": client._error_count,
         "api_log": client._call_log,
         "elapsed": round(elapsed, 2),
+        "task_types": task_types,
+        "mode": "agent",
     }
+    if missing_tools:
+        result["missing_tools"] = missing_tools
+    return result
 
 
 @app.post("/solve")
-async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def solve(body: SolveRequest, mode: str = "",
+                credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Competition endpoint — returns only {"status": "completed"}."""
     if AGENT_API_KEY:
         if not credentials or credentials.credentials != AGENT_API_KEY:
@@ -375,7 +461,7 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
 
     async def _guarded():
         async with _AGENT_SEMAPHORE:
-            await _run_agent(body, save_payload=True, source="competition")
+            await _run_agent(body, save_payload=True, source="competition", mode=mode)
     try:
         await asyncio.wait_for(_guarded(), timeout=_AGENT_TIMEOUT)
     except asyncio.TimeoutError:
@@ -386,7 +472,7 @@ async def solve(body: SolveRequest, credentials: HTTPAuthorizationCredentials = 
 
 
 @app.post("/solve-debug")
-async def solve_debug(body: SolveRequest, source: str = "debug",
+async def solve_debug(body: SolveRequest, source: str = "debug", mode: str = "",
                       credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Debug endpoint — returns full tool call and API call details."""
     if AGENT_API_KEY:
@@ -395,7 +481,7 @@ async def solve_debug(body: SolveRequest, source: str = "debug",
 
     async def _guarded():
         async with _AGENT_SEMAPHORE:
-            return await _run_agent(body, source=source)
+            return await _run_agent(body, source=source, mode=mode)
     try:
         details = await asyncio.wait_for(_guarded(), timeout=_AGENT_TIMEOUT)
     except asyncio.TimeoutError:
@@ -414,4 +500,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
+    log.info(f"Server starting — default mode: {DEFAULT_MODE}, model: {GEMINI_MODEL}, max turns: {MAX_AGENT_TURNS}")
     uvicorn.run(app, host="127.0.0.1", port=args.port)

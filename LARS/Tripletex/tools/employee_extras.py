@@ -164,8 +164,11 @@ def build_employee_extras_tools(client: TripletexClient) -> dict:
         workingHoursScheme: str = "NOT_SHIFT",
         annualSalary: float = 0.0,
         percentageOfFullTimeEquivalent: float = 100.0,
+        occupationCode: str = "",
     ) -> dict:
-        """Create employment details (salary, work arrangement).
+        """Create or update employment details (salary, work arrangement).
+
+        If details already exist for this date, they will be updated automatically.
 
         Args:
             employment_id: ID of the employment.
@@ -174,9 +177,10 @@ def build_employee_extras_tools(client: TripletexClient) -> dict:
             workingHoursScheme: Scheme - 'NOT_SHIFT', 'ROUND_THE_CLOCK', 'SHIFT_365', 'OFFSHORE_336', 'CONTINUOUS', 'OTHER_SHIFT'.
             annualSalary: Annual salary amount.
             percentageOfFullTimeEquivalent: FTE percentage.
+            occupationCode: Occupation code string (e.g. '3112', 'yrkeskode'). The tool will look up the code and include it.
 
         Returns:
-            Created details or error.
+            Created/updated details or error.
         """
         body = {
             "employment": {"id": employment_id},
@@ -187,7 +191,56 @@ def build_employee_extras_tools(client: TripletexClient) -> dict:
         }
         if annualSalary:
             body["annualSalary"] = annualSalary
-        return client.post("/employee/employment/details", json=body)
+        if occupationCode:
+            stripped = occupationCode.strip()
+            occ_vals = []
+            is_numeric = stripped.isdigit()
+
+            if is_numeric:
+                # STYRK codes are numeric — search by code field first
+                occ_result = client.get(
+                    "/employee/employment/occupationCode",
+                    params={"code": stripped, "fields": "id,code,nameNO"},
+                )
+                occ_vals = occ_result.get("values", [])
+                if occ_vals:
+                    prefix = [v for v in occ_vals if v.get("code", "").startswith(stripped)]
+                    if prefix:
+                        occ_vals = prefix
+                if not occ_vals and len(stripped) <= 4:
+                    occ_result = client.get(
+                        "/employee/employment/occupationCode",
+                        params={"fields": "id,code,nameNO", "count": 8000},
+                    )
+                    all_codes = occ_result.get("values", [])
+                    occ_vals = [v for v in all_codes if v.get("code", "").startswith(stripped)]
+            else:
+                occ_result = client.get(
+                    "/employee/employment/occupationCode",
+                    params={"nameNOContains": stripped, "fields": "id,code,nameNO"},
+                )
+                occ_vals = occ_result.get("values", [])
+
+            if occ_vals:
+                body["occupationCode"] = {"id": occ_vals[0]["id"]}
+        result = client.post("/employee/employment/details", json=body)
+
+        # Handle duplicate date: search for existing details and update via PUT
+        if isinstance(result, dict) and result.get("error") and result.get("status_code") in (422, 409):
+            error_msg = str(result.get("message", ""))
+            if "date" in error_msg.lower() or "finnes fra" in error_msg.lower():
+                existing = client.get(
+                    "/employee/employment/details",
+                    params={"employmentId": employment_id, "fields": "id,date,version"},
+                )
+                for detail in existing.get("values", []):
+                    if detail.get("date") == date:
+                        detail_id = detail["id"]
+                        version = detail.get("version", 0)
+                        body["id"] = detail_id
+                        body["version"] = version
+                        return client.put(f"/employee/employment/details/{detail_id}", json=body)
+        return result
 
     def grant_entitlements(
         employee_id: int,
