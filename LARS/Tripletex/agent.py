@@ -375,23 +375,38 @@ Without PM:
     # create_project_with_pm merged into project_invoice (identical tools + flow)
 
     "project_invoice": """
-TASK: Create project + invoice (6-7 calls)
--> create_customer(name, organizationNumber)
--> create_employee(PM_firstName, PM_lastName, PM_email, userType="EXTENDED")
-   !!! YOU MUST PASS userType="EXTENDED" !!! Without it, PM entitlements CANNOT be granted and the project will use a fallback PM.
--> create_project(name, customer_id, projectManagerId=employeeId, startDate, fixedPriceAmount=<total project value if fixed price>)
--> create_product(name="<activity/service name>", priceExcludingVatCurrency=<unit price or hourly rate>)
--> create_order(customer_id, date, orderLines=[{{"product_id": product.id, "count": <quantity or hours>}}], project_id=project.id)
-   !!! YOU MUST PASS project_id=project.id !!! This links the order to the project.
--> create_invoice(invoiceDate, invoiceDueDate, order_id)
-- CRITICAL: "Fixed price"/"fastpris"/"precio fijo" = total project value. You MUST pass fixedPriceAmount to create_project.
-- For milestone/partial invoicing: product price = milestone amount (e.g. 25% of fixed price), count = 1.
-- For hourly/time-based tasks: product price = hourly rate, count = number of hours.
-- For fixed-price tasks: product price = invoiced amount, count = 1.
-- invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate + 14 days (or invoiceDate if unclear).
-- SENDING: If the prompt says "send"/"og send"/"and send"/"enviar"/"envoyer"/"senden" the invoice, call send_invoice(invoice_id) AFTER creating the invoice.
-- The create_project tool auto-handles PM employment and entitlements internally.
-- Do NOT retry create_project if it fails with PM error — the tool auto-falls back to admin PM.""",
+TASK: Manage existing invoices, create new invoices for fees, book ledger entries, and register payments.
+
+STEPS:
+1.  **Find the overdue invoice:**
+    -   search_customers(name="<customer name>") to get customer_id.
+    -   search_invoices(customerId=<customer_id>, invoiceDateFrom="2000-01-01", invoiceDateTo="{today}") to find the overdue invoice (amountOutstanding > 0).
+    -   Identify the specific invoice_id and amountOutstanding for the partial payment.
+
+2.  **Book the reminder fee (purregebyr) as a general ledger voucher:**
+    -   Use today's date for the voucher.
+    -   create_voucher(date="{today}", description="Purregebyr", postings=[{{"accountNumber": 1500, "amount": 35.0}}, {{"accountNumber": 3400, "amount": -35.0}}])
+    -   CRITICAL: Postings MUST balance (sum of amounts = 0). Positive = debit, negative = credit.
+
+3.  **Create and send a new invoice for the reminder fee:**
+    -   create_product(name="Purregebyr", priceExcludingVatCurrency=35.0, vatPercentage=25)
+    -   create_order(customer_id=<customer_id from step 1>, deliveryDate="{today}", orderLines='[{{"product_id": <product_id from create_product>, "count": 1}}]')
+    -   create_invoice(invoiceDate="{today}", invoiceDueDate="{today}", order_id=<order_id from create_order>)
+    -   send_invoice(invoice_id=<invoice_id from create_invoice>)
+
+4.  **Register a partial payment on the original overdue invoice:**
+    -   Use the invoice_id found in step 1.
+    -   register_payment(invoice_id=<original_invoice_id>, amount=5000.0, paymentDate="{today}")
+    -   CRITICAL: The amount for partial payment is explicitly given as 5000 kr in the prompt.
+    -   STOP immediately after registering the payment.
+
+CRITICAL RULES:
+-   Extract all numerical values (amounts, percentages) and dates directly from the prompt.
+-   invoiceDueDate is REQUIRED. If not in prompt, set it = invoiceDate.
+-   VAT rates: ALWAYS pass vatPercentage to create_product. Default to 25 if not specified.
+-   NEVER call get_entity_by_id to verify your work — the create response already confirmed success.
+-   NEVER summarize what you did in a long paragraph. Just say "Done." and stop.
+""",
 
     "create_travel_expense": """
 TASK: Create travel expense (2 calls)
@@ -536,9 +551,24 @@ TASK: Create free accounting dimension with values + optional voucher (3-5 calls
 
     "create_ledger_voucher": """
 TASK: Ledger correction voucher / Book voucher (1 call)
--> create_voucher(date, description, postings=[{{accountNumber, amount, projectCategoryName if applicable}}])
+-> create_voucher(date, description, postings='[{"accountNumber": "1920", "amount": 1000}, {"accountNumber": "456", "amount": -1000}]')
 - Postings MUST balance: sum of all amounts = 0
-- Positive = debit, negative = credit
+- Positive = debit (increases assets/expenses, decreases liabilities/equity/revenue)
+- Negative = credit (decreases assets/expenses, increases liabilities/equity/revenue)
+- CRITICAL EXAMPLES for corrections:
+  - **Correcting wrong account (e.g., 7300 instead of 7000 for 3900 NOK):**
+    - Debit correct account (7000): `{"accountNumber": "7000", "amount": 3900}`
+    - Credit wrong account (7300): `{"accountNumber": "7300", "amount": -3900}`
+  - **Correcting missing VAT (e.g., 19600 NOK net on 7300, missing VAT on 2710, assuming 25% VAT):**
+    - VAT amount = 19600 * 0.25 = 4900 NOK
+    - Debit expense account (7300) for VAT portion: `{"accountNumber": "7300", "amount": 4900}`
+    - Credit VAT liability account (2710): `{"accountNumber": "2710", "amount": -4900}`
+  - **Reversing a duplicate expense (e.g., 6590 for 1650 NOK):**
+    - Credit expense account (6590): `{"accountNumber": "6590", "amount": -1650}`
+    - Debit a balancing account (e.g., Bank 1920 or a suspense account): `{"accountNumber": "1920", "amount": 1650}`
+  - **Correcting an overbooked expense (e.g., 6860 booked 22550 instead of 5150, overbooked by 17400 NOK):**
+    - Credit expense account (6860) for the overbooked amount: `{"accountNumber": "6860", "amount": -17400}`
+    - Debit a balancing account (e.g., Bank 1920 or a suspense account): `{"accountNumber": "1920", "amount": 17400}`
 - Common accounts: 1920=bank, 1500=receivables, 2400=payables, 3000=revenue, 4000=cost of goods, 6300=leie, 7100=lonn, 2700=skattetrekk, 2770=arbeidsgiveravgift, 2900=gjeld""",
 
     "reverse_voucher": """

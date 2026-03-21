@@ -367,6 +367,33 @@ export type LiveEvalEvent =
   | { type: "no_fixes"; task_type: string }
   | { type: "live_done"; total: number; passed: number; failed: number; message: string }
 
+// Score tracking types
+export interface ScoreTask {
+  task_number: number
+  checks_passed: number
+  checks_total: number
+  score: number
+  mapped_task_type: string | null
+  submission_time: string | null
+}
+
+export interface ScoreSnapshot {
+  id: number
+  total_score: number
+  rank: number | null
+  tasks_attempted: number
+  total_submissions: number
+  tasks: ScoreTask[]
+  created_at: string
+  mappings?: Record<string, { task_number: number; task_type: string; confidence: string }>
+}
+
+export interface TaskMapping {
+  task_number: number
+  task_type: string
+  confidence: string
+}
+
 // Log evaluation types
 export type LogEvalEvent =
   | { type: "phase"; phase: string; message: string }
@@ -374,4 +401,5 @@ export type LogEvalEvent =
   | { type: "fixes"; iteration: number; raw_text: string; parsed_fixes: AutoFixParsedFix[]; report: string }
   | { type: "applied"; iteration: number; results: AutoFixApplyResult[] }
   | { type: "rerun_result"; iteration: number; api_calls: number; api_errors: number; tool_count: number; agent_response: string }
+  | { type: "sandbox_cleaned"; iteration: number; total: number; details: Record<string, number>; warning?: string }
   | { type: "error"; message: string }

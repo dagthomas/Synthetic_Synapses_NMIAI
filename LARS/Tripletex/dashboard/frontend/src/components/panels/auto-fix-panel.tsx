@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react"
 import { useTasks, useLanguages } from "@/hooks/use-api"
-import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix, streamLiveEval, subscribeLiveEvents, streamLogEval, fetchLogJson } from "@/lib/api"
+import { streamAutoFix, applyFixes, streamBatchAutoFix, fetchLastEvalResults, streamBatchTaskFix, subscribeLiveEvents, streamLogEval, fetchLogJson, fetchLatestScores, mapTaskNumber, fetchScoresFromApi, setScoreAuth } from "@/lib/api"
 import type {
   AutoFixEvent,
   AutoFixScore,
@@ -11,10 +11,9 @@ import type {
   LastEvalResult,
   FieldCheck,
   ToolCall,
-  LiveEvalEvent,
-  LiveLogExplanation,
   LiveEvent,
   LogEvalEvent,
+  ScoreSnapshot,
 } from "@/types/api"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
@@ -54,6 +53,10 @@ import {
   Square,
   Trash2,
   Download,
+  Trophy,
+  Hash,
+  RefreshCw,
+  Terminal,
 } from "lucide-react"
 
 type Mode = "tasks" | "live" | "batch" | "single"
@@ -143,6 +146,7 @@ interface LiveRequestState {
   evalFixes: Array<{ iteration: number; raw_text: string; parsed_fixes: AutoFixParsedFix[]; report: string }>
   evalApplied: Array<{ iteration: number; results: AutoFixApplyResult[] }>
   evalRerunResults: Array<{ iteration: number; api_calls: number; api_errors: number; tool_count: number; agent_response: string }>
+  evalSandboxCleans: Array<{ iteration: number; total: number; details: Record<string, number>; warning?: string }>
   evalError: string
 }
 
@@ -159,6 +163,18 @@ function LiveSubmissionsView() {
   const [expandedReq, setExpandedReq] = useState<string | null>(null)
   const [requests, setRequests] = useState<LiveRequestState[]>([])
   const evalControllersRef = useRef<Map<string, AbortController>>(new Map())
+  const [scoreData, setScoreData] = useState<ScoreSnapshot | null>(null)
+  const [scoreLoading, setScoreLoading] = useState(false)
+  const [scoreFetching, setScoreFetching] = useState(false)
+  const [scoreFetchError, setScoreFetchError] = useState("")
+  const [scoreNeedsAuth, setScoreNeedsAuth] = useState(false)
+  const [showLog, setShowLog] = useState(false)
+  const { data: tasks } = useTasks()
+
+  // Load latest scores on mount
+  useEffect(() => {
+    fetchLatestScores().then(setScoreData).catch(() => {})
+  }, [])
 
   // SSE subscription
   useEffect(() => {
@@ -202,6 +218,7 @@ function LiveSubmissionsView() {
           evalFixes: [],
           evalApplied: [],
           evalRerunResults: [],
+          evalSandboxCleans: [],
           evalError: "",
         })
       }
@@ -264,6 +281,7 @@ function LiveSubmissionsView() {
         evalFixes: [],
         evalApplied: [],
         evalRerunResults: [],
+        evalSandboxCleans: [],
         evalError: "",
       } : r
     ))
@@ -289,6 +307,8 @@ function LiveSubmissionsView() {
               return { ...r, evalApplied: [...r.evalApplied, { iteration: event.iteration, results: event.results }] }
             case "rerun_result":
               return { ...r, evalRerunResults: [...r.evalRerunResults, { iteration: event.iteration, api_calls: event.api_calls, api_errors: event.api_errors, tool_count: event.tool_count, agent_response: event.agent_response }] }
+            case "sandbox_cleaned":
+              return { ...r, evalSandboxCleans: [...r.evalSandboxCleans, { iteration: event.iteration, total: event.total, details: event.details, warning: event.warning }] }
             case "error":
               return { ...r, evalError: event.message, evalStatus: "error" }
             default:
@@ -330,8 +350,74 @@ function LiveSubmissionsView() {
     setExpandedReq(null)
   }, [])
 
+  const refreshScores = useCallback(() => {
+    setScoreLoading(true)
+    fetchLatestScores()
+      .then(setScoreData)
+      .catch(() => {})
+      .finally(() => setScoreLoading(false))
+  }, [])
+
+  const handleFetchScores = useCallback(async () => {
+    setScoreFetching(true)
+    setScoreFetchError("")
+    try {
+      const result = await fetchScoresFromApi()
+      setScoreNeedsAuth(false)
+      toast.success(`Fetched ${result.tasks_stored} tasks (score: ${result.total_score})`)
+      if (result.new_mappings.length > 0) {
+        toast.success(`Auto-mapped ${result.new_mappings.length} task(s): ${result.new_mappings.map(m => `#${m.task_number}→${m.task_type}`).join(", ")}`)
+      }
+      refreshScores()
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.includes("auth") || msg.includes("401") || msg.includes("cookie")) {
+        setScoreNeedsAuth(true)
+      }
+      setScoreFetchError(msg)
+      toast.error(`Score fetch failed: ${msg}`)
+    } finally {
+      setScoreFetching(false)
+    }
+  }, [refreshScores])
+
+  const handleMapTask = useCallback(async (taskNumber: number, taskType: string) => {
+    try {
+      await mapTaskNumber(taskNumber, taskType)
+      toast.success(`Mapped task ${taskNumber} → ${taskType}`)
+      refreshScores()
+    } catch (e) {
+      toast.error(`Failed to map: ${e}`)
+    }
+  }, [refreshScores])
+
+  const handleSaveCookie = useCallback(async (cookie: string) => {
+    try {
+      await setScoreAuth(cookie)
+      toast.success("Cookie saved")
+      setScoreNeedsAuth(false)
+      handleFetchScores()
+    } catch (e) {
+      toast.error(`Failed to save cookie: ${e}`)
+    }
+  }, [handleFetchScores])
+
   return (
     <div className="space-y-4">
+      {/* Score Tracker */}
+      <ScoreTrackerCard
+        scoreData={scoreData}
+        loading={scoreLoading}
+        onRefresh={refreshScores}
+        onFetchScores={handleFetchScores}
+        fetching={scoreFetching}
+        fetchError={scoreFetchError}
+        needsAuth={scoreNeedsAuth}
+        onSaveCookie={handleSaveCookie}
+        onMapTask={handleMapTask}
+        taskTypes={tasks?.map(t => t.name) ?? []}
+      />
+
       {/* Live Activity Header */}
       <Card className="shadow-premium border-l-4 border-l-emerald-500">
         <CardContent className="p-4">
@@ -384,9 +470,284 @@ function LiveSubmissionsView() {
               ))}
             </div>
           )}
+
+          {/* Agent Log toggle */}
+          <button
+            onClick={() => setShowLog(v => !v)}
+            className="flex items-center gap-1.5 mt-3 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Terminal className="h-3 w-3" />
+            {showLog ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Agent Log ({events.length} events)
+          </button>
+
+          {showLog && (
+            <div className="mt-1 rounded border border-border/40 bg-zinc-950 text-zinc-300 font-mono text-[10px] max-h-[300px] overflow-y-auto p-2 space-y-px">
+              {events.length === 0 ? (
+                <div className="text-zinc-500 text-center py-3">No events yet</div>
+              ) : (
+                events.map((ev, i) => {
+                  const ts = ev.ts ? new Date(ev.ts).toLocaleTimeString() : ""
+                  const rid = ("request_id" in ev ? ev.request_id?.slice(-6) : "") || ""
+                  let color = "text-zinc-400"
+                  const label = ev.type
+                  let detail = ""
+                  switch (ev.type) {
+                    case "request_start":
+                      color = "text-emerald-400"
+                      detail = ev.prompt?.slice(0, 80) || ""
+                      break
+                    case "classify":
+                      color = "text-blue-400"
+                      detail = ev.task_type || ""
+                      break
+                    case "tool_call":
+                      color = "text-yellow-400"
+                      detail = ev.tool || ""
+                      break
+                    case "tool_result":
+                      color = ev.ok ? "text-emerald-400" : "text-red-400"
+                      detail = `${ev.tool || ""} ${ev.ok ? "OK" : "ERR"}`
+                      break
+                    case "api_call":
+                      color = "text-cyan-400"
+                      detail = `${ev.method || ""} ${ev.status || ""} ${(ev.url || "").slice(-60)}`
+                      break
+                    case "request_done":
+                      color = "text-emerald-300"
+                      detail = `${ev.api_calls || 0} calls, ${ev.api_errors || 0} err, ${ev.elapsed || 0}s`
+                      break
+                    case "request_error":
+                      color = "text-red-400"
+                      detail = ev.error || ""
+                      break
+                    case "text":
+                      color = "text-zinc-500"
+                      detail = (ev.text || "").slice(0, 80)
+                      break
+                    default:
+                      detail = JSON.stringify(ev).slice(0, 80)
+                  }
+                  return (
+                    <div key={i} className="flex gap-2 leading-tight">
+                      <span className="text-zinc-600 shrink-0">{ts}</span>
+                      <span className="text-zinc-600 shrink-0">[{rid}]</span>
+                      <span className={cn("shrink-0", color)}>{label}</span>
+                      <span className="text-zinc-500 truncate">{detail}</span>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+// ── Score Tracker Card ────────────────────────────────────────────────
+
+function ScoreTrackerCard({
+  scoreData,
+  loading,
+  onRefresh,
+  onFetchScores,
+  fetching,
+  fetchError,
+  needsAuth,
+  onSaveCookie,
+  onMapTask,
+  taskTypes,
+}: {
+  scoreData: ScoreSnapshot | null
+  loading: boolean
+  onRefresh: () => void
+  onFetchScores: () => void
+  fetching: boolean
+  fetchError: string
+  needsAuth: boolean
+  onSaveCookie: (cookie: string) => void
+  onMapTask: (taskNumber: number, taskType: string) => void
+  taskTypes: string[]
+}) {
+  const [showAuthInput, setShowAuthInput] = useState(false)
+  const [cookieInput, setCookieInput] = useState("")
+
+  return (
+    <Card className="shadow-premium border-l-4 border-l-amber-500">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Trophy className="h-4 w-4 text-amber-500" />
+          <span className="text-[13px] font-semibold">Competition Scores</span>
+          <button
+            onClick={onFetchScores}
+            disabled={fetching}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 transition-colors disabled:opacity-50"
+          >
+            {fetching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+            {fetching ? "Fetching..." : "Fetch Scores"}
+          </button>
+          {needsAuth && (
+            <button
+              onClick={() => setShowAuthInput(!showAuthInput)}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md bg-red-500/15 text-red-700 hover:bg-red-500/25 transition-colors"
+            >
+              <Globe className="h-3 w-3" />
+              Re-auth
+            </button>
+          )}
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded bg-muted/40 text-muted-foreground hover:bg-muted/60 transition-colors"
+          >
+            <RefreshCw className={cn("h-2.5 w-2.5", loading && "animate-spin")} />
+          </button>
+          <div className="flex-1" />
+          {scoreData && (
+            <span className="text-[10px] text-muted-foreground">
+              {new Date(scoreData.created_at).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+
+        {/* Auth input panel */}
+        {(showAuthInput || (needsAuth && !scoreData)) && (
+          <div className="mb-3 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+            <p className="text-[11px] text-amber-800 dark:text-amber-300 mb-2">
+              Paste your session cookie from <code className="bg-amber-100 dark:bg-amber-900 px-1 rounded text-[10px]">app.ainm.no</code> (DevTools &gt; Application &gt; Cookies, or ask Claude to grab it)
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={cookieInput}
+                onChange={(e) => setCookieInput(e.target.value)}
+                placeholder="session=...; connect.sid=..."
+                className="flex-1 h-7 text-[11px] bg-white dark:bg-muted/30 border rounded px-2 font-mono"
+              />
+              <button
+                onClick={() => {
+                  if (cookieInput.trim()) {
+                    onSaveCookie(cookieInput.trim())
+                    setShowAuthInput(false)
+                    setCookieInput("")
+                  }
+                }}
+                disabled={!cookieInput.trim()}
+                className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors disabled:opacity-50"
+              >
+                <Check className="h-3 w-3" />
+                Save & Fetch
+              </button>
+            </div>
+          </div>
+        )}
+
+        {fetchError && !needsAuth && (
+          <div className="mb-3 p-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded text-[11px] text-red-700 dark:text-red-400">
+            {fetchError}
+          </div>
+        )}
+
+        {!scoreData ? (
+          <div className="text-center py-4 text-muted-foreground text-[12px]">
+            No scores yet. Click "Fetch Scores" to load from competition API.
+          </div>
+        ) : (
+          <>
+            {/* Summary stats */}
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-2.5 text-center">
+                <div className="text-[20px] font-bold text-amber-700 dark:text-amber-400">
+                  {scoreData.total_score.toFixed(1)}
+                </div>
+                <div className="text-[10px] text-muted-foreground">Total Score</div>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-2.5 text-center">
+                <div className="text-[20px] font-bold text-blue-700 dark:text-blue-400">
+                  {scoreData.rank ?? "—"}
+                </div>
+                <div className="text-[10px] text-muted-foreground">Rank</div>
+              </div>
+              <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-lg p-2.5 text-center">
+                <div className="text-[20px] font-bold text-emerald-700 dark:text-emerald-400">
+                  {scoreData.tasks_attempted}
+                </div>
+                <div className="text-[10px] text-muted-foreground">Tasks</div>
+              </div>
+            </div>
+
+            {/* Per-task grid */}
+            {scoreData.tasks.length > 0 && (
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="bg-muted/40 border-b">
+                      <th className="text-left px-2 py-1.5 font-medium">Task #</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Mapped Type</th>
+                      <th className="text-center px-2 py-1.5 font-medium">Checks</th>
+                      <th className="text-right px-2 py-1.5 font-medium">Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scoreData.tasks.map((t) => (
+                      <tr key={t.task_number} className="border-b last:border-0 hover:bg-muted/20">
+                        <td className="px-2 py-1.5">
+                          <div className="flex items-center gap-1">
+                            <Hash className="h-3 w-3 text-muted-foreground" />
+                            {t.task_number}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          {t.mapped_task_type ? (
+                            <Badge variant="secondary" className="text-[10px]">
+                              {t.mapped_task_type}
+                            </Badge>
+                          ) : (
+                            <select
+                              className="h-6 text-[10px] bg-muted/30 border rounded px-1 w-full max-w-[150px]"
+                              defaultValue=""
+                              onChange={(e) => {
+                                if (e.target.value) onMapTask(t.task_number, e.target.value)
+                              }}
+                            >
+                              <option value="">— map —</option>
+                              {taskTypes.map((tt) => (
+                                <option key={tt} value={tt}>{tt}</option>
+                              ))}
+                            </select>
+                          )}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          <span className={cn(
+                            "font-mono",
+                            t.checks_passed === t.checks_total && t.checks_total > 0
+                              ? "text-emerald-600"
+                              : t.checks_passed > 0
+                                ? "text-amber-600"
+                                : "text-red-500"
+                          )}>
+                            {t.checks_passed}/{t.checks_total}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono font-medium">
+                          <span className={cn(
+                            t.score > 0 ? "text-emerald-600" : "text-muted-foreground"
+                          )}>
+                            {t.score.toFixed(1)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -637,6 +998,30 @@ function LiveFixRequestCard({
                             </div>
                           </div>
                         )}
+                        {(() => {
+                          const iterClean = req.evalSandboxCleans.find(c => c.iteration === v.iteration)
+                          if (!iterClean) return null
+                          const entries = Object.entries(iterClean.details)
+                          return (
+                            <div className="rounded bg-amber-50 border border-amber-200/50 p-2">
+                              <div className="flex items-center gap-1.5">
+                                <Trash2 className="h-3 w-3 text-amber-600" />
+                                <span className="text-[9px] uppercase tracking-wide text-amber-700 font-semibold">Sandbox Cleaned</span>
+                                <span className="text-[10px] text-amber-600 ml-auto">{iterClean.total} deleted</span>
+                              </div>
+                              {entries.length > 0 && (
+                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-[10px] text-amber-700">
+                                  {entries.map(([type, count]) => (
+                                    <span key={type}>{type}: {count}</span>
+                                  ))}
+                                </div>
+                              )}
+                              {iterClean.warning && (
+                                <div className="text-[10px] text-amber-600 mt-1">{iterClean.warning}</div>
+                              )}
+                            </div>
+                          )
+                        })()}
                         {iterRerun && (
                           <div className="rounded bg-muted/30 p-2">
                             <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Rerun</span>

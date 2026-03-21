@@ -22,18 +22,24 @@ def build_year_end_tools(client: TripletexClient) -> dict:
         return client.get("/yearEnd/annex", params={"yearEndId": year_end_id, "fields": "*"})
 
     def create_year_end_note(
-        year_end_id: int,
+        year_end_id: int = 0, # Make year_end_id optional with default 0
         note: str = "",
     ) -> dict:
         """Create a year-end note.
 
         Args:
-            year_end_id: ID of the year-end.
+            year_end_id: ID of the year-end (0 to auto-detect most recent).
             note: Note content.
 
         Returns:
             Created note or error.
         """
+        if not year_end_id:
+            ye = client.get("/yearEnd", params={"fields": "id", "count": 1})
+            ye_list = ye.get("values", [])
+            year_end_id = ye_list[0]["id"] if ye_list else 0
+        if not year_end_id:
+            return {"error": "No year-end found to attach note to."}
         body = {"yearEnd": {"id": year_end_id}}
         if note:
             body["note"] = note

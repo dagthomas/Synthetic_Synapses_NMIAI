@@ -45,6 +45,14 @@ async def lifespan(app):
 
 app = FastAPI(title="Tripletex Eval Dashboard", lifespan=lifespan)
 
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://app.ainm.no"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
 
 # ── Serve SPA ───────────────────────────────────────────────────────
 
@@ -322,7 +330,7 @@ async def replay_payloads(req: ReplayRequest):
 
             tool_calls = body.get("tool_calls", [])
             failed_tools = [tc for tc in tool_calls
-                            if tc.get("result", {}).get("ok") is False]
+                            if (tc.get("result") or {}).get("ok") is False]
 
             results.append({
                 "filename": os.path.basename(p),
@@ -640,12 +648,13 @@ async def auto_fix_live_eval(req: LiveEvalRequest):
                         "", "=== TOOL CALLS ===",
                     ]
                     for i, tc in enumerate(rep["tool_calls"], 1):
-                        ok = tc.get("result", {}).get("ok", "?")
+                        res = tc.get("result") or {}
+                        ok = res.get("ok", "?")
                         report_lines.append(
                             f"  #{i} [{'OK' if ok else 'ERROR'}] {tc.get('tool', '?')}"
                             f"({json.dumps(tc.get('args', {}), ensure_ascii=False)[:200]})")
-                        if tc.get("result") and not tc.get("result", {}).get("ok"):
-                            report_lines.append(f"       Error: {tc['result'].get('error', '')[:300]}")
+                        if res and not res.get("ok"):
+                            report_lines.append(f"       Error: {res.get('error', '')[:300]}")
                     report_lines.append("")
                     report_lines.append(f"AGENT RESPONSE: {rep['agent_response'][:500]}")
                     report = "\n".join(report_lines)
@@ -1050,10 +1059,11 @@ async def auto_fix_batch_loop(req: BatchAutoFixRequest):
                         "=== TOOL CALLS ===",
                     ]
                     for i, t in enumerate(tc, 1):
-                        ok = t.get("result", {}).get("ok", "?")
+                        res = t.get("result") or {}
+                        ok = res.get("ok", "?")
                         report_lines.append(f"  #{i} [{'OK' if ok else 'ERROR'}] {t.get('tool', '?')}({json.dumps(t.get('args', {}), ensure_ascii=False)[:200]})")
-                        if t.get("result") and not t.get("result", {}).get("ok"):
-                            report_lines.append(f"       Error: {t.get('result', {}).get('error', '')[:300]}")
+                        if res and not res.get("ok"):
+                            report_lines.append(f"       Error: {res.get('error', '')[:300]}")
                     report_lines.append("")
                     report_lines.append(f"AGENT RESPONSE: {agent_resp[:500]}")
                     report = "\n".join(report_lines)
@@ -1226,9 +1236,10 @@ async def evaluate_log(req: LogEvalRequest):
                     "=== TOOL CALLS ===",
                 ]
                 for i, tc in enumerate(tool_calls, 1):
-                    ok = tc.get("result", {}).get("ok", "?")
+                    res = tc.get("result") or {}
+                    ok = res.get("ok", "?")
                     report_lines.append(f"  #{i} [{'OK' if ok else 'ERROR'}] {tc.get('tool', '?')}({json.dumps(tc.get('args', {}), ensure_ascii=False)[:200]})")
-                    if tc.get("result") and not tc.get("result", {}).get("ok"):
+                    if res and not res.get("ok"):
                         report_lines.append(f"       Error: {tc.get('result', {}).get('error', '')[:300]}")
                 report_lines.append("")
                 report_lines.append(f"AGENT RESPONSE: {agent_response[:500]}")
@@ -1261,6 +1272,21 @@ async def evaluate_log(req: LogEvalRequest):
                     yield f"data: {json.dumps({'type': 'error', 'message': f'Apply failed: {e}'})}\n\n"
                     yield "data: [DONE]\n\n"
                     return
+
+            # Phase: cleaning sandbox before rerun
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'cleaning', 'message': 'Cleaning sandbox for clean rerun...'})}\n\n"
+            clean_summary = {}
+            try:
+                clean_client = _get_sandbox_client()
+                if clean_client:
+                    clean_result = sandbox_mod.clean_entities(clean_client)
+                    clean_summary = {
+                        k: v["deleted"] for k, v in clean_result.get("results", {}).items()
+                        if v.get("deleted", 0) > 0
+                    }
+                    yield f"data: {json.dumps({'type': 'sandbox_cleaned', 'iteration': iteration, 'total': clean_result.get('total_deleted', 0), 'details': clean_summary})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'sandbox_cleaned', 'iteration': iteration, 'total': 0, 'details': {{}}, 'warning': str(e)})}\n\n"
 
             # Phase: rerunning
             yield f"data: {json.dumps({'type': 'phase', 'phase': 'rerunning', 'message': f'Re-running prompt via /solve-debug (iteration {iteration + 1})...'})}\n\n"
@@ -2073,6 +2099,201 @@ async def proxy_agent_events():
             yield f"data: {json.dumps({'type': 'error', 'message': f'Agent connection failed: {e}'})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ── API: Score Tracking ────────────────────────────────────────────
+
+class ScoreSnapshotRequest(BaseModel):
+    submissions: list[dict] = []
+    total_score: float = 0
+    rank: int | None = None
+
+
+@app.post("/api/scores/snapshot")
+def create_score_snapshot(req: ScoreSnapshotRequest):
+    """Receive competition API data, store snapshot, auto-map tasks."""
+    tasks = []
+    for sub in req.submissions:
+        task_num = sub.get("task_number") or sub.get("taskNumber")
+        tasks.append({
+            "task_number": task_num,
+            "checks_passed": sub.get("checks_passed") or sub.get("checksPassed", 0),
+            "checks_total": sub.get("checks_total") or sub.get("checksTotal", 0),
+            "score": sub.get("score", 0),
+            "submission_time": sub.get("submission_time") or sub.get("submissionTime") or sub.get("created_at"),
+        })
+
+    snapshot_id = db.create_score_snapshot(
+        total_score=req.total_score,
+        rank=req.rank,
+        tasks_attempted=len(tasks),
+        total_submissions=len(req.submissions),
+        raw_json=json.dumps(req.submissions, default=str),
+        tasks=tasks,
+    )
+
+    # Auto-map tasks by timestamp correlation
+    new_mappings = _auto_map_tasks(tasks)
+
+    return {
+        "ok": True,
+        "snapshot_id": snapshot_id,
+        "tasks_stored": len(tasks),
+        "new_mappings": new_mappings,
+    }
+
+
+def _auto_map_tasks(tasks: list[dict]) -> list[dict]:
+    """Auto-map task numbers to task types using submission timestamp correlation."""
+    new_mappings = []
+    existing = db.get_task_number_map()
+    for t in tasks:
+        task_num = t.get("task_number")
+        sub_time = t.get("submission_time")
+        if not task_num or not sub_time or task_num in existing:
+            continue
+        # Find solve logs near this submission time
+        logs = db.get_solve_logs_near_time(sub_time, window_seconds=30)
+        if len(logs) == 1 and logs[0].get("task_type"):
+            task_type = logs[0]["task_type"]
+            db.set_task_number_mapping(task_num, task_type, confidence="timestamp")
+            new_mappings.append({"task_number": task_num, "task_type": task_type})
+    return new_mappings
+
+
+@app.get("/api/scores/latest")
+def get_latest_score():
+    """Return latest snapshot with tasks and mappings."""
+    snap = db.get_latest_snapshot()
+    if not snap:
+        return JSONResponse({"error": "No score snapshots yet"}, 404)
+    snap["mappings"] = {
+        str(k): v for k, v in db.get_task_number_map().items()
+    }
+    return snap
+
+
+class TaskMappingRequest(BaseModel):
+    task_number: int
+    task_type: str
+
+
+@app.post("/api/scores/map-task")
+def map_task_number(req: TaskMappingRequest):
+    """Manually map a task_number to task_type."""
+    db.set_task_number_mapping(req.task_number, req.task_type, confidence="manual")
+    return {"ok": True, "task_number": req.task_number, "task_type": req.task_type}
+
+
+@app.get("/api/scores/mappings")
+def get_score_mappings():
+    """Return all task_number -> task_type mappings."""
+    return db.get_task_number_map()
+
+
+_AUTH_COOKIE_FILE = os.path.join(os.path.dirname(__file__), ".ainm_cookie")
+
+
+def _load_saved_cookie() -> str:
+    try:
+        with open(_AUTH_COOKIE_FILE, "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def _save_cookie(cookie: str):
+    with open(_AUTH_COOKIE_FILE, "w") as f:
+        f.write(cookie.strip())
+
+
+class SetAuthRequest(BaseModel):
+    cookie: str
+
+
+@app.post("/api/scores/set-auth")
+def set_score_auth(req: SetAuthRequest):
+    """Save session cookie for competition API."""
+    _save_cookie(req.cookie)
+    return {"ok": True}
+
+
+@app.get("/api/scores/auth-status")
+def score_auth_status():
+    """Check if auth cookie is saved."""
+    cookie = _load_saved_cookie()
+    return {"has_cookie": bool(cookie), "preview": cookie[:20] + "..." if len(cookie) > 20 else cookie}
+
+
+class FetchScoresRequest(BaseModel):
+    cookie: str = ""
+
+
+@app.post("/api/scores/fetch")
+async def fetch_scores_from_api(req: FetchScoresRequest):
+    """Fetch scores from competition API and store snapshot."""
+    import httpx
+
+    cookie = req.cookie or _load_saved_cookie()
+    headers = {"Accept": "application/json"}
+    if cookie:
+        headers["Cookie"] = cookie
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.ainm.no/tripletex/my/submissions",
+                headers=headers,
+            )
+        if resp.status_code == 401:
+            return JSONResponse(
+                {"error": "auth_required"},
+                status_code=401,
+            )
+        if resp.status_code != 200:
+            return JSONResponse(
+                {"error": f"API returned {resp.status_code}: {resp.text[:300]}"},
+                status_code=resp.status_code,
+            )
+        data = resp.json()
+    except Exception as e:
+        return JSONResponse({"error": f"Fetch failed: {e}"}, status_code=502)
+
+    submissions = data.get("submissions", data) if isinstance(data, dict) else data
+    total_score = data.get("total_score", 0) if isinstance(data, dict) else 0
+    rank = data.get("rank") if isinstance(data, dict) else None
+
+    tasks = []
+    if isinstance(submissions, list):
+        for sub in submissions:
+            task_num = sub.get("task_number") or sub.get("taskNumber")
+            tasks.append({
+                "task_number": task_num,
+                "checks_passed": sub.get("checks_passed") or sub.get("checksPassed", 0),
+                "checks_total": sub.get("checks_total") or sub.get("checksTotal", 0),
+                "score": sub.get("score", 0),
+                "submission_time": sub.get("submission_time") or sub.get("submissionTime") or sub.get("created_at"),
+            })
+
+    snapshot_id = db.create_score_snapshot(
+        total_score=total_score,
+        rank=rank,
+        tasks_attempted=len(tasks),
+        total_submissions=len(submissions) if isinstance(submissions, list) else 0,
+        raw_json=json.dumps(data, default=str),
+        tasks=tasks,
+    )
+
+    new_mappings = _auto_map_tasks(tasks)
+
+    return {
+        "ok": True,
+        "snapshot_id": snapshot_id,
+        "tasks_stored": len(tasks),
+        "new_mappings": new_mappings,
+        "total_score": total_score,
+        "rank": rank,
+    }
 
 
 # ── SPA catch-all ─────────────────────────────────────────────────

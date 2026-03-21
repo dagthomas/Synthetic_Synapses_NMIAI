@@ -412,6 +412,34 @@ export function streamLiveEval(
   return controller
 }
 
+// Score Tracking
+export const fetchLatestScores = () =>
+  request<import("@/types/api").ScoreSnapshot>("/api/scores/latest")
+
+export const submitScoreSnapshot = (data: { submissions: unknown[]; total_score: number; rank?: number }) =>
+  post<{ ok: boolean; snapshot_id: number; tasks_stored: number; new_mappings: { task_number: number; task_type: string }[] }>(
+    "/api/scores/snapshot", data
+  )
+
+export const mapTaskNumber = (taskNumber: number, taskType: string) =>
+  post<{ ok: boolean; task_number: number; task_type: string }>(
+    "/api/scores/map-task", { task_number: taskNumber, task_type: taskType }
+  )
+
+export const fetchScoresFromApi = (cookie?: string) =>
+  post<{ ok: boolean; snapshot_id: number; tasks_stored: number; new_mappings: { task_number: number; task_type: string }[]; total_score: number; rank: number | null }>(
+    "/api/scores/fetch", { cookie: cookie || "" }
+  )
+
+export const setScoreAuth = (cookie: string) =>
+  post<{ ok: boolean }>("/api/scores/set-auth", { cookie })
+
+export const fetchScoreAuthStatus = () =>
+  request<{ has_cookie: boolean; preview: string }>("/api/scores/auth-status")
+
+export const fetchScoreMappings = () =>
+  request<Record<string, import("@/types/api").TaskMapping>>("/api/scores/mappings")
+
 // Log Evaluation
 export function streamLogEval(
   solveLogId: number,

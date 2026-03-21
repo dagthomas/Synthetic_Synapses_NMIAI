@@ -102,6 +102,39 @@ def init_db():
             created_at TEXT
         )
         """)
+        # Score tracking tables
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS score_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            total_score REAL DEFAULT 0,
+            rank INTEGER,
+            tasks_attempted INTEGER DEFAULT 0,
+            total_submissions INTEGER DEFAULT 0,
+            raw_json TEXT,
+            created_at TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS score_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_id INTEGER NOT NULL,
+            task_number INTEGER NOT NULL,
+            checks_passed INTEGER DEFAULT 0,
+            checks_total INTEGER DEFAULT 0,
+            score REAL DEFAULT 0,
+            mapped_task_type TEXT,
+            submission_time TEXT,
+            FOREIGN KEY (snapshot_id) REFERENCES score_snapshots(id)
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_number_map (
+            task_number INTEGER PRIMARY KEY,
+            task_type TEXT NOT NULL,
+            confidence TEXT DEFAULT 'manual',
+            updated_at TEXT
+        )
+        """)
         conn.commit()
 
 
@@ -442,3 +475,107 @@ def delete_all_auto_test_results():
         cur = conn.execute("DELETE FROM auto_test_results")
         conn.commit()
         return cur.rowcount
+
+
+# ── score tracking CRUD ────────────────────────────────────────────
+
+def create_score_snapshot(total_score, rank, tasks_attempted, total_submissions,
+                          raw_json, tasks: list[dict]) -> int:
+    with closing(get_conn()) as conn:
+        cur = conn.execute(
+            """INSERT INTO score_snapshots
+               (total_score, rank, tasks_attempted, total_submissions, raw_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (total_score, rank, tasks_attempted, total_submissions, raw_json, _now()),
+        )
+        snapshot_id = cur.lastrowid
+        for t in tasks:
+            mapped = t.get("mapped_task_type") or _lookup_task_mapping(conn, t.get("task_number"))
+            conn.execute(
+                """INSERT INTO score_tasks
+                   (snapshot_id, task_number, checks_passed, checks_total, score,
+                    mapped_task_type, submission_time)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (snapshot_id, t.get("task_number"), t.get("checks_passed", 0),
+                 t.get("checks_total", 0), t.get("score", 0),
+                 mapped, t.get("submission_time")),
+            )
+        conn.commit()
+        return snapshot_id
+
+
+def _lookup_task_mapping(conn, task_number) -> str | None:
+    if task_number is None:
+        return None
+    row = conn.execute(
+        "SELECT task_type FROM task_number_map WHERE task_number = ?",
+        (task_number,),
+    ).fetchone()
+    return row["task_type"] if row else None
+
+
+def get_latest_snapshot() -> dict | None:
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT * FROM score_snapshots ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        snap = dict(row)
+        tasks = conn.execute(
+            "SELECT * FROM score_tasks WHERE snapshot_id = ? ORDER BY task_number",
+            (snap["id"],),
+        ).fetchall()
+        snap["tasks"] = [dict(t) for t in tasks]
+        # Enrich with current mappings
+        mappings = _get_all_mappings(conn)
+        for t in snap["tasks"]:
+            if not t.get("mapped_task_type") and t["task_number"] in mappings:
+                t["mapped_task_type"] = mappings[t["task_number"]]
+        return snap
+
+
+def get_score_history(limit=50) -> list[dict]:
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM score_snapshots ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def _get_all_mappings(conn) -> dict[int, str]:
+    rows = conn.execute("SELECT task_number, task_type FROM task_number_map").fetchall()
+    return {r["task_number"]: r["task_type"] for r in rows}
+
+
+def get_task_number_map() -> dict[int, dict]:
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT * FROM task_number_map ORDER BY task_number").fetchall()
+        return {r["task_number"]: dict(r) for r in rows}
+
+
+def set_task_number_mapping(task_number: int, task_type: str, confidence: str = "manual"):
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """INSERT INTO task_number_map (task_number, task_type, confidence, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(task_number) DO UPDATE SET
+                 task_type = excluded.task_type,
+                 confidence = excluded.confidence,
+                 updated_at = excluded.updated_at""",
+            (task_number, task_type, confidence, _now()),
+        )
+        conn.commit()
+
+
+def get_solve_logs_near_time(iso_time: str, window_seconds: int = 30) -> list[dict]:
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """SELECT * FROM solve_logs
+               WHERE source = 'competition'
+                 AND created_at BETWEEN datetime(?, ? || ' seconds')
+                                     AND datetime(?, '+' || ? || ' seconds')
+               ORDER BY created_at""",
+            (iso_time, f"-{window_seconds}", iso_time, str(window_seconds)),
+        ).fetchall()
+        return [dict(r) for r in rows]

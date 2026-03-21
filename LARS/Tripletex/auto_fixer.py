@@ -515,15 +515,16 @@ def llm_evaluate_logs(prompt: str, tool_calls: list, api_log: list,
     # Build a structured summary of what happened
     tc_summary = []
     for i, tc in enumerate(tool_calls[:30], 1):
-        ok = tc.get("result", {}).get("ok", "?")
+        res = tc.get("result") or {}
+        ok = res.get("ok", "?")
         status = "OK" if ok else "ERROR"
         args_str = json.dumps(tc.get("args", {}), ensure_ascii=False)[:300]
         result_str = ""
-        if tc.get("result"):
-            if tc["result"].get("error"):
-                result_str = f" → Error: {tc['result']['error'][:200]}"
-            elif tc["result"].get("data"):
-                result_str = f" → {str(tc['result']['data'])[:200]}"
+        if res:
+            if res.get("error"):
+                result_str = f" → Error: {res['error'][:200]}"
+            elif res.get("data"):
+                result_str = f" → {str(res['data'])[:200]}"
         tc_summary.append(f"  #{i} [{status}] {tc.get('tool', '?')}({args_str}){result_str}")
 
     api_summary = []
