@@ -2,7 +2,7 @@
  * Environmental model scatter — densely populates the terrain with vegetation,
  * rocks, and detail models from /static/models (poly.pizza GLBs).
  *
- * Used in both orbit view and FP/flythrough modes.
+ * Uses InstancedMesh for massive draw-call reduction (~3000 → ~50-100).
  * Models sourced from https://poly.pizza/bundle
  */
 import * as THREE from 'three';
@@ -24,101 +24,49 @@ interface ScatterDef {
 
 // Terrain code → vegetation/detail definitions
 const SCATTER_DEFS: Record<number, ScatterDef> = {
-	// Forest (4): dense trees, ferns, mushrooms, undergrowth
+	// Forest (4): only trees and bushes — skip small ferns/mushrooms/grass/clover
 	4: {
 		files: [
 			'Pine.glb', 'Pine-699sFuLCN2.glb', 'Pine-79gmlLnweB.glb', 'Pine-rfnxJv0Rqa.glb', 'Pine-Zt62gceKXZ.glb',
 			'Tree.glb', 'Tree-aVOxaHRPWe.glb', 'Tree-QVOop92WmG.glb', 'Tree-qZtx0AHhcy.glb', 'Tree-t9KbsfYdXz.glb',
-			'Fern.glb', 'Mushroom.glb', 'Mushroom Laetiporus.glb',
-			'Plant.glb', 'Plant Big.glb', 'Plant Big-MbhbP7JrTI.glb', 'Plant-xH5gNlQxAZ.glb',
-			'Bush.glb', 'Bush with Flowers.glb', 'Tall Grass.glb',
-			'Clover.glb', 'Grass.glb'
-		],
-		density: 5,
-		scale: [0.06, 0.20],
-		yOffset: 0
-	},
-	// Plains (11): flowers, grass, clover, scattered bushes
-	11: {
-		files: [
-			'Grass.glb', 'Grass Wispy.glb', 'Grass Wispy-Msr9zx66VU.glb', 'Tall Grass.glb',
-			'Flower Single.glb', 'Flower Single-GvfHo0roi3.glb',
-			'Flower Group.glb', 'Flower Group-LqTljN6Wg2.glb',
-			'Flower Petal.glb', 'Flower Petal-eVE0j49ux9.glb', 'Flower Petal-LqvxG9OBOU.glb',
-			'Flower Petal-niuBUEJdvM.glb', 'Flower Petal-tzG4JcqYWs.glb',
-			'Clover.glb', 'Clover-u5SOgBFiut.glb',
 			'Bush.glb', 'Bush with Flowers.glb'
 		],
-		density: 6,
-		scale: [0.05, 0.14],
-		yOffset: 0
-	},
-	// Empty/sandy (0): sparse grass, pebbles, occasional bush
-	0: {
-		files: [
-			'Grass Wispy.glb', 'Grass Wispy-Msr9zx66VU.glb',
-			'Pebble Round.glb', 'Pebble Round-icVsN3lmVy.glb', 'Pebble Round-kAMfq1uJUY.glb',
-			'Pebble Round-KYtJ6JNXh2.glb', 'Pebble Round-nMf8LHOsbM.glb',
-			'Pebble Square.glb', 'Pebble Square-2YtLzwgsWp.glb',
-			'Rock Path Round Small.glb', 'Rock Path Round Small-GMttpOEFKT.glb'
-		],
 		density: 2,
-		scale: [0.04, 0.10],
+		scale: [0.08, 0.22],
 		yOffset: 0
 	},
-	// Mountain (5): rocks, dead/twisted trees, sparse vegetation
+	// Plains (11): only bushes — skip all flowers/grass/clover/petals
+	11: {
+		files: [
+			'Bush.glb', 'Bush with Flowers.glb'
+		],
+		density: 1,
+		scale: [0.06, 0.14],
+		yOffset: 0
+	},
+	// Mountain (5): rocks and dead trees only — skip pebbles
 	5: {
 		files: [
 			'Rock Medium.glb', 'Rock Medium-JQxF95498B.glb', 'Rock Medium-s1OJ3bBzqc.glb',
 			'Dead Tree.glb', 'Dead Tree-CD4edbPSGm.glb', 'Dead Tree-Mcd2zYqyww.glb',
-			'Dead Tree-MlmK5488ou.glb', 'Dead Tree-n8FhMgMldD.glb',
-			'Twisted Tree.glb', 'Twisted Tree-7PDBpElkQr.glb', 'Twisted Tree-8oraKn9m0x.glb',
-			'Pebble Round-kAMfq1uJUY.glb', 'Pebble Square-6juX57sLHe.glb',
-			'Pebble Square-l5XiYQj1oD.glb', 'Pebble Square-Mm4RMgwNO8.glb'
+			'Twisted Tree.glb', 'Twisted Tree-7PDBpElkQr.glb', 'Twisted Tree-8oraKn9m0x.glb'
 		],
-		density: 3,
-		scale: [0.05, 0.18],
+		density: 1,
+		scale: [0.08, 0.20],
 		yOffset: 0
 	},
-	// Ruin (3): dead trees, rocks, twisted trees, rubble
+	// Ruin (3): dead trees and rocks only
 	3: {
 		files: [
 			'Dead Tree-MlmK5488ou.glb', 'Dead Tree-n8FhMgMldD.glb',
 			'Rock Medium.glb', 'Rock Medium-s1OJ3bBzqc.glb',
-			'Twisted Tree.glb', 'Twisted Tree-7PDBpElkQr.glb',
-			'Twisted Tree-9aWlx82xUf.glb', 'Twisted Tree-GVTsMmuzv7.glb',
-			'Pebble Round.glb', 'Pebble Square.glb',
-			'Fern.glb'
-		],
-		density: 3,
-		scale: [0.05, 0.14],
-		yOffset: 0
-	},
-	// Settlement (1): flowers, plants, stone paths, bushes
-	1: {
-		files: [
-			'Flower Single-GvfHo0roi3.glb', 'Flower Single.glb',
-			'Plant-xH5gNlQxAZ.glb', 'Plant.glb',
-			'Rock Path Round Small.glb', 'Rock Path Round Small-yHEdadj5I0.glb',
-			'Rock Path Square Smal.glb', 'Rock Path Square Smal-cI9XBpVijV.glb',
-			'Rock Path Round Thin.glb', 'Rock Path Round Wide.glb',
-			'Rock Path Square Thin.glb', 'Rock Path Square Wide.glb',
-			'Bush.glb', 'Bush with Flowers.glb'
-		],
-		density: 3,
-		scale: [0.04, 0.10],
-		yOffset: 0
-	},
-	// Port (2): sparse — pebbles, small plants
-	2: {
-		files: [
-			'Pebble Round.glb', 'Pebble Square.glb',
-			'Rock Path Round Small.glb', 'Grass Wispy.glb'
+			'Twisted Tree.glb', 'Twisted Tree-7PDBpElkQr.glb'
 		],
 		density: 1,
-		scale: [0.03, 0.08],
+		scale: [0.06, 0.16],
 		yOffset: 0
 	}
+	// Removed: Empty/sandy (0), Settlement (1), Port (2) — too small to see, pure FPS waste
 };
 
 const glbCache = new Map<string, THREE.Group | null>();
@@ -129,12 +77,6 @@ async function loadGLB(file: string): Promise<THREE.Group | null> {
 	try {
 		const gltf = await loader.loadAsync(`/models/${file}`);
 		const model = gltf.scene;
-		model.traverse((child) => {
-			if (child instanceof THREE.Mesh) {
-				child.castShadow = true;
-				child.receiveShadow = true;
-			}
-		});
 		glbCache.set(file, model);
 		return model;
 	} catch {
@@ -143,10 +85,46 @@ async function loadGLB(file: string): Promise<THREE.Group | null> {
 	}
 }
 
+/** Extract all child Meshes from a GLB model, keyed by geometry+material UUID */
+interface MeshTemplate {
+	geometry: THREE.BufferGeometry;
+	material: THREE.Material | THREE.Material[];
+	localMatrix: THREE.Matrix4; // local transform within the GLB
+}
+
+const _inverseRoot = new THREE.Matrix4();
+
+function extractMeshes(model: THREE.Group): MeshTemplate[] {
+	const templates: MeshTemplate[] = [];
+	// Ensure entire hierarchy has up-to-date matrices
+	model.updateMatrixWorld(true);
+	// Get inverse of model root to compute child transforms RELATIVE to root
+	_inverseRoot.copy(model.matrixWorld).invert();
+
+	model.traverse((child) => {
+		if (child instanceof THREE.Mesh) {
+			// localMatrix = transform of this mesh relative to the model root
+			const relativeMatrix = new THREE.Matrix4().multiplyMatrices(_inverseRoot, child.matrixWorld);
+			templates.push({
+				geometry: child.geometry,
+				material: child.material,
+				localMatrix: relativeMatrix
+			});
+		}
+	});
+	return templates;
+}
+
+/** Build a unique key for a (geometry, material) pair */
+function meshKey(geo: THREE.BufferGeometry, mat: THREE.Material | THREE.Material[]): string {
+	const matId = Array.isArray(mat) ? mat.map(m => m.uuid).join('+') : mat.uuid;
+	return `${geo.uuid}::${matId}`;
+}
+
 export async function createScatter(
 	grid: number[][],
 	heightFn: (x: number, z: number) => number,
-	maxInstances = 3000
+	maxInstances = 800
 ): Promise<ScatterSystem> {
 	const rows = grid.length;
 	const cols = grid[0].length;
@@ -175,17 +153,42 @@ export async function createScatter(
 	}
 	await Promise.allSettled([...allFiles].map(f => loadGLB(f)));
 
+	// Extract mesh templates from each loaded GLB
+	const modelTemplates = new Map<string, MeshTemplate[]>(); // file → templates
+	for (const file of allFiles) {
+		const model = glbCache.get(file);
+		if (model) {
+			modelTemplates.set(file, extractMeshes(model));
+		}
+	}
+
+	// Collect instance matrices per unique (geometry, material) pair
+	// Key: meshKey → { geo, mat, matrices[], parentModelInverse }
+	interface InstanceBucket {
+		geometry: THREE.BufferGeometry;
+		material: THREE.Material | THREE.Material[];
+		matrices: THREE.Matrix4[];
+	}
+	const buckets = new Map<string, InstanceBucket>();
+
+	const _parentMatrix = new THREE.Matrix4();
+	const _instanceMatrix = new THREE.Matrix4();
+	const _euler = new THREE.Euler();
+	const _quat = new THREE.Quaternion();
+	const _scale = new THREE.Vector3();
+	const _pos = new THREE.Vector3();
+
 	// Scatter per terrain type
 	for (const [code, cells] of cellsByType.entries()) {
 		const def = SCATTER_DEFS[code];
 		if (!def) continue;
 
-		const loadedModels: THREE.Group[] = [];
+		// Get available model files for this terrain
+		const availableFiles: string[] = [];
 		for (const file of def.files) {
-			const m = glbCache.get(file);
-			if (m) loadedModels.push(m);
+			if (modelTemplates.has(file)) availableFiles.push(file);
 		}
-		if (loadedModels.length === 0) continue;
+		if (availableFiles.length === 0) continue;
 
 		const instanceCount = Math.floor(cells.length * def.density);
 		for (let i = 0; i < instanceCount && totalPlaced < maxInstances; i++) {
@@ -194,27 +197,60 @@ export async function createScatter(
 			const pz = cell.z + (rng() - 0.5) * 0.9;
 			const py = heightFn(px, pz) + def.yOffset;
 
-			const baseModel = loadedModels[Math.floor(rng() * loadedModels.length)];
-			const instance = baseModel.clone();
+			const file = availableFiles[Math.floor(rng() * availableFiles.length)];
+			const templates = modelTemplates.get(file)!;
 
 			const scale = def.scale[0] + rng() * (def.scale[1] - def.scale[0]);
-			instance.scale.setScalar(scale);
-			instance.position.set(px, py, pz);
-			instance.rotation.y = rng() * Math.PI * 2;
-			// Slight random tilt for organic feel
-			instance.rotation.x = (rng() - 0.5) * 0.06;
-			instance.rotation.z = (rng() - 0.5) * 0.06;
+			const rotY = rng() * Math.PI * 2;
+			const rotX = (rng() - 0.5) * 0.06;
+			const rotZ = (rng() - 0.5) * 0.06;
 
-			group.add(instance);
+			// Build the parent (group) transform
+			_pos.set(px, py, pz);
+			_euler.set(rotX, rotY, rotZ);
+			_quat.setFromEuler(_euler);
+			_scale.setScalar(scale);
+			_parentMatrix.compose(_pos, _quat, _scale);
+
+			// For each sub-mesh in this model, compute the final instance matrix
+			for (const tmpl of templates) {
+				_instanceMatrix.multiplyMatrices(_parentMatrix, tmpl.localMatrix);
+
+				const key = meshKey(tmpl.geometry, tmpl.material);
+				let bucket = buckets.get(key);
+				if (!bucket) {
+					bucket = { geometry: tmpl.geometry, material: tmpl.material, matrices: [] };
+					buckets.set(key, bucket);
+				}
+				bucket.matrices.push(_instanceMatrix.clone());
+			}
+
 			totalPlaced++;
 		}
 	}
 
-	// Frustum + distance culling
+	// Create InstancedMesh for each bucket
+	for (const bucket of buckets.values()) {
+		const count = bucket.matrices.length;
+		if (count === 0) continue;
+
+		const instMesh = new THREE.InstancedMesh(bucket.geometry, bucket.material, count);
+		instMesh.castShadow = false; // small vegetation — shadow cost >> visual benefit
+		instMesh.receiveShadow = true;
+		instMesh.frustumCulled = true; // let Three.js handle frustum culling on the bounding sphere
+
+		for (let i = 0; i < count; i++) {
+			instMesh.setMatrixAt(i, bucket.matrices[i]);
+		}
+		instMesh.instanceMatrix.needsUpdate = true;
+		instMesh.computeBoundingSphere();
+
+		group.add(instMesh);
+	}
+
+	// Frustum culling at InstancedMesh level (not per-instance)
 	const _frustum = new THREE.Frustum();
 	const _projScreenMatrix = new THREE.Matrix4();
-	const _sphere = new THREE.Sphere();
-	const CULL_DISTANCE_SQ = 60 * 60;
 	let cullFrame = 0;
 
 	return {
@@ -226,32 +262,21 @@ export async function createScatter(
 
 			_projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
 			_frustum.setFromProjectionMatrix(_projScreenMatrix);
-			const camPos = camera.position;
 
 			for (const child of group.children) {
-				const dx = child.position.x - camPos.x;
-				const dz = child.position.z - camPos.z;
-				if (dx * dx + dz * dz > CULL_DISTANCE_SQ) {
-					child.visible = false;
-					continue;
+				if (child instanceof THREE.InstancedMesh && child.boundingSphere) {
+					child.visible = _frustum.intersectsSphere(child.boundingSphere);
 				}
-				_sphere.center.copy(child.position);
-				_sphere.radius = 0.5;
-				child.visible = _frustum.intersectsSphere(_sphere);
 			}
 		},
 
 		dispose() {
-			group.traverse((child) => {
-				if (child instanceof THREE.Mesh) {
-					child.geometry.dispose();
-					if (Array.isArray(child.material)) {
-						child.material.forEach(m => m.dispose());
-					} else {
-						child.material.dispose();
-					}
+			// Only dispose InstancedMeshes we created (geometries/materials are shared from cache)
+			for (const child of group.children) {
+				if (child instanceof THREE.InstancedMesh) {
+					child.dispose();
 				}
-			});
+			}
 		}
 	};
 }

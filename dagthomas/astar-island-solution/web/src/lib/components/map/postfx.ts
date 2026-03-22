@@ -8,6 +8,7 @@ import {
 	EffectPass,
 	RenderPass,
 	BloomEffect,
+	BlendFunction,
 	VignetteEffect,
 	ToneMappingEffect,
 	SMAAEffect,
@@ -21,6 +22,7 @@ export type ViewMode = 'orbit' | 'fp' | 'flythrough';
 export interface PostFXPipeline {
 	composer: EffectComposer;
 	render(dt: number): void;
+	setMode(mode: ViewMode): void;
 	updateAtmosphere(timeOfDay: number, mode?: ViewMode): void;
 	resize(width: number, height: number): void;
 	dispose(): void;
@@ -79,6 +81,10 @@ export function createPostFX(
 	composer.addPass(new EffectPass(camera, bloom, dof, vignette));
 	composer.addPass(new EffectPass(camera, toneMapping, smaa));
 
+	let currentMode: ViewMode = 'orbit';
+	// Start with DOF disabled in orbit mode (expensive depth pre-pass for barely visible effect)
+	dof.blendMode.setBlendFunction(BlendFunction.SKIP);
+
 	return {
 		composer,
 
@@ -86,13 +92,25 @@ export function createPostFX(
 			composer.render(dt);
 		},
 
+		setMode(mode: ViewMode) {
+			if (mode === currentMode) return;
+			currentMode = mode;
+			if (mode === 'orbit') {
+				// Disable DOF in orbit — bokehScale 0.15 is invisible, but depth pre-pass is expensive
+				dof.blendMode.setBlendFunction(BlendFunction.SKIP);
+			} else {
+				// Enable DOF in FP/flythrough
+				dof.blendMode.setBlendFunction(BlendFunction.NORMAL);
+			}
+		},
+
 		updateAtmosphere(timeOfDay: number, mode: ViewMode = 'orbit') {
 			const isNight = timeOfDay < 6 || timeOfDay > 18;
 			const isDawnDusk = (timeOfDay >= 5 && timeOfDay <= 7) || (timeOfDay >= 17 && timeOfDay <= 19);
 			const lumMat = bloom.luminanceMaterial;
 
-			// DOF scale per view mode: orbit = minimal, flythrough = moderate, FP = full
-			const dofBase = mode === 'fp' ? 1.0 : mode === 'flythrough' ? 0.6 : 0.15;
+			// DOF scale per view mode: orbit = disabled, flythrough = moderate, FP = full
+			const dofBase = mode === 'fp' ? 1.0 : mode === 'flythrough' ? 0.3 : 0.0;
 
 			if (isDawnDusk) {
 				bloom.intensity = 1.4;
@@ -100,9 +118,9 @@ export function createPostFX(
 				vignette.darkness = 0.6;
 				dof.bokehScale = 4.0 * dofBase;
 			} else if (isNight) {
-				bloom.intensity = 1.1;
-				lumMat.threshold = 0.3;
-				vignette.darkness = 0.75;
+				bloom.intensity = 1.6;
+				lumMat.threshold = 0.25;
+				vignette.darkness = 0.65;
 				dof.bokehScale = 2.5 * dofBase;
 			} else {
 				bloom.intensity = 0.7;

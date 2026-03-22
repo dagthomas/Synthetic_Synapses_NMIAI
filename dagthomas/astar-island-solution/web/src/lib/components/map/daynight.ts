@@ -77,17 +77,18 @@ export function computeDayNight(hour: number): DayNightState {
 	} else if (dayFade > 0.5) {
 		_state.sunColor.set(0xfff8e1);
 	} else {
-		_state.sunColor.set(0x334466);
+		_state.sunColor.set(0x8899cc); // cool bluish-white moonlight for specular
 	}
 
-	_state.sunIntensity = dayFade * 1.2 + dawnFade * 0.6 + duskFade * 0.6 + nightFade * 0.20;
+	// Night uses sunLight as bright moonlight for specular highlights
+	_state.sunIntensity = dayFade * 1.2 + dawnFade * 0.6 + duskFade * 0.6 + nightFade * 0.55;
 
-	lerpHex(0x2a3366, 0x606080, 1 - nightFade, _state.ambientColor);
-	_state.ambientIntensity = 0.35 + dayFade * 0.15 + (dawnFade + duskFade) * 0.15 + nightFade * 0.10;
+	lerpHex(0x4466aa, 0x606080, 1 - nightFade, _state.ambientColor);
+	_state.ambientIntensity = 0.35 + dayFade * 0.15 + (dawnFade + duskFade) * 0.15 + nightFade * 0.25;
 
-	lerpHex(0x1a2850, 0x87ceeb, 1 - nightFade * 0.7, _state.hemiSkyColor);
-	lerpHex(0x101820, 0x5d4e37, 1 - nightFade * 0.6, _state.hemiGroundColor);
-	_state.hemiIntensity = 0.30 + dayFade * 0.35 + (dawnFade + duskFade) * 0.2 + nightFade * 0.12;
+	lerpHex(0x2a3870, 0x87ceeb, 1 - nightFade * 0.7, _state.hemiSkyColor);
+	lerpHex(0x182030, 0x5d4e37, 1 - nightFade * 0.6, _state.hemiGroundColor);
+	_state.hemiIntensity = 0.30 + dayFade * 0.35 + (dawnFade + duskFade) * 0.2 + nightFade * 0.22;
 
 	// Sky color
 	if (nightFade > 0.8) {

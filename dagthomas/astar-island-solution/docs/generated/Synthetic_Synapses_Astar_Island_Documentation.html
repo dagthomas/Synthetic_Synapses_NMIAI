@@ -1,0 +1,2958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Synthetic Synapses Documentation</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #24292e;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px;
+            background: white;
+        }
+
+        .page-break {
+            page-break-after: always;
+            break-after: page;
+            border-bottom: 2px dashed #e1e4e8;
+            margin: 40px 0;
+        }
+
+        @media print {
+            .page-break { border: none; }
+            .no-print { display: none !important; }
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            margin-top: 24px;
+            margin-bottom: 16px;
+            font-weight: 600;
+            line-height: 1.25;
+            color: #1a1a2e;
+        }
+
+        h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 2px solid #4f46e5; }
+        h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid #e1e4e8; }
+        h3 { font-size: 1.25em; }
+        h4 { font-size: 1em; }
+
+        a { color: #4f46e5; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        pre {
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.45;
+            border: 1px solid #e1e4e8;
+        }
+
+        code {
+            font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+            font-size: 13px;
+            background-color: rgba(27, 31, 35, 0.05);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+        }
+
+        pre code { background: none; padding: 0; }
+
+        table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+        th, td { padding: 8px 12px; border: 1px solid #e1e4e8; text-align: left; }
+        th { background-color: #f6f8fa; font-weight: 600; }
+        tr:nth-child(even) { background-color: #fafbfc; }
+
+        ul, ol { padding-left: 2em; margin: 16px 0; }
+        li { margin: 4px 0; }
+
+        blockquote {
+            margin: 16px 0;
+            padding: 0 1em;
+            color: #6a737d;
+            border-left: 4px solid #4f46e5;
+            background: #f8f9ff;
+        }
+
+        hr { height: 2px; background-color: #e1e4e8; border: none; margin: 24px 0; }
+
+        .mermaid {
+            background: #fafbfc;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 16px 0;
+            text-align: center;
+        }
+
+        img { max-width: 100%; height: auto; }
+
+        .cover-page {
+            text-align: center;
+            padding: 100px 0;
+            page-break-after: always;
+        }
+
+        .cover-page h1 { font-size: 3em; border: none; color: #4f46e5; }
+        .cover-page .subtitle { font-size: 1.5em; color: #6a737d; margin-top: 20px; }
+        .cover-page .date { color: #6a737d; margin-top: 40px; }
+
+        .toc { page-break-after: always; padding: 20px 0; }
+        .toc h2 { color: #4f46e5; border: none; }
+        .toc h3 { color: #24292e; font-size: 1.1em; margin-top: 20px; border: none; }
+        .toc ul { list-style: none; padding-left: 0; margin: 8px 0; }
+        .toc li { padding: 4px 0; padding-left: 16px; border-bottom: 1px dotted #e1e4e8; }
+        .toc a { color: #24292e; }
+
+        .print-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #4f46e5;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+        }
+
+        .print-btn:hover { background: #4338ca; }
+
+        @media print {
+            body { max-width: 100%; padding: 0; }
+            pre, table, .mermaid { page-break-inside: avoid; }
+            h1, h2, h3, h4 { page-break-after: avoid; }
+        }
+    </style>
+</head>
+<body>
+    <button class="print-btn no-print" onclick="window.print()">Print to PDF</button>
+
+    <div class="cover-page">
+        <h1>Synthetic Synapses</h1>
+        <div class="subtitle">System Documentation</div>
+        <div class="date">Generated: March 22, 2026</div>
+    </div>
+
+    <div class="toc"><h2>Table of Contents</h2><h3>Overview</h3><ul><li><a href="#docs-structure">DOCS_STRUCTURE</a></li></ul><h3>Context</h3><ul><li><a href="#00-context-architecture">Architecture</a></li><li><a href="#00-context-system-state">System State</a></li><li><a href="#00-context-vision">Vision</a></li><li><a href="#00-context-war-stories">War Stories</a></li></ul><h3>Product</h3><ul><li><a href="#01-product-prd">Prd</a></li></ul><h3>Features\autonomous Research</h3><ul><li><a href="#02-features-autonomous-research-feature-spec">Feature Spec</a></li><li><a href="#02-features-autonomous-research-tech-design">Tech Design</a></li></ul><h3>Features\daemon Pipeline</h3><ul><li><a href="#02-features-daemon-pipeline-feature-spec">Feature Spec</a></li><li><a href="#02-features-daemon-pipeline-tech-design">Tech Design</a></li></ul><h3>Features\gpu Simulator</h3><ul><li><a href="#02-features-gpu-simulator-feature-spec">Feature Spec</a></li><li><a href="#02-features-gpu-simulator-tech-design">Tech Design</a></li></ul><h3>Features\island Explorer</h3><ul><li><a href="#02-features-island-explorer-feature-spec">Feature Spec</a></li></ul><h3>Features\research Agent</h3><ul><li><a href="#02-features-research-agent-feature-spec">Feature Spec</a></li></ul><h3>Features\statistical Model</h3><ul><li><a href="#02-features-statistical-model-feature-spec">Feature Spec</a></li></ul><h3>Features\terminal Ui</h3><ul><li><a href="#02-features-terminal-ui-feature-spec">Feature Spec</a></li></ul><h3>Process</h3><ul><li><a href="#04-process-getting-started">Getting Started</a></li></ul></div>
+
+    <p><a id="docs-structure"></a></p>
+<h1>Documentation Structure</h1>
+<pre><code>docs/
+├── 00-context/                        # WHY and WHAT EXISTS
+│   ├── vision.md                      # Case, problem, and solution overview
+│   ├── architecture.md                # System architecture and data flow
+│   ├── system-state.md                # Current scores and pipeline status
+│   └── war-stories.md                 # Failures, breakthroughs, and lessons
+├── 01-product/
+│   └── prd.md                         # Game rules, scoring, constraints, targets
+├── 02-features/
+│   ├── autonomous-research/           # 3-agent auto-research system
+│   │   ├── feature-spec.md            # Agents, compound effect, speed comparison
+│   │   └── tech-design.md             # Parameter space, search strategy, coordination
+│   ├── daemon-pipeline/               # 24/7 daemon with iterative re-submission
+│   │   ├── feature-spec.md            # Pipeline flow, regime detection, re-submission
+│   │   └── tech-design.md             # 8-stage prediction, re-submit strategy
+│   ├── gpu-simulator/                 # CUDA Monte Carlo simulator + CMA-ES
+│   │   ├── feature-spec.md            # CMA-ES fitting, Monte Carlo, ensemble
+│   │   └── tech-design.md             # Distance decay, GPU parallelism, performance
+│   ├── statistical-model/             # The 8-stage prediction pipeline
+│   │   └── feature-spec.md            # Calibration, FK pooling, multipliers, vectorization
+│   ├── island-explorer/               # SvelteKit 3D island viewer
+│   │   └── feature-spec.md            # Three.js, weather, celestials, wildlife, Imagen
+│   ├── terminal-ui/                   # Go Bubble Tea terminal dashboard
+│   │   └── feature-spec.md            # 10 tabs, multi-pane, scramble animation
+│   └── research-agent/                # Google ADK + Gemini autonomous agent
+│       └── feature-spec.md            # ADK tools, backtest harness, execution modes
+├── 04-process/
+│   └── getting-started.md             # Setup, dependencies, how to run
+└── DOCS_STRUCTURE.md                  # This file
+</code></pre>
+<h2>Mermaid Chart Guidelines</h2>
+<ul>
+<li><strong>&gt;3 nodes</strong>: Use vertical layout (<code>flowchart TB</code>). Horizontal charts with many boxes become unreadable.</li>
+<li><strong>&lt;=3 nodes</strong>: Horizontal (<code>flowchart LR</code>) is fine.</li>
+<li><strong>Sequence diagrams</strong>: Keep as-is (vertical by nature).</li>
+<li>Prefer simple node labels — move details into text below the chart.</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="00-context-architecture"></a></p>
+<h1>Architecture</h1>
+<p>Full system architecture for the Astar Island autonomous competition system.</p>
+<hr>
+<h2>System Overview</h2>
+<div class="mermaid">flowchart TB
+    subgraph Daemon[&quot;daemon.py&quot;]
+        RM[Round Monitor]
+        HM[Health Monitor]
+        PS[Param Sync]
+    end
+
+    subgraph Pipeline[&quot;Live Round Pipeline&quot;]
+        EX[explore.py]
+        SP[predict_gemini.py]
+        GP[sim_model_gpu.py]
+        EN[Ensemble]
+        SUB[submit.py]
+    end
+
+    subgraph Research[&quot;Background Research&quot;]
+        AL[autoloop_fast.py]
+        MR[multi_researcher.py]
+        GR[gemini_researcher.py]
+    end
+
+    subgraph Data[&quot;Shared State&quot;]
+        BP[best_params.json]
+        CAL[Calibration Data]
+    end
+
+    RM --&gt;|New round| EX
+    EX --&gt; SP
+    EX --&gt; GP
+    SP --&gt; EN
+    GP --&gt; EN
+    EN --&gt; SUB
+
+    AL --&gt;|Optimizes| BP
+    BP --&gt;|Reads| SP
+    CAL --&gt;|Trains| SP
+    HM --&gt;|Restarts| AL
+    PS --&gt;|Syncs| BP
+</div>
+<hr>
+<h2>Data Flow Per Round</h2>
+<div class="mermaid">sequenceDiagram
+    participant API as Astar Island API
+    participant D as Daemon
+    participant E as Explorer
+    participant S as Statistical Model
+    participant G as GPU Simulator
+
+    D-&gt;&gt;API: Poll for active round
+    API--&gt;&gt;D: Round detected
+    D-&gt;&gt;E: Run 50 viewport queries
+
+    par Statistical + GPU
+        E-&gt;&gt;S: Observations + multipliers
+        S--&gt;&gt;D: stat_pred (40x40x6)
+        E-&gt;&gt;G: CMA-ES fit from observations
+        G--&gt;&gt;D: sim_pred (40x40x6)
+    end
+
+    D-&gt;&gt;D: Ensemble blend
+    D-&gt;&gt;API: Submit prediction
+
+    loop Every 10 minutes
+        D-&gt;&gt;G: Re-fit with more compute
+        D-&gt;&gt;API: Re-submit (overwrites)
+    end
+</div>
+<hr>
+<h2>Key Files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>daemon.py</code></td>
+<td>24/7 orchestrator — round detection, health monitoring, param sync</td>
+</tr>
+<tr>
+<td><code>explore.py</code></td>
+<td>Adaptive viewport exploration (50 queries, entropy-targeted)</td>
+</tr>
+<tr>
+<td><code>predict_gemini.py</code></td>
+<td>Statistical prediction — calibration + FK buckets + multipliers</td>
+</tr>
+<tr>
+<td><code>sim_model_gpu.py</code></td>
+<td>PyTorch CUDA Monte Carlo simulator</td>
+</tr>
+<tr>
+<td><code>submit.py</code></td>
+<td>API submission with iterative re-submission</td>
+</tr>
+<tr>
+<td><code>autoloop_fast.py</code></td>
+<td>Continuous parameter optimization (160K experiments/hr)</td>
+</tr>
+<tr>
+<td><code>multi_researcher.py</code></td>
+<td>Gemini Flash + Pro research loop</td>
+</tr>
+<tr>
+<td><code>gemini_researcher.py</code></td>
+<td>Structural algorithm proposals</td>
+</tr>
+<tr>
+<td><code>calibration.py</code></td>
+<td>Hierarchical calibration from ground truth</td>
+</tr>
+<tr>
+<td><code>best_params.json</code></td>
+<td>44 tuned continuous parameters</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Memory Model</h2>
+<p>All shared state is file-based — no database, no message queue:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Updated by</th>
+<th>Read by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>best_params.json</code></td>
+<td>Autoloop (every improvement)</td>
+<td>Statistical model, researchers</td>
+</tr>
+<tr>
+<td><code>data/calibration_*.json</code></td>
+<td>Daemon (after round closes)</td>
+<td>Statistical model</td>
+</tr>
+<tr>
+<td><code>data/sim_params_*.json</code></td>
+<td>GPU simulator</td>
+<td>KNN warm-starts</td>
+</tr>
+<tr>
+<td><code>learnings/*.json</code></td>
+<td>Multi-researcher</td>
+<td>Gemini researcher</td>
+</tr>
+</tbody></table>
+<p>Processes coordinate through the filesystem. The daemon syncs autoloop parameters to production every 2 minutes.</p>
+<div class="page-break"></div>
+
+<p><a id="00-context-system-state"></a></p>
+<h1>System State</h1>
+<p>Current state of the Astar Island competition system as of 2026-03-20.</p>
+<hr>
+<h2>Scores</h2>
+<table>
+<thead>
+<tr>
+<th>Round</th>
+<th>Score</th>
+<th>Rank</th>
+<th>Regime</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>R2</td>
+<td>66.4</td>
+<td>53</td>
+<td>Thriving</td>
+<td>Old code, no calibration</td>
+</tr>
+<tr>
+<td>R3</td>
+<td>68.0</td>
+<td>11</td>
+<td>Collapse</td>
+<td>Old code</td>
+</tr>
+<tr>
+<td>R4</td>
+<td>53.3</td>
+<td>65</td>
+<td>Collapse</td>
+<td>Floor bug</td>
+</tr>
+<tr>
+<td>R5</td>
+<td>86.3</td>
+<td><strong>1st</strong></td>
+<td>Moderate</td>
+<td>New pipeline deployed</td>
+</tr>
+<tr>
+<td>R6</td>
+<td>87.6</td>
+<td>2nd</td>
+<td>Boom</td>
+<td>+ Gemini improvements</td>
+</tr>
+<tr>
+<td>R7</td>
+<td>74.0</td>
+<td>2nd</td>
+<td>Extreme boom</td>
+<td>Undetectable regime</td>
+</tr>
+<tr>
+<td>R17</td>
+<td>93.0</td>
+<td>-</td>
+<td>Boom</td>
+<td>Best ever</td>
+</tr>
+<tr>
+<td>R20</td>
+<td>89.4</td>
+<td>-</td>
+<td>Moderate</td>
+<td>Fixed obs correction bug</td>
+</tr>
+</tbody></table>
+<p>Backtested average (R2-R7 leave-one-out): <strong>88.4</strong></p>
+<hr>
+<h2>Research Scale</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Autoloop experiments</td>
+<td>1,028,171</td>
+</tr>
+<tr>
+<td>Parameters optimized</td>
+<td>44 continuous</td>
+</tr>
+<tr>
+<td>Research iterations</td>
+<td>1,864</td>
+</tr>
+<tr>
+<td>Code variants generated</td>
+<td>497</td>
+</tr>
+<tr>
+<td>Breakthrough ideas</td>
+<td>32</td>
+</tr>
+<tr>
+<td>Calibration rounds</td>
+<td>20</td>
+</tr>
+<tr>
+<td>Ground truth cells</td>
+<td>160,000</td>
+</tr>
+<tr>
+<td>GPU sim speed</td>
+<td>124,000 sims/sec</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Pipeline Status</h2>
+<ul>
+<li>Daemon: autonomous 24/7 operation</li>
+<li>Autoloop: running (160K experiments/hr)</li>
+<li>Multi-researcher: 617 iterations completed</li>
+<li>Gemini researcher: 1,247 iterations completed</li>
+<li>GPU simulator: RTX 5090, CMA-ES fitting in ~8s</li>
+<li>Re-submission: up to 10 iterations per round (165-min window)</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="00-context-vision"></a></p>
+<h1>Vision</h1>
+<p>Autonomous AI research system built for the Astar Island challenge in NM i AI (Norwegian AI Championship, 2026).</p>
+<hr>
+<h2>The Case</h2>
+<p>Astar Island is a prediction game about Norse civilizations on a hidden simulator. A 40x40 island has terrain (land, forest, mountains, ocean) and Norse settlements. A hidden simulator runs the civilization forward — settlements survive or die, expand, clear forests, build ports, or collapse into ruins.</p>
+<p>You observe the simulation through a 15x15 viewport. From 50 observation queries across 5 random seeds, you must predict the final probability distribution — a 40x40x6 tensor where each cell has probabilities for: empty, settlement, port, ruin, forest, farmland.</p>
+<p>Scoring uses entropy-weighted KL divergence — cells where the outcome is uncertain matter more than cells where it is predictable.</p>
+<hr>
+<h2>The Problem</h2>
+<div class="mermaid">flowchart TB
+    P1[16 hidden simulator parameters] --&gt; P2[Vary up to 14x between rounds]
+    P2 --&gt; P3[Cannot be detected from initial state]
+    P3 --&gt; P4[Must be estimated from 50 partial observations]
+    P4 --&gt; P5[Rounds change every ~3 hours]
+    P5 --&gt; P6[System must adapt in real-time, autonomously]
+</div>
+<ol>
+<li><p><strong>Hidden state estimation</strong> — the simulator has 16 parameters that vary dramatically between rounds. You cannot see them. You must infer them from partial observations. This is the core challenge of science itself.</p>
+</li>
+<li><p><strong>Information-theoretic scoring</strong> — KL divergence rewards well-calibrated probabilities, not just correct guesses. You must know what you don&#39;t know.</p>
+</li>
+<li><p><strong>Exploration under budget</strong> — 50 queries is not enough to see everything. Where you look matters.</p>
+</li>
+<li><p><strong>Non-stationary dynamics</strong> — each round has completely different hidden parameters. What worked last round might fail this round.</p>
+</li>
+<li><p><strong>Multi-scale reasoning</strong> — you need local features (terrain around each cell), global features (overall settlement vigor), and spatial dynamics (expansion radius).</p>
+</li>
+</ol>
+<hr>
+<h2>The Solution</h2>
+<p>Build a fully autonomous system that competes 24/7 with zero human intervention: detect new rounds, explore, predict, submit, then keep improving and re-submitting — while simultaneously running continuous parameter optimization and AI-driven research.</p>
+<p>Three autonomous research agents run in parallel across different timescales:</p>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Timescale</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Autoloop</td>
+<td>Milliseconds</td>
+<td>Brute-force parameter search (1M+ experiments)</td>
+</tr>
+<tr>
+<td>Multi-Researcher</td>
+<td>Seconds</td>
+<td>Creative algorithmic ideas (500+ variants)</td>
+</tr>
+<tr>
+<td>Gemini Researcher</td>
+<td>Minutes</td>
+<td>Structural algorithm redesigns</td>
+</tr>
+</tbody></table>
+<p>A GPU Monte Carlo simulator on RTX 5090 fits hidden parameters from observations in 8 seconds, and an ensemble model blends statistical and physics-informed predictions.</p>
+<hr>
+<h2>Results</h2>
+<table>
+<thead>
+<tr>
+<th>Round</th>
+<th>Score</th>
+<th>Rank</th>
+<th>Regime</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>R5</td>
+<td>86.3</td>
+<td>1st</td>
+<td>Moderate</td>
+</tr>
+<tr>
+<td>R6</td>
+<td>87.6</td>
+<td>2nd</td>
+<td>Boom</td>
+</tr>
+<tr>
+<td>R7</td>
+<td>74.0</td>
+<td>2nd</td>
+<td>Extreme boom</td>
+</tr>
+<tr>
+<td>R17</td>
+<td>93.0</td>
+<td>-</td>
+<td>Boom (best ever)</td>
+</tr>
+<tr>
+<td>R20</td>
+<td>89.4</td>
+<td>-</td>
+<td>Moderate</td>
+</tr>
+</tbody></table>
+<p>Backtested average across R2-R7: <strong>88.4</strong> (leave-one-out).</p>
+<div class="page-break"></div>
+
+<p><a id="00-context-war-stories"></a></p>
+<h1>War Stories — Failures, Breakthroughs, and Lessons</h1>
+<p>The most important lessons came from things that went wrong. Every failure taught something irreplaceable. This is the collected wisdom from 1M+ experiments, 500+ AI-generated ideas, and 21 competition rounds.</p>
+<hr>
+<h2>The R8 Unicode Crash — How a Print Statement Lost 27 Points</h2>
+<p><strong>What happened</strong>: After 50 exploration queries completed successfully, a unicode arrow character (<code>→</code>) in a print statement crashed the Python process on Windows (cp1252 encoding).</p>
+<p><strong>Impact</strong>: Observations were collected but <strong>never saved to disk</strong>. R8 was submitted with calibration-only (no current-round observations). Score: 66.9, rank 103. Would have been 93+ with observations.</p>
+<p><strong>The fix</strong>:</p>
+<ol>
+<li>Move all file saves BEFORE print statements</li>
+<li>Add graceful <code>None</code> handling for missing observations</li>
+<li>Remove all unicode from print strings</li>
+<li>Add incremental observation saves (save after each query, not at the end)</li>
+</ol>
+<p><strong>Lesson</strong>: In competition systems, <strong>persistence before presentation</strong>. A crash between &quot;collected data&quot; and &quot;saved data&quot; is catastrophic. Save early, save often, and never trust that your code will reach the next line.</p>
+<hr>
+<h2>The Floor Disaster — One Parameter, 35 Points</h2>
+<p><strong>What happened</strong>: R4 was submitted with <code>floor = 0.015</code> instead of 0.005.</p>
+<p><strong>Why it seemed reasonable</strong>: KL divergence goes to infinity when <code>pred = 0</code> and <code>gt &gt; 0</code>. A floor of 0.015 felt &quot;safe.&quot; The thinking: better to waste a little probability mass than risk infinite KL.</p>
+<p><strong>Why it was catastrophic</strong>: Mountain and port probabilities are structurally zero on most dynamic cells. With floor=0.015, each cell wasted 3.7% of its probability mass on impossible outcomes (mountain appearing on plains, ports forming inland). Across 800+ dynamic cells, this destroyed the prediction.</p>
+<p><strong>The numbers</strong>: Backtested score with correct floor: 88.7. Actual submission score: 53.3. <strong>35 points lost to a single number.</strong></p>
+<p><strong>The fix</strong>: <code>floor = 0.005</code> (= 1/200, matching the GT granularity). Combined with structural zeros (mountain=0 on non-mountain, port=0 on non-coastal), this recovered all lost points.</p>
+<p><strong>Lesson</strong>: Understand your scoring function&#39;s sensitivity. In KL divergence, wasted probability mass on impossible events is just as bad as missing possible events. The floor should match the ground truth resolution, not your anxiety level.</p>
+<hr>
+<h2>The Per-Cell Bayesian Catastrophe — When More Data Makes Things Worse</h2>
+<p><strong>What happened</strong>: Attempted per-cell Bayesian updates from viewport observations.</p>
+<p><strong>The logic</strong>: &quot;We observe cell (15, 22) as &#39;settlement&#39; in seed 3. Update our prior for that cell to increase settlement probability.&quot;</p>
+<p><strong>Result</strong>: -30 points. The worst regression in the project.</p>
+<p><strong>Why it failed</strong>: With 50 queries x 225 cells = 11,250 observations across 1,600 cells, each cell is observed only 1-2 times. A single observation of a stochastic simulation is pure noise. Cell X shows &quot;settlement&quot; once, but the GT probability might be 0.12. The Bayesian update massively overweights that single sample.</p>
+<p><strong>The fix</strong>: Feature-key pooling. Group cells by <code>(terrain, distance, coastal, forest_neighbors, has_port)</code> — about 25 distinct keys. Each key has ~450 observations. The law of large numbers kicks in, and the empirical distribution becomes reliable.</p>
+<p><strong>Lesson</strong>: Statistical power matters more than granularity. 100 observations of similar cells beats 1 observation of the exact cell, every time. This is the foundation of the entire prediction model.</p>
+<hr>
+<h2>The Idea H Trap — When Validation Lies</h2>
+<p><strong>What happened</strong>: Proposed &quot;settlement percentage regime scaling&quot; — scale predictions by the observed settlement rate. Tested on R2, R3, R4: +0.61 points average. Looked great. Deployed to production.</p>
+<p><strong>Result on full harness</strong>: -0.6 points across all rounds.</p>
+<p><strong>Why validation lied</strong>: The idea double-counted an effect already captured by the global multiplier system. On 3 rounds, the double-counting happened to help (the multiplier was slightly underfit). On all 6 rounds, it averaged out to harmful — the multiplier was already well-calibrated, and adding a second scaling layer introduced noise.</p>
+<p><strong>Lesson</strong>: <strong>Always validate against the full harness, not a subset.</strong> Leave-one-out on 3 rounds is not the same as leave-one-out on 6. Overfitting is real even with proper cross-validation — you need enough rounds to detect it.</p>
+<hr>
+<h2>The Vectorization Breakthrough — 27x Speedup That Changed Everything</h2>
+<p><strong>What happened</strong>: Rewrote the prediction function from Python loops to numpy fancy indexing.</p>
+<pre><code class="language-python"># Before: 51ms per evaluation, 6,000 experiments/hour
+for y in range(40):
+    for x in range(40):
+        prior = cal.prior_for(feature_keys[y][x])
+
+# After: 10ms per evaluation, 160,000 experiments/hour
+cal_priors = lookup_table[idx_grid]  # One numpy operation
+</code></pre>
+<p><strong>Impact</strong>: The autoloop went from &quot;interesting experiment&quot; to &quot;unstoppable search engine.&quot; At 6K/hr, you get 144K experiments per day — enough to explore the parameter space. At 160K/hr, you get 3.8M — enough to <em>exhaust</em> it.</p>
+<p><strong>Side effect</strong>: The vectorized version was also needed for <code>fast_predict.py</code>, which the autoloop uses. Without it, the autoloop would have run for weeks instead of days to reach 1M experiments.</p>
+<p><strong>Bonus discovery</strong>: During vectorization, found that <code>prior_weight = 5.0</code> (the original value) was way too high. Changed to 1.5 and gained <strong>+10 points</strong> — the single biggest score improvement in the project. The original value was never properly optimized because the loop-based version was too slow to sweep it.</p>
+<p><strong>Lesson</strong>: Performance isn&#39;t just about speed — it enables qualitatively different approaches. A 27x speedup turned &quot;try a few parameter values&quot; into &quot;exhaustively search the space.&quot;</p>
+<hr>
+<h2>The Port Smoothing Bug — When Spatial Intuition Fails</h2>
+<p><strong>What happened</strong>: Applied 3x3 spatial smoothing to all 6 prediction classes, including port.</p>
+<p><strong>The logic</strong>: &quot;Nearby cells should have similar probabilities. Smoothing reduces noise.&quot;</p>
+<p><strong>Result</strong>: -2 points. Port class predictions degraded severely.</p>
+<p><strong>Why</strong>: Ports can only exist on coastal cells (adjacent to ocean). A 3x3 smoothing kernel doesn&#39;t know this — it averages port probability from a coastal cell into its inland neighbors. Those inland cells now have nonzero port probability, which is physically impossible and wastes probability mass.</p>
+<p><strong>The fix</strong>: Smooth only settlement and ruin classes. Never smooth port (geographic constraint) or forest/mountain (structurally determined).</p>
+<p><strong>Lesson</strong>: Spatial smoothing must respect physical constraints. Not all cell classes have the same spatial correlation structure. Ports are geographically constrained; settlements are not.</p>
+<hr>
+<h2>The Lambda Discovery — When AI Finds What Humans Miss</h2>
+<p><strong>What happened</strong>: The multi-researcher agent (Gemini Flash + Pro) discovered that the hidden <code>lambda</code> parameter (expansion distance decay) varies <strong>14x between rounds</strong> — from 0.5 (collapse: no expansion) to 7.0 (extreme boom: settlements spread everywhere).</p>
+<p><strong>Why humans missed it</strong>: In the backtested data, the effect of lambda was confounded with settlement survival rate. High survival + high lambda both produce &quot;more settlements.&quot; It took hundreds of systematically varied experiments to isolate lambda as the independent driver.</p>
+<p><strong>Impact</strong>: This discovery directly led to building the GPU Monte Carlo simulator. The statistical model can&#39;t capture a 14x parameter swing — it averages across rounds. The simulator models it explicitly, fitting lambda from observations per round.</p>
+<p><strong>Downstream</strong>: GPU simulator → CMA-ES parameter fitting → Iterative re-submission → +3 to +28 points per round.</p>
+<p><strong>Lesson</strong>: AI researchers have no domain intuition, which is a feature, not a bug. A human would assume &quot;lambda is probably constant&quot; and never test it. The AI tested everything, including &quot;stupid&quot; hypotheses about parameter variation.</p>
+<hr>
+<h2>The R7 Extreme Boom — The Unsolvable Problem</h2>
+<p><strong>What happened</strong>: R7 had 384% settlement expansion — the most extreme boom ever observed. Our model predicted ~15% settlement, GT had 25.6%.</p>
+<p><strong>Why it was unsolvable</strong>: Our 50 observations happened mid-simulation. At observation time, settlement rate was 14%. Between observation and final state, a massive expansion wave occurred. We literally couldn&#39;t see it coming — the signal wasn&#39;t in the data yet.</p>
+<p><strong>Score</strong>: 74.0 (vs 93.0 on R17 boom). 19-point gap purely from timing.</p>
+<p><strong>Attempted fixes</strong>:</p>
+<ul>
+<li>Alive-count settlement boost: helps R7 (+5 pts) but hurts R6 and R11 (-3 to -5 pts). Net negative.</li>
+<li>Per-regime calibration: can&#39;t detect extreme boom from mid-sim observations</li>
+<li>Settlement growth RATE detection: would need 2 observations of the same cell at different times — budget doesn&#39;t allow it</li>
+</ul>
+<p><strong>What the leader probably does</strong>: Either they observe later in the simulation (impossible with our API), or they have a better simulator model for extreme expansion.</p>
+<p><strong>Lesson</strong>: Some problems are information-theoretically impossible to solve with the available data. Recognizing this is valuable — it prevents wasting time on solutions that can&#39;t work and redirects effort to solvable problems.</p>
+<hr>
+<h2>The 45-Day Research Plateau — When You Hit the Ceiling</h2>
+<p>After 45+ Claude Opus code modifications and 5,000+ autoloop parameter sweaks, score converged at 88.6 average. Nothing moved it.</p>
+<p>The research agents (all three) kept proposing ideas. All tested. All either neutral or negative. The system had reached its architectural ceiling.</p>
+<p><strong>Why</strong>: The 8-stage prediction pipeline captures all the signal available from 50 observations + 20 rounds of GT. To go higher, you need:</p>
+<ul>
+<li>More observations (API-limited to 50)</li>
+<li>Observations later in the simulation (API doesn&#39;t support)</li>
+<li>Better simulation model (the GPU sim helps +3-28 but is also limited by observation timing)</li>
+</ul>
+<p><strong>Lesson</strong>: Architectural ceilings are real. No amount of parameter tuning or incremental changes can break through a fundamental information limit. Recognizing the ceiling lets you redirect effort (we pivoted to iterative re-submission, which uses time rather than data).</p>
+<hr>
+<h2>The Self-Improvement Loop — Every Round Makes the Next One Better</h2>
+<p>The most elegant part of the system: completed rounds automatically improve future predictions.</p>
+<div class="mermaid">flowchart TB
+    R1[Round N submitted] --&gt; GT[Download ground truth]
+    GT --&gt; CAL[CalibrationModel: 19 rounds → 20 rounds]
+    GT --&gt; SIM[CMA-ES fit sim params → KNN bank grows]
+    CAL --&gt; AUTO[Autoloop restarts with new data]
+    SIM --&gt; AUTO
+    AUTO --&gt; BETTER[Round N+1: better priors, better warm-starts]
+    BETTER --&gt; R2[Round N+1 submitted]
+    R2 --&gt; GT2[Download ground truth]
+    GT2 --&gt; EVEN[Even better for Round N+2]
+</div>
+<p>From R2 (66.4, rank 53) to R5 (86.3, rank 1): each round added calibration data, each calibration improvement fed the next prediction. By R20, the system had 20 rounds of ground truth (160,000 cells) — an enormous prior that new competition entrants couldn&#39;t match.</p>
+<p><strong>Lesson</strong>: In iterative competitions, the compounding effect of self-improvement is the strongest advantage. Start early, even with bad predictions. The data you collect is more valuable than the score you get.</p>
+<div class="page-break"></div>
+
+<p><a id="01-product-prd"></a></p>
+<h1>Product Requirements — Astar Island</h1>
+<h2>Challenge Overview</h2>
+<p>Astar Island is a prediction challenge in NM i AI (Norwegian AI Championship). Predict the final state of a Norse civilization simulator from limited viewport observations.</p>
+<hr>
+<h2>Rules</h2>
+<ul>
+<li><strong>Map</strong>: 40x40 grid with terrain (land, forest, mountains, ocean) and Norse settlements</li>
+<li><strong>Viewport</strong>: 15x15 observable window, positioned per query</li>
+<li><strong>Budget</strong>: 50 observation queries shared across 5 random seeds</li>
+<li><strong>Seeds</strong>: Same terrain, different random outcomes</li>
+<li><strong>Output</strong>: 40x40x6 probability tensor per seed (empty, settlement, port, ruin, forest, farmland)</li>
+<li><strong>Ground truth</strong>: Generated from exactly 200 Monte Carlo simulations (all probabilities are k/200)</li>
+</ul>
+<hr>
+<h2>Scoring</h2>
+<pre><code>score = 100 * exp(-3 * weighted_kl)
+weighted_kl = sum(entropy(cell) * KL(gt, pred)) / sum(entropy(cell))
+</code></pre>
+<ul>
+<li>Entropy-weighted: high-uncertainty cells matter more</li>
+<li>KL divergence: rewards calibrated probabilities, punishes overconfidence</li>
+<li>Only cells with entropy &gt; 0.01 contribute</li>
+<li>Score sensitivity: wKL=0.05 -&gt; 86.1, wKL=0.10 -&gt; 74.1, wKL=0.15 -&gt; 63.8</li>
+</ul>
+<hr>
+<h2>Simulation Dynamics</h2>
+<h3>Hard Rules (confirmed from ground truth)</h3>
+<ol>
+<li>Mountains and ocean never change</li>
+<li>Border cells are always ocean</li>
+<li>Port requires ocean adjacency (impossible inland)</li>
+<li>Minimum nonzero GT probability is 0.005 (1/200)</li>
+</ol>
+<h3>Settlement Dynamics (vary by round)</h3>
+<ul>
+<li><strong>Survival</strong>: 0% (total collapse) to 62% (thriving) across rounds</li>
+<li><strong>Expansion</strong>: Distance 1-2 from existing settlements only, ~1% probability</li>
+<li><strong>Ports</strong>: Coastal + proximity to settlement (avg dist 3.3)</li>
+<li><strong>Ruins</strong>: From collapsed settlements, not from direct ruin formation</li>
+</ul>
+<h3>Regime Classification</h3>
+<table>
+<thead>
+<tr>
+<th>Regime</th>
+<th>Survival</th>
+<th>Expansion</th>
+<th>Strategy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Collapse</td>
+<td>0-2%</td>
+<td>0%</td>
+<td>Trust statistical model</td>
+</tr>
+<tr>
+<td>Moderate</td>
+<td>2-15%</td>
+<td>&lt;1%</td>
+<td>Balanced ensemble</td>
+</tr>
+<tr>
+<td>Boom</td>
+<td>&gt;15%</td>
+<td>&gt;1%</td>
+<td>Trust GPU simulator</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Constraints</h2>
+<ul>
+<li>Rounds last ~165 minutes, new round every ~3 hours</li>
+<li>Predictions can be overwritten while round is active</li>
+<li>API rate limits apply to observation queries</li>
+<li>5 seeds per round, 50 total queries to distribute across them</li>
+<li>Must use probability floor &gt;= 0.005 to avoid infinite KL divergence</li>
+</ul>
+<hr>
+<h2>Targets</h2>
+<ul>
+<li>Backtested ceiling: 88.4 average (R2-R7)</li>
+<li>Best single round: 93.0 (R17)</li>
+<li>Leader estimate: ~130+ weighted</li>
+<li>Key gap: extreme boom rounds (R7 type) where expansion happens after observation window</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-autonomous-research-feature-spec"></a></p>
+<h1>Autonomous Research System</h1>
+<p>Three AI agents conduct continuous research in parallel, each operating at a different timescale and with a different strategy. They share a codebase and parameter file but do not communicate directly — collaboration emerges from shared state.</p>
+<hr>
+<h2>Agents</h2>
+<h3>1. Autoloop — Brute Force Parameter Search</h3>
+<div class="mermaid">flowchart TB
+    BEST[Current best params] --&gt; PERTURB[Perturb 1-3 params]
+    PERTURB --&gt; EVAL[Backtest 20 rounds x 5 seeds]
+    EVAL --&gt; CMP{Better?}
+    CMP --&gt;|Yes| ACCEPT[Accept + sync]
+    CMP --&gt;|No| REJECT[Reject]
+    ACCEPT --&gt; BEST
+    REJECT --&gt; BEST
+</div>
+<ul>
+<li>44 continuous parameters, Gaussian perturbation</li>
+<li>160,000 experiments/hour (vectorized numpy)</li>
+<li>1,028,171 total experiments run</li>
+<li>Finds non-intuitive values no human would guess (e.g., <code>mult_power_sett = 0.53</code>)</li>
+</ul>
+<h3>2. Multi-Researcher — Creative Algorithmic Ideas</h3>
+<div class="mermaid">sequenceDiagram
+    participant F as Gemini Flash
+    participant P as Gemini Pro
+    participant H as Backtest Harness
+
+    loop Every 25 seconds
+        F-&gt;&gt;F: Analyze error patterns
+        F--&gt;&gt;P: Propose research direction
+        P-&gt;&gt;P: Write prediction function
+        P--&gt;&gt;H: Test variant
+        H--&gt;&gt;F: Score + log result
+    end
+</div>
+<ul>
+<li>Gemini Flash (analyst) identifies error patterns, proposes directions</li>
+<li>Gemini Pro (coder) writes complete prediction functions</li>
+<li>497 ideas generated, 32 breakthroughs (&gt;86.6), 166 competitive (&gt;80.0)</li>
+<li>~25 seconds per full idea-to-test cycle</li>
+</ul>
+<h3>3. Gemini Researcher — Structural Thinker</h3>
+<ul>
+<li>Proposes deep algorithmic changes (diffusion fields, Dirichlet conjugates, cluster density models)</li>
+<li>1,247 iterations</li>
+<li>PhD-level ideas generated in seconds, tested in minutes</li>
+</ul>
+<hr>
+<h2>Compound Effect</h2>
+<p>The agents compound discoveries across timescales:</p>
+<div class="mermaid">flowchart TB
+    A1[&quot;Autoloop: growth_front_boost = 0.74&quot;]
+    M1[&quot;Multi-researcher: growth front + cluster = 86.7&quot;]
+    A2[&quot;Autoloop: cluster_optimal = 0.70&quot;]
+    G1[&quot;Gemini: terrain barriers for clusters&quot;]
+    A3[&quot;Autoloop: barrier_strength = 0.13&quot;]
+
+    A1 --&gt; M1
+    M1 --&gt; A2
+    A2 --&gt; G1
+    G1 --&gt; A3
+</div>
+<p>Each discovery enables the next. The autoloop picks up structural changes from researchers, and researchers see autoloop-optimized baselines.</p>
+<hr>
+<h2>Research Speed</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Human</th>
+<th>AI System</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Time per iteration</td>
+<td>~5 hours</td>
+<td>~25 seconds</td>
+<td>720x</td>
+</tr>
+<tr>
+<td>Ideas per day</td>
+<td>3-4</td>
+<td>3,456</td>
+<td>1,000x</td>
+</tr>
+<tr>
+<td>Confirmation bias</td>
+<td>Yes</td>
+<td>None</td>
+<td>-</td>
+</tr>
+<tr>
+<td>Tests &quot;stupid&quot; ideas</td>
+<td>Rarely</td>
+<td>Always</td>
+<td>-</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Files</h2>
+<ul>
+<li><code>autoloop_fast.py</code> — Parameter optimization loop</li>
+<li><code>multi_researcher.py</code> — Gemini Flash + Pro research cycle</li>
+<li><code>gemini_researcher.py</code> — Structural algorithm proposals</li>
+<li><code>best_params.json</code> — 44 tuned parameters (shared state)</li>
+<li><code>learnings/</code> — Idea archive (500+ tested variants)</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-autonomous-research-tech-design"></a></p>
+<h1>Autonomous Research — Technical Design</h1>
+<p>How three AI agents conduct parallel research to improve prediction accuracy.</p>
+<hr>
+<h2>Autoloop Architecture</h2>
+<h3>Parameter Space</h3>
+<p>44 continuous parameters in <code>best_params.json</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Count</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Multiplier powers</td>
+<td>6</td>
+<td><code>mult_power_sett=0.53</code>, <code>mult_power_empty=0.19</code></td>
+</tr>
+<tr>
+<td>Calibration</td>
+<td>4</td>
+<td><code>cal_fine_divisor=125</code>, <code>global_weight=0.01</code></td>
+</tr>
+<tr>
+<td>FK empirical</td>
+<td>3</td>
+<td><code>emp_max_weight</code>, <code>min_count=5</code></td>
+</tr>
+<tr>
+<td>Temperature</td>
+<td>3</td>
+<td><code>T_max_scale=0.10</code>, <code>radius_base=2</code></td>
+</tr>
+<tr>
+<td>Floor/clamp</td>
+<td>4</td>
+<td><code>floor=0.0034</code>, <code>sett_clamp=[0.15, 2.5]</code></td>
+</tr>
+<tr>
+<td>Growth/cluster</td>
+<td>6</td>
+<td><code>growth_front_boost=0.74</code>, <code>cluster_optimal=0.70</code></td>
+</tr>
+<tr>
+<td>Distance decay</td>
+<td>6</td>
+<td>Powers per class, expansion radius</td>
+</tr>
+<tr>
+<td>Other</td>
+<td>12</td>
+<td>Smoothing, structural zeros, port factors</td>
+</tr>
+</tbody></table>
+<h3>Search Strategy</h3>
+<ul>
+<li><strong>Perturbation</strong>: Gaussian noise on 1-3 randomly selected parameters</li>
+<li><strong>Evaluation</strong>: Full backtest against 20 rounds x 5 seeds (vectorized numpy)</li>
+<li><strong>Acceptance</strong>: Strict improvement only — new score must beat current best</li>
+<li><strong>Sync</strong>: Best params written to <code>best_params.json</code>, synced to production every 2 min</li>
+</ul>
+<h3>Performance</h3>
+<ul>
+<li>160,000 experiments/hour</li>
+<li>Vectorized numpy backtest: ~22ms per full evaluation</li>
+<li>1,028,171 total experiments</li>
+</ul>
+<hr>
+<h2>Multi-Researcher Architecture</h2>
+<h3>Two-Model Collaboration</h3>
+<p><strong>Gemini Flash</strong> (analyst):</p>
+<ul>
+<li>Reads experiment log (last N results, error decomposition)</li>
+<li>Identifies which cell class contributes most KL error</li>
+<li>Proposes a research direction in natural language</li>
+</ul>
+<p><strong>Gemini Pro</strong> (coder):</p>
+<ul>
+<li>Receives the direction + current prediction function</li>
+<li>Writes a complete <code>experimental_pred_fn()</code> — not a patch, a full reimplementation</li>
+<li>The function is loaded dynamically and backtested</li>
+</ul>
+<h3>Evaluation Pipeline</h3>
+<pre><code class="language-python"># Simplified flow
+direction = flash.analyze(experiment_log)
+code = pro.generate(direction, current_code)
+exec(code)  # defines experimental_pred_fn
+score = backtest(experimental_pred_fn, calibration_data)
+log_result(direction, code, score)
+</code></pre>
+<h3>Idea Quality Distribution</h3>
+<table>
+<thead>
+<tr>
+<th>Quality</th>
+<th>Count</th>
+<th>Criteria</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Good</td>
+<td>32</td>
+<td>Score &gt; 86.6 (beats baseline)</td>
+</tr>
+<tr>
+<td>OK</td>
+<td>166</td>
+<td>Score &gt; 80.0</td>
+</tr>
+<tr>
+<td>Failed</td>
+<td>149</td>
+<td>Error or crash</td>
+</tr>
+<tr>
+<td>Below baseline</td>
+<td>150</td>
+<td>Score &lt; 80.0</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Gemini Researcher Architecture</h2>
+<p>Single Gemini Pro model with deeper context:</p>
+<ul>
+<li>Reads full prediction codebase + recent experiment results</li>
+<li>Proposes structural algorithm changes (not parameter tweaks)</li>
+<li>Changes are applied to production code, backtested, kept or reverted</li>
+</ul>
+<p>Example proposals:</p>
+<ul>
+<li>&quot;Replace distance-based multiplier with diffusion field accounting for terrain barriers&quot;</li>
+<li>&quot;Add Dirichlet-Multinomial conjugate update for directly observed cells&quot;</li>
+<li>&quot;Implement cluster density as inverted-U survival factor&quot;</li>
+</ul>
+<hr>
+<h2>Coordination</h2>
+<p>No explicit communication between agents. Coordination via shared files:</p>
+<div class="mermaid">flowchart TB
+    AL[Autoloop] --&gt;|Writes| BP[best_params.json]
+    BP --&gt;|Baseline for| MR[Multi-Researcher]
+    BP --&gt;|Baseline for| GR[Gemini Researcher]
+    MR --&gt;|Ideas inspire| GR
+    GR --&gt;|Code changes| AL
+</div>
+<p>The autoloop optimizes whatever parameters the researchers define. When a researcher adds a new parameter (e.g., <code>barrier_strength</code>), the autoloop automatically picks it up and optimizes it.</p>
+<hr>
+<h2>Files</h2>
+<ul>
+<li><code>autoloop_fast.py</code> — Main optimization loop (160K/hr)</li>
+<li><code>autoloop_cmaes.py</code> — CMA-ES variant of autoloop</li>
+<li><code>multi_researcher.py</code> — Flash + Pro research cycle</li>
+<li><code>gemini_researcher.py</code> — Structural proposals</li>
+<li><code>experimental_pred_fn.py</code> — Dynamically loaded test variants</li>
+<li><code>eval_production.py</code> — Backtest harness</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-daemon-pipeline-feature-spec"></a></p>
+<h1>Daemon Pipeline</h1>
+<p>Fully autonomous 24/7 competition system. Detects new rounds, explores the simulation, generates predictions, submits them, and iteratively improves for the entire round window — all with zero human intervention.</p>
+<hr>
+<h2>Pipeline Flow</h2>
+<div class="mermaid">flowchart TB
+    POLL[Poll API every 90s] --&gt; DETECT{New round?}
+    DETECT --&gt;|No| POLL
+    DETECT --&gt;|Yes| PAUSE[Pause autoloop]
+    PAUSE --&gt; EXPLORE[50 viewport queries]
+    EXPLORE --&gt; REGIME[Regime detection]
+    REGIME --&gt; STAT[Statistical prediction]
+    REGIME --&gt; GPU[GPU CMA-ES fit]
+    STAT --&gt; ENSEMBLE[Ensemble blend]
+    GPU --&gt; ENSEMBLE
+    ENSEMBLE --&gt; SUBMIT[Submit to API]
+    SUBMIT --&gt; RESUB[Re-submit loop]
+    RESUB --&gt;|Every 10 min| GPU
+</div>
+<hr>
+<h2>Regime Detection</h2>
+<p>Happens within the first 25 queries (~1 minute):</p>
+<div class="mermaid">flowchart TB
+    OBS[25 scout queries] --&gt; V{Settlement rate}
+    V --&gt;|&lt; 2%| COLLAPSE[Collapse]
+    V --&gt;|2-15%| MODERATE[Moderate]
+    V --&gt;|&gt; 15%| BOOM[Boom]
+</div>
+<table>
+<thead>
+<tr>
+<th>Regime</th>
+<th>Ensemble alpha</th>
+<th>Strategy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Collapse</td>
+<td>0.15</td>
+<td>Trust statistical model</td>
+</tr>
+<tr>
+<td>Moderate</td>
+<td>0.30</td>
+<td>Balanced</td>
+</tr>
+<tr>
+<td>Boom</td>
+<td>0.65</td>
+<td>Trust GPU simulator</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Iterative Re-submission</h2>
+<p>Most systems submit once. This system exploits the 165-minute round window:</p>
+<table>
+<thead>
+<tr>
+<th>Iteration</th>
+<th>Time</th>
+<th>GPU Sims</th>
+<th>CMA-ES Evals</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Initial</td>
+<td>t+2 min</td>
+<td>2,000</td>
+<td>200</td>
+</tr>
+<tr>
+<td>Iter 0</td>
+<td>t+12 min</td>
+<td>2,000</td>
+<td>200</td>
+</tr>
+<tr>
+<td>Iter 1</td>
+<td>t+22 min</td>
+<td>2,500</td>
+<td>300</td>
+</tr>
+<tr>
+<td>Iter 2</td>
+<td>t+32 min</td>
+<td>3,000</td>
+<td>400</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td>...</td>
+<td>...</td>
+</tr>
+<tr>
+<td>Final</td>
+<td>t+140 min</td>
+<td>6,500</td>
+<td>1,100</td>
+</tr>
+</tbody></table>
+<p>Each iteration uses a different random seed and more compute. The last submission wins.</p>
+<hr>
+<h2>Self-Improvement Loop</h2>
+<div class="mermaid">flowchart TB
+    SUBMIT[Submit round N] --&gt; GT[Download ground truth]
+    GT --&gt; CAL[Update calibration model]
+    GT --&gt; SIM[GPU-fit sim params]
+    CAL --&gt; RESTART[Restart autoloop]
+    SIM --&gt; RESTART
+    RESTART --&gt; BETTER[Round N+1: better predictions]
+</div>
+<p>Every completed round makes the next one better. Ground truth is downloaded automatically, calibration model is updated (20 rounds, 160K cells), and the autoloop restarts with expanded data.</p>
+<hr>
+<h2>Health Monitoring</h2>
+<ul>
+<li>Crashed processes auto-restart via health monitor</li>
+<li>Param sync: autoloop -&gt; production every 2 minutes</li>
+<li>Observation data saved incrementally to disk (crash-proof)</li>
+<li>Unicode crash protection added after R8 incident</li>
+</ul>
+<hr>
+<h2>Files</h2>
+<ul>
+<li><code>daemon.py</code> — Main orchestrator</li>
+<li><code>explore.py</code> — Adaptive viewport exploration</li>
+<li><code>submit.py</code> — API submission + iterative re-submission</li>
+<li><code>predict_gemini.py</code> — Statistical prediction pipeline</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-daemon-pipeline-tech-design"></a></p>
+<h1>Daemon Pipeline — Technical Design</h1>
+<p>How the 24/7 autonomous system orchestrates round detection, prediction, submission, and self-improvement.</p>
+<hr>
+<h2>daemon.py Components</h2>
+<h3>Round Monitor</h3>
+<ul>
+<li>Polls Astar Island API every 90 seconds</li>
+<li>Detects new active rounds by comparing round ID to last processed</li>
+<li>Triggers full pipeline on detection</li>
+</ul>
+<h3>Health Monitor</h3>
+<ul>
+<li>Checks autoloop, multi-researcher, gemini-researcher processes</li>
+<li>Auto-restarts crashed processes</li>
+<li>Logs uptime and restart events</li>
+</ul>
+<h3>Param Sync</h3>
+<ul>
+<li>Every 2 minutes: copies autoloop&#39;s <code>best_params.json</code> to production</li>
+<li>Atomic write (write to temp, rename) to prevent partial reads</li>
+</ul>
+<hr>
+<h2>Exploration Strategy (explore.py)</h2>
+<p>50 queries distributed across 5 seeds:</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Queries</th>
+<th>Strategy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Coverage</td>
+<td>45</td>
+<td>Systematic grid coverage of 40x40 map</td>
+</tr>
+<tr>
+<td>Adaptive</td>
+<td>5</td>
+<td>Entropy-targeted: revisit high-uncertainty regions</td>
+</tr>
+</tbody></table>
+<p>Each observation captures:</p>
+<ul>
+<li>Cell types in 15x15 viewport</li>
+<li>Settlement positions and terrain context</li>
+<li>Saved incrementally to disk (crash-proof after R8 unicode incident)</li>
+</ul>
+<p>Outputs:</p>
+<ul>
+<li><code>GlobalMultipliers</code>: observed/expected ratios per class</li>
+<li><code>FeatureKeyBuckets</code>: empirical distributions grouped by (terrain, dist, coastal, forest_neighbors, has_port)</li>
+<li><code>GlobalTransitionMatrix</code>: class transition counts</li>
+</ul>
+<hr>
+<h2>Statistical Model (predict_gemini.py)</h2>
+<p>Prediction pipeline with 8 stages:</p>
+<div class="mermaid">flowchart TB
+    S1[CalibrationModel] --&gt; S2[FK empirical blend]
+    S2 --&gt; S3[Distance-aware multipliers]
+    S3 --&gt; S4[Temperature softening]
+    S4 --&gt; S5[Spatial smoothing]
+    S5 --&gt; S6[Structural zeros]
+    S6 --&gt; S7[Probability floor]
+    S7 --&gt; S8[Lock static cells]
+</div>
+<ol>
+<li><strong>CalibrationModel</strong>: Hierarchical prior from 20 rounds (fine key -&gt; coarse -&gt; base -&gt; global)</li>
+<li><strong>FK empirical blend</strong>: <code>prior*5.0 + emp*sqrt(count) / (5.0 + sqrt(count))</code></li>
+<li><strong>Multipliers</strong>: Distance-aware power transform, settlement clamp [0.15, 2.5]</li>
+<li><strong>Temperature</strong>: Softening near settlements, radius adapts to regime</li>
+<li><strong>Smoothing</strong>: 3x3 kernel on settlement + ruin only (not port)</li>
+<li><strong>Structural zeros</strong>: Mountain=0 on non-mountain, port=0 on non-coastal</li>
+<li><strong>Floor</strong>: 0.005 (matches GT granularity of 1/200)</li>
+<li><strong>Static lock</strong>: Ocean=[1,0,0,0,0,0], mountain=[0,0,0,0,0,1]</li>
+</ol>
+<hr>
+<h2>Re-submission Strategy</h2>
+<pre><code class="language-python"># Simplified re-submission loop
+for i in range(10):
+    n_sims = 2000 + i * 500
+    n_evals = 200 + i * 100
+    sim_pred = gpu_fit(observations, n_sims, n_evals, seed=i)
+    ensemble = alpha * sim_pred + (1 - alpha) * stat_pred
+    submit(ensemble)  # overwrites previous
+    sleep(600)  # 10 minutes
+</code></pre>
+<p>Different random seed per iteration ensures exploration of parameter space. More compute per iteration enables finer fitting.</p>
+<hr>
+<h2>Post-Round Processing</h2>
+<p>When a round closes:</p>
+<ol>
+<li>Download ground truth from API</li>
+<li>Add to calibration dataset (now 20 rounds, 160K cells)</li>
+<li>GPU-fit simulator parameters for KNN warm-start bank</li>
+<li>Restart autoloop with expanded dataset</li>
+</ol>
+<hr>
+<h2>Files</h2>
+<ul>
+<li><code>daemon.py</code> — Main orchestrator (round detection, health, sync)</li>
+<li><code>explore.py</code> — Adaptive viewport exploration</li>
+<li><code>predict_gemini.py</code> — 8-stage statistical prediction</li>
+<li><code>submit.py</code> — API submission + re-submission loop</li>
+<li><code>calibration.py</code> — Hierarchical CalibrationModel</li>
+<li><code>regime_calibration.py</code> — Regime-specific calibration</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-gpu-simulator-feature-spec"></a></p>
+<h1>GPU Monte Carlo Simulator</h1>
+<p>PyTorch CUDA simulator that models Norse civilization dynamics on RTX 5090. Fits 16 hidden parameters from 50 viewport observations using CMA-ES optimization, then runs thousands of Monte Carlo simulations to predict the final state.</p>
+<hr>
+<h2>Why a Simulator?</h2>
+<p>The statistical model predicts from calibrated averages. But the simulator captures spatial dynamics — particularly the sharp settlement cutoff at distance boundaries that varies 14x between rounds. The key discovery: lambda (expansion radius) varies from 0.5 to 7.0 across rounds and cannot be predicted from initial state.</p>
+<hr>
+<h2>Architecture</h2>
+<div class="mermaid">flowchart TB
+    OBS[50 observations] --&gt; WS[KNN warm-start]
+    WS --&gt; CMA[CMA-ES optimizer]
+    CMA --&gt; MC[Monte Carlo simulation]
+    MC --&gt; PRED[40x40x6 prediction]
+</div>
+<h3>CMA-ES Parameter Fitting (~8 seconds)</h3>
+<p>Fits 16 hidden parameters by maximizing log-likelihood against observed cells:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Range</th>
+<th>Controls</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>base_survival</code></td>
+<td>0-1</td>
+<td>Settlement survival probability</td>
+</tr>
+<tr>
+<td><code>expansion_str</code></td>
+<td>0-1</td>
+<td>Expansion probability strength</td>
+</tr>
+<tr>
+<td><code>expansion_scale</code></td>
+<td>0.5-7.0</td>
+<td>Distance decay scale (lambda)</td>
+</tr>
+<tr>
+<td><code>decay_power</code></td>
+<td>0.5-4.0</td>
+<td>Gaussian-power distance decay</td>
+</tr>
+<tr>
+<td><code>max_reach</code></td>
+<td>1-10</td>
+<td>Hard cutoff for expansion</td>
+</tr>
+<tr>
+<td><code>forest_resist</code></td>
+<td>0-1</td>
+<td>Forest resistance to clearing</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td>10 more parameters</td>
+</tr>
+</tbody></table>
+<p>Warm-started from 3 nearest historical rounds (KNN on observation features).</p>
+<h3>Monte Carlo Simulation (124K sims/sec)</h3>
+<p>For each evaluation:</p>
+<ol>
+<li>Sample settlement survival (Bernoulli per cell)</li>
+<li>Compute nearest-alive distance for each empty cell</li>
+<li>Expansion with Gaussian-power decay: <code>P = str * exp(-(d/scale)^power)</code></li>
+<li>Forest clearing and reclamation</li>
+<li>Accumulate cell class counts across 2,000-6,500 simulations</li>
+</ol>
+<hr>
+<h2>Performance</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GPU</td>
+<td>NVIDIA RTX 5090</td>
+</tr>
+<tr>
+<td>Simulation throughput</td>
+<td>124,000 sims/sec</td>
+</tr>
+<tr>
+<td>CMA-ES fitting</td>
+<td>~8 seconds</td>
+</tr>
+<tr>
+<td>Speedup over CPU</td>
+<td>23x</td>
+</tr>
+<tr>
+<td>Sims per evaluation</td>
+<td>2,000 (initial) to 6,500 (final)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Ensemble Integration</h2>
+<p>The simulator prediction is blended with the statistical model:</p>
+<pre><code>final = alpha * sim_pred + (1 - alpha) * stat_pred
+</code></pre>
+<p>Alpha adapts by regime:</p>
+<ul>
+<li>Collapse: 0.15 (simulator unreliable with no settlements)</li>
+<li>Moderate: 0.30</li>
+<li>Boom: 0.65 (simulator captures expansion dynamics)</li>
+</ul>
+<p>On R19 (collapse), GPU sim saved 28 points (54.6 stat-only -&gt; 82.5 ensemble).</p>
+<hr>
+<h2>Files</h2>
+<ul>
+<li><code>sim_model_gpu.py</code> — PyTorch CUDA Monte Carlo simulator</li>
+<li><code>sim_gpu.py</code> — GPU simulation kernels</li>
+<li><code>sim_inference.py</code> — CMA-ES fitting and prediction</li>
+<li><code>sim_precompute.py</code> — Distance maps and terrain features</li>
+<li><code>sim_data.py</code> — KNN warm-start from historical rounds</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-gpu-simulator-tech-design"></a></p>
+<h1>GPU Simulator — Technical Design</h1>
+<p>PyTorch CUDA Monte Carlo simulator for Norse civilization dynamics on RTX 5090.</p>
+<hr>
+<h2>Simulation Model</h2>
+<p>Each Monte Carlo run simulates the civilization forward:</p>
+<div class="mermaid">flowchart TB
+    S1[Sample settlement survival] --&gt; S2[Compute nearest-alive distances]
+    S2 --&gt; S3[Expansion with Gaussian-power decay]
+    S3 --&gt; S4[Forest clearing near settlements]
+    S4 --&gt; S5[Ruin formation from collapsed]
+    S5 --&gt; S6[Port formation on coasts]
+    S6 --&gt; S7[Accumulate cell counts]
+</div>
+<h3>Distance Decay Model</h3>
+<pre><code>P(expand | distance d) = expansion_str * exp(-(d / expansion_scale) ^ decay_power)
+</code></pre>
+<p>With hard cutoff at <code>max_reach</code>. The <code>expansion_scale</code> (lambda) varies 14x between rounds (0.5 to 7.0) and is the single most impactful hidden parameter.</p>
+<h3>Cell Class Resolution</h3>
+<p>For each cell, across N simulations, count occurrences of each class:</p>
+<pre><code>pred[x, y, class] = count[x, y, class] / N
+</code></pre>
+<p>This naturally produces calibrated probabilities (same method as ground truth generation).</p>
+<hr>
+<h2>CMA-ES Parameter Fitting</h2>
+<h3>Objective</h3>
+<p>Maximize log-likelihood of observed cells:</p>
+<pre><code>L(params) = sum over observed cells: log(P(observed_class | params))
+</code></pre>
+<p>Where <code>P(observed_class | params)</code> comes from running the simulator with those parameters.</p>
+<h3>Warm-Start</h3>
+<p>KNN (k=3) from historical rounds:</p>
+<ul>
+<li>Features: settlement rate, expansion rate, coastal settlement ratio</li>
+<li>Averaged parameters from 3 nearest rounds</li>
+<li>Reduces CMA-ES convergence from 20+ iterations to ~8</li>
+</ul>
+<h3>Budget</h3>
+<table>
+<thead>
+<tr>
+<th>Iteration</th>
+<th>N Sims</th>
+<th>CMA-ES Evals</th>
+<th>Wall Time</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Initial</td>
+<td>2,000</td>
+<td>200</td>
+<td>~8s</td>
+</tr>
+<tr>
+<td>Re-submit 5</td>
+<td>4,500</td>
+<td>700</td>
+<td>~12s</td>
+</tr>
+<tr>
+<td>Final</td>
+<td>6,500</td>
+<td>1,100</td>
+<td>~18s</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>GPU Implementation</h2>
+<h3>Parallelism</h3>
+<ul>
+<li>Each Monte Carlo simulation is independent -&gt; batch across GPU SMs</li>
+<li>Settlement survival: <code>torch.bernoulli()</code> on full grid</li>
+<li>Distance computation: parallel BFS from all alive settlements</li>
+<li>Expansion sampling: <code>torch.bernoulli()</code> with distance-decayed probabilities</li>
+</ul>
+<h3>Performance</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Time (5000 sims)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Survival sampling</td>
+<td>2ms</td>
+</tr>
+<tr>
+<td>Distance computation</td>
+<td>15ms</td>
+</tr>
+<tr>
+<td>Expansion + forest</td>
+<td>8ms</td>
+</tr>
+<tr>
+<td>Accumulation</td>
+<td>5ms</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td><strong>40ms</strong></td>
+</tr>
+</tbody></table>
+<p>Throughput: 124,000 simulations/second on RTX 5090.</p>
+<hr>
+<h2>Ensemble Weights</h2>
+<p>The alpha parameter blends simulator and statistical predictions:</p>
+<table>
+<thead>
+<tr>
+<th>Regime</th>
+<th>Alpha</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Collapse</td>
+<td>0.15</td>
+<td>Few/no settlements -&gt; simulator has little signal</td>
+</tr>
+<tr>
+<td>Moderate</td>
+<td>0.30</td>
+<td>Both models contribute</td>
+</tr>
+<tr>
+<td>Boom</td>
+<td>0.65</td>
+<td>Simulator captures expansion dynamics that stats miss</td>
+</tr>
+</tbody></table>
+<p>R19 (collapse): stat-only = 54.6, ensemble = 82.5 (+28 points from simulator).</p>
+<hr>
+<h2>Files</h2>
+<ul>
+<li><code>sim_model_gpu.py</code> — Main simulator class, CMA-ES integration</li>
+<li><code>sim_gpu.py</code> — CUDA kernels for simulation steps</li>
+<li><code>sim_inference.py</code> — Prediction from fitted parameters</li>
+<li><code>sim_precompute.py</code> — Terrain distance maps, coastal flags</li>
+<li><code>sim_data.py</code> — Historical round data for KNN warm-start</li>
+<li><code>sim_backtest.py</code> — Backtesting simulator against ground truth</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-island-explorer-feature-spec"></a></p>
+<h1>Island Explorer — 3D Visualization &amp; Image Generation</h1>
+<p>A SvelteKit web application with a full Three.js 3D renderer that brings the Astar Island simulation to life. Browse competition rounds as procedurally generated Norse islands with day/night cycles, weather systems, wildlife, and settlements — then capture screenshots for AI image generation.</p>
+<hr>
+<h2>The Idea</h2>
+<p>The competition gives you a 40x40 grid of terrain codes. Numbers on a screen. We turned each grid into a living, breathing Norse island rendered in real-time 3D — complete with thatched-roof settlements, mountain fortresses, coastal ports, procedural roads, waterfalls, birds, fog, lightning, and a full day/night cycle with astronomically accurate moon phases.</p>
+<p>It&#39;s not just pretty — it makes the competition data <em>tangible</em>. You can see at a glance where settlements cluster, where ports form on coasts, how ruins scatter from collapsed expansion. The 3D view reveals spatial patterns that heatmaps hide.</p>
+<hr>
+<h2>3D Island Renderer (IslandMap.svelte)</h2>
+<h3>Terrain System</h3>
+<p>The 40x40 grid becomes a floating island slab:</p>
+<table>
+<thead>
+<tr>
+<th>Terrain Code</th>
+<th>Color</th>
+<th>Height</th>
+<th>3D Elements</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Ocean</td>
+<td>Deep blue</td>
+<td>Transparent (0.65 opacity)</td>
+<td>Brown earth underneath</td>
+</tr>
+<tr>
+<td>Plains</td>
+<td>Light green</td>
+<td>0.04</td>
+<td>Grass texture</td>
+</tr>
+<tr>
+<td>Settlement</td>
+<td>Warm tan</td>
+<td>0.12</td>
+<td>GLB houses, farms, town centers</td>
+</tr>
+<tr>
+<td>Port</td>
+<td>Blue</td>
+<td>0.10</td>
+<td>Docks, boats, trade goods</td>
+</tr>
+<tr>
+<td>Ruin</td>
+<td>Gray</td>
+<td>0.06</td>
+<td>Collapsed walls, rubble</td>
+</tr>
+<tr>
+<td>Forest</td>
+<td>Dark green</td>
+<td>0.20</td>
+<td>Instanced pine trees</td>
+</tr>
+<tr>
+<td>Mountain</td>
+<td>Gray</td>
+<td>0.15</td>
+<td>5 model variants (0.4-0.7 scale)</td>
+</tr>
+</tbody></table>
+<div class="mermaid">flowchart TB
+    GRID[40x40 terrain grid] --&gt; SLAB[Floating island slab]
+    SLAB --&gt; LAYERS[4 earth layers with perturbed vertices]
+    SLAB --&gt; TERRAIN[InstancedMesh terrain blocks]
+    TERRAIN --&gt; MODELS[58 GLB models placed by cluster]
+    TERRAIN --&gt; ROADS[Kruskal MST road network]
+    SLAB --&gt; UNDER[Stalactites + embedded rocks]
+</div>
+<p>The island floats in space with <strong>4 earth layers</strong> underneath (grass rim, brown earth, deep dirt, bedrock), each with perturbed vertex normals for an organic rocky look. 12 stalactites hang from the bottom and 20 rocks jut from the sides.</p>
+<h3>Settlement Models</h3>
+<p><strong>58 GLB models</strong> across 2 art styles, loaded via an LRU cache with pending-request deduplication:</p>
+<table>
+<thead>
+<tr>
+<th>Style</th>
+<th>Models</th>
+<th>Scale</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RTS</td>
+<td>Hut, House, Town Center, Shack, Fortress, Watch Tower, Walls, Farm, Port, Dock</td>
+<td>0.25-0.40</td>
+<td>Settlement clusters</td>
+</tr>
+<tr>
+<td>Playfield</td>
+<td>5 house variants, Farm, Crops, Market, Fortress</td>
+<td>0.22-0.28</td>
+<td>Smaller settlements</td>
+</tr>
+<tr>
+<td>Nature</td>
+<td>5 mountain variants, Pine, Cut Tree, 3 rock types, Gold Rocks</td>
+<td>0.30-0.70</td>
+<td>Terrain decoration</td>
+</tr>
+</tbody></table>
+<p>Models are placed per <strong>cluster</strong> (BFS flood-fill detects contiguous terrain regions). A settlement cluster of 8 cells gets a Town Center at its geometric center, houses around it, and farms at the edges.</p>
+<h3>Road Network</h3>
+<p>Settlements are connected by roads using <strong>Kruskal&#39;s minimum spanning tree</strong> algorithm:</p>
+<ol>
+<li>Compute distances between all settlement cluster centers</li>
+<li>Sort edges by distance, greedily add (union-find)</li>
+<li>Render as thin tan blocks (0.18 x 0.015) at 0.11y elevation</li>
+<li>Place stone marker dodecahedra every ~0.5 units along each road</li>
+</ol>
+<hr>
+<h2>Celestial System (celestials.ts)</h2>
+<h3>Astronomically Accurate Moon</h3>
+<p>The moon phase is calculated from a real astronomical reference:</p>
+<pre><code class="language-typescript">// Reference: Jan 6, 2000 = new moon
+// Synodic month = 29.53 days
+const daysSinceRef = (date - refDate) / 86400000;
+const phase = ((daysSinceRef % 29.53) + 29.53) % 29.53 / 29.53;
+</code></pre>
+<p>The moon texture is <strong>procedurally generated</strong> on a canvas:</p>
+<ul>
+<li>Gray sphere with 7 hand-positioned craters (soft-shaded circles)</li>
+<li><strong>Terminator ellipse</strong> that follows the actual phase — waxing vs waning determines which side is lit</li>
+<li>Phase-dependent brightness: new moon ~0.2x, full moon ~1.2x ambient light</li>
+</ul>
+<p>A soft bluish glow halo (additive blending) surrounds the moon, with intensity tracking the phase.</p>
+<h3>Sun</h3>
+<p>The sun follows an orbital arc (40u horizontal, 30u vertical):</p>
+<ul>
+<li>Rises at hour 6, sets at hour 18</li>
+<li>Bright additive-blend glow sprite (18x18 scale)</li>
+<li>Intensity ramps: 1.2x at noon, 0.6x at dawn/dusk, 0.2x at night</li>
+<li>Casts 2048x2048 shadow maps for all terrain</li>
+</ul>
+<hr>
+<h2>Day/Night Cycle (daynight.ts)</h2>
+<p>A full 24-hour cycle with <strong>8 color phases</strong> and smooth interpolation:</p>
+<table>
+<thead>
+<tr>
+<th>Hour</th>
+<th>Phase</th>
+<th>Sky Color</th>
+<th>Sun Intensity</th>
+<th>Ambient</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0-4</td>
+<td>Night</td>
+<td>Dark blue</td>
+<td>0.2</td>
+<td>0.35</td>
+</tr>
+<tr>
+<td>4-6</td>
+<td>Dawn</td>
+<td>Orange -&gt; yellow</td>
+<td>0.6</td>
+<td>0.45</td>
+</tr>
+<tr>
+<td>6-10</td>
+<td>Morning</td>
+<td>Light blue</td>
+<td>1.0</td>
+<td>0.50</td>
+</tr>
+<tr>
+<td>10-14</td>
+<td>Noon</td>
+<td>Bright blue</td>
+<td>1.2</td>
+<td>0.50</td>
+</tr>
+<tr>
+<td>14-17</td>
+<td>Afternoon</td>
+<td>Light blue</td>
+<td>1.0</td>
+<td>0.50</td>
+</tr>
+<tr>
+<td>17-19</td>
+<td>Dusk</td>
+<td>Yellow -&gt; orange</td>
+<td>0.6</td>
+<td>0.45</td>
+</tr>
+<tr>
+<td>19-20</td>
+<td>Twilight</td>
+<td>Deep orange</td>
+<td>0.3</td>
+<td>0.40</td>
+</tr>
+<tr>
+<td>20-24</td>
+<td>Night</td>
+<td>Dark blue</td>
+<td>0.2</td>
+<td>0.35</td>
+</tr>
+</tbody></table>
+<p>Everything responds to time: fog density (thicker at night), hemisphere light colors (sky + ground), cloud tinting, and ambient sound (if added).</p>
+<p>Controlled via <strong>TimeSlider.svelte</strong> — drag to scrub through the day.</p>
+<hr>
+<h2>Weather System (weather.ts)</h2>
+<h3>Rain</h3>
+<p>Localized rain zones spawn <strong>per mountain cluster</strong>:</p>
+<ul>
+<li>~300 particles per zone</li>
+<li>Fall velocity with slight wind drift</li>
+<li>Particles reset to top when they hit ground</li>
+</ul>
+<h3>Lightning</h3>
+<div class="mermaid">flowchart TB
+    TIMER[Random 8-15s interval] --&gt; PICK[Pick random mountain cluster]
+    PICK --&gt; BOLT[Generate 4-segment bolt geometry]
+    BOLT --&gt; FLASH[5 intensity spikes over 0.25s]
+    FLASH --&gt; FADE[Line opacity fade to 0]
+</div>
+<p>Procedural bolt geometry with random jitter per segment creates realistic branching. The flash is a PointLight with 3 rapid intensity spikes (bright-dim-bright-dim-bright) over 250ms.</p>
+<h3>Fog</h3>
+<p>3-5 fog sprites per lake/ocean cluster:</p>
+<ul>
+<li>Billboard sprites with Perlin-like oscillation</li>
+<li>Dawn/dusk: warm orange tint</li>
+<li>Night: cool blue tint</li>
+<li>Day: white with low opacity</li>
+</ul>
+<hr>
+<h2>Wildlife System (wildlife.ts)</h2>
+<h3>Birds (20 total, 4 flocks)</h3>
+<p>Each flock orbits at a different altitude with variable radius:</p>
+<ul>
+<li>Circular path with sinusoidal vertical oscillation</li>
+<li>Wing phase animation: offset start per bird creates natural wave pattern</li>
+<li>Flocks spawn outside viewport, respawn on edges when they drift away</li>
+</ul>
+<h3>Wanderers (15)</h3>
+<p>Tiny tan dots representing Norse traders/villagers:</p>
+<ul>
+<li>Move between settlements via shortest paths</li>
+<li>Path network built from settlement positions</li>
+<li>Slow walking speed with pause at destinations</li>
+</ul>
+<h3>War Parties</h3>
+<p>Red warrior dots with smoke particle trails — attack routes between rival settlements. (Partially implemented.)</p>
+<hr>
+<h2>Waterfall System (waterfalls.ts)</h2>
+<p>Edge cascade particles at ocean-facing cliff edges:</p>
+<ul>
+<li><strong>Edge detection</strong>: BFS flood-fill finds island perimeter adjacent to ocean</li>
+<li><strong>12 waterfall sources</strong> at widest cliff faces</li>
+<li><strong>~80 particles per source</strong>: gravity + outward velocity, spiral distribution as they fall</li>
+<li><strong>Mist layer</strong>: Separate low-opacity point cloud for diffusion effect at the base</li>
+<li>Particles respawn at source position when they fall below the island</li>
+</ul>
+<hr>
+<h2>Procedural Generation (prng.ts, clusters.ts)</h2>
+<h3>Deterministic Randomness</h3>
+<p><strong>Mulberry32 PRNG</strong> seeded per island ensures identical generation across renders:</p>
+<pre><code class="language-typescript">function mulberry32(seed: number) {
+  return function() {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed &gt;&gt;&gt; 15, 1 | seed);
+    t = t + Math.imul(t ^ t &gt;&gt;&gt; 7, 61 | t) ^ t;
+    return ((t ^ t &gt;&gt;&gt; 14) &gt;&gt;&gt; 0) / 4294967296;
+  }
+}
+</code></pre>
+<p><code>cellSeed(x, y, salt)</code> produces per-cell variation for model rotation, height jitter, tree placement.</p>
+<h3>Cluster Detection</h3>
+<p>BFS flood-fill groups contiguous terrain into clusters:</p>
+<ul>
+<li>4-connected (Manhattan distance 1) neighbors</li>
+<li>Returns cluster geometry, center coordinates, cell count</li>
+<li>Used for model placement, road endpoints, rain zones, fog sources</li>
+</ul>
+<hr>
+<h2>Image Generation (Imagen Integration)</h2>
+<h3>Capture Flow</h3>
+<div class="mermaid">flowchart TB
+    RENDER[Three.js renders island] --&gt; CAPTURE[canvas.toDataURL]
+    CAPTURE --&gt; STRIP[Strip data:image/png;base64 prefix]
+    STRIP --&gt; POST[POST /api/imagen/generate]
+    POST --&gt; API[Google Imagen API]
+    API --&gt; GALLERY[Gallery with modal preview]
+</div>
+<ol>
+<li>User navigates to desired view (time of day, camera angle, seed)</li>
+<li>Clicks &quot;Generate&quot; — captures canvas as PNG</li>
+<li>Base64-encoded image sent to server</li>
+<li>Server calls Google Imagen API</li>
+<li>Result stored in <code>data/imagen/</code> with metadata</li>
+<li>Gallery refreshes with new entry</li>
+</ol>
+<h3>Batch Mode (&quot;Generate All&quot;)</h3>
+<p>Iterates through all sorted rounds:</p>
+<ul>
+<li>Renders each round&#39;s terrain grid</li>
+<li>Waits for 2x <code>requestAnimationFrame</code> (canvas sync)</li>
+<li>Captures and submits to Imagen</li>
+<li>Progress tracker: <code>{ current: i+1, total: roundCount }</code></li>
+<li>Abortable mid-batch</li>
+</ul>
+<hr>
+<h2>Dashboard Pages</h2>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+<th>Key Visuals</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/</code></td>
+<td>Dashboard</td>
+<td>Score cards, leaderboard (top 10 with medals), budget gauge, sparkline trends</td>
+</tr>
+<tr>
+<td><code>/explorer</code></td>
+<td>3D island viewer</td>
+<td>Full Three.js canvas, seed selector, time slider, Imagen capture</td>
+</tr>
+<tr>
+<td><code>/rounds</code></td>
+<td>Round listing</td>
+<td>Table with drill-down per round</td>
+</tr>
+<tr>
+<td><code>/autoloop</code></td>
+<td>Optimization monitor</td>
+<td>Experiment table, convergence sparkline, accepted/rejected stats</td>
+</tr>
+<tr>
+<td><code>/daemon</code></td>
+<td>Daemon control</td>
+<td>Best params, round scores by regime, toggle autoloop</td>
+</tr>
+<tr>
+<td><code>/flow</code></td>
+<td>Pipeline visualization</td>
+<td>Interactive pan/zoom canvas with 15+ nodes, 16-phase simulation</td>
+</tr>
+<tr>
+<td><code>/research</code></td>
+<td>Research agents</td>
+<td>Tab between ADK/Gemini/Multi, experiment tables, hypothesis viewer</td>
+</tr>
+<tr>
+<td><code>/metrics</code></td>
+<td>Score analysis</td>
+<td>Sparklines, parameter frequency heatmap</td>
+</tr>
+<tr>
+<td><code>/logs</code></td>
+<td>Real-time streaming</td>
+<td>SSE connection, 5 log sources, auto-scroll, JSON pretty-print</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Visual Design</h2>
+<h3>Cyberpunk Norse Aesthetic</h3>
+<ul>
+<li><strong>Background</strong>: Dark (#0a0a1a) with animated drifting cyan grid overlay (40px, 60s loop)</li>
+<li><strong>Scanline effect</strong>: Thin horizontal stripes at 0.015 opacity</li>
+<li><strong>Neon palette</strong>: Cyan (#00fff0), magenta (#ff00ff), gold (#ffd700), orange (#ff8a65)</li>
+<li><strong>Glass morphism panels</strong>: Semi-transparent with blur backdrop</li>
+<li><strong>Corner glows</strong>: Radial gradients — cyan top-left, magenta bottom-right, gold top-right</li>
+<li><strong>Navigation</strong>: Elder Futhark runes as tab icons (ᛟ ᚱ ᛋ ᛏ ᚹ ᚠ ᚨ ᛁ ᛚ)</li>
+<li><strong>Logo</strong>: &quot;ᛟ ASTAR ISLAND EXPLORER&quot; in monospace</li>
+</ul>
+<hr>
+<h2>Flow Visualization</h2>
+<h3>16-Phase Pipeline Simulation</h3>
+<p>The <code>/flow</code> page has a full animated simulation of the prediction pipeline:</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Time</th>
+<th>What Activates</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Boot</td>
+<td>0ms</td>
+<td>API node</td>
+</tr>
+<tr>
+<td>API up</td>
+<td>800ms</td>
+<td>API online</td>
+</tr>
+<tr>
+<td>Daemon</td>
+<td>1200ms</td>
+<td>Daemon node</td>
+</tr>
+<tr>
+<td>Round detected</td>
+<td>1800ms</td>
+<td>Exploration</td>
+</tr>
+<tr>
+<td>Exploration</td>
+<td>2400ms</td>
+<td>50 viewport queries</td>
+</tr>
+<tr>
+<td>Calibration</td>
+<td>4000ms</td>
+<td>Load calibration data</td>
+</tr>
+<tr>
+<td>Stages 1-9</td>
+<td>5000-8800ms</td>
+<td>CalModel -&gt; FK blend -&gt; multipliers -&gt; ... -&gt; floor</td>
+</tr>
+<tr>
+<td>Submission</td>
+<td>9400ms</td>
+<td>Submit to API</td>
+</tr>
+<tr>
+<td>Score reveal</td>
+<td>12000ms</td>
+<td>5 seed scores + average (95.14, 93.87, 94.62, 96.31, 93.28 = <strong>94.64</strong>)</td>
+</tr>
+<tr>
+<td>Full system</td>
+<td>14000ms</td>
+<td>All nodes active</td>
+</tr>
+</tbody></table>
+<p>Nodes flash on activation, edges pulse with animated gradients, status text updates in real-time.</p>
+<hr>
+<h2>Tech Stack</h2>
+<ul>
+<li><strong>SvelteKit 2</strong> with TypeScript</li>
+<li><strong>Three.js</strong> (WebGL renderer, OrbitControls, InstancedMesh, shadow mapping)</li>
+<li><strong>Tailwind CSS 4</strong> with custom cyberpunk theme</li>
+<li><strong>Vite</strong> build system</li>
+<li><strong>SSE</strong> (Server-Sent Events) for real-time log streaming</li>
+</ul>
+<hr>
+<h2>Files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Lines</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>IslandMap.svelte</code></td>
+<td>~1600</td>
+<td>Core 3D renderer — terrain, models, roads, all systems</td>
+</tr>
+<tr>
+<td><code>celestials.ts</code></td>
+<td>225</td>
+<td>Sun glow + moon phase with astronomical accuracy</td>
+</tr>
+<tr>
+<td><code>weather.ts</code></td>
+<td>282</td>
+<td>Rain zones, procedural lightning, fog sprites</td>
+</tr>
+<tr>
+<td><code>wildlife.ts</code></td>
+<td>200+</td>
+<td>Bird flocks, wanderer paths, war parties</td>
+</tr>
+<tr>
+<td><code>waterfalls.ts</code></td>
+<td>200+</td>
+<td>Edge cascade particles with mist</td>
+</tr>
+<tr>
+<td><code>daynight.ts</code></td>
+<td>106</td>
+<td>24-hour color/lighting interpolation</td>
+</tr>
+<tr>
+<td><code>models.ts</code></td>
+<td>122</td>
+<td>GLB model loading with LRU cache</td>
+</tr>
+<tr>
+<td><code>clusters.ts</code></td>
+<td>78</td>
+<td>BFS flood-fill terrain grouping</td>
+</tr>
+<tr>
+<td><code>prng.ts</code></td>
+<td>22</td>
+<td>Mulberry32 deterministic RNG</td>
+</tr>
+<tr>
+<td><code>FlowCanvas.svelte</code></td>
+<td>200+</td>
+<td>Pan/zoom interactive pipeline canvas</td>
+</tr>
+<tr>
+<td><code>flow-data.ts</code></td>
+<td>100+</td>
+<td>15 node + 8 edge definitions</td>
+</tr>
+<tr>
+<td><code>Sparkline.svelte</code></td>
+<td>77</td>
+<td>Animated SVG trend line with glow</td>
+</tr>
+<tr>
+<td><code>app.css</code></td>
+<td>150+</td>
+<td>Cyberpunk theme, scanlines, grid animations</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="02-features-research-agent-feature-spec"></a></p>
+<h1>Research Agent — Google ADK + Gemini</h1>
+<p>An autonomous research agent built on Google&#39;s Agent Development Kit (ADK) with Gemini 3.1 Pro. It reads domain knowledge, proposes structural algorithmic improvements, writes complete prediction functions, backtests them against ground truth, and iterates — all without human intervention.</p>
+<hr>
+<h2>How It Works</h2>
+<div class="mermaid">flowchart TB
+    READ[Read KNOWLEDGE.md + DISCOVERIES.md]
+    LOG[Read experiment log — last 15 results]
+    CODE[Inspect source code — predict.py, calibration.py]
+    ANALYZE[Analyze error patterns per round]
+    PROPOSE[Propose structural change]
+    WRITE[Write complete experimental_pred_fn]
+    TEST[Backtest against 6 rounds x 5 seeds]
+    JUDGE{Score improved?}
+    SAVE[Save to adk_best_*.py]
+    NEXT[Log result, iterate]
+
+    READ --&gt; LOG --&gt; CODE --&gt; ANALYZE --&gt; PROPOSE --&gt; WRITE --&gt; TEST --&gt; JUDGE
+    JUDGE --&gt;|Yes| SAVE --&gt; NEXT
+    JUDGE --&gt;|No| NEXT
+    NEXT --&gt; LOG
+</div>
+<p>The agent runs in an autonomous loop — no human prompts needed. Each iteration:</p>
+<ol>
+<li>Reads knowledge base (KNOWLEDGE.md, DISCOVERIES.md, IMPROVEMENTS.md)</li>
+<li>Reviews experiment log to see what worked and what failed</li>
+<li>Inspects relevant source code</li>
+<li>Identifies the highest-error component (e.g., &quot;settlement class = 64% of KL error&quot;)</li>
+<li>Proposes a structural change (not parameter tweaking — that&#39;s the autoloop&#39;s job)</li>
+<li>Writes a complete <code>experimental_pred_fn()</code> implementing the change</li>
+<li>Backtests against all available ground truth</li>
+<li>Logs result, saves if improved, moves on</li>
+</ol>
+<hr>
+<h2>The Prediction Function Contract</h2>
+<p>Every experiment must produce a function with this exact signature:</p>
+<pre><code class="language-python">def experimental_pred_fn(state: dict, global_mult, fk_buckets) -&gt; np.ndarray:
+    &quot;&quot;&quot;
+    state:       {&#39;grid&#39;: 40x40 terrain codes, &#39;settlements&#39;: [...]}
+    global_mult: GlobalMultipliers (observed/expected class ratios)
+    fk_buckets:  FeatureKeyBuckets (empirical distributions per feature key)
+    returns:     (40, 40, 6) probability tensor
+    &quot;&quot;&quot;
+</code></pre>
+<h3>Hard Rules (agent MUST NOT violate)</h3>
+<ol>
+<li>Mountain (class 5) = 0 on non-mountain cells</li>
+<li>Port (class 2) = 0 on inland (non-coastal) cells</li>
+<li>Ocean cells = <code>[1,0,0,0,0,0]</code>, Mountain cells = <code>[0,0,0,0,0,1]</code></li>
+<li>All rows sum to 1.0</li>
+<li>Floor &gt;= 0.005 for nonzero classes on dynamic cells</li>
+<li>Deterministic (no randomness)</li>
+</ol>
+<p>The backtest harness auto-validates these rules and auto-fixes minor violations (NaN, negative values, denormalized rows).</p>
+<hr>
+<h2>Tools Available to the Agent</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>run_backtest(code, name, hypothesis)</code></td>
+<td>Compile + test against 6 rounds x 5 seeds</td>
+</tr>
+<tr>
+<td><code>read_knowledge()</code></td>
+<td>Read domain docs (6000 chars per file)</td>
+</tr>
+<tr>
+<td><code>read_experiment_log()</code></td>
+<td>Last 15 experiments + top 5 best</td>
+</tr>
+<tr>
+<td><code>get_round_analysis(round)</code></td>
+<td>GT stats: class distributions, entropy, KL decomposition</td>
+</tr>
+<tr>
+<td><code>write_prediction_code(name, hypothesis, code)</code></td>
+<td>Save code to timestamped file</td>
+</tr>
+<tr>
+<td><code>read_source_code(file, start, end)</code></td>
+<td>Read allowed source files with line numbers</td>
+</tr>
+<tr>
+<td><code>list_source_files()</code></td>
+<td>List all Python files with descriptions</td>
+</tr>
+</tbody></table>
+<h3>Backtest Harness</h3>
+<p>The <code>BacktestHarness</code> is a singleton that:</p>
+<ul>
+<li>Loads 5 seeds per round from <code>data/rounds/</code> (observations) and <code>data/calibration/</code> (ground truth)</li>
+<li>Compiles the experimental function via <code>exec()</code> with safe globals</li>
+<li>Runs against all rounds with entropy-weighted KL divergence scoring</li>
+<li>Auto-fixes: NaN -&gt; 0, enforces structural zeros, applies floor, renormalizes</li>
+<li>Logs everything to <code>data/adk_research_log.jsonl</code> (append-only)</li>
+<li>Saves best experiments to <code>data/adk_best_*.py</code></li>
+</ul>
+<hr>
+<h2>What the Agent Proposes</h2>
+<p>The agent focuses on <strong>structural algorithmic changes</strong>, not parameter tuning. Example proposals:</p>
+<table>
+<thead>
+<tr>
+<th>Proposal</th>
+<th>Category</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>&quot;Replace distance multiplier with diffusion field accounting for terrain barriers&quot;</td>
+<td>Spatial model</td>
+<td>Tested</td>
+</tr>
+<tr>
+<td>&quot;Add Dirichlet-Multinomial conjugate update for directly observed cells&quot;</td>
+<td>Bayesian</td>
+<td>Tested</td>
+</tr>
+<tr>
+<td>&quot;Implement cluster density as inverted-U survival factor&quot;</td>
+<td>Feature engineering</td>
+<td>+0.3 pts</td>
+</tr>
+<tr>
+<td>&quot;Distance-dependent settlement suppression when vigor &lt; 0.05&quot;</td>
+<td>Regime adaptation</td>
+<td>Tested</td>
+</tr>
+<tr>
+<td>&quot;Per-class blending weights (trust empirical more for forest)&quot;</td>
+<td>Blending strategy</td>
+<td>Tested</td>
+</tr>
+<tr>
+<td>&quot;Gaussian kernel smoothing with coastal mask for port prediction&quot;</td>
+<td>Post-processing</td>
+<td>-0.2 pts</td>
+</tr>
+</tbody></table>
+<p>The agent generates complete functions — not patches. Each is a self-contained reimplementation of the prediction pipeline with the proposed change baked in.</p>
+<hr>
+<h2>Execution Modes</h2>
+<pre><code class="language-bash"># Autonomous loop (default) — runs until stopped
+python -m research_agent.run
+
+# Limited iterations
+python -m research_agent.run --max-iters 20
+
+# Interactive chat — talk to the agent
+python -m research_agent.run --interactive
+
+# Dry run — print prompts without executing
+python -m research_agent.run --dry-run
+
+# ADK CLI
+adk run research_agent
+
+# ADK Web UI
+adk web --port 8000
+</code></pre>
+<hr>
+<h2>Why This Approach Works</h2>
+<h3>vs. Parameter Tuning (Autoloop)</h3>
+<p>The autoloop finds the best values for existing parameters. But it can&#39;t invent new features or change the algorithm structure. The research agent can propose:</p>
+<ul>
+<li>New feature keys (settlement count in radius, terrain diversity score)</li>
+<li>Different blending formulas (entropy-weighted vs count-weighted)</li>
+<li>Novel spatial models (diffusion fields, gravity models)</li>
+<li>Per-class specialization (different strategies for settlement vs forest)</li>
+</ul>
+<h3>vs. Human Research</h3>
+<p>A human researcher:</p>
+<ul>
+<li>Takes 5 hours per idea (read data, form hypothesis, write code, test, analyze)</li>
+<li>Has confirmation bias (avoids &quot;stupid&quot; ideas)</li>
+<li>Gets tired, needs sleep</li>
+</ul>
+<p>The agent:</p>
+<ul>
+<li>Tests an idea every 25 seconds</li>
+<li>Has zero ego — cheerfully tests bad ideas</li>
+<li>Runs 24/7</li>
+<li>Generates proposals humans wouldn&#39;t think of</li>
+</ul>
+<hr>
+<h2>Files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>research_agent/agent.py</code></td>
+<td>Agent definition with Gemini 3.1 Pro, system instructions</td>
+</tr>
+<tr>
+<td><code>research_agent/tools.py</code></td>
+<td>7 tools: backtest, knowledge, logs, analysis, code I/O</td>
+</tr>
+<tr>
+<td><code>research_agent/run.py</code></td>
+<td>Entry point: autonomous loop, interactive, dry-run</td>
+</tr>
+<tr>
+<td><code>research_agent/__init__.py</code></td>
+<td>Package init</td>
+</tr>
+<tr>
+<td><code>research_agent/__main__.py</code></td>
+<td>CLI entry (<code>python -m research_agent</code>)</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="02-features-statistical-model-feature-spec"></a></p>
+<h1>Statistical Prediction Model</h1>
+<p>The 8-stage prediction pipeline that transforms 50 viewport observations into a 40x40x6 probability tensor. This is &quot;THE function&quot; — the one that runs in production after 1M+ autoloop experiments, 500+ AI-generated variants, and 75+ manual iterations.</p>
+<hr>
+<h2>Why It&#39;s Hard</h2>
+<p>You get 50 queries x 225 cells = 11,250 cell observations. But with 40x40 = 1,600 cells and 5 seeds, you typically see each cell only 1-2 times. A single observation of a stochastic simulation is <em>noise</em>, not signal.</p>
+<p>The breakthrough: <strong>don&#39;t predict per cell — predict per feature key</strong>.</p>
+<hr>
+<h2>Feature Keys</h2>
+<p>Group cells by their spatial context, not their coordinates:</p>
+<pre><code class="language-python">FeatureKey = (
+    terrain_code,      # Ocean, Plains, Forest, Mountain, ...
+    dist_bucket,       # 0=on settlement, 1-3=near, 4=d4-5, 5=d6-8, 6=d9+
+    coastal_bool,      # Adjacent to ocean?
+    forest_neighbors,  # How many forest cells in Manhattan-3 radius
+    has_port_flag,     # -1=not settlement, 0=settlement no port, 1=has port
+    cluster_bucket     # Settlement cluster density
+)
+</code></pre>
+<p>This transforms 1-2 observations per cell into <strong>~100-450 observations per feature key</strong>. Statistical power goes from useless to reliable.</p>
+<h3>The Per-Cell Bayesian Catastrophe</h3>
+<p>Early attempt: Bayesian update each cell individually from its 1-2 observations.</p>
+<p><strong>Result: -30 points.</strong> Complete disaster.</p>
+<p>The problem: a single observation of a stochastic simulation is dominated by noise. Cell X shows &quot;settlement&quot; once — but the ground truth probability is only 0.12. The Bayesian update wildly overweights that single sample. Feature-key pooling averages across hundreds of similar cells, washing out the noise.</p>
+<hr>
+<h2>The 8-Stage Pipeline</h2>
+<div class="mermaid">flowchart TB
+    S1[1. CalibrationModel — Hierarchical prior from 20 rounds GT]
+    S2[2. FK Empirical Blend — Pool current observations by feature key]
+    S3[3. Distance-Aware Multipliers — Regime-adaptive power transform]
+    S4[4. Temperature Softening — Entropy increase near settlements]
+    S5[5. Spatial Smoothing — 3x3 kernel on settlement + ruin only]
+    S6[6. Structural Zeros — Mountain=0, Port=0 inland]
+    S7[7. Probability Floor — 0.005 matches GT granularity]
+    S8[8. Lock Static Cells — Ocean, Mountain, Borders]
+
+    S1 --&gt; S2 --&gt; S3 --&gt; S4 --&gt; S5 --&gt; S6 --&gt; S7 --&gt; S8
+</div>
+<h3>Stage 1: CalibrationModel</h3>
+<p>Hierarchical prior from 20 rounds of ground truth (160,000 cells):</p>
+<pre><code>Fine key:   exact 6-tuple match → most specific prior
+  ↓ fallback if count &lt; fine_div
+Coarse key: (terrain, dist, coastal, has_port) → broader
+  ↓ fallback if count &lt; coarse_div
+Base key:   (terrain) only → broadest
+  ↓ fallback
+Global:     overall class distribution
+</code></pre>
+<p>Weights: <code>fine_div=125</code>, <code>coarse_div=100</code>, <code>base_div=100</code>, <code>global_weight=0.01</code></p>
+<p>Each level&#39;s prior is weighted by observation count at that level. The hierarchy ensures rare feature keys still get reasonable priors by falling back to coarser groupings.</p>
+<h3>Stage 2: FK Empirical Blend</h3>
+<p>Blend the historical prior with current-round observations:</p>
+<pre><code class="language-python">strength = min(sqrt(count), emp_max_weight)  # emp_max_weight = 20
+pred = (prior * prior_weight + empirical * strength) / (prior_weight + strength)
+# prior_weight = 1.5
+</code></pre>
+<p><strong>The key discovery</strong>: <code>prior_weight = 1.5</code> (trust observations heavily). The original value was 5.0, which meant the model was stuck on historical averages during boom rounds. Lowering it to 1.5 gained <strong>+10 points</strong> — the single biggest improvement in the project.</p>
+<p><code>emp_max_weight</code> is dynamic: <code>clip(12 - 4*ratio[1], 6, 12) * 1.5</code> where <code>ratio[1]</code> is the settlement multiplier. In collapse rounds (low settlement ratio), trust observations less. In boom rounds, trust them more.</p>
+<h3>Stage 3: Distance-Aware Multipliers</h3>
+<p>Global multiplier = observed settlement count / expected settlement count.</p>
+<p>Applied as a power transform:</p>
+<pre><code class="language-python"># Settlement cells (dist=0): react strongly to regime
+power_sett = [0.4, 0.75, 0.75, 0.75, 0.4, 0.4]
+
+# Expansion cells (dist&gt;=1): dampen response
+power_exp = [0.4, 0.50, 0.60, 0.50, 0.4, 0.4]
+
+pred[class] *= multiplier[class] ** power[class]
+</code></pre>
+<p>Settlement class power = 0.75 (strong adaptation), forest = 0.40 (weak — forest is stable regardless of regime). Settlement clamp: [0.15, 2.5].</p>
+<p><strong>Why distance matters</strong>: On settlement cells (dist=0), survival varies 0-62%. The multiplier captures this. On expansion cells (dist&gt;=1), the expansion rate varies 0-1% — much smaller effect, needs dampening to avoid overshoot.</p>
+<h3>Stage 4: Temperature Softening</h3>
+<p>Near settlements (within adaptive radius), increase entropy:</p>
+<pre><code class="language-python">radius = 2 + int(3 * min(ratio[1], 1.2))
+T_max = 1.0 + 0.10 * sqrt(min(ratio[1], 1.0))
+# T_max ranges from 1.0 (collapse) to 1.10 (boom)
+</code></pre>
+<p>Temperature softens the distribution: <code>pred = pred^(1/T)</code> then renormalize. This reflects the reality that cells near settlements have <em>more uncertainty</em> about their final state.</p>
+<h3>Stage 5: Spatial Smoothing</h3>
+<p>3x3 uniform kernel, applied <strong>only to settlement and ruin classes</strong>:</p>
+<pre><code class="language-python">smoothed = convolve2d(pred[:,:,class], kernel_3x3, mode=&#39;same&#39;)
+pred[:,:,class] = alpha * smoothed + (1-alpha) * pred[:,:,class]
+# alpha = 0.75
+</code></pre>
+<p><strong>Critical discovery</strong>: Do NOT smooth port probabilities. Port smoothing leaks probability mass to inland cells, because ports only exist on the coast but the 3x3 kernel doesn&#39;t know that. This single fix prevented a -2 point regression.</p>
+<h3>Stage 6: Structural Zeros</h3>
+<p>Hard-enforce physical constraints:</p>
+<ul>
+<li>Mountain probability = 0 on all non-mountain cells (mountains don&#39;t appear/disappear)</li>
+<li>Port probability = 0 on non-coastal cells (ports require ocean adjacency)</li>
+</ul>
+<p>This saves ~1.8% probability mass per dynamic cell that would otherwise be wasted on impossible outcomes.</p>
+<h3>Stage 7: Probability Floor</h3>
+<pre><code class="language-python">floor = 0.005  # = 1/200, the GT granularity
+</code></pre>
+<p>Ground truth is computed from exactly 200 simulations. The minimum nonzero GT probability is 0.005. Setting the floor to match this granularity is optimal — lower wastes mass on near-impossible events, higher wastes mass on impossible events.</p>
+<p><strong>The Floor Disaster</strong>: R4 was submitted with floor=0.015. Mountain/port/ruin on non-dynamic cells wasted 3.7% mass per cell. Score dropped from 88.7 backtested to 53.3 actual. A single parameter, 35 points.</p>
+<h3>Stage 8: Lock Static Cells</h3>
+<p>Deterministic cells get exact predictions:</p>
+<ul>
+<li>Ocean: <code>[1, 0, 0, 0, 0, 0]</code></li>
+<li>Mountain: <code>[0, 0, 0, 0, 0, 1]</code></li>
+<li>Border cells: Ocean (entire map border is always ocean)</li>
+</ul>
+<p>These cells have entropy = 0 and don&#39;t contribute to scoring. Locking them prevents any floor or smoothing artifacts from leaking in.</p>
+<hr>
+<h2>The Vectorization Breakthrough</h2>
+<p>Original implementation: nested Python loops over 1,600 cells, 22ms per prediction.</p>
+<pre><code class="language-python"># Old (51ms per full backtest evaluation)
+for y in range(40):
+    for x in range(40):
+        prior = cal.prior_for(feature_keys[y][x])
+        ...
+</code></pre>
+<p>Vectorized implementation: numpy fancy indexing, no Python loops.</p>
+<pre><code class="language-python"># New (10ms per full backtest evaluation)
+cal_priors = lookup_table[idx_grid]          # (40,40,6) in one op
+pred = cal_priors * pw + empiricals * strength  # broadcast
+pred *= multipliers[None, None, :]           # broadcast multiply
+</code></pre>
+<p>Result: <strong>160,000 experiments/hour</strong> instead of 6,000. This 27x speedup is what made the autoloop viable — you can&#39;t run 1M experiments at 6K/hr.</p>
+<hr>
+<h2>What We Tried That Failed</h2>
+<table>
+<thead>
+<tr>
+<th>Idea</th>
+<th>Impact</th>
+<th>Lesson</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Per-cell Bayesian update</td>
+<td>-30 pts</td>
+<td>1-2 obs per cell is noise, not signal</td>
+</tr>
+<tr>
+<td>Zero ruin on non-settlement</td>
+<td>-34 pts</td>
+<td>Ruins exist on expanded-then-collapsed plains</td>
+</tr>
+<tr>
+<td>Log-odds blending</td>
+<td>-29 pts</td>
+<td>Wrong transform for discrete distributions</td>
+</tr>
+<tr>
+<td>Per-regime calibration</td>
+<td>0 pts</td>
+<td>Can&#39;t detect boom from mid-sim observations</td>
+</tr>
+<tr>
+<td>Alive-count settlement boost</td>
+<td>-0.5 to -3</td>
+<td>Boosts already-correct rounds too</td>
+</tr>
+<tr>
+<td>Port spatial smoothing</td>
+<td>-2 pts</td>
+<td>Leaks mass to inland cells</td>
+</tr>
+<tr>
+<td>75+ Opus code modifications</td>
+<td>0 pts</td>
+<td>Architectural ceiling reached</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>predict_gemini.py</code></td>
+<td>THE production prediction function (~130 lines)</td>
+</tr>
+<tr>
+<td><code>fast_predict.py</code></td>
+<td>Vectorized numpy version for autoloop (10-50x faster)</td>
+</tr>
+<tr>
+<td><code>predict.py</code></td>
+<td>Original loop-based prediction (slower, more readable)</td>
+</tr>
+<tr>
+<td><code>calibration.py</code></td>
+<td>CalibrationModel: hierarchical priors from GT</td>
+</tr>
+<tr>
+<td><code>utils.py</code></td>
+<td>GlobalMultipliers, FeatureKeyBuckets, ObsAccumulator</td>
+</tr>
+<tr>
+<td><code>estimator.py</code></td>
+<td>Regime detection from observations</td>
+</tr>
+<tr>
+<td><code>autoexperiment.py</code></td>
+<td>BacktestHarness with leave-one-out scoring</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="02-features-terminal-ui-feature-spec"></a></p>
+<h1>Terminal UI — Go Bubble Tea Dashboard</h1>
+<p>A full-featured terminal dashboard built in Go with the Bubble Tea framework. 10 tabs, multi-pane split layout, hacker-style animations, and a cyberpunk Norse aesthetic — all running in a terminal.</p>
+<hr>
+<h2>Why a TUI?</h2>
+<p>The SvelteKit web app is beautiful but needs a browser. The TUI runs anywhere — SSH into a server, tmux session, headless VPS. It provides the same monitoring capabilities in a terminal: live autoloop tracking, round analysis, map exploration, research agent control, and log streaming.</p>
+<p>It also doubles as the <strong>HTTP API server</strong> for the web dashboard (<code>--web</code> mode), proxying competition API requests and serving local data.</p>
+<hr>
+<h2>Architecture</h2>
+<div class="mermaid">flowchart TB
+    APP[app.go — Elm Architecture] --&gt; TABS[10 Tab Models]
+    APP --&gt; LAYOUT[Binary Split Tree]
+    APP --&gt; THEME[Norse Cyberpunk Theme]
+
+    TABS --&gt; DASH[Dashboard]
+    TABS --&gt; ROUNDS[Rounds + Drill-Down]
+    TABS --&gt; SUBMIT[Submit Pipeline]
+    TABS --&gt; EXPLORER[Map Grid Explorer]
+    TABS --&gt; AUTO[Autoloop Monitor]
+    TABS --&gt; RESEARCH[Research Agents]
+    TABS --&gt; LOGS[JSONL Log Viewer]
+    TABS --&gt; MORE[Backtest, Settings, Metrics]
+
+    APP --&gt; API[api/client.go — HTTP + Auth]
+    API --&gt; AINM[Astar Island API]
+    API --&gt; LOCAL[Local JSONL Files]
+
+    APP --&gt; WEB[web/server.go — HTTP API]
+    WEB --&gt; SSE[SSE Streaming]
+    WEB --&gt; IMAGEN[Google Imagen]
+</div>
+<p>Built on <strong>bubbletea</strong> (Elm architecture for terminals), <strong>lipgloss</strong> (styling), and <strong>glamour</strong> (markdown rendering).</p>
+<hr>
+<h2>The Hacker Scramble Effect</h2>
+<p>The signature visual: every tab transition triggers a <strong>sequential character decode animation</strong>.</p>
+<pre><code>Phase 1: ░▓█ᛟᚨ#@!ᛋ%  (random glyphs, dim)
+Phase 2: ᚱ█%ᛟA@#ᛋ!▓  (bright neon re-randomize)
+Phase 3: ᚱu%ᛟAt#ᛋl▓  (some chars settle)
+Phase 4: Autoloop Mo▓  (most decoded)
+Phase 5: Autoloop Monitor  (complete)
+</code></pre>
+<ul>
+<li>~130 chars/sec decode speed</li>
+<li>Each char cycles through 5 scrambles before settling</li>
+<li>Glyph pools: Norse runes (ᛟᚨᛋ...) + cyberpunk (░▒▓█◈...) + ASCII (!@#$%)</li>
+<li>15ms tick interval, cursor advances ~3 chars per tick</li>
+</ul>
+<hr>
+<h2>Multi-Pane Layout System</h2>
+<p>Split your terminal into multiple panes, each showing a different tab:</p>
+<pre><code>┌─ᛟ Dashboard──────────────┬─ᚱ Rounds──────────────┐
+│ Active Round: R12         │ R5  86.3  Rank 1       │
+│ Status: Active            │ R6  87.6  Rank 2       │
+│ Closes: 14:30 UTC         │ R7  74.0  Rank 2       │
+│                           │ R9  93.6  Rank 4       │
+│ Leaderboard               │                        │
+│ 1. Team Alpha   130.2     ├─ᛋ Autoloop─────────────┤
+│ 2. Synapses     117.4     │ Experiments: 1,028,171  │
+│ 3. Team Bravo   112.1     │ Best: 88.23            │
+│                           │ Rate: 160K/hr          │
+│ ▁▂▃▄▅▆▇█▇▆▅▆▇█           │ ▁▂▃▅▆▇█▇▆▅▆▇           │
+└───────────────────────────┴────────────────────────┘
+</code></pre>
+<ul>
+<li><strong>Alt+V</strong>: Vertical split (side by side)</li>
+<li><strong>Alt+S</strong>: Horizontal split (stacked)</li>
+<li><strong>Alt+Arrows</strong>: Navigate between panes</li>
+<li><strong>Alt+W</strong>: Close focused pane</li>
+<li><strong>Alt+=/-</strong>: Resize split ratio</li>
+<li>9 accent colors cycle through panes (cyan, pink, purple, green, amber, red, teal, magenta, blue)</li>
+<li>Layout persists to <code>data/layout.json</code> across sessions</li>
+</ul>
+<hr>
+<h2>Tabs</h2>
+<h3>1. Dashboard</h3>
+<p>Three-panel home screen:</p>
+<ul>
+<li><strong>Round info</strong>: Active round status, dates, grid dimensions</li>
+<li><strong>Leaderboard</strong>: Top 10 teams (rank, name, weighted score, hot streak)</li>
+<li><strong>Score sparkline</strong>: Block chart (▁▂▃▄▅▆▇█) of your scores over time</li>
+<li>Auto-refreshes every 10 seconds</li>
+</ul>
+<h3>2. Rounds (Table + Drill-Down)</h3>
+<p>Browse all submitted rounds with cursor navigation:</p>
+<ul>
+<li>Table: Round #, Score, Rank, Seeds submitted, Queries used</li>
+<li>Press Enter to drill into a round</li>
+<li>Drill-down: switch between 5 seeds with arrow keys</li>
+<li>Per-seed view: ground truth heatmap vs prediction, cell-level KL divergence</li>
+<li>Blindspot detection: highlights cells you missed</li>
+<li>Page Up/Down for scrolling detail views</li>
+</ul>
+<h3>3. Submit</h3>
+<p>Run the prediction pipeline from the terminal:</p>
+<ul>
+<li>4 variants: Full Pipeline, Static Prior, Uniform (1/6 baseline), Dry Run</li>
+<li>Confirmation dialog before execution</li>
+<li>Live output capture with auto-scroll</li>
+<li>Cancel with <code>x</code> key</li>
+<li>Output buffer: last 200 lines</li>
+</ul>
+<h3>4. Explorer (Map Grid)</h3>
+<p>Interactive 40x40 terrain grid with viewport overlay:</p>
+<pre><code>     0    5   10   15   20   25   30   35  39
+ 0   ~~~~~···ᛋ··ᚱ····□□□□□□□□□□□□□□··░
+ 1   ~~~~~···ᛋ··ᚱ····□□□□□□□□□□□□□□··░
+ 2   ~~~~~···ᛋ··ᚱ····□□□□□□□□□□□□□□··░
+ ...
+</code></pre>
+<ul>
+<li><strong>Terrain glyphs</strong>: ~ Ocean, · Plains, ᛋ Settlement, ⚓ Port, ♦ Ruin, ♠ Forest, ▲ Mountain</li>
+<li><strong>Viewport</strong>: 15x15 amber border, movable with arrow keys</li>
+<li><strong>Overlay modes</strong>: <code>v</code> toggle viewport, <code>o</code> load observations, <code>p</code> load predictions</li>
+<li><strong>Stats panel</strong>: Terrain breakdown, observed vs predicted comparison, match %, blindspot alerts</li>
+<li><strong>Seeds</strong>: Switch with keys 1-5</li>
+</ul>
+<h3>5. Autoloop Monitor</h3>
+<p>Live dashboard for the parameter optimization loop:</p>
+<ul>
+<li>Experiment table: ID, name, timestamp, per-round scores, accepted/rejected</li>
+<li>Best score convergence sparkline</li>
+<li>Running status indicator</li>
+<li>Start/stop process control (s/x keys)</li>
+<li>2-second refresh interval</li>
+</ul>
+<h3>6. Research Agents</h3>
+<p>Control panel for 3 AI research agents:</p>
+<ul>
+<li>Tab between: Gemini Researcher (ᚷ), ADK Agent (ᚨ), Multi Researcher (ᚷ)</li>
+<li>Per-agent experiment table: hypothesis, status, score, improvement delta, elapsed time</li>
+<li>Detail view: shows generated code with <strong>syntax highlighting</strong> (via glamour/chroma)</li>
+<li>Per-round score sparklines (R2/R3/R4/R5)</li>
+<li>Start/stop process control</li>
+<li>Markdown rendering for agent documentation</li>
+</ul>
+<h3>7. Logs</h3>
+<p>JSONL log viewer with 5 sources:</p>
+<ul>
+<li>autoloop, adk_research, gemini_research, adk_history, multi_research</li>
+<li><strong>Tail mode</strong>: Auto-scroll with 1s refresh</li>
+<li><strong>Browse mode</strong>: Manual scrolling, Page Up/Down</li>
+<li><strong>Search</strong>: Regex filter with <code>/</code> key</li>
+<li><strong>Jump to end</strong>: <code>G</code> key</li>
+<li><strong>Switch source</strong>: <code>f</code> key</li>
+</ul>
+<h3>8-10. Backtest, Settings, Metrics</h3>
+<ul>
+<li><strong>Backtest</strong>: Run harness evaluations (placeholder)</li>
+<li><strong>Settings</strong>: Configure tokens (masked input), toggle options (auto-refresh, tail logs, notifications), save to .env</li>
+<li><strong>Metrics</strong>: Performance dashboards (placeholder)</li>
+</ul>
+<hr>
+<h2>Status Bar</h2>
+<pre><code>▓▒░ ◈ ONLINE ᛫ ᚠ 15/50 ᛫ ᛞ R:5 ᛫ ⚙ 2 ᛫ ⊞ 3          q:quit ?:help 0-9:tabs ░▒▓
+</code></pre>
+<ul>
+<li><strong>◈ ONLINE / ✕ OFFLINE</strong>: API connection status (green/red)</li>
+<li><strong>ᚠ 15/50</strong>: Query budget (red warning when &lt;10 remaining)</li>
+<li><strong>ᛞ R:5</strong>: Active round number</li>
+<li><strong>⚙ 2</strong>: Running processes</li>
+<li><strong>⊞ 3</strong>: Active panes</li>
+</ul>
+<hr>
+<h2>Tab Bar</h2>
+<pre><code>▓▒░ ᛟ │ ᛟ 1:Dashboard │ ᚱ 2:Rounds │ ᛏ 3:Submit │ ... │ ᛗ 0:Metrics │ ᛟ ░▒▓
+</code></pre>
+<ul>
+<li>Elder Futhark runes per tab</li>
+<li>Cyan: active in focused pane</li>
+<li>Pink: active in other panes</li>
+<li>Dim: inactive</li>
+<li>Glitch edge decorations (▓▒░)</li>
+</ul>
+<hr>
+<h2>Web API Server (--web mode)</h2>
+<p>The TUI doubles as an HTTP API server for the SvelteKit dashboard:</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Source</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /api/rounds</code></td>
+<td>Proxy</td>
+<td>Competition rounds</td>
+</tr>
+<tr>
+<td><code>GET /api/budget</code></td>
+<td>Proxy</td>
+<td>Query budget</td>
+</tr>
+<tr>
+<td><code>GET /api/leaderboard</code></td>
+<td>Proxy</td>
+<td>Top teams</td>
+</tr>
+<tr>
+<td><code>GET /api/logs/{source}</code></td>
+<td>Local</td>
+<td>JSONL log files</td>
+</tr>
+<tr>
+<td><code>GET /api/logs/{source}/stream</code></td>
+<td>SSE</td>
+<td>Real-time log streaming</td>
+</tr>
+<tr>
+<td><code>GET /api/daemon/status</code></td>
+<td>Local</td>
+<td>Daemon process states</td>
+</tr>
+<tr>
+<td><code>POST /api/processes/{name}/start</code></td>
+<td>Local</td>
+<td>Start subprocess</td>
+</tr>
+<tr>
+<td><code>POST /api/imagen/generate</code></td>
+<td>Google</td>
+<td>Imagen image generation</td>
+</tr>
+<tr>
+<td><code>GET /api/imagen/gallery</code></td>
+<td>Local</td>
+<td>Generated image gallery</td>
+</tr>
+</tbody></table>
+<p>CORS enabled for cross-origin requests from the SvelteKit dev server.</p>
+<hr>
+<h2>Color Theme (theme.go)</h2>
+<p>28-color cyberpunk palette with Norse styling:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Colors</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Primary</td>
+<td>Cyan, Neon Green, Bright White</td>
+</tr>
+<tr>
+<td>Accent</td>
+<td>Pink, Purple, Amber, Gold</td>
+</tr>
+<tr>
+<td>Terrain</td>
+<td>Ocean Blue, Plains Green, Settlement Tan, Port Teal, Ruin Gray, Forest Dark Green, Mountain Stone</td>
+</tr>
+<tr>
+<td>Score gradient</td>
+<td>Red (&lt; 60) -&gt; Amber (60-75) -&gt; Green (75-85) -&gt; Cyan (85-95) -&gt; Bright Cyan (95+)</td>
+</tr>
+<tr>
+<td>UI</td>
+<td>Border Dim, Border Bright, Bg Dark, Bg Panel</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Tech Stack</h2>
+<ul>
+<li><strong>Go 1.22+</strong></li>
+<li><strong>bubbletea</strong> — Elm architecture for terminal UIs</li>
+<li><strong>lipgloss</strong> — Declarative terminal styling</li>
+<li><strong>glamour</strong> — Markdown rendering with syntax highlighting</li>
+<li><strong>chroma</strong> — Code syntax highlighting</li>
+</ul>
+<hr>
+<h2>Files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>main.go</code></td>
+<td>Entry point, Viking banner, <code>--web</code> mode</td>
+</tr>
+<tr>
+<td><code>app.go</code></td>
+<td>Root Elm model, 10 tabs, keybindings</td>
+</tr>
+<tr>
+<td><code>layout.go</code></td>
+<td>Binary split tree for panes</td>
+</tr>
+<tr>
+<td><code>layout_persist.go</code></td>
+<td>Save/load layout to JSON</td>
+</tr>
+<tr>
+<td><code>theme.go</code></td>
+<td>28-color palette + terrain styling</td>
+</tr>
+<tr>
+<td><code>api/client.go</code></td>
+<td>HTTP client with auth + retries</td>
+</tr>
+<tr>
+<td><code>api/types.go</code></td>
+<td>15+ data structures</td>
+</tr>
+<tr>
+<td><code>components/scramble.go</code></td>
+<td>Hacker decode animation</td>
+</tr>
+<tr>
+<td><code>components/mapgrid.go</code></td>
+<td>40x40 terrain renderer</td>
+</tr>
+<tr>
+<td><code>components/sparkline.go</code></td>
+<td>Block-chart sparklines</td>
+</tr>
+<tr>
+<td><code>components/tabbar.go</code></td>
+<td>Rune-decorated tab navigation</td>
+</tr>
+<tr>
+<td><code>components/statusbar.go</code></td>
+<td>Bottom status bar</td>
+</tr>
+<tr>
+<td><code>tabs/*.go</code></td>
+<td>10 tab implementations</td>
+</tr>
+<tr>
+<td><code>web/server.go</code></td>
+<td>HTTP API server</td>
+</tr>
+<tr>
+<td><code>web/sse.go</code></td>
+<td>SSE log streaming</td>
+</tr>
+<tr>
+<td><code>web/imagen.go</code></td>
+<td>Google Imagen wrapper</td>
+</tr>
+<tr>
+<td><code>web/daemon.go</code></td>
+<td>Daemon status tracking</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="04-process-getting-started"></a></p>
+<h1>Getting Started</h1>
+<p>Setup and operation guide for the Astar Island competition system.</p>
+<hr>
+<h2>Prerequisites</h2>
+<ul>
+<li>Python 3.11+</li>
+<li>NVIDIA GPU with CUDA (RTX 5090 for full performance)</li>
+<li>PyTorch 2.10+ with CUDA support</li>
+<li>Google Cloud API key (for Gemini models in research agents)</li>
+</ul>
+<hr>
+<h2>Setup</h2>
+<pre><code class="language-bash">cd dagthomas/astar-island-solution
+pip install -r requirements.txt
+</code></pre>
+<h3>Environment Variables</h3>
+<p>Create <code>.env</code> (gitignored):</p>
+<pre><code>GOOGLE_API_KEY=&lt;your-key&gt;
+ASTAR_TOKEN=&lt;competition-jwt&gt;
+GCP_PROJECT_ID=&lt;project&gt;
+GCP_LOCATION=us-central1
+</code></pre>
+<hr>
+<h2>Running</h2>
+<h3>Full Autonomous Mode</h3>
+<pre><code class="language-bash">python daemon.py
+</code></pre>
+<p>Runs 24/7: round detection, exploration, prediction, submission, re-submission, autoloop, and research agents.</p>
+<h3>Individual Components</h3>
+<pre><code class="language-bash"># Parameter optimization only
+python autoloop_fast.py
+
+# Multi-model research
+python multi_researcher.py
+
+# Gemini structural research
+python gemini_researcher.py
+
+# Manual submission for a specific round
+python submit.py --round &lt;round_id&gt;
+
+# Backtest current model
+python eval_production.py
+</code></pre>
+<h3>Backtesting</h3>
+<pre><code class="language-bash"># Evaluate against all historical rounds
+python eval_production.py
+
+# Test a specific experimental function
+python test_ideas.py
+</code></pre>
+<hr>
+<h2>Key Files to Modify</h2>
+<table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Change prediction logic</td>
+<td><code>predict_gemini.py</code></td>
+</tr>
+<tr>
+<td>Tune parameters</td>
+<td><code>best_params.json</code> (or let autoloop do it)</td>
+</tr>
+<tr>
+<td>Change exploration strategy</td>
+<td><code>explore.py</code></td>
+</tr>
+<tr>
+<td>Modify GPU simulator</td>
+<td><code>sim_model_gpu.py</code></td>
+</tr>
+<tr>
+<td>Add calibration data</td>
+<td><code>calibration.py</code></td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Monitoring</h2>
+<ul>
+<li>Autoloop progress: <code>data/autoloop_fast_log.jsonl</code></li>
+<li>Research ideas: <code>learnings/</code> directory</li>
+<li>Daemon health: <code>data/daemon.log</code></li>
+<li>Round results: check competition dashboard at app.ainm.no</li>
+</ul>
+
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+    </script>
+</body>
+</html>

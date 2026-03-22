@@ -19,7 +19,7 @@ import { findClusters } from './clusters';
 
 export interface CreatureSystem {
 	group: THREE.Group;
-	update(dt: number, timeOfDay: number): void;
+	update(dt: number, timeOfDay: number, camera?: THREE.PerspectiveCamera): void;
 	updateCulling(camera: THREE.PerspectiveCamera): void;
 	dispose(): void;
 }
@@ -58,45 +58,8 @@ const RAIDER_FILES = ['chars/Goblin.glb', 'chars/Zombie.glb', 'chars/Yeti.glb', 
 const HUMAN_SCALE: [number, number] = [0.15, 0.20];
 const RAIDER_SCALE: [number, number] = [0.16, 0.22];
 
-// Animals per biome
-const BIOME_ANIMALS: Record<number, { files: string[]; count: number; scale: [number, number] }> = {
-	// Forest
-	4: {
-		files: ['animals/Deer.glb', 'animals/Deer-bLT2gJHPPt.glb', 'animals/Fox.glb', 'animals/Rabbit.glb', 'animals/Bird.glb', 'animals/Frog.glb'],
-		count: 3,
-		scale: [0.10, 0.18]
-	},
-	// Plains
-	11: {
-		files: ['animals/Cow.glb', 'animals/Sheep.glb', 'animals/Horse.glb', 'animals/Chicken.glb', 'animals/Chick.glb', 'animals/Dog.glb'],
-		count: 4,
-		scale: [0.10, 0.18]
-	},
-	// Mountain
-	5: {
-		files: ['animals/Bear.glb', 'animals/Bizon.glb', 'animals/Lizard.glb'],
-		count: 1,
-		scale: [0.12, 0.20]
-	},
-	// Empty/sandy
-	0: {
-		files: ['animals/Cat.glb', 'animals/Dog-9bqPCxOyrk.glb', 'animals/Corgi.glb'],
-		count: 1,
-		scale: [0.08, 0.14]
-	},
-	// Settlement
-	1: {
-		files: ['animals/Dog.glb', 'animals/Cat.glb', 'animals/Chicken.glb', 'animals/Duck.glb', 'animals/Corgi.glb', 'animals/Beagle.glb'],
-		count: 2,
-		scale: [0.08, 0.14]
-	},
-	// Ruin
-	3: {
-		files: ['animals/Fox.glb', 'animals/Penguin.glb', 'animals/Bird-h5IzAUdltz.glb'],
-		count: 1,
-		scale: [0.10, 0.16]
-	}
-};
+// Animals per biome — disabled (only humans and warbands spawn)
+const BIOME_ANIMALS: Record<number, { files: string[]; count: number; scale: [number, number] }> = {};
 
 // --- Loader ---
 
@@ -354,7 +317,7 @@ export async function createCreatures(
 	return {
 		group,
 
-		update(dt: number, _timeOfDay: number) {
+		update(dt: number, _timeOfDay: number, camera?: THREE.PerspectiveCamera) {
 			// Raid spawning
 			raidCooldown -= dt;
 			if (raidCooldown <= 0 && raids.filter(r => r.active).length < 2) {
@@ -362,10 +325,22 @@ export async function createCreatures(
 				raidCooldown = 20 + Math.random() * 30;
 			}
 
+			const ANIM_DIST_SQ = 20 * 20; // throttle animations beyond 20 units
+
 			// Update all creatures
 			for (const c of creatures) {
-				// Advance animation mixer
-				if (c.mixer) c.mixer.update(dt);
+				// Throttle animation mixer by distance from camera
+				if (c.mixer) {
+					if (camera) {
+						const cdx = c.model.position.x - camera.position.x;
+						const cdz = c.model.position.z - camera.position.z;
+						if (cdx * cdx + cdz * cdz < ANIM_DIST_SQ) {
+							c.mixer.update(dt);
+						}
+					} else {
+						c.mixer.update(dt);
+					}
+				}
 
 				c.progress += c.speed * dt * 0.04;
 

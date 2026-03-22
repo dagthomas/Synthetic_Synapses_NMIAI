@@ -4,6 +4,7 @@ import * as THREE from 'three';
 
 const CLOUD_COUNT = 10;
 const BOUNDS_X = 30; // respawn bounds
+const _tint = new THREE.Color();
 
 export interface CloudSystem {
 	sprites: THREE.Sprite[];
@@ -86,8 +87,8 @@ export function createCloudSystem(scene: THREE.Scene): CloudSystem {
 				}
 				// Tint clouds with sky color (warm at dusk, gray at night)
 				const mat = sprites[i].material as THREE.SpriteMaterial;
-				const tint = new THREE.Color(0xffffff).lerp(skyColor, 0.25);
-				mat.color.copy(tint);
+				_tint.set(0xffffff).lerp(skyColor, 0.25);
+				mat.color.copy(_tint);
 			}
 		},
 		dispose() {

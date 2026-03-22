@@ -1,0 +1,3969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Synthetic Synapses Documentation</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #24292e;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px;
+            background: white;
+        }
+
+        .page-break {
+            page-break-after: always;
+            break-after: page;
+            border-bottom: 2px dashed #e1e4e8;
+            margin: 40px 0;
+        }
+
+        @media print {
+            .page-break { border: none; }
+            .no-print { display: none !important; }
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            margin-top: 24px;
+            margin-bottom: 16px;
+            font-weight: 600;
+            line-height: 1.25;
+            color: #1a1a2e;
+        }
+
+        h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 2px solid #4f46e5; }
+        h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid #e1e4e8; }
+        h3 { font-size: 1.25em; }
+        h4 { font-size: 1em; }
+
+        a { color: #4f46e5; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        pre {
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.45;
+            border: 1px solid #e1e4e8;
+        }
+
+        code {
+            font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+            font-size: 13px;
+            background-color: rgba(27, 31, 35, 0.05);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+        }
+
+        pre code { background: none; padding: 0; }
+
+        table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+        th, td { padding: 8px 12px; border: 1px solid #e1e4e8; text-align: left; }
+        th { background-color: #f6f8fa; font-weight: 600; }
+        tr:nth-child(even) { background-color: #fafbfc; }
+
+        ul, ol { padding-left: 2em; margin: 16px 0; }
+        li { margin: 4px 0; }
+
+        blockquote {
+            margin: 16px 0;
+            padding: 0 1em;
+            color: #6a737d;
+            border-left: 4px solid #4f46e5;
+            background: #f8f9ff;
+        }
+
+        hr { height: 2px; background-color: #e1e4e8; border: none; margin: 24px 0; }
+
+        .mermaid {
+            background: #fafbfc;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 16px 0;
+            text-align: center;
+        }
+
+        img { max-width: 100%; height: auto; }
+
+        .cover-page {
+            text-align: center;
+            padding: 100px 0;
+            page-break-after: always;
+        }
+
+        .cover-page h1 { font-size: 3em; border: none; color: #4f46e5; }
+        .cover-page .subtitle { font-size: 1.5em; color: #6a737d; margin-top: 20px; }
+        .cover-page .date { color: #6a737d; margin-top: 40px; }
+
+        .toc { page-break-after: always; padding: 20px 0; }
+        .toc h2 { color: #4f46e5; border: none; }
+        .toc h3 { color: #24292e; font-size: 1.1em; margin-top: 20px; border: none; }
+        .toc ul { list-style: none; padding-left: 0; margin: 8px 0; }
+        .toc li { padding: 4px 0; padding-left: 16px; border-bottom: 1px dotted #e1e4e8; }
+        .toc a { color: #24292e; }
+
+        .print-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #4f46e5;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+        }
+
+        .print-btn:hover { background: #4338ca; }
+
+        @media print {
+            body { max-width: 100%; padding: 0; }
+            pre, table, .mermaid { page-break-inside: avoid; }
+            h1, h2, h3, h4 { page-break-after: avoid; }
+        }
+    </style>
+</head>
+<body>
+    <button class="print-btn no-print" onclick="window.print()">Print to PDF</button>
+
+    <div class="cover-page">
+        <h1>Synthetic Synapses</h1>
+        <div class="subtitle">System Documentation</div>
+        <div class="date">Generated: March 22, 2026</div>
+    </div>
+
+    <div class="toc"><h2>Table of Contents</h2><h3>Overview</h3><ul><li><a href="#docs-structure">DOCS_STRUCTURE</a></li></ul><h3>Context</h3><ul><li><a href="#00-context-architecture">Architecture</a></li><li><a href="#00-context-system-state">System State</a></li><li><a href="#00-context-vision">Vision</a></li></ul><h3>Product</h3><ul><li><a href="#01-product-prd">Prd</a></li></ul><h3>Features\astar Island Prediction</h3><ul><li><a href="#02-features-astar-island-prediction-autoloop-deep-dive">Autoloop Deep Dive</a></li><li><a href="#02-features-astar-island-prediction-calibration-model">Calibration Model</a></li><li><a href="#02-features-astar-island-prediction-daemon-system">Daemon System</a></li><li><a href="#02-features-astar-island-prediction-exploration-system">Exploration System</a></li><li><a href="#02-features-astar-island-prediction-feature-spec">Feature Spec</a></li><li><a href="#02-features-astar-island-prediction-gpu-simulator">Gpu Simulator</a></li><li><a href="#02-features-astar-island-prediction-multi-researcher">Multi Researcher</a></li><li><a href="#02-features-astar-island-prediction-prediction-pipeline">Prediction Pipeline</a></li><li><a href="#02-features-astar-island-prediction-tech-design">Tech Design</a></li></ul><h3>Features\norgesgruppen Detection</h3><ul><li><a href="#02-features-norgesgruppen-detection-feature-spec">Feature Spec</a></li><li><a href="#02-features-norgesgruppen-detection-tech-design">Tech Design</a></li></ul><h3>Features\tripletex Agent</h3><ul><li><a href="#02-features-tripletex-agent-feature-spec">Feature Spec</a></li></ul><h3>Process</h3><ul><li><a href="#04-process-dev-workflow">Dev Workflow</a></li><li><a href="#04-process-operations">Operations</a></li></ul></div>
+
+    <p><a id="docs-structure"></a></p>
+<h1>Documentation Structure -- NM i AI</h1>
+<p>Challenge documentation served via MCP at <code>https://mcp-docs.ainm.no/mcp</code>.</p>
+<h2>Challenge Documentation (<code>/docs</code>)</h2>
+<h3>astar-island/</h3>
+<p><em>Challenge: Viking civilisation prediction (40x40x6 probability tensor)</em></p>
+<ul>
+<li><code>overview.md</code>: Challenge description &amp; rules</li>
+<li><code>mechanics.md</code>: Simulator mechanics &amp; cell types</li>
+<li><code>endpoint.md</code>: API reference (<code>https://api.ainm.no/astar-island</code>)</li>
+<li><code>scoring.md</code>: Entropy-weighted KL divergence scoring (0-100)</li>
+<li><code>quickstart.md</code>: Getting started guide</li>
+</ul>
+<h3>norgesgruppen-data/</h3>
+<p><em>Challenge: Grocery product detection on store shelves</em></p>
+<ul>
+<li><code>overview.md</code>: Challenge description &amp; rules</li>
+<li><code>submission.md</code>: Submission format, Docker sandbox, blocked imports</li>
+<li><code>scoring.md</code>: 70% detection mAP + 30% classification mAP (<a href="mailto:mAP@0.5">mAP@0.5</a>)</li>
+<li><code>examples.md</code>: Example predictions &amp; edge cases</li>
+</ul>
+<h3>tripletex/</h3>
+<p><em>Challenge: AI accounting agent via Tripletex API</em></p>
+<ul>
+<li><code>overview.md</code>: Challenge description &amp; rules</li>
+<li><code>endpoint.md</code>: HTTPS <code>/solve</code> endpoint spec</li>
+<li><code>scoring.md</code>: Correctness x tier multiplier + efficiency bonus</li>
+<li><code>examples.md</code>: Example tasks &amp; responses</li>
+<li><code>sandbox.md</code>: Sandbox environment details</li>
+</ul>
+<hr>
+<h2>Solution Documentation (<code>/docs/0*</code>)</h2>
+<h3>00-context/</h3>
+<p><em>WHY and WHAT EXISTS -- system-level understanding</em></p>
+<ul>
+<li><code>vision.md</code>: Project purpose, challenge portfolio, design principles</li>
+<li><code>system-state.md</code>: Running processes, data volumes, scores, external dependencies</li>
+<li><code>architecture.md</code>: Repository layout, system diagrams, technology stack</li>
+</ul>
+<h3>01-product/</h3>
+<p><em>WHAT the product must do -- requirements</em></p>
+<ul>
+<li><code>prd.md</code>: Per-challenge objectives, scoring, constraints, requirements checklist</li>
+</ul>
+<h3>02-features/</h3>
+<p><em>HOW features are designed &amp; built</em></p>
+<h4>astar-island-prediction/</h4>
+<ul>
+<li><code>feature-spec.md</code>: System overview, subsystems, user flows, edge cases</li>
+<li><code>tech-design.md</code>: Data models, API endpoints, pipeline diagram, file map</li>
+<li><code>autoloop-deep-dive.md</code>: 44-parameter space, FastHarness pre-computation, evaluation pipeline, optimization loop, perturbation strategy, experiment log format</li>
+<li><code>gpu-simulator.md</code>: GPUSimulator internals (batched CUDA), 17 simulator params, CMA-ES fitting (GT + observations), regime warm starts, transfer learning, adaptive alpha</li>
+<li><code>prediction-pipeline.md</code>: 11-stage step-by-step walkthrough of <code>predict_gemini.py</code></li>
+<li><code>calibration-model.md</code>: Hierarchical prior (fine/coarse/base/global), feature key definition, training, inference, regime-conditional weighting</li>
+<li><code>daemon-system.md</code>: Round monitor, submission pipeline, GPU resubmission loop, calibration download, error handling</li>
+<li><code>exploration-system.md</code>: Grid/entropy strategies, data structures (ObservationAccumulator, GlobalMultipliers, FeatureKeyBuckets), overlay functions, terrain openness diffusion</li>
+<li><code>multi-researcher.md</code>: LLM research agent (Gemini Pro+Flash), orchestration loop, idea evaluation, knowledge base, integration path</li>
+</ul>
+<h4>norgesgruppen-detection/</h4>
+<ul>
+<li><code>feature-spec.md</code>: Two-stage pipeline overview, training pipeline, acceptance criteria</li>
+<li><code>tech-design.md</code>: Inference stages (YOLO -&gt; WBF -&gt; ConvNeXt-V2 -&gt; blend), training architecture, sandbox compatibility, timing budget, file map</li>
+</ul>
+<h4>tripletex-agent/</h4>
+<ul>
+<li><code>feature-spec.md</code>: Challenge overview, scoring, task execution flow (not started)</li>
+</ul>
+<h3>04-process/</h3>
+<p><em>HOW to work with this system</em></p>
+<ul>
+<li><code>operations.md</code>: Full system startup, training, submission, monitoring, troubleshooting</li>
+<li><code>dev-workflow.md</code>: Daily development loops, pre-submission checklist, general rules</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="00-context-architecture"></a></p>
+<h1>Architecture Overview</h1>
+<p>High-level architecture of all systems in the NM i AI project.</p>
+<hr>
+<h2>Repository Layout</h2>
+<pre><code>AINMNO/
+├── docs/                           # Challenge documentation &amp; training data
+│   ├── astar-island/               # Challenge spec, API reference, scoring
+│   ├── norgesgruppen-data/         # COCO dataset (248 images, 357 categories)
+│   └── tripletex/                  # Accounting agent spec
+├── astar-island-solution/          # Viking prediction system (~50 Python files)
+│   ├── web/                        # SvelteKit monitoring dashboard
+│   └── data/                       # Calibration, caches, experiments, logs
+├── norgesgruppen-solution/         # Object detection pipeline
+│   ├── datasets/                   # YOLO-format training data
+│   └── classifier_data/           # Classifier crops &amp; references
+└── submission_sub*/                # Archived NorgesGruppen submissions
+</code></pre>
+<hr>
+<h2>Astar Island System Architecture</h2>
+<div class="mermaid">flowchart TB
+    API[Competition API] --&gt; Daemon[daemon.py]
+    Daemon --&gt; Explore[explore.py&lt;br/&gt;50 queries/round]
+    Explore --&gt; FKBuckets[Feature-Key Buckets]
+    Explore --&gt; GlobalMult[Global Multipliers]
+    Explore --&gt; SimFit[sim_inference.py&lt;br/&gt;CMA-ES Fitting]
+
+    FKBuckets --&gt; Predict[predict_gemini.py]
+    GlobalMult --&gt; Predict
+    SimFit --&gt; SimModel[sim_model_gpu.py&lt;br/&gt;10k simulations]
+    SimModel --&gt; Predict
+    CalibDB[(17 rounds&lt;br/&gt;calibration)] --&gt; Predict
+    BestParams[(best_params.json&lt;br/&gt;770k+ experiments)] --&gt; Predict
+
+    Predict --&gt; Submit[submit.py&lt;br/&gt;40x40x6 tensor]
+    Submit --&gt; API
+
+    Autoloop[autoloop_fast.py] --&gt; BestParams
+    Researcher[Multi-Researcher&lt;br/&gt;Claude + Gemini] --&gt; Ideas[multi_ideas/]
+
+    WebDash[Web Dashboard&lt;br/&gt;SvelteKit] -.-&gt; Daemon
+    WebDash -.-&gt; Autoloop
+</div>
+<hr>
+<h2>NorgesGruppen Detection Pipeline</h2>
+<div class="mermaid">flowchart LR
+    Images[Input Images] --&gt; YOLOA[YOLOv8x A&lt;br/&gt;imgsz=1536 + TTA]
+    Images --&gt; YOLOB[YOLOv8x B&lt;br/&gt;imgsz=1280 + TTA]
+    YOLOA --&gt; WBF[Weighted Boxes&lt;br/&gt;Fusion&lt;br/&gt;iou=0.55]
+    YOLOB --&gt; WBF
+    WBF --&gt; Classify[ConvNeXt-V2 nano&lt;br/&gt;256x256 crops]
+    Classify --&gt; Blend[Score Blending&lt;br/&gt;+ BG Rejection]
+    Blend --&gt; JSON[predictions.json]
+</div>
+<hr>
+<h2>End-to-End Data Lifecycle</h2>
+<div class="mermaid">flowchart TB
+    subgraph Astar[&quot;Astar Island Lifecycle&quot;]
+        API_ROUND[&quot;API: New Round&quot;] --&gt; DAEMON[&quot;Daemon detects&quot;]
+        DAEMON --&gt; EXPLORE[&quot;Explore: 50 queries&lt;br/&gt;build FK buckets&lt;br/&gt;+ multipliers&quot;]
+        EXPLORE --&gt; SIM_FIT[&quot;GPU Simulator&lt;br/&gt;CMA-ES fit&lt;br/&gt;(KNN warm start)&quot;]
+        SIM_FIT --&gt; PREDICT_G[&quot;predict_gemini.py&lt;br/&gt;11-stage pipeline&quot;]
+        PREDICT_G --&gt; SUBMIT[&quot;Submit 5 seeds&quot;]
+        SUBMIT --&gt; RESUB[&quot;GPU Resubmit Loop&lt;br/&gt;(iterate while active)&quot;]
+        RESUB --&gt; SUBMIT
+
+        API_ROUND --&gt; COMPLETE[&quot;Round Completes&quot;]
+        COMPLETE --&gt; DOWNLOAD[&quot;Download GT&lt;br/&gt;to calibration/&quot;]
+        DOWNLOAD --&gt; RECAL[&quot;Recalibrate&lt;br/&gt;CalibrationModel&quot;]
+        RECAL --&gt; AUTOLOOP[&quot;Autoloop re-optimizes&lt;br/&gt;with new data&quot;]
+    end
+
+    subgraph NG[&quot;NorgesGruppen Lifecycle&quot;]
+        COCO[&quot;COCO annotations&quot;] --&gt; PREPARE[&quot;prepare_data.py&lt;br/&gt;COCO → YOLO format&quot;]
+        PREPARE --&gt; TRAIN_Y[&quot;Train YOLOv8x&lt;br/&gt;(2-phase)&quot;]
+        COCO --&gt; CROPS[&quot;Crop extraction&lt;br/&gt;+ reference images&quot;]
+        CROPS --&gt; TRAIN_C[&quot;Train ConvNeXt-V2&lt;br/&gt;(2-phase)&quot;]
+        TRAIN_Y --&gt; EVAL_L[&quot;Local evaluation&lt;br/&gt;evaluate.py&quot;]
+        TRAIN_C --&gt; EVAL_L
+        EVAL_L --&gt; BUILD[&quot;Build submission zip&quot;]
+        BUILD --&gt; UPLOAD[&quot;Upload to&lt;br/&gt;app.ainm.no&quot;]
+        UPLOAD --&gt; SCORE[&quot;Competition scoring&quot;]
+    end
+</div>
+<h2>Technology Stack</h2>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Astar Island</th>
+<th>NorgesGruppen</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Language</td>
+<td>Python 3.11</td>
+<td>Python 3.11</td>
+</tr>
+<tr>
+<td>ML Framework</td>
+<td>NumPy, PyTorch (GPU sim)</td>
+<td>PyTorch 2.6.0, ultralytics 8.1.0</td>
+</tr>
+<tr>
+<td>Models</td>
+<td>Parametric simulator, calibration</td>
+<td>YOLOv8x, ConvNeXt-V2 nano</td>
+</tr>
+<tr>
+<td>Optimization</td>
+<td>CMA-ES, Metropolis-Hastings</td>
+<td>Grid sweep, manual tuning</td>
+</tr>
+<tr>
+<td>Frontend</td>
+<td>SvelteKit + TypeScript</td>
+<td>--</td>
+</tr>
+<tr>
+<td>Serialization</td>
+<td>JSON, JSONL</td>
+<td>safetensors, .pt</td>
+</tr>
+<tr>
+<td>Deployment</td>
+<td>Local daemon + autoloop</td>
+<td>Zip submission to Docker sandbox</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="00-context-system-state"></a></p>
+<h1>System State</h1>
+<p>Current state of all running systems and infrastructure as of 2026-03-21.</p>
+<hr>
+<h2>System Health Overview</h2>
+<div class="mermaid">flowchart LR
+    subgraph Astar[&quot;Astar Island System&quot;]
+        D[&quot;Daemon&lt;br/&gt;RUNNING&quot;] --&gt;|&quot;polls every 60s&quot;| API[&quot;Competition API&quot;]
+        AL[&quot;Autoloop&lt;br/&gt;RUNNING&lt;br/&gt;770k+ experiments&quot;] --&gt;|&quot;writes&quot;| BP[&quot;best_params.json&lt;br/&gt;score: 89.389&quot;]
+        RES[&quot;Researcher&lt;br/&gt;RUNNING&quot;] --&gt;|&quot;166+ ideas&quot;| IDEAS[&quot;multi_ideas/&quot;]
+        WEB[&quot;Dashboard&lt;br/&gt;RUNNING&lt;br/&gt;:3000&quot;]
+    end
+
+    subgraph NG[&quot;NorgesGruppen&quot;]
+        TRAINED[&quot;Models Trained&lt;br/&gt;YOLOv8x + ConvNeXt-V2&quot;]
+        EVAL[&quot;Train mAP: 0.978&quot;]
+        SUBMIT[&quot;Submissions ready&quot;]
+    end
+
+    subgraph Data[&quot;Calibration Data&quot;]
+        CAL[&quot;17 rounds GT&lt;br/&gt;136,000 cells&quot;]
+    end
+</div>
+<hr>
+<h2>Running Processes</h2>
+<table>
+<thead>
+<tr>
+<th>Process</th>
+<th>Script</th>
+<th>Purpose</th>
+<th>Flag</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Daemon</td>
+<td><code>astar-island-solution/daemon.py</code></td>
+<td>Monitors API for new rounds, auto-submits</td>
+<td><code>-u</code> (unbuffered)</td>
+</tr>
+<tr>
+<td>Autoloop Fast</td>
+<td><code>astar-island-solution/autoloop_fast.py</code></td>
+<td>Continuous parameter optimization (~70ms/exp)</td>
+<td><code>-u</code></td>
+</tr>
+<tr>
+<td>Multi-Researcher</td>
+<td>Various research agents</td>
+<td>Structural algorithm improvements via LLMs</td>
+<td><code>-u</code></td>
+</tr>
+<tr>
+<td>Web Dashboard</td>
+<td><code>astar-island-solution/web/</code></td>
+<td>SvelteKit monitoring UI on localhost:3000</td>
+<td>--</td>
+</tr>
+</tbody></table>
+<p>All Python processes require <code>-u</code> flag for real-time log output.</p>
+<hr>
+<h2>Data Volumes</h2>
+<table>
+<thead>
+<tr>
+<th>Directory</th>
+<th>Contents</th>
+<th>Size</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>astar-island-solution/data/calibration/</code></td>
+<td>17 rounds of ground truth</td>
+<td>~50 MB</td>
+</tr>
+<tr>
+<td><code>astar-island-solution/data/multi_ideas/</code></td>
+<td>165+ generated algorithm variants</td>
+<td>~15 MB</td>
+</tr>
+<tr>
+<td><code>astar-island-solution/data/sim_cache/</code></td>
+<td>Simulator state caches (15 rounds)</td>
+<td>~10 MB</td>
+</tr>
+<tr>
+<td><code>norgesgruppen-solution/runs/</code></td>
+<td>YOLO training checkpoints</td>
+<td>~2 GB</td>
+</tr>
+<tr>
+<td><code>norgesgruppen-solution/*.pt</code></td>
+<td>Trained model weights</td>
+<td>~530 MB</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Key Scores</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Metric</th>
+<th>Current Best</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Astar Island</td>
+<td>Entropy-weighted KL (0-100)</td>
+<td>89.4 avg (90.2 non-boom, 87.7 boom)</td>
+</tr>
+<tr>
+<td>NorgesGruppen</td>
+<td>70% det mAP + 30% cls mAP</td>
+<td>0.978 (train set)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>External Dependencies</h2>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>URL</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Competition API</td>
+<td><code>https://api.ainm.no/astar-island</code></td>
+<td>Astar Island simulation &amp; submission</td>
+</tr>
+<tr>
+<td>Competition App</td>
+<td><code>https://app.ainm.no</code></td>
+<td>Leaderboard, submission UI</td>
+</tr>
+<tr>
+<td>MCP Docs Server</td>
+<td><code>https://mcp-docs.ainm.no/mcp</code></td>
+<td>Competition documentation</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="00-context-vision"></a></p>
+<h1>Vision</h1>
+<p>NM i AI (Norwegian AI Championship) is a competitive AI platform at <a href="https://app.ainm.no">app.ainm.no</a>. This repository contains solutions for all four challenges, with active development on two.</p>
+<hr>
+<h2>Purpose</h2>
+<p>Build competition-grade AI systems across four distinct domains: computer vision, probabilistic prediction, agentic accounting, and game AI. The goal is to maximize leaderboard scores through algorithmic innovation, hyperparameter optimization, and autonomous experimentation infrastructure.</p>
+<hr>
+<h2>Boundaries</h2>
+<ul>
+<li><strong>In scope:</strong> All four challenges, shared infrastructure, autonomous optimization systems</li>
+<li><strong>Out of scope:</strong> Production deployment, multi-user support, long-term maintenance</li>
+</ul>
+<hr>
+<h2>Challenge Portfolio</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Domain</th>
+<th>Status</th>
+<th>Approach</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>NorgesGruppen Data</td>
+<td>Object Detection</td>
+<td>Active, submitted</td>
+<td>YOLOv8x + ConvNeXt-V2 ensemble</td>
+</tr>
+<tr>
+<td>Astar Island</td>
+<td>Probabilistic Prediction</td>
+<td>Active, autonomous</td>
+<td>Bayesian calibration + simulator + autoloop</td>
+</tr>
+<tr>
+<td>Tripletex</td>
+<td>AI Accounting Agent</td>
+<td>Not started</td>
+<td>LLM agent + API integration</td>
+</tr>
+<tr>
+<td>Grocery Bot</td>
+<td>Game AI</td>
+<td>Skipped</td>
+<td>Not scored, warm-up only</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Key Design Principles</h2>
+<ol>
+<li><strong>Autonomous optimization over manual tuning</strong> -- autoloop runs 160k+ experiments/hour</li>
+<li><strong>Ensemble over single model</strong> -- WBF-fused YOLO detectors + classifier re-ranking</li>
+<li><strong>Bayesian over frequentist</strong> -- hierarchical priors with regime-conditional calibration</li>
+<li><strong>Iterate within round window</strong> -- re-submit improved predictions during ~165 min rounds</li>
+</ol>
+<div class="page-break"></div>
+
+<p><a id="01-product-prd"></a></p>
+<h1>Product Requirements</h1>
+<p>Requirements derived from competition rules and scoring criteria.</p>
+<hr>
+<h2>Astar Island</h2>
+<h3>Objective</h3>
+<p>Predict 40x40x6 probability distributions for a Norse civilization simulator across 5 seeds per round.</p>
+<h3>Scoring</h3>
+<ul>
+<li>Entropy-weighted KL divergence, scored 0-100</li>
+<li>Only dynamic cells (entropy &gt; 0.01) count</li>
+<li>Probability floor of 0.01 required (avoids infinite KL)</li>
+<li>Target: &gt;90 average score</li>
+</ul>
+<h3>Constraints</h3>
+<ul>
+<li>50 simulation queries per round (shared across 5 seeds)</li>
+<li>15x15 viewport per query</li>
+<li>~165 minute round window</li>
+<li>Rate limit: 5 sim calls/sec, 2 submit calls/sec</li>
+</ul>
+<h3>Requirements</h3>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> Adaptive exploration strategy (entropy-targeted viewports)</li>
+<li><input checked="" disabled="" type="checkbox"> Hierarchical calibration model (fine/coarse/base/global)</li>
+<li><input checked="" disabled="" type="checkbox"> Regime detection (collapse/moderate/boom)</li>
+<li><input checked="" disabled="" type="checkbox"> Parametric simulator with CMA-ES fitting</li>
+<li><input checked="" disabled="" type="checkbox"> Autonomous parameter optimization (autoloop)</li>
+<li><input checked="" disabled="" type="checkbox"> Real-time monitoring dashboard</li>
+<li><input checked="" disabled="" type="checkbox"> Automatic round detection and submission (daemon)</li>
+<li><input disabled="" type="checkbox"> Score consistently &gt;92 on boom rounds</li>
+</ul>
+<hr>
+<h2>NorgesGruppen Data</h2>
+<h3>Objective</h3>
+<p>Detect and classify grocery products on store shelf images.</p>
+<h3>Scoring</h3>
+<ul>
+<li><code>Final = 0.70 * detection_mAP@0.5 + 0.30 * classification_mAP@0.5</code></li>
+<li>Detection: category-agnostic box localization</li>
+<li>Classification: correct product class + box</li>
+</ul>
+<h3>Constraints</h3>
+<ul>
+<li>Docker sandbox: Python 3.11, L4 GPU (24 GB), 300s timeout, offline</li>
+<li>Blocked imports: <code>os</code>, <code>sys</code>, <code>subprocess</code>, <code>pickle</code>, <code>yaml</code>, etc.</li>
+<li>Max zip: 420 MB, max 3 weight files, max 10 Python files</li>
+<li>3 submissions per day</li>
+</ul>
+<h3>Requirements</h3>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> YOLOv8x detection with TTA</li>
+<li><input checked="" disabled="" type="checkbox"> Multi-model ensemble with WBF fusion</li>
+<li><input checked="" disabled="" type="checkbox"> ConvNeXt-V2 nano re-classification</li>
+<li><input checked="" disabled="" type="checkbox"> Background rejection (class 356)</li>
+<li><input checked="" disabled="" type="checkbox"> torch.load monkeypatch for PyTorch 2.6.0</li>
+<li><input checked="" disabled="" type="checkbox"> Submission under 420 MB and 300s timeout</li>
+<li><input disabled="" type="checkbox"> Test set score &gt; 0.95 combined</li>
+</ul>
+<hr>
+<h2>Tripletex</h2>
+<h3>Objective</h3>
+<p>Build HTTPS <code>/solve</code> endpoint that executes accounting tasks via Tripletex API.</p>
+<h3>Scoring</h3>
+<ul>
+<li><code>correctness * tier_multiplier + efficiency_bonus</code> (up to 6.0 per task)</li>
+<li>30 task types, 56 variants each</li>
+<li>7 languages: nb, en, es, pt, nn, de, fr</li>
+</ul>
+<h3>Requirements</h3>
+<ul>
+<li><input disabled="" type="checkbox"> HTTPS endpoint deployment</li>
+<li><input disabled="" type="checkbox"> LLM agent for prompt interpretation</li>
+<li><input disabled="" type="checkbox"> Tripletex API integration (employees, customers, products, invoices, etc.)</li>
+<li><input disabled="" type="checkbox"> Multi-language prompt handling</li>
+</ul>
+<hr>
+<h2>Grocery Bot</h2>
+<p><strong>Status:</strong> Skipped (not scored, warm-up only)</p>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-autoloop-deep-dive"></a></p>
+<h1>Autoloop -- Deep Technical Reference</h1>
+<p>Continuous autonomous parameter optimization via Metropolis-Hastings random search with leave-one-out cross-validation backtesting.</p>
+<hr>
+<h2>Architecture</h2>
+<div class="mermaid">flowchart TB
+    subgraph Startup[&quot;FastHarness Init (~10s)&quot;]
+        R1[Round 2-17 data] --&gt; LOO[Leave-One-Out Split]
+        LOO --&gt; CAL[CalibrationModel&lt;br/&gt;per test round]
+        LOO --&gt; OBS[Load Observations&lt;br/&gt;from data/rounds/]
+        OBS --&gt; GM[GlobalMultipliers]
+        OBS --&gt; FK[FeatureKeyBuckets]
+        OBS --&gt; GF[Growth Front Maps]
+        OBS --&gt; SS[Settlement Survival]
+        CAL --&gt; CACHE[Pre-computed Cache&lt;br/&gt;75 seeds ready]
+    end
+
+    subgraph Loop[&quot;Optimization Loop (~70ms/iter)&quot;]
+        BEST[best_params.json] --&gt; PERTURB[Perturb 1-3 params&lt;br/&gt;Gaussian noise]
+        PERTURB --&gt; EVAL[Evaluate&lt;br/&gt;15 rounds x 5 seeds]
+        EVAL --&gt; SCORE{score &gt; best?}
+        SCORE --&gt;|Yes| ACCEPT[Accept + Save]
+        SCORE --&gt;|Near miss&lt;br/&gt;20% prob| METRO[Metropolis Accept]
+        SCORE --&gt;|No| REJECT[Reject&lt;br/&gt;streak++]
+        ACCEPT --&gt; BEST
+        METRO --&gt; BEST
+        REJECT --&gt;|streak&gt;500| WIDEN[Widen perturbation&lt;br/&gt;2-4 params]
+        WIDEN --&gt; PERTURB
+        REJECT --&gt; PERTURB
+    end
+
+    CACHE --&gt; EVAL
+    ACCEPT --&gt; LOG[autoloop_fast_log.jsonl]
+    METRO --&gt; LOG
+    REJECT --&gt; LOG
+</div>
+<p>Two implementations exist, sharing the same parameter space and experiment log:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>autoloop.py</code></th>
+<th><code>autoloop_fast.py</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Engine</td>
+<td><code>autoexperiment.BacktestHarness</code></td>
+<td><code>FastHarness</code> (inline)</td>
+</tr>
+<tr>
+<td>Prediction</td>
+<td><code>make_pred_fn()</code> per-cell loops</td>
+<td>Vectorized numpy (no Python loops)</td>
+</tr>
+<tr>
+<td>Speed</td>
+<td>~1s per experiment</td>
+<td>~70ms per experiment</td>
+</tr>
+<tr>
+<td>Throughput</td>
+<td>~3,600/hour</td>
+<td>~50,000/hour</td>
+</tr>
+<tr>
+<td>Eval rounds</td>
+<td>8 rounds</td>
+<td>15 rounds (round2-round17, excluding round1/round8)</td>
+</tr>
+<tr>
+<td>Seeds</td>
+<td>Configurable (1-5)</td>
+<td>5 seeds per round</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Parameter Space (44 dimensions)</h2>
+<div class="mermaid">flowchart TB
+    subgraph FK_GROUP[&quot;FK Blending (4)&quot;]
+        FPW[&quot;fk_prior_weight&lt;br/&gt;0.5-12.0&quot;]
+        FMS[&quot;fk_max_strength&lt;br/&gt;2.0-25.0&quot;]
+        FMC[&quot;fk_min_count&lt;br/&gt;2-25&quot;]
+        FSF[&quot;fk_strength_fn&lt;br/&gt;sqrt/log/linear&quot;]
+    end
+
+    subgraph MULT_GROUP[&quot;Multiplier (14)&quot;]
+        MP[&quot;mult_power&lt;br/&gt;0.1-1.0&quot;]
+        MPS[&quot;mult_power_sett&lt;br/&gt;0.1-1.5&quot;]
+        MPP[&quot;mult_power_port&lt;br/&gt;0.1-1.5&quot;]
+        BOUNDS[&quot;6 per-class&lt;br/&gt;lo/hi bounds&quot;]
+        SMOOTH[&quot;mult_smooth&lt;br/&gt;1.0-20.0&quot;]
+    end
+
+    subgraph CAL_GROUP[&quot;Calibration (10)&quot;]
+        CF[&quot;cal_fine&lt;br/&gt;base/divisor/max&quot;]
+        CC[&quot;cal_coarse&lt;br/&gt;base/divisor/max&quot;]
+        CB[&quot;cal_base&lt;br/&gt;base/divisor/max&quot;]
+        CG[&quot;cal_global_weight&quot;]
+    end
+
+    subgraph TEMP_GROUP[&quot;Temperature (4)&quot;]
+        TL[&quot;temp_low&lt;br/&gt;0.5-1.0&quot;]
+        TH[&quot;temp_high&lt;br/&gt;1.0-1.5&quot;]
+        TEL[&quot;temp_ent_lo&quot;]
+        TEH[&quot;temp_ent_hi&quot;]
+    end
+
+    subgraph SPATIAL_GROUP[&quot;Spatial + Post-Hoc (8)&quot;]
+        SA[&quot;smooth_alpha&quot;]
+        FL[&quot;floor_nonzero&quot;]
+        GFB[&quot;growth_front_boost&quot;]
+        OOA[&quot;obs_overlay_alpha&quot;]
+        DSA[&quot;dist_sharpen_alpha&quot;]
+        BS[&quot;barrier_strength&quot;]
+        CSB[&quot;cluster_sett_boost&quot;]
+        CO[&quot;cluster_optimal&quot;]
+    end
+
+    subgraph DIST_GROUP[&quot;Distance (3)&quot;]
+        DAM[&quot;dist_aware_mult&quot;]
+        DED[&quot;dist_exp_damp&quot;]
+        RPS[&quot;regime_prior_scale&quot;]
+    end
+
+    FK_GROUP --&gt; PREDICTION[&quot;Prediction&lt;br/&gt;(40, 40, 6)&quot;]
+    MULT_GROUP --&gt; PREDICTION
+    CAL_GROUP --&gt; PREDICTION
+    TEMP_GROUP --&gt; PREDICTION
+    SPATIAL_GROUP --&gt; PREDICTION
+    DIST_GROUP --&gt; PREDICTION
+</div>
+<p>Defined in <code>autoloop.py:PARAM_SPACE</code> dict. Each parameter has a type, bounds, and step size for perturbation.</p>
+<h3>FK Blending (4 params)</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Range</th>
+<th>Step</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>fk_prior_weight</code></td>
+<td>float</td>
+<td>0.5-12.0</td>
+<td>0.25</td>
+<td>1.5</td>
+<td>Weight of calibration prior in FK blend</td>
+</tr>
+<tr>
+<td><code>fk_max_strength</code></td>
+<td>float</td>
+<td>2.0-25.0</td>
+<td>0.5</td>
+<td>20.0</td>
+<td>Maximum empirical FK strength cap</td>
+</tr>
+<tr>
+<td><code>fk_min_count</code></td>
+<td>int</td>
+<td>2-25</td>
+<td>1</td>
+<td>5</td>
+<td>Minimum obs count before FK is used</td>
+</tr>
+<tr>
+<td><code>fk_strength_fn</code></td>
+<td>cat</td>
+<td>sqrt/log/linear</td>
+<td>--</td>
+<td>sqrt</td>
+<td>Strength scaling function for FK count</td>
+</tr>
+</tbody></table>
+<p><strong>Blending formula:</strong></p>
+<pre><code class="language-python">strength = min(fk_max_strength, fn(count))  # fn = sqrt, log1p*2, or count*0.1
+blended = pred * fk_prior_weight + empirical * strength
+blended /= blended.sum()  # renormalize
+</code></pre>
+<h3>Multiplier System (14 params)</h3>
+<p>Controls how observed-vs-expected class ratios adjust predictions.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Range</th>
+<th>Step</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>mult_power</code></td>
+<td>float</td>
+<td>0.1-1.0</td>
+<td>0.02</td>
+<td>0.3</td>
+<td>Base dampening power for ratio</td>
+</tr>
+<tr>
+<td><code>mult_power_sett</code></td>
+<td>float</td>
+<td>0.1-1.5</td>
+<td>0.02</td>
+<td>0.3</td>
+<td>Settlement-specific power override</td>
+</tr>
+<tr>
+<td><code>mult_power_port</code></td>
+<td>float</td>
+<td>0.1-1.5</td>
+<td>0.02</td>
+<td>0.3</td>
+<td>Port-specific power override</td>
+</tr>
+<tr>
+<td><code>mult_smooth</code></td>
+<td>float</td>
+<td>1.0-20.0</td>
+<td>0.5</td>
+<td>5.0</td>
+<td>Laplace smoothing constant</td>
+</tr>
+<tr>
+<td><code>mult_sett_lo/hi</code></td>
+<td>float</td>
+<td>0.02-5.0</td>
+<td>varies</td>
+<td>0.15/2.0</td>
+<td>Settlement multiplier clamp bounds</td>
+</tr>
+<tr>
+<td><code>mult_port_lo/hi</code></td>
+<td>float</td>
+<td>0.02-5.0</td>
+<td>varies</td>
+<td>0.15/2.0</td>
+<td>Port multiplier clamp bounds</td>
+</tr>
+<tr>
+<td><code>mult_forest_lo/hi</code></td>
+<td>float</td>
+<td>0.2-2.5</td>
+<td>varies</td>
+<td>0.5/1.8</td>
+<td>Forest multiplier clamp bounds</td>
+</tr>
+<tr>
+<td><code>mult_empty_lo/hi</code></td>
+<td>float</td>
+<td>0.5-1.5</td>
+<td>0.02</td>
+<td>0.75/1.25</td>
+<td>Empty multiplier clamp bounds</td>
+</tr>
+</tbody></table>
+<p><strong>Multiplier formula:</strong></p>
+<pre><code class="language-python">ratio = (observed + smooth) / (expected + smooth)
+mult = ratio^power                    # dampened ratio
+mult[class] = clip(mult, lo, hi)      # per-class clamping
+pred *= mult                          # apply
+</code></pre>
+<h3>Distance-Aware Multiplier (2 params)</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Range</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>dist_aware_mult</code></td>
+<td>bool</td>
+<td>T/F</td>
+<td>True</td>
+<td>Enable distance-aware dampening</td>
+</tr>
+<tr>
+<td><code>dist_exp_damp</code></td>
+<td>float</td>
+<td>0.1-0.9</td>
+<td>0.4</td>
+<td>How much to dampen multiplier at distance&gt;0</td>
+</tr>
+</tbody></table>
+<pre><code class="language-python"># Settlement cells (dist=0): full multiplier
+# Expansion cells (dist&gt;=1): dampened multiplier
+mult_expansion[c] = 1.0 + (mult[c] - 1.0) * dist_exp_damp
+</code></pre>
+<h3>Calibration Weights (10 params)</h3>
+<p>Controls the hierarchical calibration model&#39;s weighting at each level.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Range</th>
+<th>Step</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>cal_fine_base</code></td>
+<td>float</td>
+<td>0.3-3.0</td>
+<td>0.1</td>
+<td>1.0</td>
+<td>Base weight for fine-level FK</td>
+</tr>
+<tr>
+<td><code>cal_fine_divisor</code></td>
+<td>float</td>
+<td>30-500</td>
+<td>10</td>
+<td>120.0</td>
+<td>Count divisor for fine weight scaling</td>
+</tr>
+<tr>
+<td><code>cal_fine_max</code></td>
+<td>float</td>
+<td>1.0-10.0</td>
+<td>0.25</td>
+<td>4.0</td>
+<td>Maximum fine weight cap</td>
+</tr>
+<tr>
+<td><code>cal_coarse_base</code></td>
+<td>float</td>
+<td>0.2-2.0</td>
+<td>0.1</td>
+<td>0.75</td>
+<td>Base weight for coarse-level FK</td>
+</tr>
+<tr>
+<td><code>cal_coarse_divisor</code></td>
+<td>float</td>
+<td>50-500</td>
+<td>10</td>
+<td>200.0</td>
+<td>Count divisor for coarse weight scaling</td>
+</tr>
+<tr>
+<td><code>cal_coarse_max</code></td>
+<td>float</td>
+<td>1.0-8.0</td>
+<td>0.25</td>
+<td>3.0</td>
+<td>Maximum coarse weight cap</td>
+</tr>
+<tr>
+<td><code>cal_base_base</code></td>
+<td>float</td>
+<td>0.1-2.0</td>
+<td>0.05</td>
+<td>0.5</td>
+<td>Base weight for terrain-only level</td>
+</tr>
+<tr>
+<td><code>cal_base_divisor</code></td>
+<td>float</td>
+<td>200-3000</td>
+<td>50</td>
+<td>1000.0</td>
+<td>Count divisor for base weight scaling</td>
+</tr>
+<tr>
+<td><code>cal_base_max</code></td>
+<td>float</td>
+<td>0.5-5.0</td>
+<td>0.1</td>
+<td>1.5</td>
+<td>Maximum base weight cap</td>
+</tr>
+<tr>
+<td><code>cal_global_weight</code></td>
+<td>float</td>
+<td>0.05-2.0</td>
+<td>0.05</td>
+<td>0.4</td>
+<td>Fixed weight for global fallback</td>
+</tr>
+</tbody></table>
+<p><strong>Weight formula for each level:</strong></p>
+<pre><code class="language-python">weight = min(max_weight, base_weight + observation_count / divisor)
+</code></pre>
+<h3>Temperature Scaling (4 params)</h3>
+<p>Entropy-aware temperature applied to sharpen or soften predictions.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Range</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>temp_low</code></td>
+<td>float</td>
+<td>0.5-1.0</td>
+<td>1.0</td>
+<td>Temperature for low-entropy (certain) cells</td>
+</tr>
+<tr>
+<td><code>temp_high</code></td>
+<td>float</td>
+<td>1.0-1.5</td>
+<td>1.15</td>
+<td>Temperature for high-entropy (uncertain) cells</td>
+</tr>
+<tr>
+<td><code>temp_ent_lo</code></td>
+<td>float</td>
+<td>0.1-0.5</td>
+<td>0.2</td>
+<td>Entropy threshold for &quot;low&quot; classification</td>
+</tr>
+<tr>
+<td><code>temp_ent_hi</code></td>
+<td>float</td>
+<td>0.6-1.5</td>
+<td>1.0</td>
+<td>Entropy threshold for &quot;high&quot; classification</td>
+</tr>
+</tbody></table>
+<pre><code class="language-python">T = T_low + clip((cell_entropy - ent_lo) / (ent_hi - ent_lo)) * (T_high - T_low)
+pred = pred^(1/T)  # T&lt;1 sharpens, T&gt;1 softens
+</code></pre>
+<h3>Post-Hoc Corrections (8 params)</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Range</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>smooth_alpha</code></td>
+<td>float</td>
+<td>0.0-0.5</td>
+<td>0.15</td>
+<td>Spatial smoothing blend (settlement/ruin only)</td>
+</tr>
+<tr>
+<td><code>floor_nonzero</code></td>
+<td>float</td>
+<td>0.001-0.015</td>
+<td>0.008</td>
+<td>Probability floor for nonzero classes</td>
+</tr>
+<tr>
+<td><code>growth_front_boost</code></td>
+<td>float</td>
+<td>0.0-1.0</td>
+<td>0.0</td>
+<td>Boost factor for young settlement expansion</td>
+</tr>
+<tr>
+<td><code>obs_overlay_alpha</code></td>
+<td>float</td>
+<td>0.0-100.0</td>
+<td>0.0</td>
+<td>Dirichlet pseudo-count for obs overlay</td>
+</tr>
+<tr>
+<td><code>dist_sharpen_alpha</code></td>
+<td>float</td>
+<td>0.0-1.0</td>
+<td>0.0</td>
+<td>Per-distance rate correction strength</td>
+</tr>
+<tr>
+<td><code>barrier_strength</code></td>
+<td>float</td>
+<td>0.0-1.0</td>
+<td>0.0</td>
+<td>Terrain barrier penalty strength</td>
+</tr>
+<tr>
+<td><code>cluster_sett_boost</code></td>
+<td>float</td>
+<td>0.0-1.0</td>
+<td>0.0</td>
+<td>Cluster density cooperative boost</td>
+</tr>
+<tr>
+<td><code>cluster_optimal</code></td>
+<td>float</td>
+<td>0.5-5.0</td>
+<td>2.0</td>
+<td>Optimal cluster density (inverted-U peak)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>FastHarness Pre-computation</h2>
+<p><code>FastHarness.__init__()</code> runs once on startup (~5-10s) and caches everything that doesn&#39;t change with parameters:</p>
+<h3>Per-Round (15 rounds):</h3>
+<ol>
+<li>Load <code>round_detail.json</code> and observations from <code>data/rounds/{uuid}/</code></li>
+<li>Build <code>GlobalMultipliers</code> and <code>FeatureKeyBuckets</code> from observations</li>
+<li>Estimate vigor (settlement % on dynamic cells) for regime-conditional calibration</li>
+<li>Build <code>CalibrationModel</code> from all rounds EXCEPT the test round (LOO)</li>
+<li>If regime-conditional: weight each training round by Gaussian similarity to test vigor</li>
+</ol>
+<h3>Per-Seed (5 per round, 75 total):</h3>
+<ol>
+<li>Load <code>analysis_seed_{i}.json</code> (ground truth)</li>
+<li>Pre-compute <code>feature_keys</code> (6-tuple per cell)</li>
+<li>Pre-compute <code>idx_grid</code> (integer index mapping FK -&gt; unique key index)</li>
+<li>Pre-compute <code>coastal</code> mask, <code>static_mask</code>, <code>dynamic_mask</code></li>
+<li>Pre-compute <code>cluster_density</code> (settlements within Manhattan r=5)</li>
+<li>Pre-compute <code>openness</code> (diffusion-based terrain accessibility)</li>
+<li>Pre-compute <code>growth_front</code> map from observation settlement populations</li>
+<li>Pre-compute <code>obs_overlay</code> (Dirichlet observation counts per cell)</li>
+<li>Pre-compute <code>sett_survival</code> (alive/dead counts per initial settlement)</li>
+<li>Pre-compute <code>dist_map</code> (Manhattan distance to nearest initial settlement)</li>
+</ol>
+<h3>Per-Round Shared:</h3>
+<ul>
+<li><code>dist_obs_rates</code>: pooled per-distance observation rates across all seeds</li>
+<li><code>est_vigor</code>: estimated vigor for regime-conditional calibration</li>
+<li><code>CalibrationModel</code>: regime-weighted or uniform-weighted from LOO training rounds</li>
+</ul>
+<hr>
+<h2>Evaluation Pipeline (<code>FastHarness.evaluate()</code>)</h2>
+<p>Called for every candidate parameter set. Returns dict with per-round and aggregate scores.</p>
+<div class="mermaid">flowchart TB
+    PARAMS[&quot;Candidate Params&quot;] --&gt; LOOP
+
+    subgraph LOOP[&quot;For each of 15 rounds (LOO)&quot;]
+        CAL_BUILD[&quot;Build cal lookup&lt;br/&gt;(N_unique, 6)&quot;] --&gt; FK_BUILD[&quot;Build FK empirical&lt;br/&gt;(N_unique, 6)&quot;]
+        FK_BUILD --&gt; PREDICT_VEC[&quot;Vectorized Prediction&lt;br/&gt;(40, 40, 6)&quot;]
+
+        subgraph PREDICT_VEC[&quot;16-Step Vectorized Prediction&quot;]
+            direction TB
+            P1[&quot;Cal prior indexing&quot;] --&gt; P2[&quot;FK blending&quot;]
+            P2 --&gt; P3[&quot;Multiplier (distance-aware)&quot;]
+            P3 --&gt; P4[&quot;Distance-ring sharpening&quot;]
+            P4 --&gt; P5[&quot;Cluster density correction&quot;]
+            P5 --&gt; P6[&quot;Growth front boost&quot;]
+            P6 --&gt; P7[&quot;Observation overlay&quot;]
+            P7 --&gt; P8[&quot;Settlement survival&quot;]
+            P8 --&gt; P9[&quot;Terrain barrier&quot;]
+            P9 --&gt; P10[&quot;Spatial smoothing&quot;]
+            P10 --&gt; P11[&quot;Temperature scaling&quot;]
+            P11 --&gt; P12[&quot;Structural zeros + redist&quot;]
+            P12 --&gt; P13[&quot;Floor + normalize&quot;]
+            P13 --&gt; P14[&quot;Lock static&quot;]
+        end
+
+        P14 --&gt; SCORE_CALC
+
+        subgraph SCORE_CALC[&quot;Score vs Ground Truth&quot;]
+            GT[&quot;Ground Truth&lt;br/&gt;(40,40,6)&quot;] --&gt; ENTROPY[&quot;entropy = -sum(gt * log(gt))&quot;]
+            ENTROPY --&gt; DYNAMIC[&quot;dynamic = entropy &gt; 0.01&quot;]
+            P14 --&gt; KL[&quot;KL = sum(gt * log(gt/pred))&quot;]
+            GT --&gt; KL
+            DYNAMIC --&gt; WKL[&quot;weighted_kl =&lt;br/&gt;sum(entropy * KL) / sum(entropy)&quot;]
+            KL --&gt; WKL
+            WKL --&gt; FINAL_SCORE[&quot;score = 100 * exp(-3 * wkl)&quot;]
+        end
+    end
+
+    FINAL_SCORE --&gt; AGG[&quot;Aggregate:&lt;br/&gt;avg, boom_avg, nonboom_avg&quot;]
+</div>
+<h3>Steps per seed (inlined, no function calls):</h3>
+<pre><code>1. Build calibration lookup table: (N_unique_keys, 6)
+2. Build FK empirical lookup: (N_unique_keys, 6) + (N_unique_keys,) counts
+3. Index into lookup tables via idx_grid -&gt; (40, 40, 6) prediction
+4. FK bucket blending (vectorized)
+5. Global multiplier (distance-aware or uniform)
+6. Distance-ring sharpening (per-distance rate correction)
+7. Cluster density multiplier (inverted-U spatial correction)
+8. Growth front boost (young settlement expansion)
+9. Observation overlay (Dirichlet-Multinomial conjugate update)
+10. Settlement survival constraints (per-initial-settlement)
+11. Terrain barrier correction (diffusion-based openness)
+12. Selective spatial smoothing (3x3 uniform filter on sett/ruin)
+13. Entropy-weighted temperature scaling
+14. Structural zeros + proportional redistribution
+15. Floor + renormalize
+16. Lock static cells (ocean/mountain)
+17. Compute score vs ground truth
+</code></pre>
+<h3>Score Computation</h3>
+<pre><code class="language-python">def compute_score(gt, pred):
+    entropy = -sum(gt * log(gt))           # per-cell entropy
+    dynamic = entropy &gt; 0.01               # static cells excluded
+    kl = sum(gt * log(gt / pred))          # per-cell KL divergence
+    weighted_kl = sum(entropy[dynamic] * kl[dynamic]) / sum(entropy[dynamic])
+    return 100 * exp(-3 * weighted_kl)     # 0-100 scale
+</code></pre>
+<h3>Aggregate Scoring</h3>
+<pre><code class="language-python">results[&quot;avg&quot;] = mean(all_round_scores)
+results[&quot;boom_avg&quot;] = mean(scores for boom rounds)      # round6,7,11,14,17
+results[&quot;nonboom_avg&quot;] = mean(scores for non-boom rounds)
+</code></pre>
+<hr>
+<h2>Optimization Loop (<code>main()</code>)</h2>
+<pre><code class="language-python">harness = FastHarness(seeds_per_round=5, regime_conditional=True)
+log = ExperimentLog(LOG_PATH)
+best_score = log.best_score
+best_params = log.best_params
+reject_streak = 0
+
+while True:
+    # 1. Propose candidate
+    n_changes = 1-3 (widened to 2-4 after 500 rejections)
+    name, candidate = perturb_params(best_params, n_changes)
+
+    # 2. Evaluate (LOO backtest)
+    results = harness.evaluate(candidate)
+    avg = results[&quot;avg&quot;]
+
+    # 3. Accept/reject
+    if avg &gt; best_score:
+        # ACCEPT: strict improvement
+        best_score = avg
+        best_params = candidate
+        reject_streak = 0
+        save_best_params_json(candidate, avg)
+    elif random() &lt; 0.2 and avg &gt; best_score - 0.05:
+        # METROPOLIS ACCEPT: near-miss exploration (20% chance)
+        best_params = candidate  # but don&#39;t update best_score
+        reject_streak = 0
+    else:
+        # REJECT
+        reject_streak += 1
+
+    # 4. Log to JSONL
+    log.append({id, name, params, scores, accepted, timestamp})
+
+    # 5. Adaptive perturbation width
+    if reject_streak &gt; 500:
+        n_changes = random.choices([2,3,4], weights=[0.4,0.4,0.2])
+        # Wider exploration to escape local optimum
+</code></pre>
+<hr>
+<h2>Perturbation Strategy (<code>perturb_params()</code>)</h2>
+<pre><code class="language-python">def perturb_params(base, n_changes=None):
+    if n_changes is None:
+        n_changes = random.choices([1, 2, 3], weights=[0.5, 0.35, 0.15])
+
+    keys = random.sample(PARAM_SPACE.keys(), n_changes)
+
+    for key in keys:
+        spec = PARAM_SPACE[key]
+        if spec.type == &quot;float&quot;:
+            delta = gauss(0, spec.step * 2)       # Normal perturbation
+            new = clip(old + delta, spec.lo, spec.hi)
+        elif spec.type == &quot;int&quot;:
+            delta = randint(-2, 2)
+            new = clip(old + delta, spec.lo, spec.hi)
+        elif spec.type == &quot;cat&quot;:
+            if random() &lt; 0.3:                     # 30% chance to flip
+                new = random.choice(spec.choices)
+</code></pre>
+<hr>
+<h2>Experiment Log Format</h2>
+<p>JSONL file at <code>data/autoloop_fast_log.jsonl</code>, one entry per experiment:</p>
+<pre><code class="language-json">{
+    &quot;id&quot;: 770671,
+    &quot;name&quot;: &quot;fk_prior_weight=5.8555, T_high=1.0011&quot;,
+    &quot;params&quot;: {&quot;fk_prior_weight&quot;: 5.8555, ...},
+    &quot;scores_full&quot;: {
+        &quot;avg&quot;: 89.389,
+        &quot;boom_avg&quot;: 87.714,
+        &quot;nonboom_avg&quot;: 90.226,
+        &quot;round2&quot;: 90.1, &quot;round3&quot;: 89.7, ...
+    },
+    &quot;accepted&quot;: true,
+    &quot;timestamp&quot;: &quot;2026-03-21T22:49:00Z&quot;
+}
+</code></pre>
+<hr>
+<h2><code>best_params.json</code> Contract</h2>
+<p>Written atomically on every improvement. Read by <code>predict_gemini.py</code> at prediction time.</p>
+<pre><code class="language-json">{
+    &quot;source&quot;: &quot;autoloop_fast&quot;,
+    &quot;score_avg&quot;: 89.389,
+    &quot;score_boom&quot;: 87.714,
+    &quot;score_nonboom&quot;: 90.226,
+    &quot;experiment_id&quot;: 770671,
+    &quot;timestamp&quot;: &quot;2026-03-21T22:49:00Z&quot;,
+    &quot;fk_prior_weight&quot;: 5.8555,
+    &quot;fk_max_strength&quot;: 17.5003,
+    &quot;T_high&quot;: 1.0011,
+    &quot;smooth_alpha&quot;: 0.4808,
+    ...
+}
+</code></pre>
+<hr>
+<h2>Regime-Conditional Calibration</h2>
+<p>When <code>regime_conditional=True</code>, the <code>CalibrationModel</code> weights training rounds by vigor similarity to the test round:</p>
+<pre><code class="language-python">for train_round in train_rounds:
+    vigor_similarity = exp(-(train_vigor - test_vigor)^2 / (2 * sigma^2))
+    vigor_similarity = max(vigor_similarity, 0.05)  # floor to prevent exclusion
+    cal.add_round(train_round_dir, weight=vigor_similarity)
+</code></pre>
+<p><strong>sigma</strong> = 0.06 (default). This means:</p>
+<ul>
+<li>A boom training round (vigor=0.20) gets full weight when testing a boom round</li>
+<li>A collapse training round (vigor=0.01) gets near-zero weight when testing a boom</li>
+<li>Every round gets at least 5% weight (floor)</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-calibration-model"></a></p>
+<h1>Calibration Model -- Technical Reference</h1>
+<p>Hierarchical feature-key-based prior model trained on 17 rounds of historical ground truth. The backbone of the prediction system.</p>
+<hr>
+<h2>Data Flow</h2>
+<div class="mermaid">flowchart TB
+    subgraph Training[&quot;Training (offline)&quot;]
+        GT1[Round 1 GT] --&gt; CAL
+        GT2[Round 2 GT] --&gt; CAL
+        GT17[&quot;... Round 17 GT&quot;] --&gt; CAL
+        CAL[CalibrationModel.add_round]
+        CAL --&gt; FINE[&quot;Fine sums&lt;br/&gt;~120 unique FKs&quot;]
+        CAL --&gt; COARSE[&quot;Coarse sums&lt;br/&gt;~40 unique FKs&quot;]
+        CAL --&gt; BASE[&quot;Base sums&lt;br/&gt;~6 terrain types&quot;]
+        CAL --&gt; GLOBAL[&quot;Global sum&lt;br/&gt;overall distribution&quot;]
+    end
+
+    subgraph Inference[&quot;Inference (per cell)&quot;]
+        FK[&quot;Feature Key&lt;br/&gt;(terrain, dist, coastal,&lt;br/&gt;forest, port, cluster)&quot;] --&gt; LOOKUP
+
+        FINE --&gt; LOOKUP[&quot;Weighted Blend&quot;]
+        COARSE --&gt; LOOKUP
+        BASE --&gt; LOOKUP
+        GLOBAL --&gt; LOOKUP
+
+        LOOKUP --&gt; PRIOR[&quot;Calibrated Prior&lt;br/&gt;(6-class distribution)&quot;]
+    end
+
+    subgraph RegimeCond[&quot;Regime-Conditional (optional)&quot;]
+        VIGOR[&quot;Estimated Vigor&lt;br/&gt;(settlement %)&quot;] --&gt; GAUSS
+        GT_VIGORS[&quot;Historical Round&lt;br/&gt;Vigors&quot;] --&gt; GAUSS
+        GAUSS[&quot;Gaussian Similarity&lt;br/&gt;w = exp(-(v1-v2)^2 / 2σ^2)&quot;] --&gt; WEIGHTS[&quot;Per-round weights&lt;br/&gt;(min 5%)&quot;]
+        WEIGHTS --&gt; CAL
+    end
+</div>
+<hr>
+<h2>Hierarchy</h2>
+<pre><code>                ┌─────────────────────────────────────────┐
+                │ Global:  overall class distribution      │
+                │ Weight: cal_global_weight (fixed 0.4)    │
+                └─────────────────────────────────────────┘
+                              ▲
+                ┌─────────────────────────────────────────┐
+                │ Base:    (terrain_code,)                  │
+                │ Weight: cal_base_base + count/divisor     │
+                │ Keys: ~6 unique terrain types             │
+                └─────────────────────────────────────────┘
+                              ▲
+                ┌─────────────────────────────────────────┐
+                │ Coarse:  (terrain, dist, coastal, port)  │
+                │ Weight: cal_coarse_base + count/divisor   │
+                │ Keys: ~40 unique combinations             │
+                └─────────────────────────────────────────┘
+                              ▲
+                ┌─────────────────────────────────────────┐
+                │ Fine:    (terrain, dist, coastal,         │
+                │           forest_neighbors, port, cluster)│
+                │ Weight: cal_fine_base + count/divisor      │
+                │ Keys: ~120 unique combinations            │
+                └─────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2>Feature Key Definition</h2>
+<pre><code class="language-python">FeatureKey = (
+    terrain_code: int,      # Raw terrain code (0, 1, 2, 3, 4, 5, 10, 11)
+    dist_bucket: int,       # Manhattan distance to nearest settlement, bucketed
+    coastal: bool,          # Adjacent to ocean cell (4-connected)
+    forest_neighbors: int,  # Count of forest neighbors (0-3, capped)
+    has_port_flag: int,     # -1=not settlement, 0=settlement no port, 1=port
+    cluster_bucket: int,    # 0=isolated, 1=sparse(1-2), 2=dense(3+)
+)
+</code></pre>
+<h3>Distance Bucketing</h3>
+<table>
+<thead>
+<tr>
+<th>Distance</th>
+<th>Bucket</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0</td>
+<td>0</td>
+<td>On a settlement</td>
+</tr>
+<tr>
+<td>1</td>
+<td>1</td>
+<td>Immediate neighbor</td>
+</tr>
+<tr>
+<td>2</td>
+<td>2</td>
+<td>Close expansion zone</td>
+</tr>
+<tr>
+<td>3</td>
+<td>3</td>
+<td>Moderate expansion</td>
+</tr>
+<tr>
+<td>4-5</td>
+<td>4</td>
+<td>Nearby expansion zone</td>
+</tr>
+<tr>
+<td>6-8</td>
+<td>5</td>
+<td>Moderate distance</td>
+</tr>
+<tr>
+<td>9+</td>
+<td>6</td>
+<td>Far from settlements</td>
+</tr>
+</tbody></table>
+<p>The d=4-5 vs d=6-8 split was added because cells at d=4-5 behave very differently from d=8+ but were previously lumped together, causing the biggest prediction errors.</p>
+<hr>
+<h2>CalibrationModel Class</h2>
+<h3>Data Structures</h3>
+<pre><code class="language-python">class CalibrationModel:
+    fine_sums: dict[FeatureKey, ndarray(6)]     # Accumulated GT probability sums
+    fine_counts: dict[FeatureKey, float]         # Observation count per FK
+    coarse_sums: dict[tuple(4), ndarray(6)]     # Coarse level (drop forest, cluster)
+    coarse_counts: dict[tuple(4), float]
+    base_sums: dict[int, ndarray(6)]            # Terrain-only level
+    base_counts: dict[int, float]
+    global_sum: ndarray(6)                      # Overall class sum
+    global_count: float
+    global_probs: ndarray(6)                    # Normalized global prior
+</code></pre>
+<h3>Training (<code>add_round()</code>)</h3>
+<p>For each round directory containing <code>round_detail.json</code> and <code>analysis_seed_*.json</code>:</p>
+<pre><code class="language-python">for seed in range(seeds_count):
+    terrain = analysis[&quot;initial_grid&quot;]      # (40, 40) int
+    ground_truth = analysis[&quot;ground_truth&quot;]  # (40, 40, 6) float
+    settlements = detail[&quot;initial_states&quot;][seed][&quot;settlements&quot;]
+    feature_keys = build_feature_keys(terrain, settlements)
+
+    for y, x in all_cells:
+        fk = feature_keys[y][x]
+        gt = ground_truth[y, x] * weight  # weight for regime-conditional
+
+        fine_sums[fk] += gt
+        fine_counts[fk] += weight
+        coarse_sums[(fk[0], fk[1], fk[2], fk[4])] += gt
+        coarse_counts[coarse_key] += weight
+        base_sums[fk[0]] += gt
+        base_counts[fk[0]] += weight
+        global_sum += gt
+        global_count += weight
+</code></pre>
+<p><strong>Data volume:</strong> 17 rounds x 5 seeds x 40x40 = 136,000 cells total.</p>
+<h3>Inference (<code>prior_for()</code>)</h3>
+<pre><code class="language-python">def prior_for(fk):
+    vector = zeros(6)
+    total_weight = 0
+
+    if fine_count[fk] &gt; 0:
+        fine_w = min(4.0, 1.0 + fine_count / 120.0)
+        vector += fine_w * normalize(fine_sums[fk])
+        total_weight += fine_w
+
+    if coarse_count[coarse_key] &gt; 0:
+        coarse_w = min(3.0, 0.75 + coarse_count / 200.0)
+        vector += coarse_w * normalize(coarse_sums[coarse_key])
+        total_weight += coarse_w
+
+    if base_count[terrain] &gt; 0:
+        base_w = min(1.5, 0.5 + base_count / 1000.0)
+        vector += base_w * normalize(base_sums[terrain])
+        total_weight += base_w
+
+    vector += 0.4 * global_probs  # regularizer
+    total_weight += 0.4
+
+    return floor_and_renormalize(vector / total_weight)
+</code></pre>
+<p><strong>Note:</strong> The autoloop overrides these hardcoded weights with tunable params (<code>cal_fine_base</code>, <code>cal_fine_divisor</code>, etc.)</p>
+<hr>
+<h2>Regime-Conditional Calibration</h2>
+<p>When estimated vigor is available, training rounds are weighted by similarity:</p>
+<pre><code class="language-python">@staticmethod
+def compute_round_vigor(round_dir):
+    # Mean settlement probability on dynamic cells across all seeds
+    for seed in range(seeds_count):
+        dynamic = (terrain != ocean) &amp; (terrain != mountain)
+        sett_probs.append(gt[dynamic, settlement_class].mean())
+    return mean(sett_probs)
+
+# During CalibrationModel construction:
+for train_round in train_rounds:
+    similarity = exp(-(train_vigor - test_vigor)^2 / (2 * sigma^2))
+    similarity = max(similarity, 0.05)  # minimum floor
+    cal.add_round(train_round, weight=similarity)
+</code></pre>
+<p><strong>sigma=0.06</strong> means rounds with similar settlement densities contribute most. A collapse training round (vigor=0.01) gets ~5% weight when predicting a boom round (vigor=0.20).</p>
+<hr>
+<h2>Observation-Based Enrichment</h2>
+<div class="mermaid">flowchart LR
+    subgraph Sources[&quot;Three Evidence Sources&quot;]
+        FK_EMP[&quot;FK Empirical&lt;br/&gt;~94 obs/bucket&lt;br/&gt;sqrt(count) strength&quot;]
+        GMULT[&quot;Global Multipliers&lt;br/&gt;observed/expected ratio&lt;br/&gt;dampened power&quot;]
+        OBS_DIR[&quot;Direct Observations&lt;br/&gt;Dirichlet conjugate&lt;br/&gt;per-cell update&quot;]
+    end
+
+    CAL_PRIOR[&quot;Calibration&lt;br/&gt;Prior&quot;] --&gt; BLEND[&quot;Blended&lt;br/&gt;Prediction&quot;]
+    FK_EMP --&gt; BLEND
+    GMULT --&gt; BLEND
+    OBS_DIR --&gt; BLEND
+
+    BLEND --&gt; FINAL[&quot;Final Prior&lt;br/&gt;(40, 40, 6)&quot;]
+</div>
+<p>The calibration prior is enriched with live observation data through three mechanisms:</p>
+<h3>1. FeatureKeyBuckets (FK empirical)</h3>
+<p>Pool observations by feature key across all seeds.</p>
+<ul>
+<li>~11,250 total observations (50 queries x 15x15 viewport x 5 seeds)</li>
+<li>~120 unique FKs -&gt; ~94 observations per bucket</li>
+<li>Empirical distribution with sqrt-count strength scaling</li>
+</ul>
+<h3>2. GlobalMultipliers</h3>
+<p>Track class ratio: observed/expected.</p>
+<ul>
+<li>Detects regime shift: collapse (ratio &lt;&lt; 1), boom (ratio &gt;&gt; 1)</li>
+<li>Applied as dampened multiplicative correction</li>
+</ul>
+<h3>3. Direct Observation Overlay</h3>
+<p>Dirichlet-Multinomial conjugate update on directly observed cells.</p>
+<ul>
+<li>Per-cell, no spatial spreading</li>
+<li>Weight controlled by <code>obs_pseudo</code> parameter</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-daemon-system"></a></p>
+<h1>Daemon System -- Technical Reference</h1>
+<p>Autonomous round detection, exploration, prediction, and iterative submission. Runs unattended 24/7.</p>
+<hr>
+<h2>Architecture</h2>
+<div class="mermaid">stateDiagram-v2
+    [*] --&gt; Polling: daemon starts
+
+    Polling --&gt; RoundDetected: active round found
+    Polling --&gt; CalDownload: completed round found
+    Polling --&gt; Polling: no changes (60s sleep)
+
+    RoundDetected --&gt; Exploring: run_adaptive_exploration()
+    Exploring --&gt; SimFitting: fit_to_observations()
+    SimFitting --&gt; Predicting: gemini_predict() x 5 seeds
+    Predicting --&gt; Submitting: client.submit() x 5 seeds
+    Submitting --&gt; Resubmit: round still active?
+
+    Resubmit --&gt; SimFitting: yes (GPU resubmit loop)
+    Resubmit --&gt; Polling: no (round ended)
+
+    CalDownload --&gt; SaveGT: download analysis_seed_*.json
+    SaveGT --&gt; Polling: calibration data saved
+</div>
+<div class="mermaid">flowchart LR
+    subgraph Concurrent[&quot;Concurrent Processes&quot;]
+        D[&quot;daemon.py&lt;br/&gt;Round Monitor&quot;]
+        AL[&quot;autoloop_fast.py&lt;br/&gt;Parameter Optimizer&quot;]
+        RES[&quot;multi_researcher.py&lt;br/&gt;Algorithm Discovery&quot;]
+        WEB[&quot;Web Dashboard&lt;br/&gt;SvelteKit&quot;]
+    end
+
+    D --&gt;|&quot;reads&quot;| BP[best_params.json]
+    AL --&gt;|&quot;writes&quot;| BP
+    D --&gt;|&quot;writes&quot;| CAL[(calibration/)]
+    AL --&gt;|&quot;reads&quot;| CAL
+    D --&gt;|&quot;logs&quot;| DL[daemon.log]
+    AL --&gt;|&quot;logs&quot;| ALL[autoloop_fast_log.jsonl]
+    RES --&gt;|&quot;writes&quot;| IDEAS[multi_ideas/]
+    WEB --&gt;|&quot;reads&quot;| DL
+    WEB --&gt;|&quot;reads&quot;| ALL
+</div>
+<hr>
+<h2>Round Monitor</h2>
+<pre><code class="language-python">while True:
+    rounds = client.get_rounds()
+    for round in rounds:
+        if round.status == &quot;active&quot; and round.id not in submitted:
+            run_submission(client, round.id, detail)
+            submitted.add(round.id)
+        elif round.status == &quot;completed&quot; and round.number not in calibrated:
+            download_round_analysis(client, round.id, round.number)
+            calibrated.add(round.number)
+    sleep(check_interval)  # default 60s
+</code></pre>
+<hr>
+<h2>Submission Pipeline (<code>run_submission()</code>)</h2>
+<div class="mermaid">sequenceDiagram
+    participant D as Daemon
+    participant CAL as CalibrationModel
+    participant E as Explore
+    participant API as Competition API
+    participant SIM as GPU Simulator
+    participant P as PredictGemini
+    participant U as Utils
+
+    D-&gt;&gt;CAL: from_all_rounds() (17 rounds)
+    D-&gt;&gt;E: run_adaptive_exploration()
+    E-&gt;&gt;API: POST /simulate x 50 queries
+    API--&gt;&gt;E: 15x15 viewport observations
+    E-&gt;&gt;E: Build FK Buckets + Multipliers
+    E--&gt;&gt;D: observations, fk_buckets, global_mult
+
+    D-&gt;&gt;D: compute_expansion_radius()
+    D-&gt;&gt;D: estimate_vigor()
+
+    D-&gt;&gt;SIM: detect_regime_from_obs()
+    SIM--&gt;&gt;D: regime (collapse/moderate/boom)
+    D-&gt;&gt;SIM: fit_to_observations(n_sims=5000)
+    SIM--&gt;&gt;D: fitted params
+
+    loop For each seed (0-4)
+        D-&gt;&gt;SIM: run(fitted_params, n_sims=10000)
+        SIM--&gt;&gt;D: sim_prediction (40,40,6)
+        D-&gt;&gt;U: build_growth_front_map()
+        D-&gt;&gt;U: build_obs_overlay()
+        D-&gt;&gt;U: build_sett_survival()
+        D-&gt;&gt;P: gemini_predict(all evidence)
+        P--&gt;&gt;D: prediction (40,40,6)
+        D-&gt;&gt;API: POST /submit(seed, prediction)
+    end
+</div>
+<h3>Step 1: Load Fresh Calibration</h3>
+<pre><code class="language-python">cal = CalibrationModel.from_all_rounds()
+predict._calibration = cal  # monkey-patch global singleton
+</code></pre>
+<h3>Step 2: Adaptive Exploration</h3>
+<pre><code class="language-python">exploration = run_adaptive_exploration(client, round_id, detail)
+# Returns: global_multipliers, fk_buckets, multi_store, variance_regime, observations
+</code></pre>
+<h3>Step 3: Compute Expansion Radius</h3>
+<pre><code class="language-python">exp_radius = compute_expansion_radius(obs_list, detail)
+# Returns: dict {distance: (sett_count, total_count)} per seed
+</code></pre>
+<p>Iterates through observations, computes Manhattan distance from each observed cell to nearest initial settlement, then accumulates settlement counts per distance bucket.</p>
+<h3>Step 4: Estimate Vigor</h3>
+<pre><code class="language-python">est_vigor = sett_observations / total_dynamic_observations
+# Used for regime-conditional calibration
+</code></pre>
+<h3>Step 5: Simulator Inference</h3>
+<pre><code class="language-python"># Detect regime from observations
+regime = detect_regime_from_obs(obs_list, terrain)
+
+# Choose GPU or CPU
+use_gpu = torch.cuda.is_available()
+fit_sims = 5000 if use_gpu else 500    # MC samples per CMA-ES eval
+pred_sims = 10000 if use_gpu else 2000  # MC samples for final prediction
+
+# Fit simulator parameters
+sim_params, _ = fit_to_observations(rd, obs_list, n_sims=fit_sims,
+                                     max_evals=200, use_gpu=use_gpu)
+
+# Generate predictions per seed
+for seed_idx in range(5):
+    sim_predictions[seed_idx] = sim.run(sim_params, n_sims=pred_sims)
+</code></pre>
+<h3>Step 6: Build Per-Seed Evidence</h3>
+<pre><code class="language-python">for seed_idx in range(5):
+    growth_front_maps[seed_idx] = build_growth_front_map(seed_obs, terrain)
+    obs_overlays[seed_idx] = build_obs_overlay(obs_list, terrain, seed_idx)
+    sett_survivals[seed_idx] = build_sett_survival(obs_list, settlements, seed_idx)
+</code></pre>
+<h3>Step 7: Predict and Submit</h3>
+<pre><code class="language-python">for seed_idx in range(5):
+    prediction = gemini_predict(
+        state, global_mult, fk_buckets,
+        sim_pred=sim_predictions.get(seed_idx),
+        sim_alpha=adaptive_alpha,
+        growth_front_map=growth_front_maps.get(seed_idx),
+        obs_overlay=obs_overlays.get(seed_idx),
+        sett_survival=sett_survivals.get(seed_idx),
+        est_vigor=est_vigor,
+        obs_expansion_radius=exp_radius,
+    )
+    errors = validate_prediction(prediction)
+    if errors:
+        prediction = apply_floor(prediction)
+    client.submit(round_id, seed_idx, prediction.tolist())
+</code></pre>
+<hr>
+<h2>GPU Resubmission Loop (<code>gpu_resubmit_round()</code>)</h2>
+<p>Called periodically while round is active. Each iteration uses a different strategy.</p>
+<h3>Strategies by Iteration</h3>
+<table>
+<thead>
+<tr>
+<th>Iteration</th>
+<th>Strategy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0</td>
+<td>Base: CMA-ES with default budget + alpha=0.25</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Tighter sigma (0.2), more evaluations</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Different warm start (KNN neighbors only)</td>
+</tr>
+<tr>
+<td>3+</td>
+<td>Wider sigma (0.8), exploration mode</td>
+</tr>
+</tbody></table>
+<h3>Iterative Improvement Process</h3>
+<pre><code class="language-python">while round_is_active():
+    # 1. Reload observations
+    observations = load_all_obs(round_id)
+
+    # 2. Rebuild multipliers and FK buckets (may have changed)
+    gm = GlobalMultipliers()
+    fk = FeatureKeyBuckets()
+    for obs in observations:
+        accumulate(gm, fk, obs)
+
+    # 3. Re-fit simulator with different strategy per iteration
+    sim_params = fit_varied_strategy(iteration)
+
+    # 4. Predict and submit
+    for seed in range(5):
+        pred = gemini_predict(state, gm, fk,
+                              sim_pred=sim.run(sim_params),
+                              sim_alpha=adaptive_alpha)
+        client.submit(round_id, seed, pred)
+
+    iteration += 1
+    wait(submission_cooldown)
+</code></pre>
+<hr>
+<h2>Calibration Download (<code>download_round_analysis()</code>)</h2>
+<pre><code class="language-python">def download_round_analysis(client, round_id, round_number):
+    cal_dir = data/calibration/round{N}/
+
+    if analysis_seed_0.json exists:
+        return  # Already downloaded
+
+    detail = client.get_round_detail(round_id)
+    save(cal_dir / &quot;round_detail.json&quot;, detail)
+
+    for seed in range(seeds_count):
+        analysis = client.get_analysis(round_id, seed)
+        save(cal_dir / f&quot;analysis_seed_{seed}.json&quot;, analysis)
+        # Contains: ground_truth (40,40,6), initial_grid, score
+</code></pre>
+<hr>
+<h2>Logging</h2>
+<p>All actions logged to <code>data/daemon.log</code> with timestamps:</p>
+<pre><code>[22:15:30] [INFO] Checking for active rounds...
+[22:15:31] [INFO]   Round 18 detected (active)
+[22:15:31] [INFO]   Calibration: 17 rounds, 136000 cells
+[22:15:32] [INFO]   Starting adaptive exploration...
+[22:15:45] [INFO]   Variance regime: MODERATE
+[22:15:45] [INFO]   Multipliers: sett=0.823, port=0.156, forest=1.102
+[22:15:45] [INFO]   Observed expansion radius: {0: (12, 15), 1: (8, 42), ...}
+[22:15:46] [INFO]   Using params: prior_w=5.86, T_high=1.00, score_avg=89.389
+[22:15:46] [INFO]   Estimated vigor: 0.0712
+[22:15:47] [INFO]   Simulator: using GPU
+[22:15:48] [INFO]   Simulator regime=moderate, alpha=0.35
+[22:16:15] [INFO]   Simulator params fitted: base_surv=-0.47, exp_str=0.52
+[22:16:35] [INFO]   Simulator predictions: 5 seeds, 10000 sims each
+[22:16:36] [INFO]   Seed 0: ok (sett=0.0682)
+[22:16:36] [INFO]   Seed 1: ok (sett=0.0715)
+...
+[22:16:38] [INFO]   All 5 seeds submitted for R18
+</code></pre>
+<hr>
+<h2>Error Handling</h2>
+<table>
+<thead>
+<tr>
+<th>Error</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>API 429 (rate limit)</td>
+<td>Exponential backoff with retry</td>
+</tr>
+<tr>
+<td>API timeout</td>
+<td>Log warning, skip submission, retry next cycle</td>
+</tr>
+<tr>
+<td>GPU OOM</td>
+<td>Fall back to CPU simulator</td>
+</tr>
+<tr>
+<td>Validation errors</td>
+<td>Apply floor and re-normalize, then submit</td>
+</tr>
+<tr>
+<td>Missing observations</td>
+<td>Submit with calibration-only prediction (no obs enrichment)</td>
+</tr>
+<tr>
+<td>Simulator fit failure</td>
+<td>Log warning, submit without sim blend (sim_alpha=0)</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-exploration-system"></a></p>
+<h1>Exploration System -- Technical Reference</h1>
+<p>Strategic data collection within the 50-query budget per round. Transforms raw API viewport observations into the statistical building blocks used by the prediction engine.</p>
+<hr>
+<h2>Budget Constraint</h2>
+<ul>
+<li>50 simulation queries per round, shared across 5 seeds</li>
+<li>Each query returns a 15x15 viewport of the 40x40 map</li>
+<li>Rate limit: 5 queries/second</li>
+</ul>
+<hr>
+<h2>Data Flow: Observations to Evidence</h2>
+<div class="mermaid">flowchart TB
+    subgraph API[&quot;API Queries (50 budget)&quot;]
+        Q1[&quot;Query 1&lt;br/&gt;seed 0, (0,0)&quot;] --&gt; VP1[&quot;15x15 viewport&quot;]
+        Q2[&quot;Query 2&lt;br/&gt;seed 0, (13,0)&quot;] --&gt; VP2[&quot;15x15 viewport&quot;]
+        Q50[&quot;... Query 50&lt;br/&gt;seed 4, (25,25)&quot;] --&gt; VP50[&quot;15x15 viewport&quot;]
+    end
+
+    VP1 --&gt; ACC
+    VP2 --&gt; ACC
+    VP50 --&gt; ACC
+
+    subgraph Processing[&quot;Evidence Building&quot;]
+        ACC[&quot;ObservationAccumulator&lt;br/&gt;per-cell class counts&quot;]
+        ACC --&gt; GM[&quot;GlobalMultipliers&lt;br/&gt;observed/expected ratio&lt;br/&gt;per class&quot;]
+        ACC --&gt; FKB[&quot;FeatureKeyBuckets&lt;br/&gt;empirical distribution&lt;br/&gt;per feature key&quot;]
+        ACC --&gt; OO[&quot;Obs Overlay&lt;br/&gt;Dirichlet counts&lt;br/&gt;per cell per seed&quot;]
+        ACC --&gt; SS[&quot;Settlement Survival&lt;br/&gt;alive/dead counts&lt;br/&gt;per initial settlement&quot;]
+        ACC --&gt; GFM[&quot;Growth Front Map&lt;br/&gt;young settlement&lt;br/&gt;expansion activity&quot;]
+        ACC --&gt; DOR[&quot;Distance Obs Rates&lt;br/&gt;sett count per&lt;br/&gt;distance ring&quot;]
+    end
+
+    GM --&gt; PREDICT[&quot;predict_gemini.py&quot;]
+    FKB --&gt; PREDICT
+    OO --&gt; PREDICT
+    SS --&gt; PREDICT
+    GFM --&gt; PREDICT
+    DOR --&gt; PREDICT
+</div>
+<hr>
+<h2>Exploration Strategies</h2>
+<h3>Grid Strategy (Default)</h3>
+<div class="mermaid">flowchart LR
+    subgraph Map[&quot;40x40 Map Coverage&quot;]
+        direction TB
+        VP1[&quot;(0,0)&lt;br/&gt;0-14&quot;] --- VP2[&quot;(13,0)&lt;br/&gt;13-27&quot;] --- VP3[&quot;(25,0)&lt;br/&gt;25-39&quot;]
+        VP4[&quot;(0,13)&lt;br/&gt;0-14&quot;] --- VP5[&quot;(13,13)&lt;br/&gt;13-27&quot;] --- VP6[&quot;(25,13)&lt;br/&gt;25-39&quot;]
+        VP7[&quot;(0,25)&lt;br/&gt;0-14&quot;] --- VP8[&quot;(13,25)&lt;br/&gt;13-27&quot;] --- VP9[&quot;(25,25)&lt;br/&gt;25-39&quot;]
+    end
+
+    subgraph Budget[&quot;Query Budget&quot;]
+        GRID[&quot;9 viewports x 5 seeds&lt;br/&gt;= 45 queries&quot;]
+        EXTRA[&quot;5 remaining queries&lt;br/&gt;→ highest uncertainty seeds&quot;]
+    end
+</div>
+<p>Fixed 3x3 grid providing ~97% map coverage:</p>
+<pre><code class="language-python">GRID_POSITIONS = [
+    (0, 0),  (13, 0),  (25, 0),   # Top row
+    (0, 13), (13, 13), (25, 13),   # Middle row
+    (0, 25), (13, 25), (25, 25),   # Bottom row
+]
+# Each viewport covers 15x15 cells
+# Coverage per axis: 0-14, 13-27, 25-39 = 39/40 cells
+# Overlap at columns/rows 13-14 and 25-27 gives double observations
+</code></pre>
+<p>Budget allocation:</p>
+<ul>
+<li>9 viewports x 5 seeds = 45 queries (grid coverage)</li>
+<li>5 remaining queries allocated to highest-uncertainty seeds</li>
+</ul>
+<h3>Entropy-Targeted Strategy (Multi-Sample)</h3>
+<p>Information-theoretic viewport selection:</p>
+<pre><code class="language-python">1. Compute per-cell expected entropy from CalibrationModel (free)
+   entropy_map = -sum(prior * log(prior))  # (40, 40)
+   entropy_map[ocean] = 0  # static cells have zero information value
+   entropy_map[mountain] = 0
+
+2. Greedy viewport selection:
+   for _ in range(n_viewports):
+       score all (x, y) positions:
+           region_entropy = sum(entropy_map[y:y+15, x:x+15] * ~covered)
+           skip if &gt;50% overlap with already-selected viewports
+       select position with highest uncovered entropy
+       mark region as covered
+
+3. Query selected viewports (highest entropy first)
+4. Repeat viewports with highest stochasticity (API randomness)
+</code></pre>
+<hr>
+<h2>Data Structures Built from Observations</h2>
+<h3>ObservationAccumulator</h3>
+<p>Per-cell class count accumulator across all viewport observations.</p>
+<pre><code class="language-python">class ObservationAccumulator:
+    counts: ndarray(H, W, 6)   # Observation class counts
+    total: ndarray(H, W)       # Total observations per cell
+
+    def add_viewport(viewport, grid):
+        for row, col in grid:
+            cls = terrain_to_class(grid[row][col])
+            counts[y+row, x+col, cls] += 1
+            total[y+row, x+col] += 1
+</code></pre>
+<h3>GlobalMultipliers</h3>
+<p>Tracks observed vs expected class distributions across all seeds.</p>
+<pre><code class="language-python">class GlobalMultipliers:
+    observed: ndarray(6)   # Total observed class counts
+    expected: ndarray(6)   # Total expected class counts (from prior)
+
+    def add_observation(obs_class, prior):
+        observed[obs_class] += 1
+        expected += prior    # prior distribution for that cell
+
+    def get_multipliers():
+        ratio = observed / expected
+        return ratio         # &gt;1 = more than expected, &lt;1 = less
+</code></pre>
+<h3>FeatureKeyBuckets</h3>
+<p>Pools observations by feature key for empirical distributions.</p>
+<pre><code class="language-python">class FeatureKeyBuckets:
+    counts: dict[FK, ndarray(6)]   # Per-FK class counts
+    totals: dict[FK, int]          # Per-FK observation count
+
+    def add_observation(fk, obs_class):
+        counts[fk][obs_class] += 1
+        totals[fk] += 1
+
+    def get_empirical(fk) -&gt; (ndarray(6), int):
+        return normalize(counts[fk]), totals[fk]
+</code></pre>
+<p><strong>Statistics:</strong> ~11,250 observations pooled into ~120 FK buckets = ~94 observations per bucket (vs 1-2 per cell).</p>
+<h3>GlobalTransitionMatrix</h3>
+<p>Tracks terrain state transitions by distance and coastal status.</p>
+<pre><code class="language-python">class GlobalTransitionMatrix:
+    # dist_buckets: 0-1, 2-3, 4-5, 6-7, 8+
+    # coastal variants tracked separately
+    transitions: dict[(dist_bucket, coastal), ndarray(6)]
+</code></pre>
+<h3>MultiSampleStore</h3>
+<p>Stores raw observation grids for variance analysis.</p>
+<pre><code class="language-python">class MultiSampleStore:
+    grids: list[ndarray(H, W)]    # Raw observation grids
+    # Computes per-FK settlement variance
+    # Detects stochastic API behavior (different results per query)
+</code></pre>
+<hr>
+<h2>Observation Overlay Functions</h2>
+<h3><code>build_obs_overlay()</code></h3>
+<p>Per-cell empirical distribution from direct observations.</p>
+<pre><code class="language-python">def build_obs_overlay(observations, terrain, seed_idx):
+    obs_counts = zeros(H, W, 6)  # Class counts per cell
+    obs_total = zeros(H, W)      # Total observations per cell
+
+    for obs in observations:
+        if obs.seed_index != seed_idx: continue
+        for row, col in obs.grid:
+            cls = terrain_to_class(grid[row][col])
+            obs_counts[y+row, x+col, cls] += 1
+            obs_total[y+row, x+col] += 1
+
+    return obs_counts, obs_total
+</code></pre>
+<p>Used in Dirichlet-Multinomial conjugate update (Stage 4.6 of prediction pipeline).</p>
+<h3><code>build_sett_survival()</code></h3>
+<p>Per-initial-settlement alive/dead evidence.</p>
+<pre><code class="language-python">def build_sett_survival(observations, settlements, seed_idx):
+    alive_counts = zeros(n_sett)  # Times observed alive
+    dead_counts = zeros(n_sett)   # Times observed dead
+
+    for obs in observations:
+        if obs.seed_index != seed_idx: continue
+        for cell in obs.grid:
+            if cell_position in settlement_positions:
+                if cls in (settlement, port): alive += 1
+                else: dead += 1  # empty, ruin, forest = dead
+
+    return alive_counts, dead_counts, (alive + dead) &gt; 0
+</code></pre>
+<p>Strongest per-cell signal: binary alive/dead observed multiple times.</p>
+<h3><code>build_growth_front_map()</code></h3>
+<p>Heat map of active expansion fronts from young settlements.</p>
+<pre><code class="language-python">def build_growth_front_map(observations, terrain):
+    front_map = zeros(H, W)
+
+    for settlement in obs.settlements:
+        if settlement.population &gt;= 1.0: continue  # Only young
+        youth = 1.0 - population  # 0 (mature) to 1 (newborn)
+        # Spread with Manhattan decay within r=3
+        for dy, dx in manhattan_radius(3):
+            front_map[sy+dy, sx+dx] += youth / (1 + manhattan_dist)
+
+    return normalize_to_0_1(front_map)
+</code></pre>
+<h3><code>compute_terrain_openness()</code></h3>
+<div class="mermaid">flowchart LR
+    SETT[&quot;Settlement&lt;br/&gt;Sources&lt;br/&gt;P=1.0&quot;] --&gt; DIFF[&quot;Gaussian Diffusion&lt;br/&gt;30 steps, D=1.5&quot;]
+    TERRAIN[&quot;Terrain&lt;br/&gt;Conductivity&quot;] --&gt; DIFF
+    DIFF --&gt; ACTUAL[&quot;Actual Field P&quot;]
+
+    SETT2[&quot;Same Sources&quot;] --&gt; DIFF2[&quot;Barrier-Free&lt;br/&gt;Diffusion&quot;]
+    DIFF2 --&gt; OPEN[&quot;Expected Field P_open&quot;]
+
+    ACTUAL --&gt; RATIO[&quot;Openness =&lt;br/&gt;P / P_open&quot;]
+    OPEN --&gt; RATIO
+    RATIO --&gt; INTERP[&quot;&lt; 1.0: behind barrier&lt;br/&gt;~ 1.0: unobstructed&quot;]
+</div>
+<p>Diffusion-based terrain accessibility metric.</p>
+<pre><code class="language-python">def compute_terrain_openness(terrain, settlements, n_steps=30, D=1.5, decay=0.12):
+    # Initialize diffusion source at settlements
+    P[settlement_cells] = 1.0
+
+    # Diffusion with terrain conductivity
+    conductivity[forest] = 0.7  # forests resist
+    conductivity[ocean/mountain] = 0.0  # impassable
+
+    for _ in range(n_steps):
+        laplacian = sum(neighbor_conductivity * neighbor_P) - 4 * self_conductivity * P
+        P += dt * (D * laplacian - decay * P)
+        P[settlements] = 1.0  # source reset
+        P[barriers] = 0.0     # hard boundary
+
+    # Compare to barrier-free diffusion
+    P_open = same_diffusion_but_uniform_conductivity()
+
+    # Openness ratio: &lt;1.0 = behind barrier, ~1.0 = unobstructed
+    return clip(P / P_open, 0.0, 1.5)
+</code></pre>
+<p>Used in terrain barrier correction (autoloop <code>barrier_strength</code> parameter).</p>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-feature-spec"></a></p>
+<h1>Astar Island Prediction System</h1>
+<p>Autonomous system that observes a Norse civilization simulator, builds probabilistic models, and submits 40x40x6 probability tensor predictions across 5 seeds per round.</p>
+<hr>
+<h2>Features</h2>
+<ul>
+<li>Adaptive exploration: entropy-targeted viewport selection within 50-query budget</li>
+<li>Hierarchical Bayesian calibration from 17 rounds of ground truth</li>
+<li>Regime detection (collapse/moderate/boom) from early observations</li>
+<li>Parametric simulator fitting via CMA-ES optimization</li>
+<li>Feature-key bucketing for empirical distribution pooling</li>
+<li>Continuous autonomous parameter optimization (770k+ experiments)</li>
+<li>Real-time web dashboard for monitoring all subsystems</li>
+<li>Automatic round detection and multi-seed submission</li>
+</ul>
+<hr>
+<h2>User Flows</h2>
+<h3>Round Lifecycle</h3>
+<div class="mermaid">stateDiagram-v2
+    [*] --&gt; Monitoring: daemon polls API
+    Monitoring --&gt; RoundDetected: new active round
+    RoundDetected --&gt; Exploration: collect 50 observations
+    Exploration --&gt; RegimeDetection: classify collapse/moderate/boom
+    RegimeDetection --&gt; Prediction: generate 40x40x6 tensors
+    Prediction --&gt; Submission: submit 5 seeds
+    Submission --&gt; Resubmission: iterate within window
+    Resubmission --&gt; Submission: improved predictions
+    Resubmission --&gt; Completed: round ends
+    Completed --&gt; Calibration: download ground truth
+    Calibration --&gt; Monitoring: update priors
+</div>
+<hr>
+<h2>Subsystems</h2>
+<h3>1. Daemon (daemon.py)</h3>
+<ul>
+<li>Polls API every 60s for new rounds</li>
+<li>Downloads completed rounds&#39; ground truth to <code>data/calibration/</code></li>
+<li>Triggers exploration, prediction, and submission pipeline</li>
+<li>GPU resubmission loop for iterative improvement</li>
+</ul>
+<h3>2. Autoloop (autoloop_fast.py)</h3>
+<ul>
+<li>Metropolis-Hastings parameter optimization</li>
+<li>Backtests against 8+ rounds x 5 seeds (leave-one-out)</li>
+<li><del>70ms per experiment (</del>160k experiments/hour)</li>
+<li>40+ tunable parameters: FK blending, multipliers, temperature, calibration weights</li>
+<li>Greedy accept with 20% Metropolis exploration on near-misses</li>
+</ul>
+<h3>3. Prediction Engine (predict_gemini.py)</h3>
+<ul>
+<li>Hierarchical calibration prior (fine/coarse/base/global)</li>
+<li>Empirical FK distribution blending</li>
+<li>Global multiplier adjustment (observed/expected ratios)</li>
+<li>Post-hoc corrections: growth fronts, survival evidence, terrain barriers</li>
+<li>Temperature scaling (entropy-aware)</li>
+<li>Optional simulator blend (alpha=0.20-0.35)</li>
+</ul>
+<h3>4. Simulator (sim_inference.py + sim_model_gpu.py)</h3>
+<ul>
+<li>17-parameter parametric simulator</li>
+<li>CMA-ES fitting with regime-specific warm starts</li>
+<li>KNN transfer learning from historical rounds</li>
+<li>GPU-accelerated: 10k simulations per evaluation</li>
+</ul>
+<h3>5. Web Dashboard (web/)</h3>
+<ul>
+<li>SvelteKit app with 7 route pages</li>
+<li>Real-time: scores, autoloop progress, daemon status, logs</li>
+<li>Components: heatmaps, sparklines, gauge bars, flow diagrams</li>
+</ul>
+<h3>6. Multi-Researcher</h3>
+<ul>
+<li>Claude Opus + Gemini Flash-Lite generate structural algorithm improvements</li>
+<li>Ideas saved as executable Python files in <code>data/multi_ideas/</code></li>
+<li>Best ideas scored 86.7 (vs 89.4 baseline -- different evaluation scope)</li>
+</ul>
+<hr>
+<h2>Edge Cases</h2>
+<ul>
+<li>Boom rounds (settlement rate &gt;15%) score ~2 points lower than non-boom</li>
+<li>Collapse rounds (settlement &lt;3%) require aggressive prior narrowing</li>
+<li>Stochastic API: same query returns different results across calls</li>
+<li>Rate limiting (429 responses): exponential backoff with retry</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-gpu-simulator"></a></p>
+<h1>GPU Simulator -- Deep Technical Reference</h1>
+<p>PyTorch CUDA-accelerated Monte Carlo simulator for the Astar Island Norse civilization model. Drop-in replacement for the CPU numpy version with ~100x speedup.</p>
+<hr>
+<h2>Architecture</h2>
+<div class="mermaid">flowchart TB
+    subgraph Fitting[&quot;CMA-ES Parameter Fitting&quot;]
+        OBS[Observations / GT] --&gt; REGIME{Detect Regime}
+        REGIME --&gt;|&quot;sett&lt;3%&quot;| COLLAPSE[Collapse Start&lt;br/&gt;survival=-3, reach=3]
+        REGIME --&gt;|&quot;3-15%&quot;| MODERATE[Moderate Start&lt;br/&gt;survival=-0.5, reach=5]
+        REGIME --&gt;|&quot;&gt;15%&quot;| BOOM[Boom Start&lt;br/&gt;survival=0, reach=8]
+
+        COLLAPSE --&gt; CMA1[CMA-ES&lt;br/&gt;50% budget]
+        MODERATE --&gt; CMA2[CMA-ES&lt;br/&gt;25% budget]
+        BOOM --&gt; CMA3[CMA-ES&lt;br/&gt;25% budget]
+        CMA1 --&gt; BEST[Best of 3]
+        CMA2 --&gt; BEST
+        CMA3 --&gt; BEST
+        BEST --&gt; POLISH[Polish&lt;br/&gt;0.3x sigma]
+    end
+
+    subgraph Transfer[&quot;KNN Transfer Learning&quot;]
+        HIST[(17 rounds&lt;br/&gt;transfer_data.json)] --&gt; KNN[k=3 Nearest&lt;br/&gt;by survival,sett,ruin]
+        KNN --&gt; WARM[Weighted Average&lt;br/&gt;Warm Start]
+        WARM --&gt; CMA4[CMA-ES&lt;br/&gt;67% budget, tight sigma]
+    end
+
+    subgraph GPU[&quot;GPU Monte Carlo&quot;]
+        PARAMS[Fitted Params] --&gt; SURV[&quot;Step 1: Settlement Survival&lt;br/&gt;sigmoid(logits) → Bernoulli&quot;]
+        SURV --&gt; DIST[&quot;Step 2: Nearest Alive Distance&lt;br/&gt;(bs, H, W) chunked min&quot;]
+        DIST --&gt; EXP[&quot;Step 3: Expansion&lt;br/&gt;Gaussian-power decay&quot;]
+        EXP --&gt; DEATH[&quot;Step 4: Expansion Death&lt;br/&gt;+ Ruin formation&quot;]
+        DEATH --&gt; FOREST[&quot;Step 5-6: Forest&lt;br/&gt;Clear + Reclaim&quot;]
+        FOREST --&gt; COUNT[&quot;Accumulate Counts&lt;br/&gt;÷ n_sims → probs&quot;]
+        COUNT --&gt; PRED[&quot;(40, 40, 6)&lt;br/&gt;probability tensor&quot;]
+    end
+
+    POLISH --&gt; PARAMS
+    CMA4 --&gt; PARAMS
+</div>
+<pre><code>sim_model.py (CPU)          sim_model_gpu.py (GPU)
+├── Simulator               ├── GPUSimulator
+├── compute_score()         ├── fit_cma_gpu()
+├── PARAM_SPEC (17 params)  └── (imports PARAM_SPEC from sim_model)
+└── params_to_vec/vec_to_params
+
+sim_inference.py
+├── fit_to_gt()            # CMA-ES fitting against ground truth
+├── fit_to_observations()  # CMA-ES fitting from live observations
+├── WARM_STARTS            # 3 regime-specific starting points
+└── _knn_warm_start()      # Transfer learning from historical rounds
+</code></pre>
+<hr>
+<h2>Simulator Parameters (17 dimensions)</h2>
+<p>Defined in <code>sim_model.PARAM_SPEC</code>, each with (default, min, max):</p>
+<h3>Settlement Survival (5 params)</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Purpose</th>
+<th>Typical Range</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>base_survival</code></td>
+<td>Logit intercept for settlement survival</td>
+<td>-3.0 to 0.0</td>
+</tr>
+<tr>
+<td><code>food_coeff</code></td>
+<td>Forest/food production coefficient</td>
+<td>0.0 to 1.0</td>
+</tr>
+<tr>
+<td><code>coastal_mod</code></td>
+<td>Coastal settlement survival modifier</td>
+<td>-1.0 to 0.0</td>
+</tr>
+<tr>
+<td><code>cluster_pen</code></td>
+<td>Cluster density linear penalty</td>
+<td>-1.0 to 0.0</td>
+</tr>
+<tr>
+<td><code>cluster_optimal</code></td>
+<td>Optimal cluster density for inverted-U</td>
+<td>1.0 to 5.0</td>
+</tr>
+</tbody></table>
+<p><strong>Survival probability:</strong></p>
+<pre><code class="language-python">logits = base_survival
+       + food_coeff * (food_within_r2 / 12.0)
+       + coastal_mod * is_coastal
+       + cluster_pen * (cluster_r3 / 3.0)
+       + cluster_quad * ((cluster_r3 - cluster_optimal)^2 / 9.0)
+surv_prob = sigmoid(logits)
+</code></pre>
+<h3>Expansion (5 params)</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Purpose</th>
+<th>Typical Range</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>expansion_str</code></td>
+<td>Expansion probability coefficient</td>
+<td>0.1 to 1.0</td>
+</tr>
+<tr>
+<td><code>expansion_scale</code></td>
+<td>Distance scale for expansion decay</td>
+<td>1.0 to 6.0</td>
+</tr>
+<tr>
+<td><code>decay_power</code></td>
+<td>Power of distance decay (higher = sharper)</td>
+<td>1.0 to 4.0</td>
+</tr>
+<tr>
+<td><code>max_reach</code></td>
+<td>Hard cutoff distance for expansion</td>
+<td>2.0 to 10.0</td>
+</tr>
+<tr>
+<td><code>forest_resist</code></td>
+<td>Forest terrain expansion resistance</td>
+<td>0.0 to 0.5</td>
+</tr>
+</tbody></table>
+<p><strong>Expansion probability:</strong></p>
+<pre><code class="language-python">exp_prob = expansion_str * exp(-(d / expansion_scale)^decay_power)
+exp_prob *= (1 - forest_resist) if cell_is_forest
+exp_prob = 0 if d &gt; max_reach
+</code></pre>
+<h3>Post-Expansion (4 params)</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Purpose</th>
+<th>Typical Range</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>exp_death</code></td>
+<td>Probability expanded cell dies</td>
+<td>0.1 to 0.8</td>
+</tr>
+<tr>
+<td><code>ruin_rate</code></td>
+<td>Probability dead cell becomes ruin</td>
+<td>0.05 to 0.5</td>
+</tr>
+<tr>
+<td><code>port_factor</code></td>
+<td>Probability expansion on coast becomes port</td>
+<td>0.05 to 0.5</td>
+</tr>
+<tr>
+<td><code>forest_clear</code></td>
+<td>Forest clearing rate near settlements</td>
+<td>0.1 to 0.6</td>
+</tr>
+</tbody></table>
+<h3>Environment (2 params)</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Purpose</th>
+<th>Typical Range</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>forest_reclaim</code></td>
+<td>Empty cell forest regrowth rate</td>
+<td>0.01 to 0.15</td>
+</tr>
+<tr>
+<td><code>cluster_quad</code></td>
+<td>Quadratic cluster penalty coefficient</td>
+<td>-0.5 to 0.0</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>GPUSimulator Internals</h2>
+<h3>Initialization (<code>__init__</code>)</h3>
+<p>Pre-computes and transfers to CUDA:</p>
+<ol>
+<li><strong>Terrain data</strong> <code>(H, W)</code> as int8 tensor</li>
+<li><strong>Terrain class mapping</strong> <code>(H, W)</code> - raw codes to 6-class indices</li>
+<li><strong>Settlement features:</strong><ul>
+<li><code>sett_coastal</code> (n_sett,) float32 - is coastal flag</li>
+<li><code>sett_has_port</code> (n_sett,) bool - has port flag</li>
+<li><code>sett_cluster</code> (n_sett,) float32 - cluster density within r=3</li>
+<li><code>sett_food_r2</code> (n_sett,) float32 - food (forest/plains) within Manhattan r=2</li>
+</ul>
+</li>
+<li><strong>Distance maps</strong> <code>(n_sett, H, W)</code> float32 - pre-computed per-settlement distances</li>
+<li><strong>Cell masks:</strong><ul>
+<li><code>cell_coastal</code> (H, W) bool</li>
+<li><code>cell_is_forest</code> (H, W) bool</li>
+<li><code>expand_mask</code> (H, W) bool - buildable and not already settlement</li>
+</ul>
+</li>
+</ol>
+<h3>Simulation Loop (<code>run()</code>)</h3>
+<div class="mermaid">flowchart TB
+    subgraph Init[&quot;Per-Batch Init (bs=2500)&quot;]
+        SURV_PROB[&quot;Per-settlement&lt;br/&gt;survival prob&lt;br/&gt;sigmoid(logits)&quot;] --&gt; SAMPLE[&quot;Bernoulli sample&lt;br/&gt;alive: (bs, n_sett)&quot;]
+        TERRAIN_CLS[&quot;Terrain class&lt;br/&gt;(H, W)&quot;] --&gt; GRIDS[&quot;Clone to&lt;br/&gt;(bs, H, W)&quot;]
+    end
+
+    SAMPLE --&gt; SETT_OUT
+
+    subgraph SETT_OUT[&quot;Settlement Outcomes&quot;]
+        ALIVE{&quot;alive?&quot;} --&gt;|&quot;yes&quot;| SET_SETT[&quot;grid = settlement&lt;br/&gt;(or port)&quot;]
+        ALIVE --&gt;|&quot;no&quot;| RUIN_ROLL{&quot;rand &lt; ruin_rate?&quot;}
+        RUIN_ROLL --&gt;|&quot;yes&quot;| SET_RUIN[&quot;grid = ruin&quot;]
+        RUIN_ROLL --&gt;|&quot;no&quot;| SET_EMPTY[&quot;grid = empty&quot;]
+    end
+
+    SET_SETT --&gt; NEAREST
+    SET_RUIN --&gt; NEAREST
+    SET_EMPTY --&gt; NEAREST
+
+    subgraph NEAREST[&quot;Nearest Alive Distance&quot;]
+        DIST_MAPS[&quot;Pre-computed&lt;br/&gt;dist_maps (n_sett, H, W)&quot;] --&gt; MASK[&quot;Mask by alive&lt;br/&gt;chunked (10 at a time)&quot;]
+        MASK --&gt; MIN[&quot;Min across settlements&lt;br/&gt;→ (bs, H, W)&quot;]
+    end
+
+    MIN --&gt; EXPAND
+
+    subgraph EXPAND[&quot;Expansion + Environment&quot;]
+        EXP_PROB[&quot;exp_prob = str * exp(-(d/scale)^power)&lt;br/&gt;* (1-forest_resist) if forest&lt;br/&gt;= 0 if d &gt; max_reach&quot;]
+        EXP_PROB --&gt; EXP_SAMPLE[&quot;Bernoulli sample&lt;br/&gt;→ expanded cells&quot;]
+        EXP_SAMPLE --&gt; EXP_DEATH[&quot;Expansion death&lt;br/&gt;→ ruin or empty&quot;]
+        EXP_SAMPLE --&gt; FOREST_CLEAR[&quot;Forest clearing&lt;br/&gt;near settlements&quot;]
+        EXP_DEATH --&gt; FOREST_RECLAIM[&quot;Forest regrowth&lt;br/&gt;on distant empty&quot;]
+    end
+
+    FOREST_RECLAIM --&gt; ACCUMULATE[&quot;Accumulate class counts&lt;br/&gt;counts[:,:,cls] += (grid==cls).sum()&quot;]
+    ACCUMULATE --&gt; PROBS[&quot;probs = counts / n_sims&lt;br/&gt;→ (H, W, 6)&quot;]
+</div>
+<p><strong>Batched execution:</strong> processes <code>batch_size</code> simulations in parallel (default 2500).</p>
+<p>For each batch of <code>bs</code> simulations:</p>
+<pre><code>Step 1: Sample settlement survival
+    alive = rand(bs, n_sett) &lt; surv_prob   # Bernoulli sampling
+
+Step 2: Initialize grids from terrain class
+    grids = terrain_class.expand(bs, H, W)  # (bs, H, W)
+
+Step 3: Apply settlement outcomes
+    for each settlement:
+        if alive: grid[sy,sx] = settlement (or port if has_port)
+        if dead and rand &lt; ruin_rate: grid[sy,sx] = ruin
+        if dead and no ruin: grid[sy,sx] = empty
+
+Step 4: Compute nearest alive distance
+    # (bs, H, W) - minimum distance to any alive settlement
+    # Processed in chunks of 10 settlements to balance memory
+    nearest = min over settlements(dist_map * alive_mask)
+
+Step 5: Compute expansion probability
+    exp_prob = expansion_str * exp(-(nearest/scale)^power)
+    exp_prob *= (1 - forest_resist) where forest
+    exp_prob = 0 where nearest &gt; max_reach
+    exp_prob = 0 where not buildable
+
+Step 6: Sample and apply expansion
+    expanded = rand(bs, H, W) &lt; exp_prob
+    port_expanded = expanded &amp; coastal &amp; rand &lt; port_factor
+    sett_expanded = expanded &amp; ~port_expanded
+
+Step 7: Expansion death
+    exp_dies = expanded &amp; rand &lt; exp_death
+    exp_ruin = exp_dies &amp; rand &lt; ruin_rate
+
+Step 8: Forest clearing
+    clear_prob = forest_clear * exp(-(nearest/3)^2)
+    cleared = is_forest &amp; rand &lt; clear_prob
+
+Step 9: Forest reclamation
+    reclaim_prob = base_rate * min(nearest/5, 1)
+    # Higher regrowth on originally-forested cells
+    reclaimed = is_empty &amp; rand &lt; reclaim_prob
+
+Step 10: Accumulate counts
+    for class in 0..5:
+        counts[:,:,class] += (grids == class).sum(dim=0)
+</code></pre>
+<p><strong>Output:</strong> <code>probs = counts / n_sims</code> -&gt; <code>(H, W, 6)</code> numpy array</p>
+<h3>Performance</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>CPU (sim_model)</th>
+<th>GPU (sim_model_gpu)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>500 sims</td>
+<td>~0.5s</td>
+<td>~0.05s</td>
+</tr>
+<tr>
+<td>5000 sims</td>
+<td>~5s</td>
+<td>~0.3s</td>
+</tr>
+<tr>
+<td>10000 sims</td>
+<td>~10s</td>
+<td>~0.5s</td>
+</tr>
+<tr>
+<td>Memory (L4 24GB)</td>
+<td>N/A</td>
+<td>~2 GB per run</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>CMA-ES Fitting Pipeline</h2>
+<h3><code>fit_to_gt()</code> -- Fitting Against Ground Truth</h3>
+<p>Used for offline calibration of all historical rounds.</p>
+<pre><code>Input: RoundData (terrain, settlements, ground_truth)
+
+1. Detect regime from GT: collapse (&lt;3% sett), boom (&gt;15%), moderate
+2. Multi-start CMA-ES:
+   a. Detected regime start (50% of budget)
+   b. Regime 2 start (25% of budget)
+   c. Regime 3 start (25% of budget)
+3. Polish: refine best with 0.3x sigma (25% of budget)
+
+Objective: minimize -compute_score(gt, sim.run(params))
+CMA-ES options:
+  - bounds: PARAM_SPEC min/max
+  - tolfun: 0.01 (stop if improvement &lt; 0.01)
+  - tolx: 1e-4 (stop if step &lt; 1e-4)
+
+Output: (best_params, best_score)
+</code></pre>
+<h3><code>fit_to_observations()</code> -- Fitting From Live Observations</h3>
+<p>Used during live rounds when no ground truth is available.</p>
+<pre><code>Input: RoundData, observations (from API)
+
+1. Compute observable features from observations:
+   - survival_rate: initial settlements still alive / total observed
+   - sett_rate: settlement class / total dynamic cells observed
+   - ruin_rate: ruin class / total dynamic cells observed
+
+2. KNN warm-start from transfer_data.json:
+   - Load GT-fitted params from all 17 historical rounds
+   - Find k=3 nearest neighbors by Euclidean distance in feature space
+   - Average their params weighted by 1/(distance + 0.01)
+
+3. CMA-ES optimization:
+   a. KNN warm start (67% budget, sigma=0.2, tighter)
+   b. Regime warm start (33% budget, sigma=0.5, wider)
+   Pick best result.
+
+Objective: maximize mean log-likelihood of observed cells
+   pred = sim.run(params)
+   ll = mean(log(pred[obs_y, obs_x, obs_class]))
+
+Output: (best_params, best_score_on_gt_if_available)
+</code></pre>
+<h3>Transfer Learning Data</h3>
+<p><code>data/sim_params/transfer_data.json</code> stores GT-fitted params and features for every historical round:</p>
+<pre><code class="language-json">[
+  {
+    &quot;round&quot;: &quot;round5&quot;,
+    &quot;params&quot;: {&quot;base_survival&quot;: -0.47, &quot;expansion_str&quot;: 0.52, ...},
+    &quot;features&quot;: {
+      &quot;gt_survival&quot;: 0.65,
+      &quot;gt_sett_rate&quot;: 0.08,
+      &quot;gt_ruin_rate&quot;: 0.02
+    },
+    &quot;score&quot;: 82.5
+  },
+  ...
+]
+</code></pre>
+<hr>
+<h2>Regime-Specific Warm Starts</h2>
+<p>Three pre-computed starting points learned from fitting 15+ rounds:</p>
+<h3>Collapse (settlement &lt;3%)</h3>
+<pre><code class="language-python">base_survival=-3.0, expansion_str=0.3, expansion_scale=1.5,
+decay_power=3.0, max_reach=3.0, exp_death=0.7
+</code></pre>
+<p>Key: very low survival, narrow expansion, high death rate.</p>
+<h3>Moderate (3-15% settlement)</h3>
+<pre><code class="language-python">base_survival=-0.5, expansion_str=0.5, expansion_scale=2.5,
+decay_power=2.5, max_reach=5.0, exp_death=0.4
+</code></pre>
+<p>Key: balanced survival and expansion.</p>
+<h3>Boom (settlement &gt;15%)</h3>
+<pre><code class="language-python">base_survival=0.0, expansion_str=0.8, expansion_scale=4.0,
+decay_power=1.5, max_reach=8.0, exp_death=0.3
+</code></pre>
+<p>Key: high survival, wide expansion, low death.</p>
+<hr>
+<h2>Adaptive Alpha (Simulator Blend Weight)</h2>
+<div class="mermaid">flowchart LR
+    REGIME{Detected Regime} --&gt;|&quot;collapse&quot;| A025[&quot;alpha = 0.25&lt;br/&gt;Sim less reliable&lt;br/&gt;for die-off dynamics&quot;]
+    REGIME --&gt;|&quot;moderate&quot;| A035[&quot;alpha = 0.35&lt;br/&gt;Balanced blend&quot;]
+    REGIME --&gt;|&quot;boom&quot;| A045[&quot;alpha = 0.45&lt;br/&gt;Sim captures&lt;br/&gt;expansion well&quot;]
+
+    A025 --&gt; SPATIAL
+    A035 --&gt; SPATIAL
+    A045 --&gt; SPATIAL
+
+    subgraph SPATIAL[&quot;Spatially-Varying Alpha&quot;]
+        NEAR[&quot;d=0: alpha * 1.5&lt;br/&gt;(max 0.7)&quot;]
+        FAR[&quot;d=10+: alpha * 0.3&quot;]
+        NEAR --- DECAY[&quot;Gaussian decay&lt;br/&gt;exp(-(d/4)^2)&quot;]
+        FAR --- DECAY
+    end
+</div>
+<p>The blend weight between statistical model and simulator varies by regime:</p>
+<pre><code class="language-python">REGIME_ALPHAS = {
+    &quot;collapse&quot;: 0.25,  # Simulator less reliable for collapse dynamics
+    &quot;moderate&quot;: 0.35,  # Balanced blend
+    &quot;boom&quot;: 0.45,      # Simulator captures expansion well in boom
+}
+</code></pre>
+<p>In <code>predict_gemini.py</code>, the blend is spatially varying:</p>
+<pre><code class="language-python">alpha_near = min(sim_alpha * 1.5, 0.7)   # Higher weight near settlements
+alpha_far = sim_alpha * 0.3               # Lower weight far from settlements
+alpha_map = alpha_far + (alpha_near - alpha_far) * exp(-(dist/4)^2)
+pred = (1 - alpha_map) * statistical_pred + alpha_map * sim_pred
+</code></pre>
+<hr>
+<h2><code>fit_cma_gpu()</code> -- GPU-Optimized CMA-ES</h2>
+<p>Dedicated GPU fitting function with normalized parameter space:</p>
+<pre><code class="language-python"># Normalize parameters to [0,1] for uniform step sizes
+x_norm = (x - lo) / (hi - lo)
+
+# CMA-ES in normalized space
+es = CMA(x0_norm, sigma=0.5, bounds=[0, 1])
+
+# Each evaluation:
+x = lo + x_norm * (hi - lo)  # denormalize
+pred = gpu_sim.run(params, n_sims=1000)
+score = compute_score(target, pred)
+</code></pre>
+<p>Used by <code>daemon.py:gpu_resubmit_round()</code> for iterative improvement during active rounds.</p>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-multi-researcher"></a></p>
+<h1>Multi-Researcher -- Technical Reference</h1>
+<p>Autonomous research agent that uses LLMs to generate, evaluate, and iterate on structural algorithm improvements for the prediction pipeline.</p>
+<hr>
+<h2>Architecture</h2>
+<div class="mermaid">flowchart TB
+    subgraph Loop[&quot;Research Cycle&quot;]
+        ANALYZE[&quot;Gemini Flash&lt;br/&gt;Analyze log +&lt;br/&gt;pick direction&lt;br/&gt;(2-5s)&quot;] --&gt; GENERATE[&quot;Gemini Pro&lt;br/&gt;Write prediction&lt;br/&gt;function code&lt;br/&gt;(10-30s)&quot;]
+        GENERATE --&gt; SAVE[&quot;Save to&lt;br/&gt;data/multi_ideas/&lt;br/&gt;idea_N.py&quot;]
+        SAVE --&gt; EXEC[&quot;Execute in&lt;br/&gt;subprocess&lt;br/&gt;(timeout 120s)&quot;]
+        EXEC --&gt; BACKTEST[&quot;BacktestHarness&lt;br/&gt;8 rounds x 5 seeds&lt;br/&gt;(~3s)&quot;]
+        BACKTEST --&gt; RESULT{Score?}
+        RESULT --&gt;|&quot;85+&quot;| GOOD[&quot;idea_N_good_86.7.py&quot;]
+        RESULT --&gt;|&quot;80-85&quot;| OK[&quot;idea_N_ok_83.0.py&quot;]
+        RESULT --&gt;|&quot;crash&quot;| FAIL[&quot;idea_N_failed.py&quot;]
+        GOOD --&gt; REVIEW[&quot;Flash reviews&lt;br/&gt;what worked&quot;]
+        OK --&gt; REVIEW
+        FAIL --&gt; REVIEW
+        REVIEW --&gt; ANALYZE
+    end
+
+    REVIEW --&gt;|&quot;update&quot;| KB[&quot;KNOWLEDGE.md&lt;br/&gt;accumulated findings&quot;]
+    KB --&gt; ANALYZE
+    REVIEW --&gt;|&quot;log&quot;| LOG[&quot;multi_research_log.jsonl&quot;]
+</div>
+<div class="mermaid">flowchart LR
+    subgraph Integration[&quot;Research → Production Path&quot;]
+        IDEA[&quot;Research Idea&lt;br/&gt;(new algorithm)&quot;] --&gt; REVIEW2[&quot;Manual Review&lt;br/&gt;(human)&quot;]
+        REVIEW2 --&gt; PARAM[&quot;Add to&lt;br/&gt;PARAM_SPACE&quot;]
+        PARAM --&gt; AUTOLOOP[&quot;autoloop_fast.py&lt;br/&gt;optimizes value&quot;]
+        AUTOLOOP --&gt; PRODUCTION[&quot;predict_gemini.py&lt;br/&gt;production use&quot;]
+    end
+</div>
+<hr>
+<h2>Models Used</h2>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Role</th>
+<th>Latency</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Gemini 3.1 Pro Preview</td>
+<td>Code generation (replaces Claude Opus)</td>
+<td>10-30s</td>
+<td>Higher</td>
+</tr>
+<tr>
+<td>Gemini 3 Flash Preview</td>
+<td>Fast analysis, direction picking (replaces Claude Haiku)</td>
+<td>2-5s</td>
+<td>Lower</td>
+</tr>
+</tbody></table>
+<p>Both accessed via <code>google-genai</code> SDK with <code>GOOGLE_API_KEY</code> from <code>.env</code>.</p>
+<hr>
+<h2>Research Cycle</h2>
+<h3>Step 1: Direction Selection (Flash)</h3>
+<p>Flash receives:</p>
+<ul>
+<li>Current best score and parameters</li>
+<li>Last 5-10 experiment results (accepted + rejected)</li>
+<li>Knowledge base (<code>KNOWLEDGE.md</code>) of accumulated findings</li>
+<li>Available parameter space and current values</li>
+</ul>
+<p>Flash outputs:</p>
+<ul>
+<li>1-3 promising research directions</li>
+<li>Rationale for each</li>
+<li>Specific parameters/code areas to modify</li>
+</ul>
+<h3>Step 2: Code Generation (Pro)</h3>
+<p>Pro receives:</p>
+<ul>
+<li>Selected direction from Flash</li>
+<li>Current prediction function source code</li>
+<li>Full parameter space definition</li>
+<li>Calibration model interface</li>
+<li>Examples of previous successful modifications</li>
+</ul>
+<p>Pro outputs:</p>
+<ul>
+<li>Complete modified prediction function</li>
+<li>Wrapped in executable Python that matches BacktestHarness interface</li>
+</ul>
+<h3>Step 3: Evaluation</h3>
+<pre><code class="language-python"># Extract Python code from LLM response
+code = extract_code_block(response)
+
+# Write to data/multi_ideas/idea_{N}.py
+idea_path = save_idea(code, idea_number)
+
+# Execute in subprocess for safety
+result = subprocess.run([&quot;python&quot;, str(idea_path)], capture_output=True, timeout=120)
+
+# Parse score from stdout
+score = extract_score(result.stdout)
+</code></pre>
+<h3>Step 4: Analysis (Flash)</h3>
+<p>Flash receives:</p>
+<ul>
+<li>Generated code and its score</li>
+<li>How it compares to current best</li>
+<li>Per-round breakdown (boom vs non-boom)</li>
+</ul>
+<p>Flash decides:</p>
+<ul>
+<li>Whether this direction is promising (continue iterating)</li>
+<li>What to modify next (narrow search)</li>
+<li>Or abandon direction (try something else)</li>
+</ul>
+<hr>
+<h2>Idea Files</h2>
+<p>Generated algorithms saved to <code>data/multi_ideas/idea_{N}_{status}.py</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ok_83.0</code></td>
+<td>Ran successfully, scored 83.0</td>
+<td><code>idea_0001_ok_83.0.py</code></td>
+</tr>
+<tr>
+<td><code>good_86.7</code></td>
+<td>Scored above threshold (85+)</td>
+<td><code>idea_0076_good_85.7.py</code></td>
+</tr>
+<tr>
+<td><code>failed</code></td>
+<td>Crashed, timeout, or invalid output</td>
+<td><code>idea_0002_failed.py</code></td>
+</tr>
+</tbody></table>
+<h3>Current Statistics (as of 2026-03-21)</h3>
+<ul>
+<li>Total ideas: 166+</li>
+<li>Successful (ok): ~60</li>
+<li>Good (85+): ~8</li>
+<li>Failed: ~40</li>
+<li>Best score: 86.7 (idea_0153, idea_0155)</li>
+</ul>
+<p><strong>Note:</strong> Research ideas are evaluated on a different harness configuration than autoloop, so scores are not directly comparable. The best research score (86.7) doesn&#39;t beat autoloop&#39;s 89.4 because research ideas don&#39;t use the full production pipeline (observation overlays, survival evidence, etc.).</p>
+<hr>
+<h2>Knowledge Base</h2>
+<p><code>KNOWLEDGE.md</code> accumulates findings across all research iterations:</p>
+<ul>
+<li>Which directions improved scores</li>
+<li>Which directions are dead ends</li>
+<li>Key insights about the scoring function</li>
+<li>Discovered parameter interactions</li>
+<li>Structural improvements that worked</li>
+</ul>
+<hr>
+<h2>Integration with Autoloop</h2>
+<p>Research ideas that show improvement are manually reviewed and integrated:</p>
+<ol>
+<li>Researcher generates structural improvement (new feature/algorithm)</li>
+<li>If score improves: extract the innovation</li>
+<li>Add as new parameter to <code>PARAM_SPACE</code> in <code>autoloop.py</code></li>
+<li>Add implementation to <code>autoloop_fast.py:FastHarness.evaluate()</code></li>
+<li>Add production implementation to <code>predict_gemini.py</code></li>
+<li>Autoloop optimizes the new parameter&#39;s value</li>
+</ol>
+<hr>
+<h2>Logging</h2>
+<p><code>data/multi_research_log.jsonl</code> tracks every research iteration:</p>
+<pre><code class="language-json">{
+    &quot;id&quot;: 153,
+    &quot;direction&quot;: &quot;entropy-aware temperature with settlement proximity boost&quot;,
+    &quot;model&quot;: &quot;gemini-3.1-pro-preview&quot;,
+    &quot;code_file&quot;: &quot;idea_0153_good_86.7.py&quot;,
+    &quot;score&quot;: 86.7,
+    &quot;per_round&quot;: {&quot;round2&quot;: 88.1, &quot;round3&quot;: 85.2, ...},
+    &quot;accepted&quot;: true,
+    &quot;timestamp&quot;: &quot;2026-03-21T18:30:00Z&quot;
+}
+</code></pre>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-prediction-pipeline"></a></p>
+<h1>Prediction Pipeline -- Step-by-Step Technical Reference</h1>
+<p>Complete walkthrough of <code>predict_gemini.py:gemini_predict()</code> -- the 11-stage production prediction engine.</p>
+<hr>
+<h2>Pipeline Overview</h2>
+<div class="mermaid">flowchart TB
+    subgraph Inputs[&quot;Inputs&quot;]
+        STATE[state: grid + settlements]
+        GM[GlobalMultipliers]
+        FKB[FeatureKeyBuckets]
+        SIM[sim_pred: GPU simulator output]
+        GF[growth_front_map]
+        OO[obs_overlay]
+        SURV[sett_survival]
+    end
+
+    STATE --&gt; S1[&quot;1. Feature Key&lt;br/&gt;Construction&quot;]
+    S1 --&gt; S2[&quot;2. Hierarchical&lt;br/&gt;Calibration Prior&quot;]
+    S2 --&gt; S3[&quot;3. FK Empirical&lt;br/&gt;Blending&quot;]
+    FKB --&gt; S3
+    S3 --&gt; S45[&quot;4.5 Growth Front&lt;br/&gt;Boost&quot;]
+    GF --&gt; S45
+    S45 --&gt; S46[&quot;4.6 Observation&lt;br/&gt;Overlay&quot;]
+    OO --&gt; S46
+    S46 --&gt; S47[&quot;4.7 Settlement&lt;br/&gt;Survival&quot;]
+    SURV --&gt; S47
+    S47 --&gt; S5[&quot;5. Global&lt;br/&gt;Multiplier&quot;]
+    GM --&gt; S5
+    S5 --&gt; S55[&quot;5.5 Distance-Ring&lt;br/&gt;Sharpening&quot;]
+    S55 --&gt; S6[&quot;6. Temperature&lt;br/&gt;Scaling&quot;]
+    S6 --&gt; S7[&quot;7. Spatial&lt;br/&gt;Smoothing&quot;]
+    S7 --&gt; S8[&quot;8. Proportional&lt;br/&gt;Redistribution&quot;]
+    S8 --&gt; S9[&quot;9. Probability&lt;br/&gt;Floor&quot;]
+    S9 --&gt; S10[&quot;10. Simulator&lt;br/&gt;Blend&quot;]
+    SIM --&gt; S10
+    S10 --&gt; S11[&quot;11. Lock Static&lt;br/&gt;+ Borders&quot;]
+    S11 --&gt; OUT[&quot;Output: (40,40,6)&lt;br/&gt;probability tensor&quot;]
+</div>
+<hr>
+<h2>Input</h2>
+<pre><code class="language-python">gemini_predict(
+    state: dict,           # {&quot;grid&quot;: [[int]], &quot;settlements&quot;: [{&quot;x&quot;,&quot;y&quot;,&quot;has_port&quot;}]}
+    global_mult,           # GlobalMultipliers instance
+    fk_buckets,           # FeatureKeyBuckets instance
+    multi_store=None,     # MultiSampleStore (unused in current best)
+    variance_regime=None, # &quot;EXTREME_BOOM&quot; or None
+    obs_expansion_radius=None,  # dict {dist: (sett_count, total)} or int
+    est_vigor=None,       # float: estimated settlement % on dynamic cells
+    sim_pred=None,        # (40,40,6) numpy array from GPU simulator
+    sim_alpha=0.25,       # blend weight for simulator predictions
+    growth_front_map=None,  # (40,40) float: young settlement expansion activity
+    obs_overlay=None,     # (obs_counts, obs_total) per-cell observation data
+    sett_survival=None,   # (alive_counts, dead_counts, observed) per settlement
+) -&gt; np.ndarray  # (40, 40, 6) probability tensor
+</code></pre>
+<hr>
+<h2>Stage 1: Feature Key Construction</h2>
+<pre><code class="language-python">fkeys = build_feature_keys(grid, settlements)
+# Returns (40, 40) grid of 6-tuples:
+# (terrain_code, dist_bucket, coastal, forest_neighbors, has_port_flag, cluster_bucket)
+</code></pre>
+<p><strong>Distance buckets:</strong> 0, 1, 2, 3, 4-5, 6-8, 9+<br><strong>Cluster buckets:</strong> 0 (isolated), 1 (sparse, 1-2), 2 (dense, 3+)</p>
+<pre><code class="language-python">idx_grid, unique_keys = _build_feature_key_index(fkeys)
+# idx_grid: (40, 40) int array -&gt; index into unique_keys
+# unique_keys: list of unique feature tuples (typically ~120 unique)
+</code></pre>
+<hr>
+<h2>Stage 2: Hierarchical Calibration Prior</h2>
+<p>If <code>est_vigor</code> is provided, uses regime-conditional calibration:</p>
+<pre><code class="language-python">cal = predict.get_regime_calibration(est_vigor)
+# Weights training rounds by Gaussian similarity to estimated vigor
+</code></pre>
+<p>Otherwise uses uniform calibration from all historical rounds.</p>
+<p><strong>Lookup table construction</strong> (<code>build_calibration_lookup</code>):</p>
+<p>For each unique feature key:</p>
+<pre><code>fine_weight = min(cal_fine_max, cal_fine_base + fine_count / cal_fine_divisor)
+coarse_weight = min(cal_coarse_max, cal_coarse_base + coarse_count / cal_coarse_divisor)
+base_weight = min(cal_base_max, cal_base_base + base_count / cal_base_divisor)
+global_weight = cal_global_weight (fixed)
+
+prior = (fine_weight * fine_dist + coarse_weight * coarse_dist
+       + base_weight * base_dist + global_weight * global_dist)
+prior /= sum(weights)
+</code></pre>
+<p>Output: <code>(N_unique, 6)</code> lookup table indexed by <code>idx_grid</code>.</p>
+<hr>
+<h2>Stage 3: FK Empirical Blending</h2>
+<p>Builds empirical distributions from observation-derived FK bucket data:</p>
+<pre><code class="language-python">empiricals, counts = build_fk_empirical_lookup(fk_buckets, unique_keys, min_count=5)
+# Only FKs with &gt;= 5 observations get empirical data
+
+strengths = min(emp_max, sqrt(counts))  # default: sqrt scaling
+blended = pred * prior_w + empirical * strength
+blended /= sum(blended)
+
+pred = where(has_fk, blended, pred)  # only blend where sufficient data
+</code></pre>
+<p><strong>EXTREME_BOOM regime adjustment:</strong></p>
+<pre><code class="language-python">prior_w -= 0.5    # Trust observations more in extreme boom
+emp_max *= 1.2    # Allow stronger empirical signal
+</code></pre>
+<hr>
+<h2>Stage 4.5: Growth Front Boost</h2>
+<p>Identifies cells near young, actively expanding settlements:</p>
+<pre><code class="language-python">gf_factor = 1.0 + growth_front_boost * growth_front_map
+pred[:, :, 1] *= gf_factor  # boost settlement probability
+pred /= sum(pred)  # renormalize
+</code></pre>
+<p><code>growth_front_map</code> is built from observation data: cells where settlements have population &lt; 1.0 (young) get Manhattan-decay influence within r=3.</p>
+<hr>
+<h2>Stage 4.6: Observation Overlay (Dirichlet-Multinomial)</h2>
+<p>Conjugate Bayesian update on directly observed cells:</p>
+<pre><code class="language-python"># obs_counts: (40, 40, 6) - observed class counts per cell
+# obs_total: (40, 40) - total observations per cell
+# obs_pseudo: model weight (higher = trust model more)
+
+pred[observed] = (obs_pseudo * pred[observed] + obs_counts[observed]) / (obs_pseudo + obs_total)
+</code></pre>
+<p><strong>Interpretation:</strong> With <code>obs_pseudo=50</code> and <code>obs_total=5</code>:</p>
+<ul>
+<li>Model contributes 50/55 = 91% weight</li>
+<li>Observations contribute 5/55 = 9% weight</li>
+</ul>
+<hr>
+<h2>Stage 4.7: Settlement Survival Correction</h2>
+<p>Per-initial-settlement Bayesian update based on alive/dead evidence:</p>
+<pre><code class="language-python">for each initial settlement (sy, sx):
+    if observed:
+        sett_counts = zeros(6)
+        sett_counts[alive_cls] = alive_count       # alive -&gt; settlement (or port)
+        sett_counts[0] = dead_count * 0.5           # dead -&gt; 50% empty
+        sett_counts[3] = dead_count * 0.5           # dead -&gt; 50% ruin
+
+        pred[sy, sx] = (sett_pseudo * pred[sy, sx] + sett_counts) / (sett_pseudo + n_obs)
+</code></pre>
+<p><strong>Key insight:</strong> Settlement cells have the strongest per-cell signal because alive/dead is binary and observed multiple times across queries.</p>
+<hr>
+<h2>Stage 5: Global Multiplier</h2>
+<div class="mermaid">flowchart LR
+    OBS[&quot;Observed&lt;br/&gt;class counts&quot;] --&gt; RATIO[&quot;ratio =&lt;br/&gt;observed / expected&quot;]
+    EXP[&quot;Expected&lt;br/&gt;class counts&quot;] --&gt; RATIO
+    RATIO --&gt; DAMP[&quot;mult = ratio^power&lt;br/&gt;(power &lt; 1 = conservative)&quot;]
+    DAMP --&gt; CLAMP[&quot;Per-class clamp&lt;br/&gt;sett: [0.15, 2.0]&lt;br/&gt;forest: [0.5, 1.8]&lt;br/&gt;empty: [0.75, 1.25]&quot;]
+    CLAMP --&gt; DIST{&quot;Distance&lt;br/&gt;to settlement?&quot;}
+    DIST --&gt;|&quot;d = 0&quot;| FULL[&quot;Full multiplier&quot;]
+    DIST --&gt;|&quot;d &gt; 0&quot;| DAMPD[&quot;Dampened:&lt;br/&gt;1 + (mult-1) * exp_damp&quot;]
+    FULL --&gt; APPLY[&quot;pred *= mult&quot;]
+    DAMPD --&gt; APPLY
+</div>
+<p>Adjusts predictions based on observed-vs-expected class distributions.</p>
+<pre><code class="language-python">ratio = observed / expected  # per-class ratio from GlobalMultipliers
+mult = ratio^power           # dampened (power &lt; 1 = conservative)
+mult[1] = ratio[1]^sett_power  # settlement-specific power
+mult[2] = ratio[2]^port_power  # port-specific power
+mult[class] = clip(mult[class], lo, hi)  # per-class clamping
+</code></pre>
+<p><strong>Distance-aware application:</strong></p>
+<pre><code class="language-python"># Settlements (dist=0): full multiplier
+pred[dist==0] *= mult
+
+# Expansion zone (dist&gt;0): dampened multiplier
+mult_exp[c] = 1.0 + (mult[c] - 1.0) * exp_damp
+pred[dist&gt;0] *= mult_exp
+</code></pre>
+<hr>
+<h2>Stage 5.5: Distance-Ring Sharpening</h2>
+<p>Corrects the spatial profile of settlement predictions using per-distance observed rates:</p>
+<pre><code class="language-python">for distance d in 0..12:
+    if observed_total[d] &lt; 30: continue  # need statistical significance
+    obs_rate = observed_sett[d] / observed_total[d]
+    pred_rate = mean(pred[dist==d, settlement_class])
+    correction = clip(obs_rate / pred_rate, 0.2, 5.0)
+    adjustment = 1.0 + dist_sharpen * (correction - 1.0)
+    pred[dist==d, settlement_class] *= adjustment
+</code></pre>
+<p><strong>Purpose:</strong> If observations show settlements concentrated at d=1-3 but the model predicts d=5+, this corrects the spatial distribution.</p>
+<hr>
+<h2>Stage 6: Entropy-Weighted Temperature</h2>
+<pre><code class="language-python">cal_entropy = -sum(cal_prior * log(cal_prior))  # per-cell entropy from calibration
+t_frac = clip((cal_entropy - T_ent_lo) / (T_ent_hi - T_ent_lo), 0, 1)
+T = T_low + t_frac * (T_high - T_low)
+
+# Near-settlement boom boost
+boom_boost = 0.10 * sqrt(min(ratio[settlement], 1.0))
+T[dist &lt;= sett_radius] += boom_boost
+
+pred = pred^(1/T)  # T&gt;1 softens (high entropy), T&lt;1 sharpens (low entropy)
+</code></pre>
+<hr>
+<h2>Stage 7: Selective Spatial Smoothing</h2>
+<p>3x3 uniform filter on settlement and ruin channels only:</p>
+<pre><code class="language-python">for class in [settlement, ruin]:
+    smoothed = uniform_filter(pred[:,:,class], size=3)
+    pred[:,:,class] = pred[:,:,class] * (1 - smooth_alpha) + smoothed * smooth_alpha
+</code></pre>
+<hr>
+<h2>Stage 8: Proportional Redistribution</h2>
+<p>Removes probability mass from impossible classes and redistributes:</p>
+<pre><code class="language-python"># Mountain mass on non-mountain cells
+mountain_mass = pred[non_mountain, mountain_class]
+pred[non_mountain, mountain_class] = 0
+
+# Port mass on non-coastal cells
+port_mass = pred[inland, port_class]
+pred[inland, port_class] = 0
+
+# Redistribute freed mass proportionally to calibration prior
+redist_weights = cal_prior (excluding zeroed classes)
+pred += freed_mass * redist_weights
+</code></pre>
+<hr>
+<h2>Stage 9: Probability Floor</h2>
+<pre><code class="language-python">pred = max(pred, floor)           # default floor = 0.008
+pred[non_mountain, mountain] = 0  # re-zero structural impossibilities
+pred[non_coastal, port] = 0
+pred /= sum(pred)                 # renormalize
+</code></pre>
+<hr>
+<h2>Stage 10: Simulator Ensemble Blend</h2>
+<div class="mermaid">flowchart TB
+    STAT[&quot;Statistical Prediction&lt;br/&gt;(stages 1-9)&quot;] --&gt; BLEND
+    SIMPRED[&quot;GPU Simulator&lt;br/&gt;Prediction&lt;br/&gt;(10k MC sims)&quot;] --&gt; BLEND
+
+    subgraph BLEND[&quot;Spatially-Varying Alpha&quot;]
+        NEAR[&quot;Near settlements&lt;br/&gt;alpha = sim_alpha * 1.5&lt;br/&gt;(max 0.7)&quot;]
+        FAR[&quot;Far from settlements&lt;br/&gt;alpha = sim_alpha * 0.3&quot;]
+        DECAY[&quot;Gaussian decay:&lt;br/&gt;alpha(d) = far + (near-far) * exp(-(d/4)^2)&quot;]
+        NEAR --&gt; DECAY
+        FAR --&gt; DECAY
+    end
+
+    DECAY --&gt; FINAL[&quot;final = (1-alpha) * statistical + alpha * simulator&quot;]
+    FINAL --&gt; FLOOR[&quot;Re-apply floor&lt;br/&gt;+ structural zeros&quot;]
+</div>
+<p>Spatially-varying blend with parametric simulator predictions:</p>
+<pre><code class="language-python">alpha_near = min(sim_alpha * 1.5, 0.7)
+alpha_far = sim_alpha * 0.3
+alpha_map = alpha_far + (alpha_near - alpha_far) * exp(-(dist/4)^2)
+
+pred = (1 - alpha_map) * pred + alpha_map * sim_pred
+# Re-apply floor and structural zeros after blending
+</code></pre>
+<hr>
+<h2>Stage 11: Lock Static + Borders</h2>
+<pre><code class="language-python">pred[ocean] = [1, 0, 0, 0, 0, 0]
+pred[mountain] = [0, 0, 0, 0, 0, 1]
+pred[border_rows_and_cols] = [1, 0, 0, 0, 0, 0]  # borders always empty
+</code></pre>
+<hr>
+<h2>Output</h2>
+<p><code>(40, 40, 6)</code> numpy float64 array where each cell sums to 1.0. Classes:</p>
+<ul>
+<li>0: Empty (ocean, plains, cleared land)</li>
+<li>1: Settlement</li>
+<li>2: Port</li>
+<li>3: Ruin</li>
+<li>4: Forest</li>
+<li>5: Mountain</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-astar-island-prediction-tech-design"></a></p>
+<h1>Astar Island - Technical Design</h1>
+<p>Three-stage prediction pipeline: exploration, modeling, and submission, backed by continuous autonomous optimization.</p>
+<hr>
+<h2>Core Data Models</h2>
+<h3>Prediction Tensor</h3>
+<pre><code class="language-python">prediction: np.ndarray  # shape (40, 40, 6), dtype float64
+# Classes: [empty, settlement, port, ruin, forest, mountain]
+# Constraints: sum per cell = 1.0, min per class = 0.01
+</code></pre>
+<h3>Feature Key (per cell)</h3>
+<pre><code class="language-python">feature_key = (
+    terrain_code,       # int: terrain type at cell
+    dist_bucket,        # int: distance to nearest initial settlement
+    coastal,            # bool: adjacent to ocean
+    forest_neighbors,   # int: count of adjacent forest cells
+    has_port,           # bool: initial port present
+    cluster_bucket,     # int: settlement cluster density bucket
+)
+</code></pre>
+<h3>Calibration Model</h3>
+<pre><code class="language-python">class CalibrationModel:
+    fine: dict[tuple, np.ndarray]    # 6-tuple FK -&gt; class distribution
+    coarse: dict[tuple, np.ndarray]  # 4-tuple FK -&gt; class distribution
+    base: dict[tuple, np.ndarray]    # 1-tuple (terrain,) -&gt; class distribution
+    global_: np.ndarray              # overall distribution
+</code></pre>
+<h3>Simulator Parameters (17 dimensions)</h3>
+<pre><code class="language-python">params = {
+    &quot;base_survival&quot;, &quot;expansion_str&quot;, &quot;expansion_scale&quot;,
+    &quot;decay_power&quot;, &quot;max_reach&quot;, &quot;coastal_mod&quot;,
+    &quot;food_coeff&quot;, &quot;cluster_pen&quot;, &quot;cluster_optimal&quot;, &quot;cluster_quad&quot;,
+    &quot;ruin_rate&quot;, &quot;port_factor&quot;, &quot;forest_resist&quot;,
+    &quot;forest_clear&quot;, &quot;forest_reclaim&quot;, &quot;exp_death&quot;
+}
+</code></pre>
+<hr>
+<h2>API Endpoints</h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GET</td>
+<td><code>/rounds</code></td>
+<td>List all rounds</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/rounds/{id}</code></td>
+<td>Round detail + initial states</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/rounds/{id}/simulate</code></td>
+<td>Query 15x15 viewport (costs 1 query)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/rounds/{id}/submit</code></td>
+<td>Submit 40x40x6 prediction for a seed</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Prediction Pipeline</h2>
+<div class="mermaid">sequenceDiagram
+    participant D as Daemon
+    participant E as Explore
+    participant P as Predict
+    participant S as Simulator
+    participant A as API
+
+    D-&gt;&gt;A: GET /rounds (poll)
+    A--&gt;&gt;D: active round found
+    D-&gt;&gt;E: run_adaptive_exploration()
+    E-&gt;&gt;A: POST /simulate (50 queries)
+    A--&gt;&gt;E: observation grids
+    E-&gt;&gt;E: Build FK Buckets + Multipliers
+    E--&gt;&gt;D: observations, fk_buckets, global_mult
+    D-&gt;&gt;S: fit_to_observations()
+    S-&gt;&gt;S: CMA-ES optimization
+    S--&gt;&gt;D: fitted params + sim predictions
+    D-&gt;&gt;P: gemini_predict()
+    P-&gt;&gt;P: Calibration + FK blend + multipliers
+    P-&gt;&gt;P: Sim blend (alpha=0.25)
+    P-&gt;&gt;P: Floor + renormalize
+    P--&gt;&gt;D: 40x40x6 tensor
+    D-&gt;&gt;A: POST /submit (5 seeds)
+</div>
+<hr>
+<h2>Autoloop Optimization</h2>
+<h3>Parameter Space (40+ dimensions)</h3>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Parameters</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>FK Blending</td>
+<td>4</td>
+<td>prior_weight, max_strength, min_count, strength_fn</td>
+</tr>
+<tr>
+<td>Multipliers</td>
+<td>10</td>
+<td>power, per-class bounds, dampening</td>
+</tr>
+<tr>
+<td>Temperature</td>
+<td>4</td>
+<td>T_low, T_high, entropy thresholds</td>
+</tr>
+<tr>
+<td>Spatial</td>
+<td>2</td>
+<td>smooth_alpha, barrier_strength</td>
+</tr>
+<tr>
+<td>Calibration</td>
+<td>9</td>
+<td>fine/coarse/base weights and divisors</td>
+</tr>
+<tr>
+<td>Growth/Obs</td>
+<td>3</td>
+<td>growth_front_boost, obs_overlay_alpha</td>
+</tr>
+</tbody></table>
+<h3>Optimization Algorithm</h3>
+<pre><code>1. Load best_params.json (current best: 89.389)
+2. Perturb 1-3 random parameters (widened after 500+ rejections)
+3. Backtest against 8 rounds x 5 seeds (vectorized, ~70ms)
+4. Accept if score improves (greedy)
+5. Accept with 20% probability if within 0.05 of best (Metropolis)
+6. Write best_params.json on improvement
+7. Repeat indefinitely
+</code></pre>
+<hr>
+<h2>Key Algorithms</h2>
+<h3>Hierarchical Calibration Lookup</h3>
+<pre><code>weight_fine = cal_fine_base + count / cal_fine_divisor  (capped at cal_fine_max)
+weight_coarse = cal_coarse_base + count / cal_coarse_divisor
+weight_base = cal_base_base + count / cal_base_divisor
+
+prior = weighted_average(fine, coarse, base, global)
+</code></pre>
+<h3>Score Blending (empirical FK + calibration)</h3>
+<pre><code>blended = prior_weight * calibration + emp_strength * empirical
+blended /= sum(blended)  # renormalize
+</code></pre>
+<h3>Global Multiplier</h3>
+<pre><code>ratio = observed_count[class] / expected_count[class]
+dampened = ratio ^ power[class]
+clamped = clip(dampened, class_min, class_max)
+prediction *= clamped  # per class
+</code></pre>
+<hr>
+<h2>File Map</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>daemon.py</code></td>
+<td>Round monitor, exploration trigger, submission loop</td>
+</tr>
+<tr>
+<td><code>explore.py</code></td>
+<td>Viewport selection, observation collection</td>
+</tr>
+<tr>
+<td><code>predict_gemini.py</code></td>
+<td>Production prediction engine</td>
+</tr>
+<tr>
+<td><code>fast_predict.py</code></td>
+<td>Vectorized prediction (numpy, for autoloop)</td>
+</tr>
+<tr>
+<td><code>calibration.py</code></td>
+<td>Hierarchical prior model</td>
+</tr>
+<tr>
+<td><code>sim_inference.py</code></td>
+<td>CMA-ES simulator fitting</td>
+</tr>
+<tr>
+<td><code>sim_model_gpu.py</code></td>
+<td>PyTorch GPU simulator</td>
+</tr>
+<tr>
+<td><code>autoloop_fast.py</code></td>
+<td>Continuous parameter optimization</td>
+</tr>
+<tr>
+<td><code>utils.py</code></td>
+<td>GlobalMultipliers, FeatureKeyBuckets, ObservationAccumulator</td>
+</tr>
+<tr>
+<td><code>client.py</code></td>
+<td>API client with rate limiting</td>
+</tr>
+<tr>
+<td><code>config.py</code></td>
+<td>Constants (MAP_W=40, NUM_CLASSES=6, PROB_FLOOR=0.01)</td>
+</tr>
+<tr>
+<td><code>best_params.json</code></td>
+<td>Current best parameters (auto-updated by autoloop)</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="02-features-norgesgruppen-detection-feature-spec"></a></p>
+<h1>NorgesGruppen Object Detection</h1>
+<p>Detect and classify grocery products on store shelf images using a two-stage ensemble pipeline: multi-model YOLO detection fused with Weighted Boxes Fusion, followed by ConvNeXt-V2 re-classification.</p>
+<hr>
+<h2>Features</h2>
+<ul>
+<li>Dual YOLOv8x detection with test-time augmentation (TTA)</li>
+<li>Weighted Boxes Fusion (WBF) for multi-model ensemble merging</li>
+<li>ConvNeXt-V2 nano re-classification with smart score blending</li>
+<li>Background rejection via trained class 356</li>
+<li>Rare category protection through stratified data splitting</li>
+<li>Sandbox-compatible inference (blocked imports, torch.load patch)</li>
+<li>285s safety timeout (300s sandbox limit)</li>
+</ul>
+<hr>
+<h2>User Flows</h2>
+<h3>Inference Pipeline</h3>
+<div class="mermaid">flowchart LR
+    Input[Shelf Images] --&gt; A[YOLOv8x A&lt;br/&gt;1536px + TTA]
+    Input --&gt; B[YOLOv8x B&lt;br/&gt;1280px + TTA]
+    A --&gt; WBF[WBF Merge&lt;br/&gt;IoU=0.55]
+    B --&gt; WBF
+    WBF --&gt; Crop[Extract Crops&lt;br/&gt;256x256]
+    Crop --&gt; Cls[ConvNeXt-V2&lt;br/&gt;nano]
+    Cls --&gt; Blend[Score Blend&lt;br/&gt;+ BG Reject]
+    Blend --&gt; JSON[predictions.json]
+</div>
+<h3>Training Pipeline</h3>
+<div class="mermaid">flowchart TB
+    COCO[COCO Annotations] --&gt; Prep[prepare_data.py&lt;br/&gt;COCO to YOLO]
+    Prep --&gt; Split[Stratified Split&lt;br/&gt;90/10 val]
+    Split --&gt; Phase1[Phase 1: Val Run&lt;br/&gt;Find best epoch]
+    Phase1 --&gt; Phase2[Phase 2: Final&lt;br/&gt;100% data, 1.15x epochs]
+
+    COCO --&gt; Crops[prepare_classifier_data.py&lt;br/&gt;Extract crops + refs]
+    Crops --&gt; Head[Phase 1: Head-Only&lt;br/&gt;5 epochs]
+    Head --&gt; Finetune[Phase 2: Full Fine-tune&lt;br/&gt;55 epochs]
+</div>
+<hr>
+<h2>Acceptance Criteria</h2>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> Detection <a href="mailto:mAP@0.5">mAP@0.5</a> &gt; 0.95 on train set</li>
+<li><input checked="" disabled="" type="checkbox"> Classification <a href="mailto:mAP@0.5">mAP@0.5</a> &gt; 0.95 on train set</li>
+<li><input checked="" disabled="" type="checkbox"> Combined score &gt; 0.97 on train set</li>
+<li><input checked="" disabled="" type="checkbox"> Runs within 300s on L4 GPU</li>
+<li><input checked="" disabled="" type="checkbox"> Zip under 420 MB</li>
+<li><input checked="" disabled="" type="checkbox"> No blocked imports</li>
+<li><input checked="" disabled="" type="checkbox"> torch.load monkeypatch applied before ultralytics import</li>
+<li><input disabled="" type="checkbox"> Test set combined score &gt; 0.95</li>
+</ul>
+<hr>
+<h2>Edge Cases</h2>
+<ul>
+<li>Products with identical packaging but different sizes (e.g., 500g vs 1kg)</li>
+<li>Occluded products where only partial label is visible</li>
+<li>Empty shelf regions triggering false positive detections (mitigated by BG class)</li>
+<li>Rare categories with 1-3 training examples (protected by stratified split)</li>
+<li>TTA timeout risk on large images (mitigated by 285s safety cutoff)</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="02-features-norgesgruppen-detection-tech-design"></a></p>
+<h1>NorgesGruppen Detection - Technical Design</h1>
+<p>Two-stage detection + classification pipeline optimized for grocery shelf product recognition within a constrained Docker sandbox.</p>
+<hr>
+<h2>Inference Pipeline Detail</h2>
+<div class="mermaid">flowchart TB
+    IMG[&quot;Input Image&lt;br/&gt;4032x3024&quot;] --&gt; YOLOA[&quot;YOLOv8x A&lt;br/&gt;imgsz=1536&lt;br/&gt;augment=True (TTA)&lt;br/&gt;conf=0.001, iou=0.6&quot;]
+    IMG --&gt; YOLOB[&quot;YOLOv8x B&lt;br/&gt;imgsz=1280&lt;br/&gt;augment=True (TTA)&lt;br/&gt;conf=0.001, iou=0.6&quot;]
+
+    YOLOA --&gt; DETS_A[&quot;Detections A&lt;br/&gt;boxes + scores + classes&quot;]
+    YOLOB --&gt; DETS_B[&quot;Detections B&lt;br/&gt;boxes + scores + classes&quot;]
+
+    DETS_A --&gt; WBF[&quot;Weighted Boxes Fusion&lt;br/&gt;iou_thr=0.55&lt;br/&gt;weights=[1.0, 0.9]&lt;br/&gt;skip_box_thr=0.001&quot;]
+    DETS_B --&gt; WBF
+
+    WBF --&gt; MERGED[&quot;Merged Detections&lt;br/&gt;unified boxes + scores&quot;]
+    MERGED --&gt; CROP[&quot;Extract Crops&lt;br/&gt;256x256, validate &gt;=5px&quot;]
+
+    CROP --&gt; CLS[&quot;ConvNeXt-V2 nano&lt;br/&gt;FP16, 357 classes&lt;br/&gt;batch=64, chunks of 500&quot;]
+
+    CLS --&gt; BLEND{&quot;YOLO cls ==&lt;br/&gt;Classifier cls?&quot;}
+    BLEND --&gt;|&quot;Yes&quot;| AGREE[&quot;score = yolo_conf *&lt;br/&gt;(0.7 + 0.3 * cls_prob)&quot;]
+    BLEND --&gt;|&quot;No&quot;| DISAGREE[&quot;score = yolo_conf *&lt;br/&gt;cls_prob * 0.5&quot;]
+    BLEND --&gt;|&quot;BG class&quot;| REJECT[&quot;Discard detection&lt;br/&gt;(bg_prob &gt; 0.5)&quot;]
+
+    AGREE --&gt; JSON[&quot;predictions.json&lt;br/&gt;[image_id, category_id,&lt;br/&gt;bbox, score]&quot;]
+    DISAGREE --&gt; JSON
+</div>
+<div class="mermaid">flowchart TB
+    subgraph Training[&quot;Two-Phase Training Strategy&quot;]
+        subgraph YOLO[&quot;YOLOv8x Training&quot;]
+            DATA[&quot;248 shelf images&lt;br/&gt;22,700 annotations&lt;br/&gt;357 categories&quot;] --&gt; SPLIT[&quot;Stratified Split&lt;br/&gt;90/10 val&lt;br/&gt;rare cats forced to train&quot;]
+            SPLIT --&gt; PH1Y[&quot;Phase 1: Val Run&lt;br/&gt;imgsz=1280, batch=4&lt;br/&gt;patience=50, up to 300 epochs&quot;]
+            PH1Y --&gt; BEST_EP[&quot;Best epoch found&lt;br/&gt;(via early stopping)&quot;]
+            BEST_EP --&gt; PH2Y[&quot;Phase 2: Final&lt;br/&gt;100% data&lt;br/&gt;1.15x best_epoch&lt;br/&gt;patience=0&quot;]
+            PH2Y --&gt; BESTPT[&quot;best.pt&lt;br/&gt;132 MB&quot;]
+        end
+
+        subgraph CLS[&quot;ConvNeXt-V2 Training&quot;]
+            CROPS[&quot;Shelf crops&lt;br/&gt;1x weight&quot;] --&gt; COMBINED
+            REFS[&quot;Reference images&lt;br/&gt;3x oversampled&lt;br/&gt;heavy augmentation&quot;] --&gt; COMBINED
+            COMBINED[&quot;WeightedRandomSampler&lt;br/&gt;inverse-freq, cap 50x&quot;] --&gt; PH1C[&quot;Phase 1: Head-Only&lt;br/&gt;5 epochs, lr=3e-4&lt;br/&gt;backbone frozen&quot;]
+            PH1C --&gt; PH2C[&quot;Phase 2: Full Fine-tune&lt;br/&gt;55 epochs&lt;br/&gt;backbone: 3e-5&lt;br/&gt;head: 3e-4&quot;]
+            PH2C --&gt; SAFETENSORS[&quot;classifier.safetensors&lt;br/&gt;30 MB FP16&quot;]
+        end
+    end
+</div>
+<hr>
+<h2>Data Models</h2>
+<h3>COCO Annotation Format (Input)</h3>
+<pre><code class="language-json">{
+  &quot;images&quot;: [{&quot;id&quot;: 42, &quot;file_name&quot;: &quot;img_00042.jpg&quot;, &quot;width&quot;: 4032, &quot;height&quot;: 3024}],
+  &quot;annotations&quot;: [{&quot;id&quot;: 1, &quot;image_id&quot;: 42, &quot;category_id&quot;: 15, &quot;bbox&quot;: [x, y, w, h]}],
+  &quot;categories&quot;: [{&quot;id&quot;: 0, &quot;name&quot;: &quot;product_0&quot;}, ..., {&quot;id&quot;: 356, &quot;name&quot;: &quot;unknown_product&quot;}]
+}
+</code></pre>
+<h3>Prediction Format (Output)</h3>
+<pre><code class="language-json">[
+  {&quot;image_id&quot;: 42, &quot;category_id&quot;: 15, &quot;bbox&quot;: [x, y, w, h], &quot;score&quot;: 0.87},
+  ...
+]
+</code></pre>
+<h3>Training Data</h3>
+<ul>
+<li>248 shelf images, ~22,700 annotations, 357 categories</li>
+<li>327 product reference images with multi-angle photos</li>
+<li>Stratified split: rare categories (&lt;=3 annotations) forced to training set</li>
+</ul>
+<hr>
+<h2>Inference Pipeline</h2>
+<h3>Stage 1: Detection (YOLO)</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Weight File</th>
+<th>Input Size</th>
+<th>TTA</th>
+<th>Weight</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>YOLO-A</td>
+<td><code>best_a.pt</code></td>
+<td>1536px</td>
+<td>Yes</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>YOLO-B</td>
+<td><code>best_b.pt</code></td>
+<td>1280px</td>
+<td>Yes</td>
+<td>0.9</td>
+</tr>
+</tbody></table>
+<p>Parameters: <code>conf=0.001</code>, <code>iou=0.6</code>, <code>max_det=3000</code></p>
+<h3>Stage 2: WBF Fusion</h3>
+<pre><code class="language-python">from ensemble_boxes import weighted_boxes_fusion
+# Normalize boxes to [0,1], merge, denormalize
+# iou_thr=0.55, skip_box_thr=0.001
+</code></pre>
+<h3>Stage 3: Classification (ConvNeXt-V2)</h3>
+<ul>
+<li>Model: ConvNeXt-V2 nano (15.2M params, 30 MB FP16 safetensors)</li>
+<li>Input: 256x256 crops extracted from detection boxes</li>
+<li>Output: 357 class probabilities</li>
+<li>Batch size: 64 crops, chunked at 500 crops</li>
+</ul>
+<h3>Stage 4: Score Blending</h3>
+<pre><code class="language-python">if classifier_class == yolo_class:
+    score = yolo_conf * (0.7 + 0.3 * cls_prob)    # agreement boost
+elif classifier_class == BG_CLASS:
+    score = 0  # reject detection (bg_prob &gt; 0.5)
+else:
+    score = yolo_conf * cls_prob * 0.5              # disagreement penalty
+</code></pre>
+<hr>
+<h2>Training Architecture</h2>
+<h3>YOLOv8x Training (train_yolo.py)</h3>
+<p><strong>Phase 1 -- Validation Run (90/10 split)</strong></p>
+<ul>
+<li><code>imgsz=1280</code>, <code>batch=4</code>, <code>epochs=300</code>, <code>patience=50</code></li>
+<li>AdamW optimizer, lr=0.001, cosine annealing to 0.00001</li>
+<li>Mosaic=1.0, mixup=0.0, copy_paste=0.1</li>
+<li>Output: best epoch count via early stopping</li>
+</ul>
+<p><strong>Phase 2 -- Final Training (100% data)</strong></p>
+<ul>
+<li>Same hyperparameters, epochs = 1.15 * best_epoch</li>
+<li>No early stopping (<code>patience=0</code>)</li>
+<li>Output: <code>best.pt</code> trained on all data</li>
+</ul>
+<h3>ConvNeXt-V2 Classifier Training (train_classifier.py)</h3>
+<p><strong>Phase 1 -- Head-Only (5 epochs)</strong></p>
+<ul>
+<li>Freeze backbone, train classification head only</li>
+<li>lr=3e-4</li>
+</ul>
+<p><strong>Phase 2 -- Full Fine-tune (55 epochs)</strong></p>
+<ul>
+<li>Unfreeze all, differential learning rates (backbone: 3e-5, head: 3e-4)</li>
+<li>CosineAnnealingLR, label smoothing=0.1</li>
+<li>WeightedRandomSampler (inverse-frequency, capped at 50x)</li>
+<li>Reference images 3x oversampled (bridge white-bg to shelf-bg domain gap)</li>
+</ul>
+<hr>
+<h2>Submission Pipeline</h2>
+<div class="mermaid">flowchart LR
+    subgraph Build[&quot;Build Submission&quot;]
+        CODE[&quot;run.py&lt;br/&gt;classifier.py&lt;br/&gt;classifier_config.json&quot;] --&gt; ZIP
+        WEIGHTS[&quot;best_a.pt (132MB)&lt;br/&gt;best_b.pt (132MB)&lt;br/&gt;classifier.safetensors (30MB)&quot;] --&gt; ZIP
+        ZIP[&quot;submission.zip&lt;br/&gt;(max 420 MB)&quot;]
+    end
+
+    subgraph Sandbox[&quot;Docker Sandbox&quot;]
+        ZIP --&gt; UPLOAD[&quot;Upload to&lt;br/&gt;app.ainm.no&quot;]
+        UPLOAD --&gt; DOCKER[&quot;Python 3.11&lt;br/&gt;L4 GPU 24GB&lt;br/&gt;300s timeout&lt;br/&gt;OFFLINE&quot;]
+        DOCKER --&gt; RUN[&quot;python run.py&lt;br/&gt;--input /data/images&lt;br/&gt;--output /output/predictions.json&quot;]
+        RUN --&gt; EVAL[&quot;Scoring:&lt;br/&gt;0.7 * det_mAP&lt;br/&gt;+ 0.3 * cls_mAP&quot;]
+    end
+</div>
+<hr>
+<h2>Sandbox Compatibility</h2>
+<h3>Critical: torch.load Monkeypatch</h3>
+<pre><code class="language-python"># MUST be before `from ultralytics import YOLO`
+_original_torch_load = torch.load
+def _patched_torch_load(*args, **kwargs):
+    if &quot;weights_only&quot; not in kwargs:
+        kwargs[&quot;weights_only&quot;] = False
+    return _original_torch_load(*args, **kwargs)
+torch.load = _patched_torch_load
+</code></pre>
+<h3>Package Version Pinning</h3>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Sandbox Version</th>
+<th>Breaking Change</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ultralytics</td>
+<td>8.1.0</td>
+<td>8.2+ weights fail to load</td>
+</tr>
+<tr>
+<td>timm</td>
+<td>0.9.12</td>
+<td>1.0+ weights fail to load</td>
+</tr>
+<tr>
+<td>PyTorch</td>
+<td>2.6.0+cu124</td>
+<td>weights_only=True default</td>
+</tr>
+<tr>
+<td>onnxruntime</td>
+<td>1.20.0</td>
+<td>opset &gt; 20 fails</td>
+</tr>
+</tbody></table>
+<h3>Submission Structure</h3>
+<pre><code>submission.zip (max 420 MB)
+├── run.py              # Entry point
+├── classifier.py       # Model loader
+├── classifier_config.json
+├── classifier.safetensors  # 30 MB
+├── best_a.pt               # 132 MB
+└── best_b.pt               # 132 MB (optional)
+</code></pre>
+<hr>
+<h2>Timing Budget (~285s safety margin)</h2>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Per Image</th>
+<th>Total (248 imgs)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Model loading</td>
+<td>--</td>
+<td>10-15s</td>
+</tr>
+<tr>
+<td>YOLO-A (1536 + TTA)</td>
+<td>~1.0s</td>
+<td>~248s</td>
+</tr>
+<tr>
+<td>YOLO-B (1280 + TTA)</td>
+<td>~0.8s</td>
+<td>~198s</td>
+</tr>
+<tr>
+<td>WBF merge</td>
+<td>&lt;0.01s</td>
+<td>&lt;2s</td>
+</tr>
+<tr>
+<td>Classifier (batch 64)</td>
+<td>~0.05s/crop</td>
+<td>~15s</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td></td>
+<td><strong>~270s</strong></td>
+</tr>
+</tbody></table>
+<hr>
+<h2>File Map</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>run.py</code></td>
+<td>Submission entry point (detection + classification)</td>
+</tr>
+<tr>
+<td><code>classifier.py</code></td>
+<td>ConvNeXt-V2 model loader (timm + safetensors)</td>
+</tr>
+<tr>
+<td><code>train_yolo.py</code></td>
+<td>Two-phase YOLOv8x training</td>
+</tr>
+<tr>
+<td><code>train_classifier.py</code></td>
+<td>Two-phase ConvNeXt-V2 training</td>
+</tr>
+<tr>
+<td><code>prepare_data.py</code></td>
+<td>COCO to YOLO format + stratified split</td>
+</tr>
+<tr>
+<td><code>prepare_classifier_data.py</code></td>
+<td>Crop extraction + reference image organization</td>
+</tr>
+<tr>
+<td><code>evaluate.py</code></td>
+<td>COCO evaluation (det mAP + cls mAP)</td>
+</tr>
+<tr>
+<td><code>sweep.py</code></td>
+<td>Hyperparameter sweep testing</td>
+</tr>
+<tr>
+<td><code>synth_test.py</code></td>
+<td>Local synthetic evaluation</td>
+</tr>
+</tbody></table>
+<div class="page-break"></div>
+
+<p><a id="02-features-tripletex-agent-feature-spec"></a></p>
+<h1>Tripletex AI Accounting Agent</h1>
+<p>HTTPS endpoint that receives accounting task prompts in 7 languages and executes them via the Tripletex API.</p>
+<hr>
+<h2>Features</h2>
+<ul>
+<li>HTTPS <code>/solve</code> endpoint accepting task prompts</li>
+<li>Multi-language prompt interpretation (nb, en, es, pt, nn, de, fr)</li>
+<li>30 task types across 7 categories: employees, customers, products, invoicing, travel expenses, projects, departments</li>
+<li>56 variants per task type (1,680 total scenarios)</li>
+<li>Tiered scoring with efficiency bonuses</li>
+</ul>
+<hr>
+<h2>User Flows</h2>
+<h3>Task Execution</h3>
+<div class="mermaid">sequenceDiagram
+    participant Judge as Competition Judge
+    participant Agent as /solve Endpoint
+    participant LLM as Language Model
+    participant API as Tripletex API
+
+    Judge-&gt;&gt;Agent: POST /solve {prompt, session_token}
+    Agent-&gt;&gt;LLM: Interpret prompt (any of 7 languages)
+    LLM--&gt;&gt;Agent: Structured task + parameters
+    Agent-&gt;&gt;API: Execute accounting operations
+    API--&gt;&gt;Agent: Results
+    Agent--&gt;&gt;Judge: Response
+</div>
+<hr>
+<h2>Scoring</h2>
+<pre><code>score_per_task = correctness * tier_multiplier + efficiency_bonus
+max_per_task = 6.0
+</code></pre>
+<ul>
+<li><strong>Correctness:</strong> Binary (task completed correctly or not)</li>
+<li><strong>Tier multiplier:</strong> Higher for harder task types</li>
+<li><strong>Efficiency bonus:</strong> Fewer API calls = higher bonus</li>
+</ul>
+<hr>
+<h2>Acceptance Criteria</h2>
+<ul>
+<li><input disabled="" type="checkbox"> HTTPS endpoint deployed and accessible</li>
+<li><input disabled="" type="checkbox"> Basic Auth: username <code>0</code>, password = session token</li>
+<li><input disabled="" type="checkbox"> Handles all 30 task types</li>
+<li><input disabled="" type="checkbox"> Handles all 7 input languages</li>
+<li><input disabled="" type="checkbox"> Response within timeout limits</li>
+<li><input disabled="" type="checkbox"> Correct Tripletex API usage per task type</li>
+</ul>
+<hr>
+<h2>Intended Architecture</h2>
+<div class="mermaid">flowchart TB
+    JUDGE[&quot;Competition Judge&lt;br/&gt;POST /solve&quot;] --&gt; ENDPOINT[&quot;HTTPS Endpoint&lt;br/&gt;Basic Auth: 0 / session_token&quot;]
+
+    ENDPOINT --&gt; PARSE[&quot;Parse prompt&lt;br/&gt;(7 languages)&quot;]
+    PARSE --&gt; LLM[&quot;LLM Agent&lt;br/&gt;Interpret task&quot;]
+    LLM --&gt; ROUTE{&quot;Task Type?&quot;}
+
+    ROUTE --&gt;|&quot;Employee&quot;| EMP[&quot;Create/update employee&lt;br/&gt;via Tripletex API&quot;]
+    ROUTE --&gt;|&quot;Invoice&quot;| INV[&quot;Create invoice&lt;br/&gt;with line items&quot;]
+    ROUTE --&gt;|&quot;Product&quot;| PROD[&quot;Register product&lt;br/&gt;with pricing&quot;]
+    ROUTE --&gt;|&quot;Travel&quot;| TRAVEL[&quot;Submit travel&lt;br/&gt;expense report&quot;]
+    ROUTE --&gt;|&quot;Project&quot;| PROJ[&quot;Create/manage&lt;br/&gt;project&quot;]
+    ROUTE --&gt;|&quot;Department&quot;| DEPT[&quot;Manage&lt;br/&gt;departments&quot;]
+    ROUTE --&gt;|&quot;Customer&quot;| CUST[&quot;Create/update&lt;br/&gt;customer record&quot;]
+
+    EMP --&gt; TRIPLETEX[&quot;Tripletex REST API&lt;br/&gt;Basic Auth&quot;]
+    INV --&gt; TRIPLETEX
+    PROD --&gt; TRIPLETEX
+    TRAVEL --&gt; TRIPLETEX
+    PROJ --&gt; TRIPLETEX
+    DEPT --&gt; TRIPLETEX
+    CUST --&gt; TRIPLETEX
+
+    TRIPLETEX --&gt; RESULT[&quot;API Response&quot;]
+    RESULT --&gt; RESPONSE[&quot;Return to Judge&quot;]
+</div>
+<h2>Status</h2>
+<p><strong>Not started.</strong> Requires:</p>
+<ol>
+<li>HTTPS endpoint deployment (not a zip submission like NorgesGruppen)</li>
+<li>LLM integration for prompt interpretation</li>
+<li>Tripletex API client for task execution</li>
+<li>Task type routing and parameter extraction</li>
+</ol>
+<p>Documentation available at <code>docs/tripletex/</code> (overview, endpoint, scoring, examples, sandbox).</p>
+<div class="page-break"></div>
+
+<p><a id="04-process-dev-workflow"></a></p>
+<h1>Development Workflow</h1>
+<p>Daily development loop for each challenge.</p>
+<hr>
+<h2>Astar Island</h2>
+<h3>Improving Predictions</h3>
+<ol>
+<li><strong>Check autoloop progress</strong> -- review <code>best_params.json</code> score and experiment count</li>
+<li><strong>Analyze weak rounds</strong> -- identify boom vs non-boom score gaps</li>
+<li><strong>Propose structural changes</strong> -- modify <code>predict_gemini.py</code> or <code>calibration.py</code></li>
+<li><strong>Backtest locally</strong> -- run against calibration data (17 rounds x 5 seeds)</li>
+<li><strong>If improvement:</strong> update autoloop parameter space if new knobs added</li>
+<li><strong>Wait for next round</strong> -- daemon auto-submits with latest params</li>
+</ol>
+<h3>Adding New Features</h3>
+<ol>
+<li>Add parameter to <code>best_params.json</code> schema</li>
+<li>Implement in <code>predict_gemini.py</code> (production) and <code>fast_predict.py</code> (vectorized)</li>
+<li>Add to autoloop perturbation space in <code>autoloop_fast.py</code></li>
+<li>Backtest shows improvement before committing</li>
+</ol>
+<h3>Monitoring Active Rounds</h3>
+<p>The daemon handles everything automatically. To intervene:</p>
+<ul>
+<li>Check <code>data/daemon.log</code> for submission status</li>
+<li>Use web dashboard for real-time scores</li>
+<li>Manual submission: <code>python submit.py</code> (for custom strategies)</li>
+</ul>
+<hr>
+<h2>NorgesGruppen</h2>
+<h3>Improving Scores</h3>
+<ol>
+<li><strong>Evaluate current submission</strong> -- <code>python evaluate.py</code> for train set metrics</li>
+<li><strong>Identify weakness</strong> -- detection mAP vs classification mAP</li>
+<li><strong>Train improved model</strong> -- one GPU job at a time</li>
+<li><strong>Test locally</strong> -- <code>python synth_test.py</code></li>
+<li><strong>Build submission</strong> -- zip with required files</li>
+<li><strong>Submit</strong> -- upload at <code>app.ainm.no</code> (max 3/day)</li>
+</ol>
+<h3>Pre-submission Checklist</h3>
+<ul>
+<li><input disabled="" type="checkbox"> <code>run.py</code> starts with torch.load monkeypatch</li>
+<li><input disabled="" type="checkbox"> No blocked imports (<code>os</code>, <code>sys</code>, <code>subprocess</code>, etc.)</li>
+<li><input disabled="" type="checkbox"> Zip under 420 MB</li>
+<li><input disabled="" type="checkbox"> Max 3 weight files, max 10 Python files</li>
+<li><input disabled="" type="checkbox"> Weight files trained with <code>ultralytics==8.1.0</code> and <code>timm==0.9.12</code></li>
+<li><input disabled="" type="checkbox"> Tested locally: completes in &lt;285s</li>
+</ul>
+<hr>
+<h2>General Rules</h2>
+<ul>
+<li><strong>Never run concurrent GPU training</strong> -- sequential only, CUDA OOM risk</li>
+<li><strong>Pin package versions</strong> -- match sandbox exactly</li>
+<li><strong>Save ideas to IDEAS.md</strong> -- document findings and hypotheses</li>
+<li><strong>Use <code>-u</code> flag</strong> -- all Python daemon/autoloop processes need unbuffered output</li>
+</ul>
+<div class="page-break"></div>
+
+<p><a id="04-process-operations"></a></p>
+<h1>Operations Guide</h1>
+<p>How to start, monitor, and manage all running systems.</p>
+<hr>
+<h2>System Process Map</h2>
+<div class="mermaid">flowchart TB
+    subgraph Processes[&quot;Running Processes&quot;]
+        DAEMON[&quot;daemon.py&lt;br/&gt;Round monitor&lt;br/&gt;Auto-submit&quot;]
+        AUTOLOOP[&quot;autoloop_fast.py&lt;br/&gt;Parameter optimizer&lt;br/&gt;~70ms/experiment&quot;]
+        RESEARCHER[&quot;multi_researcher.py&lt;br/&gt;Algorithm discovery&lt;br/&gt;Gemini Pro + Flash&quot;]
+        WEB[&quot;Web Dashboard&lt;br/&gt;SvelteKit&lt;br/&gt;localhost:3000&quot;]
+    end
+
+    subgraph SharedState[&quot;Shared State&quot;]
+        BP[&quot;best_params.json&quot;]
+        CAL[&quot;data/calibration/&lt;br/&gt;17 rounds GT&quot;]
+        LOGS[&quot;data/*.log&quot;]
+        IDEAS[&quot;data/multi_ideas/&quot;]
+    end
+
+    subgraph External[&quot;External&quot;]
+        API[&quot;Competition API&lt;br/&gt;api.ainm.no&quot;]
+        GEMINI[&quot;Gemini API&lt;br/&gt;google-genai&quot;]
+    end
+
+    AUTOLOOP --&gt;|&quot;writes on improvement&quot;| BP
+    DAEMON --&gt;|&quot;reads at prediction time&quot;| BP
+    DAEMON --&gt;|&quot;downloads new GT&quot;| CAL
+    AUTOLOOP --&gt;|&quot;reads for backtest&quot;| CAL
+    DAEMON &lt;--&gt;|&quot;simulate/submit&quot;| API
+    RESEARCHER --&gt;|&quot;generate code&quot;| GEMINI
+    RESEARCHER --&gt;|&quot;saves&quot;| IDEAS
+    DAEMON --&gt;|&quot;logs&quot;| LOGS
+    AUTOLOOP --&gt;|&quot;logs&quot;| LOGS
+    WEB --&gt;|&quot;reads&quot;| LOGS
+</div>
+<hr>
+<h2>Astar Island -- Full System Startup</h2>
+<p>All Python processes require the <code>-u</code> flag for unbuffered output (real-time logging).</p>
+<h3>1. Daemon (round monitor + auto-submission)</h3>
+<pre><code class="language-bash">cd astar-island-solution
+python -u daemon.py 2&gt;&amp;1 | tee data/daemon.log
+</code></pre>
+<p>Monitors API every 60s. On new round: explores, predicts, submits, then iterates.</p>
+<h3>2. Autoloop (parameter optimization)</h3>
+<pre><code class="language-bash">cd astar-island-solution
+python -u autoloop_fast.py 2&gt;&amp;1 | tee data/autoloop_fast_output.log
+</code></pre>
+<p>Runs continuously. Updates <code>best_params.json</code> on improvements. ~70ms per experiment.</p>
+<h3>3. Multi-Researcher (structural improvements)</h3>
+<pre><code class="language-bash">cd astar-island-solution
+python -u &lt;researcher_script&gt;.py 2&gt;&amp;1 | tee data/multi_researcher_output.log
+</code></pre>
+<p>Generates algorithm variants in <code>data/multi_ideas/</code>. Requires API keys in <code>.env</code>.</p>
+<h3>4. Web Dashboard</h3>
+<pre><code class="language-bash">cd astar-island-solution/web
+npm run dev
+</code></pre>
+<p>Opens at <code>http://localhost:3000</code>. Connects to API at <code>localhost:7091</code>.</p>
+<hr>
+<h2>NorgesGruppen -- Training &amp; Submission</h2>
+<h3>Training YOLOv8x</h3>
+<pre><code class="language-bash">cd norgesgruppen-solution
+python train_yolo.py
+</code></pre>
+<p>Two-phase: validation split (finds best epoch) then full data training. Takes ~4-6 hours on GPU. <strong>Never run concurrent GPU training jobs.</strong></p>
+<h3>Training Classifier</h3>
+<pre><code class="language-bash">cd norgesgruppen-solution
+python train_classifier.py
+</code></pre>
+<p>Two-phase: head-only warmup then full fine-tune. Takes ~2-3 hours.</p>
+<h3>Building Submission</h3>
+<pre><code class="language-bash">cd norgesgruppen-solution
+zip -r ../submission.zip . -x &quot;.*&quot; &quot;__MACOSX/*&quot; &quot;datasets/*&quot; &quot;classifier_data/*&quot; &quot;runs/*&quot;
+</code></pre>
+<p>Verify zip is under 420 MB and contains <code>run.py</code> + weight files.</p>
+<h3>Local Evaluation</h3>
+<pre><code class="language-bash">cd norgesgruppen-solution
+python evaluate.py
+python synth_test.py  # synthetic test
+</code></pre>
+<hr>
+<h2>Environment Variables</h2>
+<p>API keys and tokens stored in <code>.env</code> file (not committed). Required for:</p>
+<ul>
+<li>Astar Island API authentication</li>
+<li>Gemini API (researcher agents)</li>
+<li>Any other external service calls</li>
+</ul>
+<hr>
+<h2>Monitoring</h2>
+<h3>Astar Island Scores</h3>
+<ul>
+<li>Web dashboard: <code>http://localhost:3000</code> (scores, autoloop, daemon status)</li>
+<li>Autoloop log: <code>data/autoloop_fast_output.log</code> (experiment results)</li>
+<li>Daemon log: <code>data/daemon.log</code> (round detection, submissions)</li>
+<li>Best params: <code>best_params.json</code> (current optimal, auto-updated)</li>
+</ul>
+<h3>NorgesGruppen Scores</h3>
+<ul>
+<li>Competition leaderboard: <code>https://app.ainm.no</code></li>
+<li>Local eval: <code>python evaluate.py</code> (train set mAP)</li>
+</ul>
+<hr>
+<h2>Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>CUDA OOM</td>
+<td>Concurrent GPU jobs</td>
+<td>Kill other GPU processes first</td>
+</tr>
+<tr>
+<td>ultralytics load error</td>
+<td>Wrong version weights</td>
+<td>Retrain with <code>ultralytics==8.1.0</code></td>
+</tr>
+<tr>
+<td>torch.load fails</td>
+<td>Missing monkeypatch</td>
+<td>Add patch before <code>from ultralytics import YOLO</code></td>
+</tr>
+<tr>
+<td>Rate limit 429</td>
+<td>Too many API calls</td>
+<td>Daemon handles with exponential backoff</td>
+</tr>
+<tr>
+<td>Submission rejected</td>
+<td>Blocked import detected</td>
+<td>Replace with allowed alternative (pathlib, json)</td>
+</tr>
+<tr>
+<td>Autoloop stagnant</td>
+<td>Local optimum</td>
+<td>Will auto-widen perturbation after 500 rejections</td>
+</tr>
+</tbody></table>
+
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+    </script>
+</body>
+</html>

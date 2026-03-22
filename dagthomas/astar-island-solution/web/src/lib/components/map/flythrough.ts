@@ -15,6 +15,7 @@ export interface FlythroughSystem {
 	active: boolean;
 	update(camera: THREE.PerspectiveCamera, dt: number): void;
 	start(camera: THREE.PerspectiveCamera): void;
+	transitionToNewPath(newGrid: number[][], newHeightFn: (x: number, z: number) => number): void;
 	stop(): void;
 	dispose(): void;
 }
@@ -168,6 +169,15 @@ function buildRandomFlightPath(
 		Math.sin(closingAngle) * mapR * 0.6
 	));
 
+	// Enforce minimum clearance above terrain at each waypoint
+	const MIN_PATH_CLEARANCE = 0.8;
+	for (const pt of pts) {
+		const h = heightFn(pt.x, pt.z);
+		if (pt.y < h + MIN_PATH_CLEARANCE) {
+			pt.y = h + MIN_PATH_CLEARANCE;
+		}
+	}
+
 	// Enforce minimum 3-unit distance between consecutive waypoints
 	const filtered = enforceMinDist(pts, 3);
 
@@ -190,10 +200,12 @@ function buildRandomFlightPath(
 }
 
 export function createFlythrough(
-	grid: number[][],
-	heightFn: (x: number, z: number) => number
+	initialGrid: number[][],
+	initialHeightFn: (x: number, z: number) => number
 ): FlythroughSystem {
-	let pathPoints = buildRandomFlightPath(grid, heightFn);
+	let _grid = initialGrid;
+	let _heightFn = initialHeightFn;
+	let pathPoints = buildRandomFlightPath(_grid, _heightFn);
 	let curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.08);
 	let loopDuration = curve.getLength() / 1.8;
 
@@ -221,7 +233,7 @@ export function createFlythrough(
 			if (t > 1) {
 				// Generate a new random path for the next loop
 				t -= 1;
-				pathPoints = buildRandomFlightPath(grid, heightFn);
+				pathPoints = buildRandomFlightPath(_grid, _heightFn);
 				curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.08);
 				loopDuration = curve.getLength() / 1.8;
 				smoothRoll = 0;
@@ -240,6 +252,13 @@ export function createFlythrough(
 			curve.getTangentAt(t, _tangent);
 			_right.crossVectors(_tangent, _up).normalize();
 			pos.addScaledVector(_right, Math.sin(breathPhase * 0.4) * 0.015);
+
+			// Terrain collision avoidance — always fly OVER mountains
+			const groundH = _heightFn(pos.x, pos.z);
+			const MIN_CLEARANCE = 0.6;
+			if (pos.y < groundH + MIN_CLEARANCE) {
+				pos.y = groundH + MIN_CLEARANCE;
+			}
 
 			camera.position.copy(pos);
 
@@ -284,7 +303,7 @@ export function createFlythrough(
 
 		start(camera: THREE.PerspectiveCamera) {
 			// Generate fresh random path each time
-			pathPoints = buildRandomFlightPath(grid, heightFn);
+			pathPoints = buildRandomFlightPath(_grid, _heightFn);
 			curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.08);
 			loopDuration = curve.getLength() / 1.8;
 
@@ -299,6 +318,32 @@ export function createFlythrough(
 			_prevTangent.copy(_smoothLook);
 			const initLook = pathPoints[0].clone().addScaledVector(_smoothLook, 5);
 			camera.lookAt(initLook);
+		},
+
+		transitionToNewPath(newGrid: number[][], newHeightFn: (x: number, z: number) => number) {
+			// Capture current camera position and heading from the active spline
+			const currentPos = curve.getPointAt(Math.min(t, 0.999));
+			const currentDir = _smoothLook.clone().normalize();
+
+			// Update grid/heightFn for future path generation
+			_grid = newGrid;
+			_heightFn = newHeightFn;
+
+			// Generate new path from new terrain
+			pathPoints = buildRandomFlightPath(newGrid, newHeightFn);
+
+			// Bridge: prepend current position + a point along current heading
+			// so the spline smoothly exits the current trajectory
+			const bridgePoint = currentPos.clone().addScaledVector(currentDir, 4);
+			bridgePoint.y = newHeightFn(bridgePoint.x, bridgePoint.z) + 2.0;
+			pathPoints.unshift(currentPos.clone(), bridgePoint);
+
+			// Rebuild spline with bridge segment
+			curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.08);
+			loopDuration = curve.getLength() / 1.8;
+			t = 0;
+			// Preserve smooth look/roll to avoid sudden snap
+			_prevTangent.copy(currentDir);
 		},
 
 		stop() {

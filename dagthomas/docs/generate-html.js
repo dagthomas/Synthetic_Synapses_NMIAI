@@ -42,7 +42,7 @@ function getMarkdownFiles(docsDir) {
 
     // First add root-level markdown files (README, api-reference, etc.)
     const rootFiles = fs.readdirSync(docsDir)
-        .filter(f => f.endsWith('.md') && !f.startsWith('DS_HRM_Documentation'))
+        .filter(f => f.endsWith('.md') && !f.startsWith('Synthetic_Synapses_Documentation'))
         .filter(f => fs.statSync(path.join(docsDir, f)).isFile())
         .sort();
 
@@ -159,7 +159,7 @@ function getHTMLTemplate(content, toc) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DS HRM Documentation</title>
+    <title>Synthetic Synapses Documentation</title>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
     <style>
@@ -297,7 +297,7 @@ function getHTMLTemplate(content, toc) {
     <button class="print-btn no-print" onclick="window.print()">Print to PDF</button>
 
     <div class="cover-page">
-        <h1>DS HRM</h1>
+        <h1>Synthetic Synapses</h1>
         <div class="subtitle">System Documentation</div>
         <div class="date">Generated: ${new Date().toLocaleDateString('en-US', {
             year: 'numeric',
@@ -319,7 +319,7 @@ function getHTMLTemplate(content, toc) {
 
 // Main
 function main() {
-    console.log('DS HRM Documentation HTML Generator\n');
+    console.log('Synthetic Synapses Documentation HTML Generator\n');
     console.log('='.repeat(40));
 
     const docsDir = __dirname;
@@ -330,7 +330,7 @@ function main() {
         fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    const outputPath = path.join(outputDir, 'DS_HRM_Documentation.html');
+    const outputPath = path.join(outputDir, 'Synthetic_Synapses_Documentation.html');
     fs.writeFileSync(outputPath, fullHtml);
 
     console.log(`\nHTML generated: ${outputPath}`);

@@ -1,0 +1,33 @@
+{
+  "stats": {
+    "avg_population": 1.056,
+    "avg_food": 0.724,
+    "avg_wealth": 0.008,
+    "avg_defense": 0.39,
+    "alive_count": 303,
+    "dead_count": 0,
+    "pop_ratio_vs_r1": 0.422,
+    "port_fraction": 0.013,
+    "num_factions": 42,
+    "largest_faction": 18,
+    "avg_faction_size": 7.2,
+    "observed_expansion_rate": 0.025,
+    "observed_survival_rate": 0.136,
+    "survival_ratio_vs_r1": 0.331,
+    "observed_forest_loss_rate": 0.041,
+    "avg_divergence_from_r1": 0.705
+  },
+  "regime": {
+    "winter": "mild",
+    "trade": "low",
+    "conflict": "fragmented",
+    "expansion": "low"
+  },
+  "prior_strength": 1.2377385537013268,
+  "adjustments": {
+    "settlement_survival": 0.332,
+    "expansion": 0.132,
+    "forest_loss": 0.195
+  },
+  "collapse_detected": false
+}
