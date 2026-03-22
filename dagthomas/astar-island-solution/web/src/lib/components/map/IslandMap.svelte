@@ -15,6 +15,11 @@
 	import { createWeatherSystem, type WeatherSystem } from './weather';
 	import { createTerrain, type TerrainSystem } from './terrain';
 	import { createFPController, type FPController } from './fpcontrols';
+	import { createPostFX, type PostFXPipeline } from './postfx';
+	import { createAtmosphere, type AtmosphereSystem } from './atmosphere';
+	import { Sky } from 'three/addons/objects/Sky.js';
+	import { createFlythrough, type FlythroughSystem } from './flythrough';
+	import { createScatter, type ScatterSystem } from './scatter';
 
 	let {
 		grid,
@@ -73,6 +78,15 @@
 	let blockyTerrainGroup: THREE.Group | null = null;
 	let fpFog: THREE.FogExp2 | null = null;
 	let fpOverlay: HTMLDivElement = $state() as HTMLDivElement;
+	let postFX: PostFXPipeline | null = null;
+	let atmosphere: AtmosphereSystem | null = null;
+	let fpSky: Sky | null = null;
+	let fpSkyUniforms: Record<string, { value: any }> | null = null;
+	let flythrough: FlythroughSystem | null = null;
+	let flythroughActive = $state(false);
+	let scatter: ScatterSystem | null = null;
+	let fpAudio: HTMLAudioElement | null = null;
+	let pointerLocked = $state(false);
 
 	// --- Terrain colors matching reference image ---
 	// Reference: sandy tan base, green grass patches, blue water, gray stone
@@ -144,19 +158,79 @@
 			fpController.setHeightFn(terrainSystem.getHeightAt);
 		}
 
-		// Camera: ground level, higher FOV
-		camera.fov = 85;
+		// Camera: wide FOV, close near plane for immersion
+		camera.fov = 100;
 		camera.near = 0.01;
-		camera.far = 200;
+		camera.far = 300;
 		camera.updateProjectionMatrix();
 
 		// Position camera at center of map at eye height
 		const groundY = terrainSystem ? terrainSystem.getHeightAt(0, 0) : 0.1;
-		camera.position.set(0, groundY + 0.5, 0);
+		camera.position.set(0, groundY + 0.45, 0);
 
-		// Fog for immersion
+		// Preetham atmospheric sky shader — replaces flat sky color
+		if (!fpSky) {
+			fpSky = new Sky();
+			fpSky.scale.setScalar(450);
+			fpSkyUniforms = fpSky.material.uniforms;
+			fpSkyUniforms['turbidity'].value = 4;
+			fpSkyUniforms['rayleigh'].value = 2;
+			fpSkyUniforms['mieCoefficient'].value = 0.005;
+			fpSkyUniforms['mieDirectionalG'].value = 0.8;
+		}
+		scene.add(fpSky);
+		// Hide the flat color background — sky shader renders it
+		scene.background = null;
+
+		// Height-based fog for depth
 		fpFog = new THREE.FogExp2(0x8ab4cc, 0.035);
 		scene.fog = fpFog;
+
+		// Post-processing pipeline (bloom, DOF, vignette, ACES, SMAA)
+		if (!postFX) {
+			renderer.toneMapping = THREE.NoToneMapping;
+			postFX = createPostFX(renderer, scene, camera);
+			postFX.resize(container.clientWidth, container.clientHeight);
+		}
+
+		// Atmosphere (player light, grass, mist, dust)
+		if (!atmosphere && terrainSystem) {
+			atmosphere = createAtmosphere(scene, grid, terrainSystem.getHeightAt);
+		}
+
+		// 4K shadows for ground-level detail
+		if (sunLight) {
+			sunLight.shadow.mapSize.width = 4096;
+			sunLight.shadow.mapSize.height = 4096;
+			sunLight.shadow.camera.near = 0.5;
+			sunLight.shadow.camera.far = 60;
+			sunLight.shadow.camera.left = -20;
+			sunLight.shadow.camera.right = 20;
+			sunLight.shadow.camera.top = 20;
+			sunLight.shadow.camera.bottom = -20;
+			sunLight.shadow.needsUpdate = true;
+		}
+
+		// Boost ambient for ground-level (shadows are darker at eye level)
+		if (ambientLight) ambientLight.intensity *= 1.3;
+
+		// Scatter environmental models (async — loads in background)
+		if (!scatter && terrainSystem) {
+			createScatter(grid, terrainSystem.getHeightAt, 2000).then(s => {
+				scatter = s;
+				if (fpMode) scene.add(scatter.group);
+			});
+		} else if (scatter) {
+			scene.add(scatter.group);
+		}
+
+		// Play ambient music
+		if (!fpAudio) {
+			fpAudio = new Audio('/song.mp3');
+			fpAudio.loop = true;
+			fpAudio.volume = 0.4;
+		}
+		fpAudio.play().catch(() => {/* autoplay blocked, user needs interaction first */});
 
 		// Disable orbit controls
 		if (controls) controls.enabled = false;
@@ -164,8 +238,9 @@
 		// Lock pointer
 		fpController.lock();
 
-		// Listen for pointer unlock to show re-entry overlay
+		// Listen for pointer lock/unlock to toggle overlay reactively
 		fpController.controls.addEventListener('unlock', onFPUnlock);
+		fpController.controls.addEventListener('lock', onFPLock);
 	}
 
 	function exitFPMode() {
@@ -174,6 +249,11 @@
 		// Show blocky terrain, hide heightmap
 		if (blockyTerrainGroup) blockyTerrainGroup.visible = true;
 		if (terrainSystem) terrainSystem.mesh.visible = false;
+
+		// Remove sky shader, restore flat background
+		if (fpSky) {
+			scene.remove(fpSky);
+		}
 
 		// Restore orbit camera
 		camera.fov = 60;
@@ -187,6 +267,42 @@
 		scene.fog = null;
 		fpFog = null;
 
+		// Dispose post-processing (restore renderer tone mapping)
+		if (postFX) {
+			postFX.dispose();
+			postFX = null;
+			renderer.toneMapping = THREE.ACESFilmicToneMapping;
+			renderer.toneMappingExposure = 1.15;
+		}
+
+		// Dispose atmosphere
+		if (atmosphere) {
+			atmosphere.dispose();
+			atmosphere = null;
+		}
+
+		// Restore ambient intensity
+		if (ambientLight) ambientLight.intensity = 0.45;
+
+		// Hide scatter (keep loaded for re-entry)
+		if (scatter) scene.remove(scatter.group);
+
+		// Stop music
+		if (fpAudio) { fpAudio.pause(); fpAudio.currentTime = 0; }
+
+		// Restore shadow quality
+		if (sunLight) {
+			sunLight.shadow.mapSize.width = 2048;
+			sunLight.shadow.mapSize.height = 2048;
+			sunLight.shadow.camera.near = 1;
+			sunLight.shadow.camera.far = 100;
+			sunLight.shadow.camera.left = -30;
+			sunLight.shadow.camera.right = 30;
+			sunLight.shadow.camera.top = 30;
+			sunLight.shadow.camera.bottom = -30;
+			sunLight.shadow.needsUpdate = true;
+		}
+
 		// Re-enable orbit controls
 		if (controls) {
 			controls.enabled = true;
@@ -197,16 +313,21 @@
 		// Unlock FP
 		if (fpController) {
 			fpController.controls.removeEventListener('unlock', onFPUnlock);
+			fpController.controls.removeEventListener('lock', onFPLock);
 			fpController.unlock();
 		}
+		pointerLocked = false;
 
 		lastInteraction = performance.now() / 1000;
 		autoRotateAngle = Math.atan2(camera.position.z, camera.position.x);
 	}
 
 	function onFPUnlock() {
-		// When pointer unlocks (Esc), show the re-entry overlay but stay in FP mode
-		// User can click overlay to re-lock or press the exit button
+		pointerLocked = false;
+	}
+
+	function onFPLock() {
+		pointerLocked = true;
 	}
 
 	function handleFPToggle() {
@@ -214,6 +335,50 @@
 			exitFPMode();
 		} else {
 			enterFPMode();
+		}
+	}
+
+	function handleFlythroughToggle() {
+		if (flythroughActive) {
+			stopFlythrough();
+		} else {
+			startFlythrough();
+		}
+	}
+
+	function startFlythrough() {
+		if (!scene || !camera || !grid?.length) return;
+
+		// Enter FP visual mode first (sky, postfx, terrain)
+		if (!fpMode) enterFPMode();
+		// Unlock pointer — flythrough is hands-free
+		if (fpController) {
+			fpController.controls.removeEventListener('unlock', onFPUnlock);
+			fpController.controls.removeEventListener('lock', onFPLock);
+			fpController.unlock();
+		}
+		pointerLocked = false;
+
+		// Build flythrough path if needed
+		if (!flythrough && terrainSystem) {
+			flythrough = createFlythrough(grid, terrainSystem.getHeightAt);
+		}
+
+		if (flythrough) {
+			flythrough.start(camera);
+			flythroughActive = true;
+		}
+	}
+
+	function stopFlythrough() {
+		if (flythrough) {
+			flythrough.stop();
+		}
+		flythroughActive = false;
+		// Return to FP walking mode
+		if (fpController) {
+			fpController.controls.addEventListener('unlock', onFPUnlock);
+			fpController.controls.addEventListener('lock', onFPLock);
 		}
 	}
 
@@ -1116,13 +1281,62 @@
 			(tw.mesh.material as THREE.MeshBasicMaterial).opacity = nightBlend * 0.9;
 		}
 
-		// First-person mode: update FP controller instead of orbit
+		// First-person mode: update FP controller or flythrough
 		if (fpMode && fpController) {
-			fpController.update(dt);
+			// Flythrough overrides FP controls
+			if (flythroughActive && flythrough) {
+				flythrough.update(camera, dt);
+			} else {
+				fpController.update(dt);
+			}
 
-			// Animate fog color with sky
-			if (fpFog && scene.background instanceof THREE.Color) {
-				fpFog.color.copy(scene.background);
+			// Sync Preetham sky with sun position from daynight system
+			if (fpSky && fpSkyUniforms && sunLight) {
+				const sunPos = sunLight.position.clone().normalize();
+				// Tilt the up vector slightly to avoid harsh zenith
+				fpSkyUniforms['sunPosition'].value.copy(sunPos);
+
+				// Adjust sky params based on time of day
+				const h = ((timeOfDay % 24) + 24) % 24;
+				const isDawnDusk = (h >= 5 && h <= 7) || (h >= 17 && h <= 19);
+				const isNight = h < 5 || h > 19;
+				if (isDawnDusk) {
+					fpSkyUniforms['turbidity'].value = 8;
+					fpSkyUniforms['rayleigh'].value = 3;
+					fpSkyUniforms['mieCoefficient'].value = 0.01;
+				} else if (isNight) {
+					fpSkyUniforms['turbidity'].value = 2;
+					fpSkyUniforms['rayleigh'].value = 0.5;
+					fpSkyUniforms['mieCoefficient'].value = 0.001;
+				} else {
+					fpSkyUniforms['turbidity'].value = 4;
+					fpSkyUniforms['rayleigh'].value = 2;
+					fpSkyUniforms['mieCoefficient'].value = 0.005;
+				}
+			}
+
+			// Animate fog — color derived from sky, density from camera height
+			if (fpFog) {
+				// Sample sky color from daynight for fog tint
+				const dn = computeDayNight(timeOfDay);
+				fpFog.color.copy(dn.fogColor);
+				const camHeight = camera.position.y;
+				fpFog.density = 0.035 + Math.max(0, (0.3 - camHeight) * 0.025);
+			}
+
+			// Update atmosphere (player light, grass, mist, dust)
+			if (atmosphere) {
+				atmosphere.update(camera, dt, timeOfDay);
+			}
+
+			// Update post-processing atmosphere (bloom/vignette intensity)
+			if (postFX) {
+				postFX.updateAtmosphere(timeOfDay);
+			}
+
+			// Frustum + distance culling on scatter objects
+			if (scatter) {
+				scatter.updateCulling(camera);
 			}
 		} else {
 			// Gentle idle auto-rotation after 10 seconds of no interaction
@@ -1140,7 +1354,12 @@
 			controls.update();
 		}
 
-		renderer.render(scene, camera);
+		// Use post-processing composer in FP mode, direct render otherwise
+		if (fpMode && postFX) {
+			postFX.render(dt);
+		} else {
+			renderer.render(scene, camera);
+		}
 	}
 
 	function handleResize() {
@@ -1148,6 +1367,7 @@
 		camera.aspect = container.clientWidth / container.clientHeight;
 		camera.updateProjectionMatrix();
 		renderer.setSize(container.clientWidth, container.clientHeight);
+		if (postFX) postFX.resize(container.clientWidth, container.clientHeight);
 	}
 
 	onMount(() => {
@@ -1208,6 +1428,11 @@
 		if (animationId) cancelAnimationFrame(animationId);
 		cleanupSystems();
 		if (fpController) { fpController.dispose(); fpController = null; }
+		if (postFX) { postFX.dispose(); postFX = null; }
+		if (atmosphere) { atmosphere.dispose(); atmosphere = null; }
+		if (fpSky) { fpSky.geometry.dispose(); (fpSky.material as THREE.Material).dispose(); fpSky = null; }
+		if (scatter) { scatter.dispose(); scatter = null; }
+		if (flythrough) { flythrough.dispose(); flythrough = null; }
 		if (renderer) renderer.dispose();
 		window.removeEventListener('resize', handleResize);
 	});
@@ -1224,19 +1449,31 @@
 <div class="relative w-full h-full">
 	<div bind:this={container} class="w-full h-full rounded-lg overflow-hidden border border-cyber-border"></div>
 
-	<!-- FP mode toggle button -->
-	<button
-		class="absolute top-3 right-3 z-10 px-3 py-1.5 text-[11px] font-medium rounded
-			border transition-colors backdrop-blur-sm
-			{fpMode
-				? 'border-neon-cyan text-neon-cyan bg-cyber-surface/80 hover:bg-neon-cyan/20'
-				: 'border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-cyan/40 hover:text-cyber-fg'
-			}"
-		onclick={handleFPToggle}
-		title={fpMode ? 'Exit first-person (Esc)' : 'Enter first-person mode'}
-	>
-		{fpMode ? 'Exit FP' : 'First Person'}
-	</button>
+	<!-- FP mode buttons -->
+	<div class="absolute top-3 right-3 z-10 flex gap-2">
+		<button
+			class="px-3 py-1.5 text-[11px] font-medium rounded border transition-colors backdrop-blur-sm
+				{flythroughActive
+					? 'border-neon-gold text-neon-gold bg-cyber-surface/80 hover:bg-neon-gold/20 animate-pulse'
+					: 'border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-gold/40 hover:text-cyber-fg'
+				}"
+			onclick={handleFlythroughToggle}
+			title={flythroughActive ? 'Stop flythrough' : 'Epic FPV flythrough'}
+		>
+			{flythroughActive ? 'Stop Tour' : 'Flythrough'}
+		</button>
+		<button
+			class="px-3 py-1.5 text-[11px] font-medium rounded border transition-colors backdrop-blur-sm
+				{fpMode && !flythroughActive
+					? 'border-neon-cyan text-neon-cyan bg-cyber-surface/80 hover:bg-neon-cyan/20'
+					: 'border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-cyan/40 hover:text-cyber-fg'
+				}"
+			onclick={handleFPToggle}
+			title={fpMode ? 'Exit first-person' : 'Enter first-person mode'}
+		>
+			{fpMode ? 'Exit FP' : 'First Person'}
+		</button>
+	</div>
 
 	<!-- FP mode HUD overlay -->
 	{#if fpMode}
@@ -1248,8 +1485,8 @@
 			</div>
 		</div>
 
-		<!-- Controls hint (bottom) -->
-		{#if !(fpController?.isLocked())}
+		<!-- Controls hint (bottom) — not during flythrough -->
+		{#if !pointerLocked && !flythroughActive}
 			<div
 				bind:this={fpOverlay}
 				class="absolute inset-0 z-20 flex items-center justify-center bg-black/50 backdrop-blur-sm cursor-pointer rounded-lg"
@@ -1265,9 +1502,13 @@
 			</div>
 		{/if}
 
-		<!-- FP mode indicator -->
+		<!-- FP/flythrough mode indicator -->
 		<div class="absolute bottom-3 left-3 z-10 text-[10px] text-cyber-muted/60 pointer-events-none">
-			FP MODE &middot; WASD + Mouse &middot; Shift = Sprint
+			{#if flythroughActive}
+				FPV FLYTHROUGH &middot; Click "Stop Tour" to exit
+			{:else}
+				FP MODE &middot; WASD + Mouse &middot; Shift = Sprint
+			{/if}
 		</div>
 	{/if}
 </div>

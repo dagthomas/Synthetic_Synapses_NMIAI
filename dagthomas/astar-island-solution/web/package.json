@@ -26,6 +26,7 @@
 		"@threlte/core": "^8.5.0",
 		"@threlte/extras": "^9.9.0",
 		"@types/three": "^0.183.1",
+		"postprocessing": "^6.39.0",
 		"tailwindcss": "^4.2.2",
 		"three": "^0.183.2"
 	}

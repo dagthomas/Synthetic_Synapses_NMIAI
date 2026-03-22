@@ -40,3 +40,7 @@ npm run build
 You can preview the production build with `npm run preview`.
 
 > To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+
+## 3D Assets
+
+Environmental models in `static/models/` are sourced from [Poly Pizza](https://poly.pizza/bundle) — low-poly GLB models used for terrain scatter in first-person and flythrough modes.
