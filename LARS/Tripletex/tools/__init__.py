@@ -32,6 +32,9 @@ from tools.process_invoice import build_process_invoice_tools
 from tools.process_supplier_invoice import build_process_supplier_invoice_tools
 from tools.process_travel_expense import build_process_travel_expense_tools
 from tools.process_order_invoice_payment import build_process_order_invoice_payment_tools
+from tools.process_invoice_with_payment import build_process_invoice_with_payment_tools
+from tools.process_reverse_payment import build_process_reverse_payment_tools
+from tools.process_project_invoice import build_process_project_invoice_tools
 from tools.expense_receipt import build_expense_receipt_tools
 
 
@@ -70,6 +73,9 @@ def build_tools_dict(client: TripletexClient, files_dir: str = "") -> dict:
     all_tools.update(build_process_supplier_invoice_tools(client))
     all_tools.update(build_process_travel_expense_tools(client))
     all_tools.update(build_process_order_invoice_payment_tools(client))
+    all_tools.update(build_process_invoice_with_payment_tools(client))
+    all_tools.update(build_process_reverse_payment_tools(client))
+    all_tools.update(build_process_project_invoice_tools(client))
     all_tools.update(build_expense_receipt_tools(client))
     if files_dir:
         all_tools.update(build_file_tools(files_dir))

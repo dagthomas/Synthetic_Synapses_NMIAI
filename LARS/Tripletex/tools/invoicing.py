@@ -17,7 +17,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         Args:
             customer_id: The ID of the customer (must exist).
             deliveryDate: Delivery date in YYYY-MM-DD format.
-            orderLines: JSON string of order lines, each with 'product_id', 'count', and optionally 'unitPriceExcludingVat'. Example: '[{"product_id": 1, "count": 2}]'
+            orderLines: JSON string of order lines, each with 'product_id', 'count', and optionally 'unitPriceExcludingVatCurrency'. Example: '[{"product_id": 1, "count": 2}]'
             project_id: Optional project ID to link this order to (0 if none).
 
         Returns:
@@ -41,7 +41,9 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
                 "count": line["count"],
             }
             if "unitPriceExcludingVat" in line:
-                entry["unitPriceExcludingVat"] = line["unitPriceExcludingVat"]
+                entry["unitPriceExcludingVatCurrency"] = line["unitPriceExcludingVat"]
+            elif "unitPriceExcludingVatCurrency" in line:
+                entry["unitPriceExcludingVatCurrency"] = line["unitPriceExcludingVatCurrency"]
             formatted_lines.append(entry)
 
         body = {
@@ -179,7 +181,7 @@ def build_invoicing_tools(client: TripletexClient) -> dict:
         Returns:
             A list of invoices.
         """
-        params = {"fields": "id,invoiceNumber,invoiceDate,invoiceDueDate,customer(id,name),amount,amountOutstanding,amountCurrencyOutstanding"}
+        params = {"fields": "id,invoiceNumber,invoiceDate,invoiceDueDate,customer(id,name),amount,amountOutstanding,amountCurrencyOutstanding,voucher(id)"}
         params["invoiceDateFrom"] = invoiceDateFrom or "2000-01-01"
         params["invoiceDateTo"] = invoiceDateTo or "2030-12-31"
         if customerId:

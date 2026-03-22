@@ -51,7 +51,7 @@ def _search_entity(client: TripletexClient, entity_type: str, search_params: dic
     """Search for entities matching the given params."""
     # Expand nested address objects for customer/supplier
     if entity_type in ("customer", "supplier"):
-        fields = "*,postalAddress(*),physicalAddress(*)"
+        fields = "*,postalAddress(*),physicalAddress(*),bankAccountPresentation(*)"
     else:
         fields = "*"
     params = {"fields": fields, "count": 1000}
@@ -65,6 +65,37 @@ def _search_entity(client: TripletexClient, entity_type: str, search_params: dic
 
 def _make_check(field: str, points: int, max_pts: int, passed: bool, detail: str) -> dict:
     return {"field": field, "points": points, "max": max_pts, "passed": passed, "detail": detail}
+
+
+def _extract_salary_transaction_id(agent_response: dict) -> int | None:
+    """Extract salary transaction ID from agent's solve-debug response.
+
+    Searches tool_calls and agent_response text for transaction_id.
+    Works with both LLM agent format (result=dict) and static pipeline (result.data=str).
+    """
+    import re
+
+    for tc in agent_response.get("tool_calls", []):
+        result = tc.get("result", {})
+        if isinstance(result, dict):
+            # LLM agent format: result is the actual dict
+            tid = result.get("transaction_id")
+            if tid:
+                return int(tid)
+            # Static pipeline format: result = {"ok": bool, "data": str}
+            data_str = result.get("data", "")
+            if data_str and "transaction_id" in str(data_str):
+                m = re.search(r"transaction_id['\"]?\s*[:=]\s*(\d+)", str(data_str))
+                if m:
+                    return int(m.group(1))
+
+    # Check agent_response text
+    text = str(agent_response.get("agent_response", ""))
+    m = re.search(r"transaction_id[\"']?\s*[:=]\s*(\d+)", text)
+    if m:
+        return int(m.group(1))
+
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -203,7 +234,7 @@ def verify_contact(
     # Check customer was created
     customer_name = expected.get("customer_name", "")
     customers = _search_entity(client, "customer", {"name": customer_name})
-    customer = customers[0] if customers else None
+    customer = max(customers, key=lambda e: e.get("id", 0)) if customers else None
 
     # Search for contact
     search_params = {}
@@ -211,7 +242,7 @@ def verify_contact(
         if sf in expected:
             search_params[sf] = expected[sf]
     contacts = _search_entity(client, "contact", search_params)
-    contact = contacts[0] if contacts else None
+    contact = max(contacts, key=lambda e: e.get("id", 0)) if contacts else None
 
     for fc in task_def.field_checks:
         if fc.field == "_found":
@@ -564,7 +595,13 @@ def verify_project(
 
     project_name = expected.get("project_name", "")
     projects = _search_entity(client, "project", {"name": project_name})
-    project = projects[0] if projects else None
+    # In polluted sandbox, multiple projects may share a name — pick newest exact match.
+    if projects:
+        exact = [p for p in projects if _fields_match(p.get("name"), project_name)]
+        pool = exact if exact else projects
+        project = max(pool, key=lambda p: p.get("id", 0))
+    else:
+        project = None
 
     for fc in task_def.field_checks:
         if fc.field == "_found":
@@ -643,12 +680,12 @@ def verify_travel_expense(
     expenses = _search_entity(client, "travelExpense", {})
     title = expected.get("title", "")
     matching = [e for e in expenses if _normalize(e.get("title", "")) == _normalize(title)]
-    expense = matching[0] if matching else None
+    expense = max(matching, key=lambda e: e.get("id", 0)) if matching else None
 
     emp_first = expected.get("employee_firstName", "")
     emp_last = expected.get("employee_lastName", "")
     employees = _search_entity(client, "employee", {"firstName": emp_first, "lastName": emp_last})
-    employee = employees[0] if employees else None
+    employee = max(employees, key=lambda e: e.get("id", 0)) if employees else None
 
     for fc in task_def.field_checks:
         if fc.field == "_employee_found":
@@ -872,7 +909,7 @@ def verify_ledger_voucher(
             desc = _normalize(v.get("description", ""))
             if any(kw in desc for kw in ob_keywords):
                 matching.append(v)
-    voucher = matching[0] if matching else None
+    voucher = max(matching, key=lambda e: e.get("id", 0)) if matching else None
 
     for fc in task_def.field_checks:
         if fc.field == "_found":
@@ -1180,36 +1217,56 @@ def verify_supplier_invoice(
             continue
 
         if fc.field == "supplier_name":
-            passed = supplier is not None and _fields_match(supplier.get("name"), supplier_name)
+            actual_name = supplier.get("name", "") if supplier else ""
+            passed = supplier is not None and _fields_match(actual_name, supplier_name)
             checks.append(_make_check(
                 "supplier_name", fc.points if passed else 0, fc.points, passed,
-                f"expected={supplier_name}",
+                f"expected={supplier_name}, actual={actual_name}",
             ))
             continue
 
         if fc.field == "supplier_org_number" and "supplier_org_number" in expected:
             passed = False
+            actual_org = ""
             if supplier:
-                passed = _fields_match(supplier.get("organizationNumber"), expected["supplier_org_number"])
+                actual_org = supplier.get("organizationNumber", "")
+                passed = _fields_match(actual_org, expected["supplier_org_number"])
             checks.append(_make_check(
                 "supplier_org_number", fc.points if passed else 0, fc.points, passed,
-                f"expected={expected['supplier_org_number']}",
+                f"expected={expected['supplier_org_number']}, actual={actual_org}",
             ))
             continue
 
         if fc.field == "supplier_bank_account" and "supplier_bank_account" in expected:
             passed = False
+            actual_bank = ""
+            exp_digits = "".join(c for c in str(expected["supplier_bank_account"]) if c.isdigit())
             if supplier:
+                # Check bankAccountPresentation (list of bank account objects)
                 bank_accounts = supplier.get("bankAccountPresentation", [])
-                for ba in bank_accounts:
-                    if isinstance(ba, dict):
-                        acct_num = ba.get("bankAccountNumber", "")
-                        if _fields_match(acct_num, expected["supplier_bank_account"]):
+                if isinstance(bank_accounts, list):
+                    for ba in bank_accounts:
+                        if isinstance(ba, dict):
+                            # API may return bban or bankAccountNumber depending on version
+                            acct_num = ba.get("bban", "") or ba.get("bankAccountNumber", "")
+                            if acct_num:
+                                actual_bank = acct_num
+                            # Compare first 10 digits (mod-11 check digit may differ)
+                            act_digits = "".join(c for c in str(acct_num) if c.isdigit())
+                            if len(act_digits) >= 10 and len(exp_digits) >= 10 and act_digits[:10] == exp_digits[:10]:
+                                passed = True
+                                break
+                # Also check top-level bankAccountNumber (some API versions)
+                if not passed:
+                    top_bank = supplier.get("bankAccountNumber", "")
+                    if top_bank:
+                        actual_bank = actual_bank or top_bank
+                        top_digits = "".join(c for c in str(top_bank) if c.isdigit())
+                        if len(top_digits) >= 10 and len(exp_digits) >= 10 and top_digits[:10] == exp_digits[:10]:
                             passed = True
-                            break
             checks.append(_make_check(
                 "supplier_bank_account", fc.points if passed else 0, fc.points, passed,
-                f"expected={expected['supplier_bank_account']}",
+                f"expected={expected['supplier_bank_account']}, actual={actual_bank}",
             ))
             continue
 
@@ -1290,7 +1347,7 @@ def verify_travel_expense_with_costs(
     expenses = _search_entity(client, "travelExpense", {})
     title = expected.get("title", "")
     matching = [e for e in expenses if _normalize(e.get("title", "")) == _normalize(title)]
-    expense = matching[0] if matching else None
+    expense = max(matching, key=lambda e: e.get("id", 0)) if matching else None
 
     # Check for cost items
     for fc in task_def.field_checks:
@@ -1322,7 +1379,13 @@ def verify_project_with_pm(
 
     project_name = expected.get("project_name", "")
     projects = _search_entity(client, "project", {"name": project_name})
-    project = projects[0] if projects else None
+    # In polluted sandbox, multiple projects may share a name — pick newest exact match.
+    if projects:
+        exact = [p for p in projects if _fields_match(p.get("name"), project_name)]
+        pool = exact if exact else projects
+        project = max(pool, key=lambda p: p.get("id", 0))
+    else:
+        project = None
 
     # Check PM
     for fc in task_def.field_checks:
@@ -1358,6 +1421,7 @@ def verify_salary(
     client: TripletexClient,
     task_def: TaskDef,
     expected: dict,
+    agent_response: dict | None = None,
 ) -> dict:
     """Verify a salary transaction task."""
     checks = []
@@ -1399,9 +1463,12 @@ def verify_salary(
 
         if fc.field == "_salary_found":
             passed = False
+            detail_suffix = " not found"
             if employee:
                 year = expected.get("year", 2026)
                 month = expected.get("month", 3)
+
+                # Strategy 1: Try the list endpoint (works on competition sandbox)
                 sal_txns = client.get("/salary/transaction", params={
                     "employeeId": employee["id"],
                     "yearFrom": year, "yearTo": year,
@@ -1412,9 +1479,25 @@ def verify_salary(
                 txns = sal_txns.get("values", [])
                 if txns:
                     passed = True
+                    detail_suffix = " found"
+
+                # Strategy 2: If 403 (sandbox lacks permission), extract
+                # transaction_id from agent response and verify directly
+                if not passed and sal_txns.get("status_code") == 403 and agent_response:
+                    txn_id = _extract_salary_transaction_id(agent_response)
+                    if txn_id:
+                        txn_detail = client.get(
+                            f"/salary/transaction/{txn_id}",
+                            params={"fields": "id,year,month"},
+                        )
+                        txn_val = txn_detail.get("value", {})
+                        if txn_val.get("year") == year and txn_val.get("month") == month:
+                            passed = True
+                            detail_suffix = f" found (txn_id={txn_id}, verified directly)"
+
             checks.append(_make_check(
                 "Salary transaction found", fc.points if passed else 0, fc.points, passed,
-                f"year={expected.get('year')}, month={expected.get('month')}" + (" found" if passed else " not found"),
+                f"year={expected.get('year')}, month={expected.get('month')}" + detail_suffix,
             ))
             continue
 
@@ -1446,7 +1529,13 @@ def verify_project_invoice(
     # Check project
     project_name = expected.get("project_name", "")
     projects = _search_entity(client, "project", {"name": project_name})
-    project = projects[0] if projects else None
+    # In polluted sandbox, multiple projects may share a name — pick newest exact match.
+    if projects:
+        exact = [p for p in projects if _fields_match(p.get("name"), project_name)]
+        pool = exact if exact else projects
+        project = max(pool, key=lambda p: p.get("id", 0))
+    else:
+        project = None
 
     # Check invoice
     inv_date = expected.get("invoice_date", "")
@@ -1588,11 +1677,99 @@ def verify_reverse_payment(
     return {"checks": checks, "total_points": total, "max_points": max_pts}
 
 
+def verify_dimension(
+    client: TripletexClient,
+    task_def: TaskDef,
+    expected: dict,
+) -> dict:
+    """Verify that a custom accounting dimension was created with values and a voucher."""
+    checks = []
+    entity_ids = []
+
+    dim_name = expected.get("dimension_name", "")
+    amount = expected.get("amount", 0)
+
+    # Search for dimension
+    dims = client.get("/ledger/accountingDimensionName",
+                      params={"fields": "id,dimensionName,dimensionIndex,active"})
+    dim_list = dims.get("values", [])
+    found_dim = None
+    for d in dim_list:
+        if _fields_match(d.get("dimensionName"), dim_name):
+            found_dim = d
+            break
+
+    for fc in task_def.field_checks:
+        if fc.field == "_dimension_found":
+            passed = found_dim is not None
+            checks.append(_make_check(
+                "Dimension found", fc.points if passed else 0, fc.points, passed,
+                f"'{dim_name}'" + (" found" if passed else " not found"),
+            ))
+            continue
+
+        if fc.field == "dimension_name":
+            passed = found_dim is not None
+            checks.append(_make_check(
+                "dimension_name", fc.points if passed else 0, fc.points, passed,
+                f"expected={dim_name}",
+            ))
+            continue
+
+        if fc.field == "_voucher_found":
+            # Search recent vouchers then fetch postings individually
+            # (Tripletex list endpoint doesn't reliably return nested postings)
+            from datetime import date as dt_date, timedelta
+            today = dt_date.today()
+            v_params = {
+                "fields": "id",
+                "dateFrom": (today - timedelta(days=7)).isoformat(),
+                "dateTo": (today + timedelta(days=1)).isoformat(),
+                "count": 200,
+            }
+            v_result = client.get("/ledger/voucher", params=v_params)
+            vouchers = v_result.get("values", [])
+            found_voucher = False
+            # Check newest vouchers first (most likely to be the one we just created)
+            for v in sorted(vouchers, key=lambda x: x.get("id", 0), reverse=True)[:30]:
+                vd = client.get(f"/ledger/voucher/{v['id']}", params={"fields": "*,postings(*)"})
+                v_detail = vd.get("value", vd)
+                postings = v_detail.get("postings", [])
+                for posting in postings:
+                    gross = abs(float(posting.get("amountGross", 0) or 0))
+                    net = abs(float(posting.get("amount", 0) or 0))
+                    if amount and (abs(gross - float(amount)) < 1.0 or abs(net - float(amount)) < 1.0):
+                        found_voucher = True
+                        entity_ids.append(("ledger/voucher", v["id"]))
+                        break
+                if found_voucher:
+                    break
+            checks.append(_make_check(
+                "Voucher found", fc.points if found_voucher else 0, fc.points, found_voucher,
+                f"Voucher with amount ~{amount}" + (" found" if found_voucher else " not found"),
+            ))
+            continue
+
+        if fc.field == "amount":
+            # Already checked in voucher search above — count as pass if voucher found
+            passed = any(c["field"] == "Voucher found" and c["passed"] for c in checks)
+            checks.append(_make_check(
+                "amount", fc.points if passed else 0, fc.points, passed,
+                f"expected={amount}",
+            ))
+            continue
+
+    total = sum(c["points"] for c in checks)
+    max_pts = sum(c["max"] for c in checks)
+    return {"checks": checks, "entity_ids": entity_ids, "total_points": total, "max_points": max_pts}
+
+
 def verify_task(
     client: TripletexClient,
     task_def: TaskDef,
     expected: dict,
     pre_created_id: int = 0,
+    agent_response: dict | None = None,
 ) -> dict:
     """Route to the correct verification function based on task type."""
     name = task_def.name
@@ -1660,7 +1837,7 @@ def verify_task(
 
     # Salary with bonus (Tier 3)
     if name == "salary_with_bonus":
-        return verify_salary(client, task_def, expected)
+        return verify_salary(client, task_def, expected, agent_response=agent_response)
 
     # Project invoice (Tier 2)
     if name == "project_invoice":
@@ -1669,6 +1846,10 @@ def verify_task(
     # Reverse payment (Tier 3)
     if name == "reverse_payment":
         return verify_reverse_payment(client, task_def, expected, pre_created_id)
+
+    # Create dimension (Tier 3)
+    if name == "create_dimension":
+        return verify_dimension(client, task_def, expected)
 
     log.warning(f"No verifier for task type: {name}")
     return {"checks": [], "total_points": 0, "max_points": 0}

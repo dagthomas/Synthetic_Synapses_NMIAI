@@ -1,39 +1,9 @@
 from tripletex_client import TripletexClient
+from tools._helpers import recover_error, resolve_vat_map, find_or_create_product
 
 
 def build_product_tools(client: TripletexClient) -> dict:
     """Build product-related tools."""
-
-    _DYNAMIC_VAT_MAP = {}
-    _VAT_MAP_INITIALIZED = False
-
-    def _initialize_vat_map(client: TripletexClient):
-        nonlocal _VAT_MAP_INITIALIZED
-        if _VAT_MAP_INITIALIZED:
-            return
-
-        # 1. Check if client pre-warmed the VAT map (free — no API call counted)
-        cached = client.get_cached("vat_type_map")
-        if cached:
-            _DYNAMIC_VAT_MAP.update(cached)
-            _VAT_MAP_INITIALIZED = True
-            return
-
-        # 2. Fetch and match by standard VAT type NUMBER (stable across sandboxes)
-        #    Output: 3→25%, 31→15%, 33→12%, 5/6→0%
-        _OUT = {3: 25, 31: 15, 33: 12}
-        _ZERO = {6, 5}
-        result = client.get("/ledger/vatType", params={"fields": "id,number"})
-        for vt in (result.get("values") or []):
-            n, vid = vt.get("number"), vt.get("id")
-            if n is not None and vid is not None:
-                n = int(n)
-                if n in _OUT:
-                    _DYNAMIC_VAT_MAP[_OUT[n]] = vid
-                elif n in _ZERO:
-                    _DYNAMIC_VAT_MAP.setdefault(0, vid)
-
-        _VAT_MAP_INITIALIZED = True
 
     def create_product(
         name: str,
@@ -54,45 +24,61 @@ def build_product_tools(client: TripletexClient) -> dict:
         Returns:
             The created product with id and fields, or an error message.
         """
-        _initialize_vat_map(client) # Ensure VAT map is initialized
+        price = priceExcludingVatCurrency or priceIncludingVatCurrency
+        vat_pct = vatPercentage if vatPercentage >= 0 else 25
 
-        # Search-first: avoid 422 errors when product already exists
-        if productNumber:
-            existing = client.get("/product", params={
-                "number": productNumber,
-                "fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency",
-            })
-            vals = existing.get("values", [])
-            if vals:
-                return {"value": vals[0], "_note": "Product number already existed, returning existing."}
-
+        # Build product body
         body = {"name": name}
-        # Only send ONE price — sending both causes validation errors when they don't match the product's VAT type
-        if priceExcludingVatCurrency:
-            body["priceExcludingVatCurrency"] = priceExcludingVatCurrency
-        elif priceIncludingVatCurrency:
-            body["priceIncludingVatCurrency"] = priceIncludingVatCurrency
+        if price:
+            body["priceExcludingVatCurrency"] = price
         if productNumber:
             body["number"] = productNumber
-        if vatPercentage >= 0:
-            vat_id = _DYNAMIC_VAT_MAP.get(vatPercentage)
-            if vat_id is None:
-                return {"error": True, "message": f"Unsupported VAT rate {vatPercentage}%. Could not find matching VAT type in Tripletex."}
-            body["vatType"] = {"id": vat_id}
+        # Only resolve VAT types for non-standard rates (15, 12, 0)
+        # Tripletex uses 25% by default, so skip the GET for standard rate
+        if vat_pct != 25 and not client.get_cached("skip_vat_type"):
+            vat_map = resolve_vat_map(client)
+            vat_type_id = vat_map.get(int(vat_pct))
+            if vat_type_id is not None:
+                body["vatType"] = {"id": vat_type_id}
 
         result = client.post("/product", json=body)
+        prod_id = result.get("value", {}).get("id")
 
-        # If product name already exists (no number given), try to recover
-        if result.get("error") and result.get("status_code") == 422:
-            existing = client.get("/product", params={
-                "name": name,
-                "fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency",
+        # Handle collisions: search existing and UPDATE with correct values
+        if not prod_id and result.get("error"):
+            err_msg = str(result.get("message", "")).lower()
+            # VAT type rejected — retry without
+            if "vatType" in body and ("mva-kode" in err_msg or "vattype" in err_msg):
+                body.pop("vatType", None)
+                client.set_cached("skip_vat_type", True)
+                recover_error(client, "/product")
+                result = client.post("/product", json=body)
+                prod_id = result.get("value", {}).get("id")
+
+            if not prod_id:
+                recover_error(client, "/product")
+                # Search by name and update existing with correct values
+                existing = client.get("/product", params={"name": name, "fields": "id,name,version"})
+                for v in (existing.get("values") or []):
+                    if (v.get("name") or "").strip().lower() == name.strip().lower():
+                        prod_id = v["id"]
+                        upd = {"id": prod_id, "version": v.get("version", 0), "name": name}
+                        if price:
+                            upd["priceExcludingVatCurrency"] = price
+                        if productNumber:
+                            upd["number"] = productNumber
+                        client.put(f"/product/{prod_id}", json=upd)
+                        break
+
+        if prod_id:
+            # Return from POST/search response when possible (saves 1 GET)
+            val = result.get("value") if isinstance(result, dict) else None
+            if val and isinstance(val, dict) and val.get("id") == prod_id:
+                return {"value": val}
+            return client.get(f"/product/{prod_id}", params={
+                "fields": "id,name,number,priceExcludingVatCurrency,priceIncludingVatCurrency,version",
             })
-            vals = existing.get("values", [])
-            if vals:
-                return {"value": vals[0], "_note": "Product already existed, returning existing."}
-
-        return result
+        return {"error": True, "message": f"Failed to create product '{name}'"}
 
     def search_products(name: str = "", number: str = "") -> dict:
         """Search for products by name or product number.
@@ -108,7 +94,7 @@ def build_product_tools(client: TripletexClient) -> dict:
         if name:
             params["name"] = name
         if number:
-            params["number"] = number
+            params["productNumber"] = number
         return client.get("/product", params=params)
 
     def update_product(

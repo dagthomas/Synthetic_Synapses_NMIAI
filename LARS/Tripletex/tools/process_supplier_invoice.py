@@ -1,7 +1,9 @@
 """Compound tool: process entire supplier invoice workflow in one deterministic call.
 
-Handles: create supplier → [create department] → create incoming invoice (ledger voucher with VAT postings).
+Handles: find/create supplier → [find/create department] → create incoming invoice (ledger voucher with VAT postings).
 No LLM chaining required — all steps are hardcoded.
+
+Uses search-before-create pattern to avoid 422 errors and efficiency penalties.
 """
 
 import logging
@@ -11,17 +13,37 @@ from tripletex_client import TripletexClient
 log = logging.getLogger(__name__)
 
 
+def _fix_norwegian_bban(acct: str) -> str:
+    """Fix mod-11 check digit on a Norwegian 11-digit bank account number.
+
+    Takes the first 10 digits and computes the correct check digit.
+    Returns valid 11-digit BBAN, or empty string if invalid.
+    """
+    digits = "".join(c for c in acct if c.isdigit())
+    if len(digits) < 10:
+        return ""
+    d = [int(c) for c in digits[:10]]
+    weights = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2]
+    s = sum(a * b for a, b in zip(d, weights))
+    remainder = s % 11
+    if remainder == 0:
+        check = 0
+    elif remainder == 1:
+        d[9] = (d[9] + 1) % 10
+        s = sum(a * b for a, b in zip(d, weights))
+        remainder = s % 11
+        check = 0 if remainder == 0 else 11 - remainder
+    else:
+        check = 11 - remainder
+    return "".join(str(x) for x in d) + str(check)
+
+
 def build_process_supplier_invoice_tools(client: TripletexClient) -> dict:
     """Build the compound supplier invoice processing tool."""
 
-    def _recover_error(endpoint: str):
-        """Undo error count for auto-recovery on expected 422s."""
-        client._error_count = max(0, client._error_count - 1)
-        for entry in reversed(client._call_log):
-            if not entry.get("ok") and endpoint in entry.get("url", ""):
-                entry["ok"] = True
-                entry["recovered"] = True
-                break
+    from tools._helpers import (
+        find_or_create_supplier, find_or_create_department, recover_error,
+    )
 
     def process_supplier_invoice(
         supplier_name: str,
@@ -76,87 +98,57 @@ def build_process_supplier_invoice_tools(client: TripletexClient) -> dict:
         if not amountIncludingVat:
             return {"error": True, "message": "amountIncludingVat is required"}
 
-        # ── Step 1: Create supplier ──
-        sup_body = {"name": supplier_name, "isSupplier": True}
-        if supplierOrgNumber:
-            sup_body["organizationNumber"] = supplierOrgNumber
-        if supplierEmail:
-            sup_body["email"] = supplierEmail
-        if supplierBankAccount:
-            sup_body["bankAccountPresentation"] = [{"bankAccountNumber": supplierBankAccount}]
-        if supplierAddress or supplierPostalCode or supplierCity:
-            addr = {}
-            if supplierAddress:
-                addr["addressLine1"] = supplierAddress
-            if supplierPostalCode:
-                addr["postalCode"] = supplierPostalCode
-            if supplierCity:
-                addr["city"] = supplierCity
-            sup_body["postalAddress"] = addr
-            sup_body["physicalAddress"] = addr
-
-        sup_result = client.post("/supplier", json=sup_body)
-        supplier_id = sup_result.get("value", {}).get("id")
-
-        if not supplier_id and sup_result.get("error"):
-            # Auto-recover: find existing supplier
-            search_params = {"fields": "id,name,organizationNumber"}
-            if supplierOrgNumber:
-                search_params["organizationNumber"] = supplierOrgNumber
-            else:
-                search_params["name"] = supplier_name
-            existing = client.get("/supplier", params=search_params)
-            vals = existing.get("values", [])
-            if vals:
-                supplier_id = vals[0]["id"]
-                _recover_error("/supplier")
-                steps_log.append(f"Supplier already existed (id={supplier_id})")
-
+        # ── Step 1: Find or create supplier ──
+        supplier_id = find_or_create_supplier(
+            client, name=supplier_name, email=supplierEmail,
+            org_number=supplierOrgNumber,
+            address=supplierAddress, postal_code=supplierPostalCode,
+            city=supplierCity, steps_log=steps_log,
+        )
         if not supplier_id:
-            return {"error": True, "message": f"Failed to create supplier: {sup_result}", "steps": steps_log}
-        if not steps_log or "already existed" not in steps_log[-1]:
-            steps_log.append(f"Created supplier '{supplier_name}' (id={supplier_id})")
+            return {"error": True, "message": f"Failed to create supplier '{supplier_name}'", "steps": steps_log}
+
+        # Set bank account via PUT using bban field (best-effort)
+        if supplierBankAccount:
+            try:
+                bban = _fix_norwegian_bban(supplierBankAccount)
+                if bban:
+                    ba_result = client.put(f"/supplier/{supplier_id}", json={
+                        "id": supplier_id, "name": supplier_name,
+                        "bankAccountPresentation": [{"bban": bban}],
+                    })
+                    if ba_result.get("error"):
+                        recover_error(client, f"/supplier/{supplier_id}")
+                    else:
+                        steps_log.append(f"Set bank account on supplier ({bban})")
+            except Exception:
+                pass
 
         # ── Step 2: Optional department ──
         dept_id = 0
         if departmentName:
-            # Search first
-            dept_search = client.get("/department", params={
-                "name": departmentName, "fields": "id,name", "count": 5,
-            })
-            dept_vals = dept_search.get("values", [])
-            # Find exact or close match
-            for dv in dept_vals:
-                if (dv.get("name") or "").strip().lower() == departmentName.strip().lower():
-                    dept_id = dv["id"]
-                    steps_log.append(f"Found department '{departmentName}' (id={dept_id})")
-                    break
-            if not dept_id and dept_vals:
-                dept_id = dept_vals[0]["id"]
-                steps_log.append(f"Found department (id={dept_id})")
-            if not dept_id:
-                # Create department
-                dept_result = client.post("/department", json={"name": departmentName})
-                dept_id = dept_result.get("value", {}).get("id")
-                if dept_id:
-                    steps_log.append(f"Created department '{departmentName}' (id={dept_id})")
+            dept_id = find_or_create_department(client, name=departmentName, steps_log=steps_log)
 
         # ── Step 3: Create incoming invoice (ledger voucher) ──
-        # Look up expense account ID
         expense_cache_key = f"acct_{expenseAccountNumber}"
         expense_id = client.get_cached(expense_cache_key)
         if not expense_id:
-            expense_result = client.get("/ledger/account", params={
-                "number": str(expenseAccountNumber), "fields": "id", "count": 1,
-            })
-            expense_accts = expense_result.get("values", [])
-            if not expense_accts:
+            accounts_to_try = [expenseAccountNumber]
+            if expenseAccountNumber not in (6590, 6300, 6800, 4000):
+                accounts_to_try.append(6590)
+            for acct_num in accounts_to_try:
+                expense_result = client.get("/ledger/account", params={
+                    "number": str(acct_num), "fields": "id", "count": 1,
+                })
+                expense_accts = expense_result.get("values", [])
+                if expense_accts:
+                    expense_id = expense_accts[0]["id"]
+                    client.set_cached(f"acct_{acct_num}", expense_id)
+                    break
+            if not expense_id:
                 return {"error": True, "message": f"Expense account {expenseAccountNumber} not found",
                         "steps": steps_log}
-            expense_id = expense_accts[0]["id"]
-            client.set_cached(expense_cache_key, expense_id)
 
-        # Look up payables account 2400
         payables_id = client.get_cached("acct_2400")
         if not payables_id:
             payables_result = client.get("/ledger/account", params={
@@ -168,15 +160,20 @@ def build_process_supplier_invoice_tools(client: TripletexClient) -> dict:
             payables_id = payables_accts[0]["id"]
             client.set_cached("acct_2400", payables_id)
 
-        # Resolve input VAT types by standard number (from prewarm cache or live lookup)
+        # Resolve input VAT types
         input_vat_map = client.get_cached("input_vat_type_map") or {}
         if not input_vat_map and vatPercentage > 0:
             _IN = {1: 25, 11: 15, 13: 12}
             r = client.get("/ledger/vatType", params={"fields": "id,number"})
             for vt in (r.get("values") or []):
                 n, vid = vt.get("number"), vt.get("id")
-                if n is not None and vid is not None and int(n) in _IN:
-                    input_vat_map[_IN[int(n)]] = vid
+                if n is not None and vid is not None:
+                    try:
+                        n = int(n)
+                    except (ValueError, TypeError):
+                        continue
+                    if n in _IN:
+                        input_vat_map[_IN[n]] = vid
             if input_vat_map:
                 client.set_cached("input_vat_type_map", input_vat_map)
         vat_type_id = input_vat_map.get(vatPercentage, 0) if vatPercentage > 0 else 0
@@ -186,7 +183,6 @@ def build_process_supplier_invoice_tools(client: TripletexClient) -> dict:
 
         amt = round(amountIncludingVat, 2)
 
-        # Build description
         if lineDescription and invoiceNumber:
             description = f"{invoiceNumber} - {lineDescription}"
         elif invoiceNumber:
@@ -196,7 +192,6 @@ def build_process_supplier_invoice_tools(client: TripletexClient) -> dict:
         else:
             description = "Supplier invoice"
 
-        # Build expense posting (debit)
         expense_posting = {
             "row": 1,
             "account": {"id": expense_id},
@@ -209,7 +204,6 @@ def build_process_supplier_invoice_tools(client: TripletexClient) -> dict:
         if dept_id:
             expense_posting["department"] = {"id": dept_id}
 
-        # Build payables posting (credit)
         credit_posting = {
             "row": 2,
             "account": {"id": payables_id},

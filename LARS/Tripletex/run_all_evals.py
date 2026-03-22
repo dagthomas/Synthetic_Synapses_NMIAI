@@ -34,10 +34,20 @@ logging.basicConfig(
 log = logging.getLogger("run_all_evals")
 
 
+# Task types that are functionally identical (same pipeline + same tools)
+TASK_ALIASES = {
+    "create_credit_note": {"create_credit_note", "delete_invoice"},
+    "delete_invoice": {"delete_invoice", "create_credit_note"},
+    "invoice_with_payment": {"invoice_with_payment", "order_to_invoice_with_payment"},
+    "order_to_invoice_with_payment": {"order_to_invoice_with_payment", "invoice_with_payment"},
+}
+
+
 def test_classifier(task_name: str, prompt: str) -> dict:
     """Test if classify_task returns the correct task type for this prompt."""
     predicted = classify_task(prompt)
-    correct = predicted == task_name
+    aliases = TASK_ALIASES.get(task_name, {task_name})
+    correct = predicted in aliases
     return {
         "task": task_name,
         "predicted": predicted or "(fallback)",
@@ -101,9 +111,10 @@ def run_agent_eval(agent_url: str, task_name: str, lang: str, base_url: str, tok
 
     time.sleep(1)  # API propagation
 
-    # Verify
+    # Verify (pass agent response for salary transaction ID extraction)
     verify_client = TripletexClient(base_url, token)
-    verification = verify_task(verify_client, task_def, expected, pre_created_id)
+    verification = verify_task(verify_client, task_def, expected, pre_created_id,
+                               agent_response=body)
 
     api_calls = body.get("api_calls", task_def.baseline_calls)
     api_errors = body.get("api_errors", 0)
@@ -205,6 +216,27 @@ def main():
     if need_agent and (not base_url or not token):
         print("ERROR: Set TRIPLETEX_BASE_URL and TRIPLETEX_SESSION_TOKEN in .env")
         sys.exit(1)
+
+    # Pre-flight: try to enable required modules on sandbox
+    if need_agent and base_url and token:
+        try:
+            from tripletex_client import TripletexClient as _TC
+            setup_client = _TC(base_url, token)
+            # Enable salary, department, project modules
+            setup_client.put("/company/modules", json={
+                "moduleDepartment": True,
+                "moduleProjectEconomy": True,
+                "moduleSalary": True,
+                "moduleHRM": True,
+            })
+            # Also try salesmodules endpoint
+            for mod_name in ["MAMUT_SALARY", "MAMUT_WITH_NTO"]:
+                setup_client.post("/company/salesmodules", json={
+                    "name": mod_name, "costStartDate": "2026-01-01",
+                })
+            log.info("Module activation attempted")
+        except Exception as e:
+            log.debug(f"Module activation skipped: {e}")
 
     results = []
     total = sum(1 for t in task_names for _ in args.langs)

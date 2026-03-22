@@ -3,6 +3,8 @@
 Handles: create customer → create product(s) → create order → create invoice
          → optionally create credit note or send invoice.
 No LLM chaining required — all steps are hardcoded.
+
+Uses search-before-create pattern to avoid 422 errors and efficiency penalties.
 """
 
 import json as _json
@@ -17,42 +19,10 @@ log = logging.getLogger(__name__)
 def build_process_invoice_tools(client: TripletexClient) -> dict:
     """Build the compound invoice processing tool."""
 
-    def _recover_error(endpoint: str):
-        """Undo error count for auto-recovery on expected 422s."""
-        client._error_count = max(0, client._error_count - 1)
-        for entry in reversed(client._call_log):
-            if not entry.get("ok") and endpoint in entry.get("url", ""):
-                entry["ok"] = True
-                entry["recovered"] = True
-                break
-
-    def _ensure_bank_account() -> None:
-        """Ensure ledger account 1920 has a bank account number (once per session)."""
-        cache_key = "bank_account_ensured"
-        if client.get_cached(cache_key):
-            return
-        try:
-            r = client.get("/ledger/account", params={
-                "number": "1920", "fields": "id,name,isBankAccount,bankAccountNumber"
-            })
-            accounts = r.get("values", [])
-            if not accounts:
-                client.set_cached(cache_key, True)
-                return
-            acct = accounts[0]
-            if acct.get("bankAccountNumber"):
-                client.set_cached(cache_key, True)
-                return
-            client.put(f"/ledger/account/{acct['id']}", json={
-                "id": acct["id"],
-                "number": 1920,
-                "name": acct["name"],
-                "isBankAccount": True,
-                "bankAccountNumber": "12345678903",
-            })
-            client.set_cached(cache_key, True)
-        except Exception:
-            pass
+    from tools._helpers import (
+        find_or_create_customer, find_or_create_product,
+        ensure_bank_account,
+    )
 
     def process_invoice(
         customer_name: str,
@@ -113,61 +83,17 @@ def build_process_invoice_tools(client: TripletexClient) -> dict:
         if not prod_list:
             return {"error": True, "message": "products must be a non-empty list"}
 
-        # ── Step 1: Create customer ──
-        cust_body = {"name": customer_name, "isCustomer": True}
-        if customer_email:
-            cust_body["email"] = customer_email
-        if customer_org_number:
-            cust_body["organizationNumber"] = customer_org_number
-        if customer_phone:
-            cust_body["phoneNumber"] = customer_phone
-        if customer_address:
-            cust_body["physicalAddress"] = {"addressLine1": customer_address}
-            if customer_postal_code:
-                cust_body["physicalAddress"]["postalCode"] = customer_postal_code
-            if customer_city:
-                cust_body["physicalAddress"]["city"] = customer_city
-
-        cust_result = client.post("/customer", json=cust_body)
-        customer_id = cust_result.get("value", {}).get("id")
-
-        if not customer_id and cust_result.get("error"):
-            # Try to find existing
-            search_params = {"fields": "id,name"}
-            if customer_org_number:
-                search_params["organizationNumber"] = customer_org_number
-            else:
-                search_params["name"] = customer_name
-            existing = client.get("/customer", params=search_params)
-            vals = existing.get("values", [])
-            if vals:
-                customer_id = vals[0]["id"]
-                _recover_error("/customer")
-                steps_log.append(f"Customer already existed (id={customer_id})")
-
+        # ── Step 1: Find or create customer ──
+        customer_id = find_or_create_customer(
+            client, name=customer_name, email=customer_email,
+            org_number=customer_org_number, phone=customer_phone,
+            address=customer_address, postal_code=customer_postal_code,
+            city=customer_city, steps_log=steps_log,
+        )
         if not customer_id:
-            return {"error": True, "message": f"Failed to create customer: {cust_result}", "steps": steps_log}
-        if not steps_log or "already existed" not in steps_log[-1]:
-            steps_log.append(f"Created customer '{customer_name}' (id={customer_id})")
+            return {"error": True, "message": f"Failed to create customer '{customer_name}'", "steps": steps_log}
 
-        # ── Step 2: Create products ──
-        # Resolve output VAT types by standard number (from prewarm cache or live lookup)
-        vat_map = client.get_cached("vat_type_map") or {}
-        if not vat_map:
-            _OUT = {3: 25, 31: 15, 33: 12}
-            _ZERO = {6, 5}
-            r = client.get("/ledger/vatType", params={"fields": "id,number"})
-            for vt in (r.get("values") or []):
-                n, vid = vt.get("number"), vt.get("id")
-                if n is not None and vid is not None:
-                    n = int(n)
-                    if n in _OUT:
-                        vat_map[_OUT[n]] = vid
-                    elif n in _ZERO:
-                        vat_map.setdefault(0, vid)
-            if vat_map:
-                client.set_cached("vat_type_map", vat_map)
-
+        # ── Step 2: Find or create products ──
         product_ids = []
         order_lines = []
 
@@ -178,36 +104,19 @@ def build_process_invoice_tools(client: TripletexClient) -> dict:
             p_vat_pct = prod.get("vatPercentage", 25)
             p_number = prod.get("productNumber", "")
 
-            vat_type_id = vat_map.get(int(p_vat_pct))
-            if vat_type_id is None:
-                return {"error": True, "message": f"No valid output VAT type for {p_vat_pct}%. Available: {list(vat_map.keys())}", "steps": steps_log}
-
-            prod_body = {
-                "name": p_name,
-                "priceExcludingVatCurrency": p_price,
-                "vatType": {"id": vat_type_id},
-            }
-            if p_number:
-                prod_body["number"] = p_number
-
-            prod_result = client.post("/product", json=prod_body)
-            prod_id = prod_result.get("value", {}).get("id")
-
-            if not prod_id and prod_result.get("error"):
-                # Product number collision — search for existing
-                if p_number:
-                    existing = client.get("/product", params={"number": p_number, "fields": "id"})
-                    vals = existing.get("values", [])
-                    if vals:
-                        prod_id = vals[0]["id"]
-                        _recover_error("/product")
-
+            prod_id = find_or_create_product(
+                client, name=p_name, price=p_price,
+                vat_percentage=p_vat_pct, product_number=p_number,
+                steps_log=steps_log,
+            )
             if not prod_id:
-                return {"error": True, "message": f"Failed to create product '{p_name}': {prod_result}", "steps": steps_log}
+                return {"error": True, "message": f"Failed to create product '{p_name}'", "steps": steps_log}
 
             product_ids.append(prod_id)
-            order_lines.append({"product": {"id": prod_id}, "count": p_qty})
-            steps_log.append(f"Created product '{p_name}' (id={prod_id})")
+            line = {"product": {"id": prod_id}, "count": p_qty}
+            if p_price:
+                line["unitPriceExcludingVatCurrency"] = p_price
+            order_lines.append(line)
 
         # ── Step 3: Create order ──
         order_body = {
@@ -223,7 +132,7 @@ def build_process_invoice_tools(client: TripletexClient) -> dict:
         steps_log.append(f"Created order (id={order_id})")
 
         # ── Step 4: Ensure bank account + create invoice ──
-        _ensure_bank_account()
+        ensure_bank_account(client)
 
         inv_body = {
             "invoiceDate": invoiceDate,

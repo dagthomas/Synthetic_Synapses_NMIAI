@@ -313,6 +313,13 @@ TASK: Create department (1 call)
 -> create_department(name, departmentNumber if given)
 - "avdeling" = department""",
 
+    "create_multiple_departments": """
+TASK: Create multiple departments (N calls — one per department)
+-> For EACH department name in the prompt: create_department(name, departmentNumber if given)
+- Extract ALL department names from the prompt. Create each one separately.
+- "tre avdelinger"/"three departments" = create 3 departments.
+- Call create_department once per department name. Do NOT skip any.""",
+
     "create_supplier": """
 TASK: Create supplier
 -> create_supplier(name, email, organizationNumber if given, phoneNumber if given)
@@ -430,30 +437,38 @@ Do NOT retry create_project if PM fails — the tool auto-falls back to admin PM
 """,
 
     "project_invoice": """
-TASK: Project invoice — create project and invoice customer.
+TASK: Project invoice (1 compound call)
+USE process_project_invoice — this single tool handles EVERYTHING:
+  - Creates customer, employee (PM), project
+  - For hourly: creates employment, participant, hourly rate, timesheet, product, order, invoice
+  - For fixed-price: creates product with milestone amount, order, invoice
 
-COMMON STEPS:
-1. create_customer(name, organizationNumber)
-2. create_employee(firstName, lastName, email, userType="EXTENDED") — use existing if email taken.
-3. create_project(name, customer_id, startDate="{today}", projectManagerId=employeeId, fixedPriceAmount=<if fixed price>, isInternal=<if internal>)
+AUTO-DETECTS scenario from parameters:
+  - fixedPriceAmount > 0 → Fixed-price project. milestonePercentage controls how much to invoice (default 100%).
+  - hourlyRate > 0 AND hours > 0 → Hourly project. invoice_amount = hourlyRate × hours.
 
-SCENARIO A — FIXED-PRICE MILESTONE (when "Festpreis"/"fixed price" AND percentage mentioned):
-4. invoice_amount = fixedPriceAmount × (percentage / 100)
-5. create_product(name="Milestone Payment for <project>", priceExcludingVatCurrency=invoice_amount, vatPercentage=25)
-6. create_order(customer_id, deliveryDate="{today}", orderLines, project_id)
-7. create_invoice(invoiceDate="{today}", invoiceDueDate="{today}", order_id). Send if asked.
+EXAMPLE (fixed-price):
+  process_project_invoice(customer_name="Fjellvind AS", customer_org_number="987654321",
+    pm_firstName="Kari", pm_lastName="Nordmann", pm_email="kari@fjellvind.no",
+    project_name="Nettsideprosjekt", fixedPriceAmount=200000, milestonePercentage=50,
+    invoiceDate="2026-03-10", invoiceDueDate="2026-03-24", send_invoice=True)
 
-SCENARIO B — HOURLY PROJECT (when "hours"/"timer" AND "hourly rate"/"timepris" mentioned):
-4. create_project_participant(project_id, employee_id)
-5. create_hourly_cost_and_rate(employee_id, date="{today}", rate=<hourly_rate>)
-6. create_employment(employee_id, startDate="2026-01-01") → create_timesheet_entry(employee_id, date, hours, project_id, activity_name)
-7. total = hourly_rate × hours → create_product(name, priceExcludingVatCurrency=TOTAL, vatPercentage=25)
-   WARNING: price = rate × hours (TOTAL), NOT hourly rate alone! count=1 on order line.
-8. create_order → create_invoice. Send if asked.
+EXAMPLE (hourly):
+  process_project_invoice(customer_name="Fjellvind AS",
+    pm_firstName="Ola", pm_lastName="Hansen", pm_email="ola@fjellvind.no",
+    project_name="Konsulenttimer", hourlyRate=1200, hours=40,
+    activity_name="Utvikling",
+    timesheetDate="2026-03-15", invoiceDate="2026-03-20", invoiceDueDate="2026-04-03")
 
-invoiceDueDate REQUIRED — if not in prompt, set = invoiceDate.
-Employee needs employment BEFORE timesheet. "taux horaire"/"timepris"/"Stundensatz" = hourly rate.
-""",
+CRITICAL:
+- "Festpreis"/"fastpris"/"fixed price" + amount → fixedPriceAmount parameter
+- "Stundensatz"/"timepris"/"taux horaire"/"hourly rate" → hourlyRate parameter
+- "timer"/"hours"/"heures"/"Stunden" → hours parameter
+- "actividad"/"aktivitet"/"activity"/"Aktivität" → activity_name parameter
+- Milestone percentage: "50%"/"erste Rate" → milestonePercentage=50
+- The employee who logs hours goes in pm_firstName/pm_lastName/pm_email (the tool creates them as PM).
+- The tool auto-calculates: price = hourlyRate × hours for hourly, or fixedPriceAmount × percentage/100 for fixed.
+- send_invoice=True if prompt says "send"/"og send"/"enviar"/"senden".""",
 
     "create_travel_expense": """
 TASK: Create travel expense (1 compound call)
@@ -518,42 +533,33 @@ CRITICAL:
 - Do NOT call any other tools — this single call does everything.""",
 
     "invoice_with_payment": """
-TASK: Register payment on an invoice (2-6 calls, up to 8 with currency/agio)
+TASK: Invoice with payment (1 compound call)
+USE process_invoice_with_payment — this single tool handles EVERYTHING.
 
-MANDATORY FIRST CHECK — scan prompt for: EUR, USD, GBP, "kurs", "agio", "disagio",
-"valutadifferanse", "exchange rate", "gain de change", "wechselkursdifferenz".
-If ANY appear → MUST use FOREIGN CURRENCY flow. Do NOT skip create_voucher.
+DETERMINE THE MODE from the prompt:
+- "create_new": Prompt asks to CREATE a new invoice AND register payment. Has customer/product details.
+- "existing": Prompt references an EXISTING invoice. Past tense: "vi sendte", "har en ubetalt faktura", "has paid".
+- "foreign_currency": Prompt mentions EUR/USD/GBP, "kurs", "agio", "disagio", "valutadifferanse", exchange rates.
 
-STEP 1 — Determine if invoice EXISTS or must be CREATED:
-- EXISTING: "vi sendte en faktura", "har en ubetalt faktura", "has paid", past tense about invoice.
-- CREATE NEW: "opprett en faktura og registrer betaling", all details for new invoice provided.
+EXAMPLES:
+  Create new + pay:
+    process_invoice_with_payment(mode="create_new", customer_name="Acme AS", customer_email="post@acme.no",
+      products='[{{"name":"Konsulenttime","price":1200,"quantity":10,"vatPercentage":25}}]',
+      invoiceDate="2026-03-15", invoiceDueDate="2026-04-15", paymentDate="2026-03-20")
 
-═══ EXISTING INVOICE flow (NOK only, 3 calls) ═══
-1. search_customers(name) — match by EXACT NAME, never blindly use first result.
-2. search_invoices(invoiceDateFrom="2000-01-01", invoiceDateTo="2030-12-31", customerId)
-   Pick invoice with amountOutstanding > 0. If all are 0 → already paid, STOP.
-3. register_payment(invoice_id, amount=amountOutstanding, paymentDate="{today}")
-   Use amountOutstanding from search (includes VAT). NEVER amount=0.
+  Pay existing:
+    process_invoice_with_payment(mode="existing", customer_name="Acme AS", paymentDate="2026-03-20")
 
-═══ FOREIGN CURRENCY / AGIO flow (4-5 calls) ═══
-Must complete ALL steps including create_voucher.
-1. search_customers → search_invoices (same as above)
-2. Calculate from PROMPT values ONLY (never use system amountOutstanding):
-   invoiceNOK = foreign_amount × old_rate, paymentNOK = foreign_amount × new_rate, diff = paymentNOK − invoiceNOK
-   Example: 11219 EUR, old 10.02, new 10.29 → payment=115443.51, invoice=112414.38, agio=3029.13
-3. register_payment(invoice_id, amount=paymentNOK, paymentDate, paidAmountCurrency=foreign_amount)
-4. create_voucher for exchange difference — DO NOT SKIP:
-   Gain (diff>0): debit 1500 +diff (with customerId!), credit 8060 -diff
-   Loss (diff<0): debit 8160 +|diff|, credit 1500 -|diff| (with customerId!)
-   Account 1500 REQUIRES customerId. 8060=agiogevinst, 8160=agiotap.
+  Foreign currency with agio:
+    process_invoice_with_payment(mode="foreign_currency", customer_name="Acme GmbH",
+      foreignAmount=11219, foreignCurrency="EUR", oldRate=10.02, newRate=10.29, paymentDate="2026-03-20")
 
-═══ CREATE NEW flow (5-6 calls) ═══
-Only if prompt explicitly asks to create a new invoice.
-1. create_customer → create_product → create_order → create_invoice
-2. register_payment(invoice_id, amount=total incl VAT, paymentDate)
-
-RULES: Call register_payment EXACTLY ONCE. "paiement intégral"/"full betaling" = pay entire amountOutstanding.
-If EXISTING invoice → NEVER create_customer/product/order/invoice. If foreign currency → NEVER skip create_voucher.""",
+CRITICAL:
+- For create_new: products must be a JSON array with price EXCLUDING VAT. The tool calculates total incl VAT automatically.
+- For existing: the tool finds the unpaid invoice and pays amountOutstanding. Override with paymentAmount if needed.
+- For foreign_currency: ALL of foreignAmount, oldRate, newRate are REQUIRED. The tool auto-books the agio voucher.
+- "betalt"/"paid"/"pagado"/"bezahlt"/"payé" on existing invoice → mode="existing"
+- "paiement intégral"/"full betaling" = pay full amountOutstanding (default behavior)""",
 
     "create_credit_note": """
 TASK: Credit note (1 compound call)
@@ -764,14 +770,20 @@ TASK: Reverse voucher (2 calls)
 - This task references EXISTING entities. Use search tools.""",
 
     "reverse_payment": """
-TASK: Reverse/revert a payment on an existing invoice (2-3 calls)
--> search_customers(name) -> search_invoices(customerId, invoiceDateFrom, invoiceDateTo) -> register_payment(invoice_id, amount=NEGATIVE_AMOUNT, paymentDate)
-- This task references EXISTING entities. NEVER create a customer or product — use search tools ONLY.
-- FIRST search for the customer by name to get their ID. If org number is given, verify it matches.
-- Then search invoices filtered by customerId with a wide date range (2000-01-01 to 2030-01-01).
-- Pick the invoice that is fully paid (amountOutstanding = 0 or amountOutstanding < amount).
-- To reverse: register a NEGATIVE amount = -(amount - amountOutstanding). This is the paid portion, negated.
-- "devolvido pelo banco"/"payment returned"/"betaling returnert" = reverse payment""",
+TASK: Reverse/revert a payment (1 compound call)
+USE process_reverse_payment — this single tool handles EVERYTHING:
+  1. Searches for the customer by name
+  2. Finds the paid invoice
+  3. Registers a negative payment to reverse it
+
+EXAMPLE:
+  process_reverse_payment(customer_name="Acme AS", paymentDate="2026-03-20", amount=1000)
+
+CRITICAL:
+- customer_name is REQUIRED — extract the EXACT customer name from the prompt.
+- amount = the original payment amount to reverse. If omitted, reverses the full paid amount.
+- "devolvido pelo banco"/"payment returned"/"betaling returnert"/"tilbakeføre betaling" = reverse payment
+- "devuelto por el banco"/"retourné par la banque"/"von der bank zurückgewiesen" = reverse payment""",
 
     "delete_invoice": """
 TASK: Credit/delete invoice (5 calls)

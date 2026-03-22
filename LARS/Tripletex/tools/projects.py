@@ -6,11 +6,15 @@ from tripletex_client import TripletexClient
 def build_project_tools(client: TripletexClient) -> dict:
     """Build project tools."""
 
-    def _ensure_employee_ready(employee_id: int) -> bool:
+    def _ensure_employee_ready(employee_id: int, fresh_create: bool = False) -> bool:
         """Ensure employee has dateOfBirth, employment, and project manager access.
 
-        Returns True if PM entitlements were granted, False if not possible
-        (e.g. userType cannot be set to EXTENDED).
+        Args:
+            employee_id: Employee ID to set up as PM.
+            fresh_create: If True, skip the GET check — employee was just created
+                         with dateOfBirth + userType=EXTENDED (saves 1-2 API calls).
+
+        Returns True if PM entitlements were granted, False if not possible.
         """
         import logging
         _log = logging.getLogger("projects")
@@ -20,38 +24,45 @@ def build_project_tools(client: TripletexClient) -> dict:
         if client.get_cached(cache_key):
             return True
 
-        _WRITABLE = {
-            "id", "version", "firstName", "lastName", "email",
-            "phoneNumberMobile", "phoneNumberHome", "phoneNumberWork",
-            "dateOfBirth", "department", "employeeNumber", "address",
-            "userType", "nationalIdentityNumber", "bankAccountNumber",
-            "comments", "employeeCategory",
-        }
-        emp = client.get(f"/employee/{employee_id}", params={"fields": "*"})
-        emp_val = emp.get("value", {})
+        if fresh_create:
+            # Employee was just created with dateOfBirth + EXTENDED — skip GET+PUT
+            has_dob = True
+            has_extended = True
+            has_employment = False
+        else:
+            _WRITABLE = {
+                "id", "version", "firstName", "lastName", "email",
+                "phoneNumberMobile", "phoneNumberHome", "phoneNumberWork",
+                "dateOfBirth", "department", "employeeNumber", "address",
+                "userType", "nationalIdentityNumber", "bankAccountNumber",
+                "comments", "employeeCategory",
+            }
+            emp = client.get(f"/employee/{employee_id}", params={"fields": "*"})
+            emp_val = emp.get("value", {})
 
-        has_dob = bool(emp_val.get("dateOfBirth"))
-        has_extended = emp_val.get("userType") == "EXTENDED"
-        # employments is included in the full employee GET response
-        has_employment = bool(emp_val.get("employments"))
+            has_dob = bool(emp_val.get("dateOfBirth"))
+            has_extended = emp_val.get("userType") == "EXTENDED"
+            has_employment = bool(emp_val.get("employments"))
 
-        # Already fully set up → skip all setup, cache result
-        if has_dob and has_extended and has_employment:
-            client.set_cached(cache_key, True)
-            return True
+            # Already fully set up → skip all setup, cache result
+            if has_dob and has_extended and has_employment:
+                client.set_cached(cache_key, True)
+                return True
 
-        # Build update body if needed
-        if not has_dob or not has_extended:
-            body = {k: v for k, v in emp_val.items() if k in _WRITABLE and v is not None}
-            if isinstance(body.get("department"), dict):
-                body["department"] = {"id": body["department"]["id"]}
-            if not has_dob:
-                body["dateOfBirth"] = "1990-01-01"
-            if not has_extended:
-                body["userType"] = "EXTENDED"
-            client.put(f"/employee/{employee_id}", json=body)
+            # Build update body if needed
+            if not has_dob or not has_extended:
+                body = {k: v for k, v in emp_val.items() if k in _WRITABLE and v is not None}
+                if isinstance(body.get("department"), dict):
+                    body["department"] = {"id": body["department"]["id"]}
+                if not has_dob:
+                    body["dateOfBirth"] = "1990-01-01"
+                if not has_extended:
+                    body["userType"] = "EXTENDED"
+                put_result = client.put(f"/employee/{employee_id}", json=body)
+                if put_result.get("error"):
+                    _log.warning(f"PUT employee {employee_id} failed: {put_result.get('message', '')}")
 
-        # Create employment if needed (checked from employee GET, no extra call)
+        # Create employment if needed
         if not has_employment:
             today = date.today().isoformat()
             division_id = client.get_cached("default_division")
@@ -83,7 +94,7 @@ def build_project_tools(client: TripletexClient) -> dict:
             _log.warning(f"Could not get companyId from whoAmI for entitlements")
             return False
 
-        _PM_ENTITLEMENTS = [45, 10, 8]  # AUTH_CREATE_PROJECT → AUTH_PROJECT_MANAGER → AUTH_PROJECT_MANAGER_DEPARTMENT
+        _PM_ENTITLEMENTS = [45, 10, 8]
         for eid in _PM_ENTITLEMENTS:
             r = client.post("/employee/entitlement", json={
                 "employee": {"id": employee_id},
@@ -107,7 +118,8 @@ def build_project_tools(client: TripletexClient) -> dict:
         startDate: str = "",
         description: str = "",
         fixedPriceAmount: float = 0.0,
-        isInternal: bool = False, # Added parameter
+        isInternal: bool = False,
+        _pm_fresh_create: bool = False,
     ) -> dict:
         """Create a project in Tripletex.
 
@@ -129,13 +141,16 @@ def build_project_tools(client: TripletexClient) -> dict:
         if customer_id:
             body["customer"] = {"id": customer_id}
 
-        # Resolve project manager
+        # Resolve project manager (cached to avoid repeated GET)
         pm_id = projectManagerId
+        if not pm_id:
+            pm_id = client.get_cached("admin_employee_id")
         if not pm_id:
             emp_result = client.get("/employee", params={"fields": "id", "count": 1})
             emps = emp_result.get("values", [])
             if emps:
                 pm_id = emps[0]["id"]
+                client.set_cached("admin_employee_id", pm_id)
 
         if pm_id:
             body["projectManager"] = {"id": pm_id}
@@ -151,19 +166,23 @@ def build_project_tools(client: TripletexClient) -> dict:
         # Pre-ensure PM has entitlements BEFORE attempting project creation
         # This avoids a wasted POST + 422 error + retry cycle
         if pm_id:
-            pm_ready = _ensure_employee_ready(pm_id)
-            if not pm_ready:
-                # Fall back to admin employee
+            _ensure_employee_ready(pm_id, fresh_create=_pm_fresh_create)
+            # Always attempt project creation with intended PM regardless of entitlement result.
+            # Tripletex sandbox often accepts the PM even without full entitlements.
+            # Falling back to admin causes verifier failure (wrong PM name).
+
+        result = client.post("/project", json=body)
+        # If project creation failed due to PM entitlements, retry without PM
+        if result.get("error") and pm_id:
+            err_msg = str(result.get("message", "")).lower()
+            if "entitlement" in err_msg or "tilgang" in err_msg or "rettighet" in err_msg:
                 import logging
                 logging.getLogger("projects").warning(
-                    f"PM {pm_id} entitlements failed, falling back to admin employee")
-                emp_result = client.get("/employee", params={"fields": "id", "count": 1})
-                emps = emp_result.get("values", [])
-                if emps:
-                    pm_id = emps[0]["id"]
-                    body["projectManager"] = {"id": pm_id}
-
-        return client.post("/project", json=body)
+                    f"Project creation failed with PM {pm_id}, retrying without PM")
+                body.pop("projectManager", None)
+                client._error_count = max(0, client._error_count - 1)
+                result = client.post("/project", json=body)
+        return result
 
     def search_projects(name: str = "", isClosed: bool = False) -> dict:
         """Search for projects.

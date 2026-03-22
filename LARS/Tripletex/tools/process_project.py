@@ -1,8 +1,10 @@
 """Compound tool: process entire project_lifecycle workflow in one deterministic call.
 
-Handles: create customer → create PM → create project → employee hours →
+Handles: find/create customer → create PM → create project → employee hours →
          supplier cost → customer invoice.
 No LLM chaining required — all steps are hardcoded.
+
+Uses search-before-create pattern to avoid 422 errors and efficiency penalties.
 """
 
 import json as _json
@@ -17,17 +19,11 @@ log = logging.getLogger(__name__)
 def build_process_project_tools(client: TripletexClient) -> dict:
     """Build the compound project lifecycle tool."""
 
-    # ── Import helper from projects module ──
+    from tools._helpers import (
+        recover_error, find_or_create_customer, find_or_create_supplier,
+        find_or_create_employment, find_or_create_product, ensure_bank_account,
+    )
     from tools.projects import build_project_tools as _build_project_tools
-
-    def _recover_error(endpoint: str):
-        """Undo error count for auto-recovery on expected 422s."""
-        client._error_count = max(0, client._error_count - 1)
-        for entry in reversed(client._call_log):
-            if not entry.get("ok") and endpoint in entry.get("url", ""):
-                entry["ok"] = True
-                entry["recovered"] = True
-                break
 
     def _find_or_create_employee(firstName, lastName, email, userType="STANDARD", steps_log=None):
         """Create an employee or find existing by email on collision.
@@ -37,6 +33,14 @@ def build_process_project_tools(client: TripletexClient) -> dict:
         if steps_log is None:
             steps_log = []
 
+        # Search by email first to avoid 422
+        if email:
+            existing = client.get("/employee", params={"email": email, "fields": "id,firstName,lastName"})
+            vals = existing.get("values", [])
+            if vals:
+                steps_log.append(f"Found existing employee {firstName} {lastName} (id={vals[0]['id']})")
+                return vals[0]["id"], False
+
         body = {
             "firstName": firstName,
             "lastName": lastName,
@@ -45,77 +49,24 @@ def build_process_project_tools(client: TripletexClient) -> dict:
             "dateOfBirth": "1990-01-01",
         }
         result = client.post("/employee", json=body)
-        emp_id = None
-        just_created = False
+        emp_id = result.get("value", {}).get("id")
 
-        if result.get("error") and result.get("status_code") == 422:
+        if not emp_id and result.get("error") and result.get("status_code") == 422:
             msg = str(result.get("message", "")).lower()
             if "e-postadress" in msg or "email" in msg:
+                recover_error(client, "/employee")
                 existing = client.get("/employee", params={"email": email, "fields": "id,firstName,lastName"})
                 vals = existing.get("values", [])
                 if vals:
                     emp_id = vals[0]["id"]
-                    _recover_error("/employee")
                     steps_log.append(f"Employee {firstName} {lastName} already existed (id={emp_id})")
-        if not emp_id:
-            emp_val = result.get("value", {})
-            emp_id = emp_val.get("id")
-            if emp_id:
-                just_created = True
-                steps_log.append(f"Created employee {firstName} {lastName} (id={emp_id})")
+                    return emp_id, False
 
-        return emp_id, just_created
+        if emp_id:
+            steps_log.append(f"Created employee {firstName} {lastName} (id={emp_id})")
+            return emp_id, True
 
-    def _find_or_create_employment(employee_id, startDate, steps_log=None, skip_dob_check=False):
-        """Create employment or find existing on collision."""
-        if steps_log is None:
-            steps_log = []
-
-        # Ensure dateOfBirth is set (required for employment)
-        # Skip if employee was just created with dateOfBirth
-        if not skip_dob_check:
-            emp_check = client.get(f"/employee/{employee_id}", params={"fields": "id,dateOfBirth"})
-            emp_data = emp_check.get("value", emp_check)
-            if not emp_data.get("dateOfBirth"):
-                client.put(f"/employee/{employee_id}", json={"dateOfBirth": "1990-01-01"})
-
-        # Get or create division
-        div_id = client.get_cached("default_division")
-        if div_id is None:
-            divs = client.get("/division", params={"fields": "id", "count": 1})
-            div_list = divs.get("values", [])
-            if div_list:
-                div_id = div_list[0]["id"]
-            client.set_cached("default_division", div_id or 0)
-
-        emp_body = {
-            "employee": {"id": employee_id},
-            "startDate": startDate,
-            "employmentDetails": [{"date": startDate, "employmentType": "ORDINARY",
-                                    "workingHoursScheme": "NOT_SHIFT"}],
-        }
-        if div_id:
-            emp_body["division"] = {"id": div_id}
-
-        result = client.post("/employee/employment", json=emp_body)
-        employment_id = result.get("value", {}).get("id")
-
-        if not employment_id:
-            # May already exist — find it
-            existing = client.get("/employee/employment", params={
-                "employeeId": employee_id, "fields": "id"
-            })
-            vals = existing.get("values", [])
-            if vals:
-                employment_id = vals[0]["id"]
-                _recover_error("/employee/employment")
-                steps_log.append(f"Employment already existed for employee {employee_id} (id={employment_id})")
-            else:
-                steps_log.append(f"WARNING: Failed to create employment for employee {employee_id}: {result}")
-        else:
-            steps_log.append(f"Created employment for employee {employee_id} (id={employment_id})")
-
-        return employment_id
+        return None, False
 
     def execute_project_lifecycle(
         project_name: str,
@@ -176,31 +127,13 @@ def build_process_project_tools(client: TripletexClient) -> dict:
         except (_json.JSONDecodeError, TypeError):
             emp_list = []
 
-        # ── Step 1: Create customer ──
-        cust_body = {"name": customer_name, "isCustomer": True}
-        if customer_org_number:
-            cust_body["organizationNumber"] = customer_org_number
-        cust_result = client.post("/customer", json=cust_body)
-        customer_id = cust_result.get("value", {}).get("id")
-
-        # Handle duplicate customer (422 collision)
-        if not customer_id and cust_result.get("error"):
-            search_params = {"fields": "id,name"}
-            if customer_org_number:
-                search_params["organizationNumber"] = customer_org_number
-            else:
-                search_params["name"] = customer_name
-            existing = client.get("/customer", params=search_params)
-            vals = existing.get("values", [])
-            if vals:
-                customer_id = vals[0]["id"]
-                _recover_error("/customer")
-                steps_log.append(f"Customer '{customer_name}' already existed (id={customer_id})")
-
+        # ── Step 1: Find or create customer ──
+        customer_id = find_or_create_customer(
+            client, name=customer_name, org_number=customer_org_number,
+            steps_log=steps_log,
+        )
         if not customer_id:
-            return {"error": True, "message": f"Failed to create customer: {cust_result}", "steps": steps_log}
-        if not steps_log or "already existed" not in steps_log[-1]:
-            steps_log.append(f"Created customer '{customer_name}' (id={customer_id})")
+            return {"error": True, "message": f"Failed to create customer '{customer_name}'", "steps": steps_log}
 
         # ── Step 2: Create PM employee (EXTENDED) ──
         pm_id = 0
@@ -211,7 +144,6 @@ def build_process_project_tools(client: TripletexClient) -> dict:
                 return {"error": True, "message": "Failed to create PM employee", "steps": steps_log}
 
         # ── Step 3: Create project ──
-        # Use the project tool which handles PM entitlement errors automatically
         proj_tools = _build_project_tools(client)
         proj_result = proj_tools["create_project"](
             name=project_name,
@@ -235,9 +167,8 @@ def build_process_project_tools(client: TripletexClient) -> dict:
             # Reuse PM if same email
             if emp_email and emp_email == pm_email and pm_id:
                 emp_id = pm_id
-                # Ensure PM has employment (create_project may not have created it)
-                # PM was created with dateOfBirth, skip DOB check
-                _find_or_create_employment(emp_id, today, steps_log=steps_log, skip_dob_check=True)
+                find_or_create_employment(client, employee_id=emp_id, start_date=today,
+                                          steps_log=steps_log, skip_dob_check=True)
             else:
                 emp_id, emp_created = _find_or_create_employee(emp_firstName, emp_lastName, emp_email,
                                                    steps_log=steps_log)
@@ -245,10 +176,9 @@ def build_process_project_tools(client: TripletexClient) -> dict:
                     steps_log.append(f"WARNING: Skipping employee {emp_firstName} {emp_lastName} — creation failed")
                     continue
 
-                # Non-PM employees need employment record
-                _find_or_create_employment(emp_id, today, steps_log=steps_log, skip_dob_check=emp_created)
+                find_or_create_employment(client, employee_id=emp_id, start_date=today,
+                                          steps_log=steps_log, skip_dob_check=emp_created)
 
-                # Add as project participant (best-effort)
                 try:
                     client.post("/project/participant", json={
                         "project": {"id": project_id},
@@ -262,14 +192,12 @@ def build_process_project_tools(client: TripletexClient) -> dict:
 
             # Register timesheet hours
             if emp_hours > 0:
-                # Resolve activity for timesheet
                 activity_id = 0
                 act_result = client.get("/activity", params={"projectId": project_id, "fields": "id", "count": 1})
                 act_vals = act_result.get("values", [])
                 if act_vals:
                     activity_id = act_vals[0]["id"]
                 else:
-                    # Get any activity
                     act_result2 = client.get("/activity", params={"fields": "id", "count": 1})
                     act_vals2 = act_result2.get("values", [])
                     if act_vals2:
@@ -292,15 +220,11 @@ def build_process_project_tools(client: TripletexClient) -> dict:
 
         # ── Step 5: Supplier cost ──
         if supplier_name and supplier_cost > 0:
-            sup_body = {"name": supplier_name, "isSupplier": True}
-            if supplier_org_number:
-                sup_body["organizationNumber"] = supplier_org_number
-            sup_result = client.post("/supplier", json=sup_body)
-            supplier_id = sup_result.get("value", {}).get("id")
+            supplier_id = find_or_create_supplier(
+                client, name=supplier_name, org_number=supplier_org_number,
+                steps_log=steps_log,
+            )
             if supplier_id:
-                steps_log.append(f"Created supplier '{supplier_name}' (id={supplier_id})")
-
-                # Create incoming invoice linked to project (tool handles VAT/account resolution)
                 from tools.incoming_invoice import build_incoming_invoice_tools
                 inv_tools = build_incoming_invoice_tools(client)
                 inv_result = inv_tools["create_incoming_invoice"](
@@ -318,42 +242,41 @@ def build_process_project_tools(client: TripletexClient) -> dict:
                 else:
                     steps_log.append(f"WARNING: Incoming invoice failed: {inv_result}")
             else:
-                steps_log.append(f"WARNING: Failed to create supplier: {sup_result}")
+                steps_log.append(f"WARNING: Failed to create supplier '{supplier_name}'")
 
         # ── Step 6: Customer invoice ──
         if create_customer_invoice and budget > 0:
-            # Create product
-            from tools.products import build_product_tools
-            prod_tools = build_product_tools(client)
-            prod_result = prod_tools["create_product"](
-                name=f"Project Services - {project_name}",
-                priceExcludingVatCurrency=budget,
-                vatPercentage=invoice_vat_percentage,
+            prod_id = find_or_create_product(
+                client, name=f"Project Services - {project_name}",
+                price=budget, vat_percentage=invoice_vat_percentage,
+                steps_log=steps_log,
             )
-            prod_id = prod_result.get("value", {}).get("id")
             if prod_id:
-                steps_log.append(f"Created product for invoice (id={prod_id})")
-
-                # Create order
-                from tools.invoicing import build_invoicing_tools
-                inv_tools = build_invoicing_tools(client)
-                order_lines = _json.dumps([{"product_id": prod_id, "count": 1}])
-                order_result = inv_tools["create_order"](
-                    customer_id=customer_id,
-                    deliveryDate=today,
-                    orderLines=order_lines,
-                    project_id=project_id,
-                )
+                order_body = {
+                    "customer": {"id": customer_id},
+                    "orderDate": today,
+                    "deliveryDate": today,
+                    "orderLines": [{"product": {"id": prod_id}, "count": 1}],
+                    "project": {"id": project_id},
+                }
+                order_result = client.post("/order", json=order_body)
                 order_id = order_result.get("value", {}).get("id")
+
+                if not order_id and order_result.get("error"):
+                    order_body.pop("project", None)
+                    recover_error(client, "/order")
+                    order_result = client.post("/order", json=order_body)
+                    order_id = order_result.get("value", {}).get("id")
+
                 if order_id:
                     steps_log.append(f"Created order (id={order_id})")
 
-                    # Create invoice
-                    inv_result = inv_tools["create_invoice"](
-                        invoiceDate=today,
-                        invoiceDueDate=today,
-                        order_id=order_id,
-                    )
+                    ensure_bank_account(client)
+                    inv_result = client.post("/invoice", json={
+                        "invoiceDate": today,
+                        "invoiceDueDate": today,
+                        "orders": [{"id": order_id}],
+                    })
                     invoice_id = inv_result.get("value", {}).get("id")
                     if invoice_id:
                         steps_log.append(f"Created invoice (id={invoice_id})")
@@ -362,7 +285,7 @@ def build_process_project_tools(client: TripletexClient) -> dict:
                 else:
                     steps_log.append(f"WARNING: Order creation failed: {order_result}")
             else:
-                steps_log.append(f"WARNING: Product creation failed: {prod_result}")
+                steps_log.append("WARNING: Product creation failed")
 
         return {
             "success": True,

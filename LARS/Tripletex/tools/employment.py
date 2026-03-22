@@ -1,4 +1,5 @@
 from tripletex_client import TripletexClient
+from tools._helpers import recover_error
 
 
 def build_employment_tools(client: TripletexClient) -> dict:
@@ -10,6 +11,7 @@ def build_employment_tools(client: TripletexClient) -> dict:
         annualSalary: float = 0.0,
         percentageOfFullTimeEquivalent: float = 100.0,
         occupationCode: str = "",
+        _skip_checks: bool = False,
     ) -> dict:
         """Create an employment record for an employee.
 
@@ -33,11 +35,22 @@ def build_employment_tools(client: TripletexClient) -> dict:
         Returns:
             The created employment with id, or an error message.
         """
-        # Tripletex requires dateOfBirth on the employee before creating employment
-        emp = client.get(f"/employee/{employee_id}", params={"fields": "id,dateOfBirth"})
-        emp_val = emp.get("value", emp)
-        if not emp_val.get("dateOfBirth"):
-            client.put(f"/employee/{employee_id}", json={"dateOfBirth": "1990-01-01"})
+        if not _skip_checks:
+            # ── Search first: check if employee already has an employment ──
+            existing = client.get("/employee/employment", params={
+                "employeeId": employee_id,
+                "fields": "id,employee,startDate,endDate,division",
+            })
+            existing_vals = existing.get("values", [])
+            if existing_vals:
+                # Return existing employment instead of creating a duplicate
+                return {"value": existing_vals[0], "_note": "Employment already existed."}
+
+            # Tripletex requires dateOfBirth on the employee before creating employment
+            emp = client.get(f"/employee/{employee_id}", params={"fields": "id,dateOfBirth"})
+            emp_val = emp.get("value", emp)
+            if not emp_val.get("dateOfBirth"):
+                client.put(f"/employee/{employee_id}", json={"dateOfBirth": "1990-01-01"})
 
         details = {
             "date": startDate,
