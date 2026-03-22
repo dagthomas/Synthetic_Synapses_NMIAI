@@ -1,0 +1,18 @@
+{
+  "name": "ds-hrm-docs",
+  "version": "1.0.0",
+  "description": "DS HRM Documentation Generator",
+  "scripts": {
+    "generate-md": "node generate-md.js",
+    "generate-pdf": "node generate-pdf.js",
+    "generate-pdf:continuous": "node generate-pdf.js --continuous --output DS_HRM_Documentation_Continuous.pdf",
+    "generate-html": "node generate-html.js",
+    "generate-diagrams": "node generate-diagrams.js",
+    "generate-diagrams:md-only": "node generate-diagrams.js --md-only"
+  },
+  "dependencies": {
+    "highlight.js": "^11.9.0",
+    "marked": "^11.1.1",
+    "puppeteer": "^24.15.0"
+  }
+}

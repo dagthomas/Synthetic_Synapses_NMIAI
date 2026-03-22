@@ -55,6 +55,11 @@ __pycache__/
 *.glb
 *.glb.zip
 
-# Dependencies & docs
+# Dependencies
 node_modules/
-docs/
+
+# Competition docs (large datasets, not code docs)
+docs/norgesgruppen-data/
+docs/tripletex/
+docs/astar-island/
+docs/grocery-bot/

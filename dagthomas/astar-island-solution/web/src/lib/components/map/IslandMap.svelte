@@ -13,6 +13,8 @@
 	import { createWildlifeSystem, type WildlifeSystem } from './wildlife';
 	import { preloadModels, placeModel } from './models';
 	import { createWeatherSystem, type WeatherSystem } from './weather';
+	import { createTerrain, type TerrainSystem } from './terrain';
+	import { createFPController, type FPController } from './fpcontrols';
 
 	let {
 		grid,
@@ -64,6 +66,14 @@
 	let lastInteraction = 0;
 	let autoRotateAngle = 0;
 
+	// First-person mode state
+	let fpMode = $state(false);
+	let fpController: FPController | null = $state(null);
+	let terrainSystem: TerrainSystem | null = null;
+	let blockyTerrainGroup: THREE.Group | null = null;
+	let fpFog: THREE.FogExp2 | null = null;
+	let fpOverlay: HTMLDivElement = $state() as HTMLDivElement;
+
 	// --- Terrain colors matching reference image ---
 	// Reference: sandy tan base, green grass patches, blue water, gray stone
 	const terrainMaterials: Record<number, THREE.MeshStandardMaterial> = {};
@@ -102,11 +112,109 @@
 		if (celestialSystem) { celestialSystem.dispose(); celestialSystem = null; }
 		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
 		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
+		if (terrainSystem) { terrainSystem.dispose(); terrainSystem = null; }
 		if (fillLight) { scene.remove(fillLight); fillLight = null; }
+		blockyTerrainGroup = null;
 		settlementLights = [];
 		fireParticles = [];
 		torchWanderers = [];
 		settlementPositions = [];
+	}
+
+	// === First-person mode toggle ===
+	function enterFPMode() {
+		if (!scene || !camera || !renderer || !grid?.length) return;
+		fpMode = true;
+
+		// Build heightmap terrain if needed
+		if (!terrainSystem) {
+			terrainSystem = createTerrain(grid);
+			scene.add(terrainSystem.mesh);
+		}
+		terrainSystem.mesh.visible = true;
+
+		// Hide blocky terrain
+		if (blockyTerrainGroup) blockyTerrainGroup.visible = false;
+
+		// Create FP controller
+		if (!fpController) {
+			fpController = createFPController(camera, renderer.domElement);
+		}
+		if (terrainSystem) {
+			fpController.setHeightFn(terrainSystem.getHeightAt);
+		}
+
+		// Camera: ground level, higher FOV
+		camera.fov = 85;
+		camera.near = 0.01;
+		camera.far = 200;
+		camera.updateProjectionMatrix();
+
+		// Position camera at center of map at eye height
+		const groundY = terrainSystem ? terrainSystem.getHeightAt(0, 0) : 0.1;
+		camera.position.set(0, groundY + 0.5, 0);
+
+		// Fog for immersion
+		fpFog = new THREE.FogExp2(0x8ab4cc, 0.035);
+		scene.fog = fpFog;
+
+		// Disable orbit controls
+		if (controls) controls.enabled = false;
+
+		// Lock pointer
+		fpController.lock();
+
+		// Listen for pointer unlock to show re-entry overlay
+		fpController.controls.addEventListener('unlock', onFPUnlock);
+	}
+
+	function exitFPMode() {
+		fpMode = false;
+
+		// Show blocky terrain, hide heightmap
+		if (blockyTerrainGroup) blockyTerrainGroup.visible = true;
+		if (terrainSystem) terrainSystem.mesh.visible = false;
+
+		// Restore orbit camera
+		camera.fov = 60;
+		camera.near = 0.1;
+		camera.far = 250;
+		camera.updateProjectionMatrix();
+		camera.position.set(28, 22, 28);
+		camera.lookAt(0, 0, 0);
+
+		// Remove fog
+		scene.fog = null;
+		fpFog = null;
+
+		// Re-enable orbit controls
+		if (controls) {
+			controls.enabled = true;
+			controls.target.set(0, 0, 0);
+			controls.update();
+		}
+
+		// Unlock FP
+		if (fpController) {
+			fpController.controls.removeEventListener('unlock', onFPUnlock);
+			fpController.unlock();
+		}
+
+		lastInteraction = performance.now() / 1000;
+		autoRotateAngle = Math.atan2(camera.position.z, camera.position.x);
+	}
+
+	function onFPUnlock() {
+		// When pointer unlocks (Esc), show the re-entry overlay but stay in FP mode
+		// User can click overlay to re-lock or press the exit button
+	}
+
+	function handleFPToggle() {
+		if (fpMode) {
+			exitFPMode();
+		} else {
+			enterFPMode();
+		}
 	}
 
 	// --- Square floating island slab with earthy cross-section ---
@@ -278,7 +386,8 @@
 		canopy3Inst.castShadow = true;
 		let treeIdx = 0;
 
-		// Build terrain blocks
+		// Build terrain blocks (wrapped in group for FP mode toggling)
+		blockyTerrainGroup = new THREE.Group();
 		const blockGeo = new THREE.BoxGeometry(0.95, 0.15, 0.95);
 		const typeCounts: Record<number, number> = {};
 		for (const row of grid) {
@@ -315,8 +424,14 @@
 				}
 			}
 			instanced.instanceMatrix.needsUpdate = true;
-			scene.add(instanced);
+			blockyTerrainGroup.add(instanced);
 		}
+		scene.add(blockyTerrainGroup);
+
+		// Build heightmap terrain (hidden initially, used in FP mode)
+		terrainSystem = createTerrain(grid);
+		terrainSystem.mesh.visible = false;
+		scene.add(terrainSystem.mesh);
 
 		// Ground under ocean cells — earth blocks so water doesn't float over void
 		const oceanCellCount = typeCounts[TerrainCode.OCEAN] || 0;
@@ -342,7 +457,7 @@
 				}
 			}
 			groundInst.instanceMatrix.needsUpdate = true;
-			scene.add(groundInst);
+			blockyTerrainGroup.add(groundInst);
 		}
 
 		// Add 3D cluster objects
@@ -1001,19 +1116,30 @@
 			(tw.mesh.material as THREE.MeshBasicMaterial).opacity = nightBlend * 0.9;
 		}
 
-		// Gentle idle auto-rotation after 10 seconds of no interaction
-		const idleTime = now - lastInteraction;
-		if (!freezeCamera && idleTime > 10 && controls) {
-			autoRotateAngle += dt * 0.08; // slow orbit
-			const dist = camera.position.length();
-			const baseY = camera.position.y;
-			camera.position.x = Math.cos(autoRotateAngle) * dist * 0.7;
-			camera.position.z = Math.sin(autoRotateAngle) * dist * 0.7;
-			camera.position.y = baseY + Math.sin(autoRotateAngle * 0.3) * 0.5;
-			camera.lookAt(0, 0, 0);
+		// First-person mode: update FP controller instead of orbit
+		if (fpMode && fpController) {
+			fpController.update(dt);
+
+			// Animate fog color with sky
+			if (fpFog && scene.background instanceof THREE.Color) {
+				fpFog.color.copy(scene.background);
+			}
+		} else {
+			// Gentle idle auto-rotation after 10 seconds of no interaction
+			const idleTime = now - lastInteraction;
+			if (!freezeCamera && idleTime > 10 && controls) {
+				autoRotateAngle += dt * 0.08; // slow orbit
+				const dist = camera.position.length();
+				const baseY = camera.position.y;
+				camera.position.x = Math.cos(autoRotateAngle) * dist * 0.7;
+				camera.position.z = Math.sin(autoRotateAngle) * dist * 0.7;
+				camera.position.y = baseY + Math.sin(autoRotateAngle * 0.3) * 0.5;
+				camera.lookAt(0, 0, 0);
+			}
+
+			controls.update();
 		}
 
-		controls.update();
 		renderer.render(scene, camera);
 	}
 
@@ -1081,6 +1207,7 @@
 		if (typeof window === 'undefined') return;
 		if (animationId) cancelAnimationFrame(animationId);
 		cleanupSystems();
+		if (fpController) { fpController.dispose(); fpController = null; }
 		if (renderer) renderer.dispose();
 		window.removeEventListener('resize', handleResize);
 	});
@@ -1094,4 +1221,53 @@
 	});
 </script>
 
-<div bind:this={container} class="w-full h-full rounded-lg overflow-hidden border border-cyber-border"></div>
+<div class="relative w-full h-full">
+	<div bind:this={container} class="w-full h-full rounded-lg overflow-hidden border border-cyber-border"></div>
+
+	<!-- FP mode toggle button -->
+	<button
+		class="absolute top-3 right-3 z-10 px-3 py-1.5 text-[11px] font-medium rounded
+			border transition-colors backdrop-blur-sm
+			{fpMode
+				? 'border-neon-cyan text-neon-cyan bg-cyber-surface/80 hover:bg-neon-cyan/20'
+				: 'border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-cyan/40 hover:text-cyber-fg'
+			}"
+		onclick={handleFPToggle}
+		title={fpMode ? 'Exit first-person (Esc)' : 'Enter first-person mode'}
+	>
+		{fpMode ? 'Exit FP' : 'First Person'}
+	</button>
+
+	<!-- FP mode HUD overlay -->
+	{#if fpMode}
+		<!-- Crosshair -->
+		<div class="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
+			<div class="w-5 h-5 relative opacity-40">
+				<div class="absolute top-1/2 left-0 w-full h-px bg-white -translate-y-px"></div>
+				<div class="absolute left-1/2 top-0 h-full w-px bg-white -translate-x-px"></div>
+			</div>
+		</div>
+
+		<!-- Controls hint (bottom) -->
+		{#if !(fpController?.isLocked())}
+			<div
+				bind:this={fpOverlay}
+				class="absolute inset-0 z-20 flex items-center justify-center bg-black/50 backdrop-blur-sm cursor-pointer rounded-lg"
+				onclick={() => fpController?.lock()}
+				role="button"
+				tabindex="0"
+				onkeydown={(e) => e.key === 'Enter' && fpController?.lock()}
+			>
+				<div class="text-center text-cyber-fg">
+					<p class="text-lg font-medium mb-2">Click to enter first-person view</p>
+					<p class="text-xs text-cyber-muted">WASD to move &middot; Mouse to look &middot; Shift to sprint &middot; Esc to pause</p>
+				</div>
+			</div>
+		{/if}
+
+		<!-- FP mode indicator -->
+		<div class="absolute bottom-3 left-3 z-10 text-[10px] text-cyber-muted/60 pointer-events-none">
+			FP MODE &middot; WASD + Mouse &middot; Shift = Sprint
+		</div>
+	{/if}
+</div>

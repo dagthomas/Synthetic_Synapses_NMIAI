@@ -300,13 +300,26 @@ Every 0.01 reduction in wKL is worth ~2-3 score points.
 
 Full docs in [`docs/`](docs/DOCS_STRUCTURE.md):
 
+### Context
 - [`00-context/vision.md`](docs/00-context/vision.md) — Case, problem, and solution overview
 - [`00-context/architecture.md`](docs/00-context/architecture.md) — System architecture and data flow
 - [`00-context/system-state.md`](docs/00-context/system-state.md) — Current scores and pipeline status
-- [`01-product/prd.md`](docs/01-product/prd.md) — Game rules, scoring, constraints
-- [`02-features/autonomous-research/`](docs/02-features/autonomous-research/) — 3-agent research system
-- [`02-features/daemon-pipeline/`](docs/02-features/daemon-pipeline/) — 24/7 daemon and re-submission
-- [`02-features/gpu-simulator/`](docs/02-features/gpu-simulator/) — CUDA Monte Carlo simulator
+- [`00-context/war-stories.md`](docs/00-context/war-stories.md) — Failures, breakthroughs, and hard-won lessons
+
+### Product
+- [`01-product/prd.md`](docs/01-product/prd.md) — Game rules, scoring formula, constraints
+
+### Features (deep technical dives)
+- [`02-features/autonomous-research/`](docs/02-features/autonomous-research/) — 3-agent auto-research system (autoloop, multi-researcher, Gemini)
+- [`02-features/daemon-pipeline/`](docs/02-features/daemon-pipeline/) — 24/7 daemon with iterative re-submission
+- [`02-features/gpu-simulator/`](docs/02-features/gpu-simulator/) — CUDA Monte Carlo simulator + CMA-ES fitting
+- [`02-features/statistical-model/`](docs/02-features/statistical-model/) — The 8-stage prediction pipeline (calibration, FK pooling, vectorization)
+- [`02-features/island-explorer/`](docs/02-features/island-explorer/) — SvelteKit 3D island viewer (Three.js, weather, celestials, wildlife, Imagen)
+- [`02-features/terminal-ui/`](docs/02-features/terminal-ui/) — Go Bubble Tea terminal dashboard (10 tabs, multi-pane, hacker scramble)
+- [`02-features/research-agent/`](docs/02-features/research-agent/) — Google ADK + Gemini autonomous research agent
+
+### Process
+- [`04-process/getting-started.md`](docs/04-process/getting-started.md) — Setup, dependencies, how to run
 
 ---
 
