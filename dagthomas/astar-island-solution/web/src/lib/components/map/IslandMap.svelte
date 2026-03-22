@@ -168,7 +168,9 @@
 		settlementPositions = [];
 	}
 
-	/** Set opacity on all meshes in a group for cross-fade transitions */
+	/** Set opacity on all meshes in a group for cross-fade transitions.
+	 *  Disables depthWrite when transparent so overlapping old/new terrain
+	 *  both render instead of occluding each other via depth buffer. */
 	function setGroupOpacity(group: THREE.Group | null, alpha: number) {
 		if (!group) return;
 		const fullyOpaque = alpha >= 0.999;
@@ -180,6 +182,7 @@
 			for (const m of mats) {
 				if (m.isMeshStandardMaterial || m.isMeshBasicMaterial) {
 					m.transparent = !fullyOpaque;
+					m.depthWrite = fullyOpaque;
 					m.opacity = alpha;
 					m.needsUpdate = true;
 				} else if (m.isShaderMaterial && m.uniforms?.uOpacity) {
@@ -829,6 +832,15 @@
 			}).catch(() => {});
 		}
 
+		// === Environmental scatter (rocks, vegetation, dead trees) ===
+		if (terrainSystem) {
+			createScatter(grid, terrainSystem.getHeightAt).then(s => {
+				if (gen !== buildGeneration) { s.dispose(); return; }
+				scatter = s;
+				newGroup.add(s.group);
+			}).catch(() => {});
+		}
+
 		// === Wildlife: birds (first build only — grid-independent) ===
 		if (isFirstBuild) {
 			scene.add = _realSceneAdd;
@@ -841,7 +853,16 @@
 
 		// Add the new world group to the real scene
 		if (isFlythroughTransition) {
-			// Cross-fade: new group starts invisible, fades in
+			// Remove old world immediately to prevent floating objects
+			// (cross-fade causes old trees/people to hover over new terrain)
+			if (prevWorldGroup) {
+				disposeGroup(prevWorldGroup);
+				scene.remove(prevWorldGroup);
+				prevWorldGroup = null;
+			}
+			if (prevTerrainSystem) { prevTerrainSystem.dispose(); prevTerrainSystem = null; }
+			if (prevWaterSystem) { prevWaterSystem.dispose(); prevWaterSystem = null; }
+			// Fade in new world only
 			setGroupOpacity(newGroup, 0);
 			_realSceneAdd(newGroup);
 			transitioning = true;
@@ -1010,48 +1031,29 @@
 		const rng = mulberry32(cellSeed(Math.round(cluster.centerX), Math.round(cluster.centerY), 100));
 		const cx = cluster.centerX + ox + 0.5;
 		const cz = cluster.centerY + oz + 0.5;
+		const groundH = gY(cx, cz);
 
-		// Try GLB models first
+		// GLB mountain models placed on terrain surface
 		if (cluster.size >= 7) {
-			const m = placeModel('mountains', new THREE.Vector3(cx, 0.1, cz), rng() * Math.PI * 2, 0.55);
-			if (m) { scene.add(m); return; }
+			const m = placeModel('mountains', new THREE.Vector3(cx, groundH, cz), rng() * Math.PI * 2, 0.55);
+			if (m) { scene.add(m); }
 		} else if (cluster.size >= 4) {
-			const m = placeModel('mountainGroup', new THREE.Vector3(cx, 0.1, cz), rng() * Math.PI * 2, 0.60);
-			if (m) { scene.add(m); return; }
+			const m = placeModel('mountainGroup', new THREE.Vector3(cx, groundH, cz), rng() * Math.PI * 2, 0.60);
+			if (m) { scene.add(m); }
 		} else if (cluster.size >= 2) {
-			const m = placeModel('mountain', new THREE.Vector3(cx, 0.1, cz), rng() * Math.PI * 2, 0.75);
-			if (m) { scene.add(m); return; }
+			const m = placeModel('mountain', new THREE.Vector3(cx, groundH, cz), rng() * Math.PI * 2, 0.75);
+			if (m) { scene.add(m); }
 		}
 
-		// Fallback: procedural mountain
-		const h = cluster.size >= 7 ? 4.5 : cluster.size >= 4 ? 2.8 : cluster.size >= 2 ? 1.4 : 0.6;
-		const r = cluster.size >= 7 ? 1.4 : cluster.size >= 4 ? 0.9 : Math.max(0.3, Math.sqrt(cluster.size) * 0.35);
-
-		const peakGeo = new THREE.ConeGeometry(r, h, 10);
-		const peakPos = peakGeo.attributes.position;
-		for (let i = 0; i < peakPos.count; i++) {
-			const y = peakPos.getY(i);
-			if (y < h * 0.45 && y > -h * 0.45) {
-				peakPos.setX(i, peakPos.getX(i) + (rng() - 0.5) * r * 0.3);
-				peakPos.setZ(i, peakPos.getZ(i) + (rng() - 0.5) * r * 0.3);
-			}
-		}
-		peakPos.needsUpdate = true;
-		peakGeo.computeVertexNormals();
-
-		const peak = new THREE.Mesh(peakGeo, new THREE.MeshStandardMaterial({ color: 0x7a7a72, roughness: 0.85, flatShading: true }));
-		peak.position.set(cx, 0.3 + h / 2, cz);
-		peak.castShadow = true;
-		scene.add(peak);
-
-		if (cluster.size >= 2) {
-			const snowH = cluster.size >= 7 ? h * 0.3 : h * 0.22;
-			const snowR = cluster.size >= 7 ? r * 0.5 : r * 0.38;
+		// Snow cap on peak
+		if (cluster.size >= 2 && groundH > 1.0) {
+			const snowR = cluster.size >= 7 ? 0.7 : cluster.size >= 4 ? 0.5 : 0.35;
+			const snowH = cluster.size >= 7 ? 0.5 : 0.35;
 			const snow = new THREE.Mesh(
 				new THREE.ConeGeometry(snowR, snowH, 8),
 				new THREE.MeshStandardMaterial({ color: 0xf0ece0, roughness: 0.4 })
 			);
-			snow.position.set(cx, 0.3 + h * 0.85, cz);
+			snow.position.set(cx, groundH + snowH * 0.3, cz);
 			scene.add(snow);
 		}
 
@@ -1061,7 +1063,8 @@
 				const cell = cluster.cells[Math.min(i, cluster.cells.length - 1)];
 				const bx = cell.x + ox + 0.2 + rng() * 0.6;
 				const bz = cell.y + oz + 0.2 + rng() * 0.6;
-				const rockModel = placeModel(rng() > 0.5 ? 'rock' : 'rocks', new THREE.Vector3(bx, 0.1, bz), rng() * Math.PI * 2, 0.20 + rng() * 0.25);
+				const bH = gY(bx, bz);
+				const rockModel = placeModel(rng() > 0.5 ? 'rock' : 'rocks', new THREE.Vector3(bx, bH, bz), rng() * Math.PI * 2, 0.20 + rng() * 0.25);
 				if (rockModel) { scene.add(rockModel); }
 				else {
 					const bs = 0.1 + rng() * 0.25;
@@ -1069,7 +1072,7 @@
 						new THREE.DodecahedronGeometry(bs, 1),
 						new THREE.MeshStandardMaterial({ color: 0x8a8878, roughness: 0.9, flatShading: true })
 					);
-					boulder.position.set(bx, 0.15 + bs * 0.5, bz);
+					boulder.position.set(bx, bH + bs * 0.5, bz);
 					boulder.rotation.set(rng() * 3, rng() * 3, rng() * 3);
 					boulder.castShadow = true;
 					scene.add(boulder);
@@ -1109,28 +1112,29 @@
 			const jx = (rng() - 0.5) * 0.25;
 			const jz = (rng() - 0.5) * 0.25;
 			const rot = rng() * Math.PI * 2;
+			const groundH = gY(px, pz);
 
 			if (isTown) {
 				if (isCenter && isLarge) {
 					// Town center: market or fortress
 					const special = townSpecials[Math.floor(rng() * townSpecials.length)];
-					const m = placeModel(special, new THREE.Vector3(px, 0.1, pz), rot, 0.55);
+					const m = placeModel(special, new THREE.Vector3(px, groundH, pz), rot, 0.55);
 					if (m) scene.add(m);
 				} else if (isCenter && isMedium) {
-					const m = placeModel('pfMarket', new THREE.Vector3(px, 0.1, pz), rot, 0.48);
+					const m = placeModel('pfMarket', new THREE.Vector3(px, groundH, pz), rot, 0.48);
 					if (m) scene.add(m);
 				} else {
 					// Mix of houses and farms
 					const pick = townBuildings[Math.floor(rng() * townBuildings.length)];
 					const scale = pick.startsWith('pf') ? 0.38 + rng() * 0.10 : 0.50 + rng() * 0.12;
-					const m = placeModel(pick, new THREE.Vector3(px + jx, 0.1, pz + jz), rot, scale);
+					const m = placeModel(pick, new THREE.Vector3(px + jx, groundH, pz + jz), rot, scale);
 					if (m) scene.add(m);
 					else {
 						// Procedural fallback
 						const wallMat = new THREE.MeshStandardMaterial({ color: 0x8a6a40, roughness: 0.8 });
 						const hutS = 0.45 + rng() * 0.15;
 						const hut = new THREE.Mesh(new THREE.BoxGeometry(hutS, 0.32, hutS), wallMat);
-						hut.position.set(px + jx, 0.28, pz + jz);
+						hut.position.set(px + jx, groundH + 0.16, pz + jz);
 						hut.castShadow = true;
 						scene.add(hut);
 						const roof = new THREE.Mesh(
@@ -1147,18 +1151,18 @@
 				// Village: mostly huts, small farms, crops
 				if (isCenter && isMedium) {
 					// Central building for medium village
-					const m = placeModel('house', new THREE.Vector3(px, 0.1, pz), rot, 0.55);
+					const m = placeModel('house', new THREE.Vector3(px, groundH, pz), rot, 0.55);
 					if (m) scene.add(m);
 				} else {
 					const pick = villageBuildings[Math.floor(rng() * villageBuildings.length)];
 					const scale = pick.startsWith('pf') ? 0.36 + rng() * 0.08 : 0.28 + rng() * 0.10;
-					const m = placeModel(pick, new THREE.Vector3(px + jx, 0.1, pz + jz), rot, scale);
+					const m = placeModel(pick, new THREE.Vector3(px + jx, groundH, pz + jz), rot, scale);
 					if (m) scene.add(m);
 					else {
 						const wallMat = new THREE.MeshStandardMaterial({ color: 0x8a6a40, roughness: 0.8 });
 						const hutS = 0.40 + rng() * 0.12;
 						const hut = new THREE.Mesh(new THREE.BoxGeometry(hutS, 0.28, hutS), wallMat);
-						hut.position.set(px + jx, 0.26, pz + jz);
+						hut.position.set(px + jx, groundH + 0.14, pz + jz);
 						hut.castShadow = true;
 						scene.add(hut);
 						const roof = new THREE.Mesh(
@@ -1176,7 +1180,7 @@
 			// Fire lights disabled for performance
 
 			if (i === 0) {
-				settlementPositions.push(new THREE.Vector3(px, 0.2, pz));
+				settlementPositions.push(new THREE.Vector3(px, groundH + 0.1, pz));
 			}
 		}
 
@@ -1190,7 +1194,8 @@
 				const angle = (i / wallCount) * Math.PI * 2;
 				const wx = fcx + Math.cos(angle) * fenceR;
 				const wz = fcz + Math.sin(angle) * fenceR;
-				const wm = placeModel('woodenWall', new THREE.Vector3(wx, 0.1, wz), angle + Math.PI / 2, 0.22);
+				const wH = gY(wx, wz);
+				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.22);
 				if (wm) scene.add(wm);
 			}
 		} else if (isMedium) {
@@ -1202,7 +1207,8 @@
 				const angle = (i / wallCount) * Math.PI * 2;
 				const wx = fcx + Math.cos(angle) * fenceR;
 				const wz = fcz + Math.sin(angle) * fenceR;
-				const wm = placeModel('woodenWall', new THREE.Vector3(wx, 0.1, wz), angle + Math.PI / 2, 0.18);
+				const wH = gY(wx, wz);
+				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.18);
 				if (wm) scene.add(wm);
 			}
 		}
@@ -1217,13 +1223,14 @@
 				const angle = (i / wallCount) * Math.PI * 2;
 				const wx = cx + Math.cos(angle) * fenceR;
 				const wz = cz + Math.sin(angle) * fenceR;
-				const wm = placeModel('woodenWall', new THREE.Vector3(wx, 0.1, wz), angle + Math.PI / 2, 0.20);
+				const wH = gY(wx, wz);
+				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.20);
 				if (wm) { scene.add(wm); }
 				else {
 					const fenceMat = new THREE.MeshStandardMaterial({ color: 0x6a5030, roughness: 0.9 });
 					const postH = 0.22;
 					const post = new THREE.Mesh(new THREE.BoxGeometry(0.04, postH, 0.04), fenceMat);
-					post.position.set(wx, 0.12 + postH / 2, wz);
+					post.position.set(wx, wH + postH / 2, wz);
 					scene.add(post);
 				}
 			}
@@ -1299,11 +1306,9 @@
 				const rs = 0.04 + rng() * 0.06;
 				const rubbleGeo = new THREE.DodecahedronGeometry(rs, 0);
 				const rubble = new THREE.Mesh(rubbleGeo, rubbleMat);
-				rubble.position.set(
-					cell.x + ox + 0.2 + rng() * 0.6,
-					0.1 + rs,
-					cell.y + oz + 0.2 + rng() * 0.6
-				);
+				const rx = cell.x + ox + 0.2 + rng() * 0.6;
+				const rz = cell.y + oz + 0.2 + rng() * 0.6;
+				rubble.position.set(rx, gY(rx, rz) + rs, rz);
 				rubble.rotation.set(rng() * 3, rng() * 3, rng() * 3);
 				scene.add(rubble);
 			}
@@ -1711,7 +1716,8 @@
 		{#if flythroughActive}
 			<div class="absolute inset-0 pointer-events-none z-20 flex flex-col items-center"
 				style="animation: hudFadeIn 2s ease-out forwards">
-				<div class="mt-10 text-center">
+				<div class="mt-10 text-center flex flex-col items-center">
+				<div class="inline-block px-8 py-4 rounded-lg" style="background: rgba(10, 15, 40, 0.55); backdrop-filter: blur(6px);">
 					<h1 class="text-5xl font-thin tracking-[0.4em] uppercase"
 						style="color: rgba(255,255,255,0.85);
 							text-shadow: 0 0 40px rgba(255,255,255,0.4), 0 0 80px rgba(135,206,235,0.25), 0 0 120px rgba(135,206,235,0.1);
@@ -1729,10 +1735,12 @@
 						</p>
 					{/if}
 				</div>
+				</div>
 			</div>
 
 			<!-- Minimap + terrain breakdown (bottom-right) -->
 			{#if grid}
+				{@const terrainColors = { 0: '#2a2a3a', 1: '#d4a843', 2: '#4fc3f7', 3: '#e53935', 4: '#2e7d32', 5: '#8a8a8a', 10: '#1565c0', 11: '#558b2f' } as Record<number, string>}
 				{@const terrainNames = new Map([[0,'Sand'],[1,'Town'],[2,'Port'],[3,'Ruin'],[4,'Forest'],[5,'Mountain'],[10,'Ocean'],[11,'Plains']])}
 				{@const total = grid.length * grid[0].length}
 				{@const terrainCounts = (() => {
@@ -1743,11 +1751,13 @@
 					return c.sort((a, b) => b[1] - a[1]);
 				})()}
 				<div class="absolute bottom-4 right-4 z-20 pointer-events-none flex gap-3 items-end" style="animation: hudFadeIn 2s ease-out forwards">
-					<div class="text-[9px] font-mono text-white/50 leading-relaxed text-right">
+					<div class="text-[9px] font-mono leading-relaxed text-right space-y-0.5">
 						{#each terrainCounts as [code, count]}
-							{#if count / total > 0.02}
-								<div>{terrainNames.get(code) ?? '?'} {(count / total * 100).toFixed(0)}%</div>
-							{/if}
+							<div class="flex items-center gap-1.5 justify-end">
+								<span class="w-2 h-2 rounded-sm shrink-0" style="background: {terrainColors[code] ?? '#333'}"></span>
+								<span class="text-white/50">{terrainNames.get(code) ?? '?'}</span>
+								<span class="text-white/40">{(count / total * 100).toFixed(0)}%</span>
+							</div>
 						{/each}
 					</div>
 					<canvas
