@@ -456,8 +456,6 @@
 
 		flythroughLoading = false;
 
-		// Go fullscreen
-		try { container?.requestFullscreen?.(); } catch {};
 	}
 
 	function stopFlythrough() {
@@ -1436,11 +1434,11 @@
 
 		// First-person mode: update FP controller or flythrough
 
-		if (fpMode && fpController) {
+		if (fpMode) {
 			// Flythrough overrides FP controls
 			if (flythroughActive && flythrough) {
 				flythrough.update(camera, dt);
-			} else {
+			} else if (fpController) {
 				fpController.update(dt);
 			}
 
