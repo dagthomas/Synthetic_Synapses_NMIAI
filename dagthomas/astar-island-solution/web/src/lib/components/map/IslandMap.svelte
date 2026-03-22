@@ -466,6 +466,9 @@
 		}
 		flythroughActive = false;
 		onFlythroughChange?.(false);
+		// Exit fullscreen
+		try { document.exitFullscreen?.(); } catch {}
+		if (minimapInterval) { clearInterval(minimapInterval); minimapInterval = undefined; }
 		// Return to FP walking mode
 		if (fpController) {
 			fpController.controls.addEventListener('unlock', onFPUnlock);
@@ -1732,24 +1735,23 @@
 
 			<!-- Minimap + terrain breakdown (bottom-right) -->
 			{#if grid}
+				{@const terrainNames = new Map([[0,'Sand'],[1,'Town'],[2,'Port'],[3,'Ruin'],[4,'Forest'],[5,'Mountain'],[10,'Ocean'],[11,'Plains']])}
+				{@const total = grid.length * grid[0].length}
+				{@const terrainCounts = (() => {
+					const c: [number, number][] = [];
+					const m = new Map<number, number>();
+					for (const row of grid) for (const cell of row) m.set(cell, (m.get(cell) || 0) + 1);
+					m.forEach((v, k) => c.push([k, v]));
+					return c.sort((a, b) => b[1] - a[1]);
+				})()}
 				<div class="absolute bottom-4 right-4 z-20 pointer-events-none flex gap-3 items-end" style="animation: hudFadeIn 2s ease-out forwards">
-					<!-- Terrain breakdown -->
 					<div class="text-[9px] font-mono text-white/50 leading-relaxed text-right">
-						{@const counts = (() => {
-							const c: Record<number, number> = {};
-							let total = 0;
-							for (const row of grid) for (const cell of row) { c[cell] = (c[cell] || 0) + 1; total++; }
-							return { c, total };
-						})()}
-						{#each Object.entries(counts.c).sort((a, b) => Number(b[1]) - Number(a[1])) as [code, count]}
-							{@const pct = ((count as number) / counts.total * 100).toFixed(0)}
-							{@const names: Record<string, string> = {'0':'Sand','1':'Town','2':'Port','3':'Ruin','4':'Forest','5':'Mountain','10':'Ocean','11':'Plains'}}
-							{#if (count as number) / counts.total > 0.02}
-								<div>{names[code] ?? '?'} {pct}%</div>
+						{#each terrainCounts as [code, count]}
+							{#if count / total > 0.02}
+								<div>{terrainNames.get(code) ?? '?'} {(count / total * 100).toFixed(0)}%</div>
 							{/if}
 						{/each}
 					</div>
-					<!-- Minimap canvas -->
 					<canvas
 						class="rounded border border-white/20"
 						width={grid[0].length * 3}
