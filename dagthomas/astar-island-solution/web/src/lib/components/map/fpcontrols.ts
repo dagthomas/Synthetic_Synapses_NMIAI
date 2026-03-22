@@ -11,15 +11,17 @@ export interface FPController {
 	lock(): void;
 	unlock(): void;
 	setHeightFn(fn: (x: number, z: number) => number): void;
+	setOnExit(fn: () => void): void;
 	dispose(): void;
 	isLocked(): boolean;
 }
 
-const MOVE_SPEED = 5.0;
-const SPRINT_SPEED = 12.0;
+const MOVE_SPEED = 1.8;
+const SPRINT_SPEED = 4.5;
 const EYE_HEIGHT = 0.45;
-const HEAD_BOB_SPEED = 9.0;
-const HEAD_BOB_AMOUNT = 0.014;
+const HEAD_BOB_SPEED = 7.0;
+const HEAD_BOB_AMOUNT = 0.025;
+const HEAD_SWAY_AMOUNT = 0.002; // lateral sway (subtle)
 
 export function createFPController(
 	camera: THREE.PerspectiveCamera,
@@ -36,6 +38,7 @@ export function createFPController(
 	};
 
 	let heightFn: ((x: number, z: number) => number) | null = null;
+	let onExitFn: (() => void) | null = null;
 	let bobPhase = 0;
 	let isMoving = false;
 
@@ -45,6 +48,12 @@ export function createFPController(
 	const _right = new THREE.Vector3();
 
 	function onKeyDown(e: KeyboardEvent) {
+		// Escape exits FP/flythrough mode entirely
+		if (e.code === 'Escape' && onExitFn) {
+			e.preventDefault();
+			onExitFn();
+			return;
+		}
 		if (!controls.isLocked) return;
 		switch (e.code) {
 			case 'KeyW': case 'ArrowUp': keys.forward = true; break;
@@ -103,14 +112,22 @@ export function createFPController(
 				let targetY = groundY + EYE_HEIGHT;
 
 				if (isMoving) {
-					bobPhase += dt * HEAD_BOB_SPEED * (keys.sprint ? 1.4 : 1.0);
-					targetY += Math.sin(bobPhase) * HEAD_BOB_AMOUNT;
+					const bobSpeed = keys.sprint ? 1.4 : 1.0;
+					bobPhase += dt * HEAD_BOB_SPEED * bobSpeed;
+					// Vertical bob — footstep rhythm
+					targetY += Math.sin(bobPhase * 2) * HEAD_BOB_AMOUNT;
+					// Lateral sway — shoulder rock
+					camera.getWorldDirection(_forward);
+					_right.crossVectors(_forward, camera.up).normalize();
+					camera.position.addScaledVector(
+						_right,
+						Math.sin(bobPhase) * HEAD_SWAY_AMOUNT * bobSpeed
+					);
 				} else {
-					// Smoothly decay bob
-					bobPhase *= 0.9;
+					bobPhase *= 0.92;
 				}
 
-				camera.position.y += (targetY - camera.position.y) * Math.min(1, dt * 14);
+				camera.position.y += (targetY - camera.position.y) * Math.min(1, dt * 10);
 			}
 		},
 
@@ -129,6 +146,10 @@ export function createFPController(
 
 		setHeightFn(fn: (x: number, z: number) => number) {
 			heightFn = fn;
+		},
+
+		setOnExit(fn: () => void) {
+			onExitFn = fn;
 		},
 
 		dispose() {

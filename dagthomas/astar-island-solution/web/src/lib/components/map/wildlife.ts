@@ -1,8 +1,7 @@
-// Living world system: birds, wandering people, settlement activity
+// Living world system: bird flocking sprites
 
 import * as THREE from 'three';
 import { mulberry32 } from './prng';
-import type { Cluster } from './clusters';
 
 // --- Birds (flocking sprites circling the island) ---
 
@@ -22,29 +21,6 @@ interface Flock {
 	height: number;
 	speed: number;
 	verticalOsc: number;
-}
-
-// --- Wandering people (tiny dots moving between settlements) ---
-
-interface Wanderer {
-	position: THREE.Vector3;
-	target: THREE.Vector3;
-	speed: number;
-	fromIdx: number;
-	toIdx: number;
-	progress: number;
-}
-
-// --- War parties (red dots moving toward a settlement, with smoke) ---
-
-interface WarParty {
-	warriors: THREE.Vector3[];
-	target: THREE.Vector3;
-	origin: THREE.Vector3;
-	progress: number;
-	speed: number;
-	active: boolean;
-	cooldown: number;
 }
 
 export interface WildlifeSystem {
@@ -72,10 +48,7 @@ function createBirdTexture(): THREE.Texture {
 }
 
 export function createWildlifeSystem(
-	scene: THREE.Scene,
-	settlementClusters: Cluster[],
-	offsetX: number,
-	offsetZ: number
+	scene: THREE.Scene
 ): WildlifeSystem {
 	const rng = mulberry32(9999);
 
@@ -90,7 +63,7 @@ export function createWildlifeSystem(
 			center: new THREE.Vector3(),
 			angle: rng() * Math.PI * 2,
 			radius: 8 + rng() * 15,
-			height: 5 + rng() * 10,
+			height: 1.5 + rng() * 3,
 			speed: 0.3 + rng() * 0.4,
 			verticalOsc: rng() * Math.PI * 2
 		});
@@ -117,98 +90,6 @@ export function createWildlifeSystem(
 				(rng() - 0.5) * 2
 			),
 			wingPhase: rng() * Math.PI * 2
-		});
-	}
-
-	// === Wandering people (dots between settlements) ===
-	const settPositions = settlementClusters.map(c => new THREE.Vector3(
-		c.centerX + offsetX + 0.5,
-		0.35,
-		c.centerY + offsetZ + 0.5
-	));
-
-	const wanderers: Wanderer[] = [];
-	const wandererPoints: THREE.Points | null = settPositions.length >= 2 ? (() => {
-		const count = Math.min(15, settPositions.length * 3);
-		for (let i = 0; i < count; i++) {
-			const fromIdx = Math.floor(rng() * settPositions.length);
-			let toIdx = Math.floor(rng() * settPositions.length);
-			if (toIdx === fromIdx) toIdx = (toIdx + 1) % settPositions.length;
-			wanderers.push({
-				position: settPositions[fromIdx].clone(),
-				target: settPositions[toIdx].clone(),
-				speed: 0.5 + rng() * 1.0,
-				fromIdx,
-				toIdx,
-				progress: rng()
-			});
-		}
-		const geo = new THREE.BufferGeometry();
-		const pos = new Float32Array(count * 3);
-		geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-		const mat = new THREE.PointsMaterial({
-			color: 0xddbb77,
-			size: 0.15,
-			sizeAttenuation: true,
-			transparent: true,
-			opacity: 0.9
-		});
-		const points = new THREE.Points(geo, mat);
-		scene.add(points);
-		return points;
-	})() : null;
-
-	// === War parties ===
-	const warParties: WarParty[] = [];
-	let warCooldown = 5 + rng() * 10; // seconds until first war
-	const warPoints: THREE.Points | null = settPositions.length >= 2 ? (() => {
-		const maxWarriors = 30;
-		const geo = new THREE.BufferGeometry();
-		const pos = new Float32Array(maxWarriors * 3);
-		geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-		const mat = new THREE.PointsMaterial({
-			color: 0xff3333,
-			size: 0.18,
-			sizeAttenuation: true,
-			transparent: true,
-			opacity: 0.9
-		});
-		const points = new THREE.Points(geo, mat);
-		scene.add(points);
-		return points;
-	})() : null;
-
-	// Smoke sprites for battles
-	const smokeSprites: THREE.Sprite[] = [];
-	const smokeMat = new THREE.SpriteMaterial({
-		color: 0x444444,
-		transparent: true,
-		opacity: 0,
-		depthWrite: false
-	});
-
-	function spawnWarParty() {
-		if (settPositions.length < 2) return;
-		const fromIdx = Math.floor(Math.random() * settPositions.length);
-		let toIdx = Math.floor(Math.random() * settPositions.length);
-		if (toIdx === fromIdx) toIdx = (toIdx + 1) % settPositions.length;
-
-		const count = 4 + Math.floor(Math.random() * 6);
-		const warriors: THREE.Vector3[] = [];
-		for (let i = 0; i < count; i++) {
-			warriors.push(settPositions[fromIdx].clone().add(
-				new THREE.Vector3((Math.random() - 0.5) * 0.5, 0, (Math.random() - 0.5) * 0.5)
-			));
-		}
-
-		warParties.push({
-			warriors,
-			target: settPositions[toIdx].clone(),
-			origin: settPositions[fromIdx].clone(),
-			progress: 0,
-			speed: 0.8 + Math.random() * 0.5,
-			active: true,
-			cooldown: 0
 		});
 	}
 
@@ -250,106 +131,6 @@ export function createWildlifeSystem(
 				// Fade at night
 				(birdSprites[i].material as THREE.SpriteMaterial).opacity = isNight ? 0.2 : 0.8;
 			}
-
-			// Update wanderers
-			if (wandererPoints && wanderers.length > 0) {
-				const pos = wandererPoints.geometry.attributes.position as THREE.BufferAttribute;
-				for (let i = 0; i < wanderers.length; i++) {
-					const w = wanderers[i];
-					w.progress += w.speed * dt * 0.05;
-					if (w.progress >= 1) {
-						// Arrived — pick new destination
-						w.fromIdx = w.toIdx;
-						w.toIdx = Math.floor(Math.random() * settPositions.length);
-						if (w.toIdx === w.fromIdx) w.toIdx = (w.toIdx + 1) % settPositions.length;
-						w.target = settPositions[w.toIdx].clone();
-						w.progress = 0;
-					}
-
-					const from = settPositions[w.fromIdx];
-					const to = w.target;
-					w.position.lerpVectors(from, to, w.progress);
-					// Slight bobble
-					w.position.y = 0.35 + Math.sin(now * 3 + i) * 0.02;
-					pos.setXYZ(i, w.position.x, w.position.y, w.position.z);
-				}
-				pos.needsUpdate = true;
-			}
-
-			// War parties
-			warCooldown -= dt;
-			if (warCooldown <= 0 && warParties.filter(w => w.active).length < 2) {
-				spawnWarParty();
-				warCooldown = 15 + Math.random() * 20;
-			}
-
-			if (warPoints) {
-				const pos = warPoints.geometry.attributes.position as THREE.BufferAttribute;
-				let wIdx = 0;
-
-				for (const wp of warParties) {
-					if (!wp.active) continue;
-					wp.progress += wp.speed * dt * 0.03;
-
-					if (wp.progress >= 1) {
-						// Battle reached! Create smoke
-						wp.active = false;
-						// Spawn smoke sprite at target
-						const smoke = new THREE.Sprite(smokeMat.clone());
-						smoke.position.copy(wp.target);
-						smoke.position.y += 0.5;
-						smoke.scale.set(0.1, 0.1, 1);
-						scene.add(smoke);
-						smokeSprites.push(smoke);
-						continue;
-					}
-
-					for (const warrior of wp.warriors) {
-						warrior.lerpVectors(wp.origin, wp.target, wp.progress);
-						warrior.x += (Math.random() - 0.5) * 0.1;
-						warrior.z += (Math.random() - 0.5) * 0.1;
-						warrior.y = 0.35;
-						if (wIdx < 30) {
-							pos.setXYZ(wIdx, warrior.x, warrior.y, warrior.z);
-							wIdx++;
-						}
-					}
-				}
-
-				// Clear remaining slots
-				for (let i = wIdx; i < 30; i++) {
-					pos.setXYZ(i, 0, -100, 0); // off-screen
-				}
-				pos.needsUpdate = true;
-			}
-
-			// Animate smoke (grows then fades)
-			for (let i = smokeSprites.length - 1; i >= 0; i--) {
-				const smoke = smokeSprites[i];
-				const mat = smoke.material as THREE.SpriteMaterial;
-				const scale = smoke.scale.x;
-				if (scale < 2) {
-					smoke.scale.set(scale + dt * 0.8, scale + dt * 0.8, 1);
-					smoke.position.y += dt * 0.3;
-					mat.opacity = Math.min(0.5, mat.opacity + dt * 0.3);
-				} else {
-					mat.opacity -= dt * 0.15;
-					smoke.position.y += dt * 0.1;
-					if (mat.opacity <= 0) {
-						scene.remove(smoke);
-						mat.dispose();
-						smokeSprites.splice(i, 1);
-					}
-				}
-			}
-
-			// Cleanup dead war parties
-			for (let i = warParties.length - 1; i >= 0; i--) {
-				if (!warParties[i].active) {
-					warParties[i].cooldown += dt;
-					if (warParties[i].cooldown > 5) warParties.splice(i, 1);
-				}
-			}
 		},
 
 		dispose() {
@@ -358,21 +139,6 @@ export function createWildlifeSystem(
 				(s.material as THREE.SpriteMaterial).dispose();
 				scene.remove(s);
 			}
-			if (wandererPoints) {
-				wandererPoints.geometry.dispose();
-				(wandererPoints.material as THREE.PointsMaterial).dispose();
-				scene.remove(wandererPoints);
-			}
-			if (warPoints) {
-				warPoints.geometry.dispose();
-				(warPoints.material as THREE.PointsMaterial).dispose();
-				scene.remove(warPoints);
-			}
-			for (const smoke of smokeSprites) {
-				(smoke.material as THREE.SpriteMaterial).dispose();
-				scene.remove(smoke);
-			}
-			smokeSprites.length = 0;
 		}
 	};
 }

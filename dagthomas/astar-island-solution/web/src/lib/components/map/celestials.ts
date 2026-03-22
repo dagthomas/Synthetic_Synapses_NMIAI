@@ -145,10 +145,11 @@ export function createCelestials(scene: THREE.Scene): CelestialSystem {
 		transparent: true,
 		blending: THREE.AdditiveBlending,
 		depthWrite: false,
-		fog: false
+		fog: false,
+		color: new THREE.Color(2.5, 2.2, 1.8) // HDR bright — triggers bloom
 	});
 	const sunSprite = new THREE.Sprite(sunMat);
-	sunSprite.scale.set(18, 18, 1);
+	sunSprite.scale.set(28, 28, 1);
 	sunSprite.renderOrder = 90;
 	scene.add(sunSprite);
 
@@ -162,7 +163,7 @@ export function createCelestials(scene: THREE.Scene): CelestialSystem {
 		fog: false
 	});
 	const moonSprite = new THREE.Sprite(moonMat);
-	moonSprite.scale.set(5, 5, 1);
+	moonSprite.scale.set(8, 8, 1);
 	moonSprite.renderOrder = 91;
 
 	// Moon glow
@@ -172,10 +173,11 @@ export function createCelestials(scene: THREE.Scene): CelestialSystem {
 		transparent: true,
 		blending: THREE.AdditiveBlending,
 		depthWrite: false,
-		fog: false
+		fog: false,
+		color: new THREE.Color(1.5, 1.6, 2.0) // HDR cool blue — subtle bloom
 	});
 	const moonGlow = new THREE.Sprite(moonGlowMat);
-	moonGlow.scale.set(12, 12, 1);
+	moonGlow.scale.set(18, 18, 1);
 	moonGlow.renderOrder = 89;
 
 	// Moon light — soft bluish point light
@@ -198,11 +200,11 @@ export function createCelestials(scene: THREE.Scene): CelestialSystem {
 		moonLight,
 
 		update(sunPos: THREE.Vector3, moonPos: THREE.Vector3, nightFade: number) {
-			// Sun: position at sunlight source, fade out at night
+			// Sun: world-space position (large orbit radius keeps it in the sky)
 			sunSprite.position.copy(sunPos);
 			sunMat.opacity = Math.max(0, 1 - nightFade * 1.5);
 
-			// Moon: position opposite to sun, fade in at night
+			// Moon: world-space position
 			moonGroup.position.copy(moonPos);
 			const moonOpacity = Math.min(1, nightFade * 1.5) * Math.max(0.2, phaseBrightness);
 			moonMat.opacity = moonOpacity;

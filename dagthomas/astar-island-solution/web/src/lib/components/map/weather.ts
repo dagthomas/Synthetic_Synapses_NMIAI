@@ -39,7 +39,7 @@ export function createWeatherSystem(
 	const rainZones: RainZone[] = [];
 	const fogSprites: FogSprite[] = [];
 	const lightning: LightningState = {
-		nextStrike: 8 + Math.random() * 7,
+		nextStrike: 5 + Math.random() * 5,
 		flashLight: null,
 		flashTimer: 0,
 		flashPhase: 0,
@@ -48,7 +48,7 @@ export function createWeatherSystem(
 
 	// --- Rain near mountains ---
 	for (const mt of mountainPositions) {
-		const particleCount = Math.round(300 + mt.radius * 60);
+		const particleCount = Math.round(80 + mt.radius * 20);
 		const spread = Math.max(2.5, mt.radius);
 		const geo = new THREE.BufferGeometry();
 		const positions = new Float32Array(particleCount * 3);
@@ -65,9 +65,9 @@ export function createWeatherSystem(
 
 		const mat = new THREE.PointsMaterial({
 			color: 0xaabbcc,
-			size: 0.06,
+			size: 0.03,
 			transparent: true,
-			opacity: 0.35,
+			opacity: 0.25,
 			depthWrite: false,
 			blending: THREE.NormalBlending
 		});
@@ -118,7 +118,7 @@ export function createWeatherSystem(
 
 	// --- Lightning setup ---
 	if (mountainPositions.length > 0) {
-		lightning.flashLight = new THREE.PointLight(0xccddff, 0, 60);
+		lightning.flashLight = new THREE.PointLight(0xddeeff, 0, 120);
 		lightning.flashLight.position.set(0, 15, 0);
 		scene.add(lightning.flashLight);
 	}
@@ -188,9 +188,9 @@ export function createWeatherSystem(
 
 					const boltGeo = new THREE.BufferGeometry().setFromPoints(boltPoints);
 					const boltMat = new THREE.LineBasicMaterial({
-						color: 0xddeeff,
+						color: new THREE.Color(3, 3, 4), // HDR white-blue — triggers bloom
 						transparent: true,
-						opacity: 0.9,
+						opacity: 1.0,
 						linewidth: 2
 					});
 					lightning.boltLine = new THREE.Line(boltGeo, boltMat);
@@ -202,19 +202,19 @@ export function createWeatherSystem(
 					// 2-3 rapid brightness spikes over 0.3s
 					const t = lightning.flashTimer;
 					if (t < 0.05) {
-						lightning.flashLight.intensity = 3.0;
+						lightning.flashLight.intensity = 15.0;
 					} else if (t < 0.1) {
-						lightning.flashLight.intensity = 0.5;
+						lightning.flashLight.intensity = 2.0;
 					} else if (t < 0.15) {
-						lightning.flashLight.intensity = 2.5;
+						lightning.flashLight.intensity = 12.0;
 					} else if (t < 0.2) {
-						lightning.flashLight.intensity = 0.3;
+						lightning.flashLight.intensity = 1.0;
 					} else if (t < 0.25) {
-						lightning.flashLight.intensity = 1.5;
+						lightning.flashLight.intensity = 8.0;
 					} else {
 						lightning.flashLight.intensity = 0;
 						lightning.flashPhase = 0;
-						lightning.nextStrike = 8 + Math.random() * 7;
+						lightning.nextStrike = 5 + Math.random() * 5;
 						if (lightning.boltLine) {
 							scene.remove(lightning.boltLine);
 							lightning.boltLine.geometry.dispose();

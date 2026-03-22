@@ -20,27 +20,28 @@
 	import { Sky } from 'three/addons/objects/Sky.js';
 	import { createFlythrough, type FlythroughSystem } from './flythrough';
 	import { createScatter, type ScatterSystem } from './scatter';
+	import { createCreatures, type CreatureSystem } from './creatures';
 
 	let {
 		grid,
 		settlements = [],
-		showViewport = true,
 		showScores = false,
-		viewportX = 12,
-		viewportY = 12,
 		timeOfDay = 12,
 		freezeCamera = false,
-		onCaptureFn = undefined
+		seedLabel = '',
+		roundLabel = '',
+		onCaptureFn = undefined,
+		onFlythroughChange = undefined
 	}: {
 		grid: number[][];
 		settlements?: Settlement[];
-		showViewport?: boolean;
 		showScores?: boolean;
-		viewportX?: number;
-		viewportY?: number;
 		timeOfDay?: number;
 		freezeCamera?: boolean;
+		seedLabel?: string;
+		roundLabel?: string;
 		onCaptureFn?: (fn: () => string) => void;
+		onFlythroughChange?: (active: boolean) => void;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -49,7 +50,6 @@
 	let camera: THREE.PerspectiveCamera;
 	let controls: OrbitControls;
 	let animationId: number;
-	let viewportMesh: THREE.LineSegments | null = null;
 	let oceanMesh: THREE.Mesh | null = null;
 	let oceanTime = 0;
 	let lastTime = 0;
@@ -66,10 +66,14 @@
 	let fillLight: THREE.DirectionalLight | null = null;
 	let settlementLights: THREE.PointLight[] = [];
 	let fireParticles: THREE.Mesh[] = [];
-	let torchWanderers: { light: THREE.PointLight; mesh: THREE.Mesh; from: THREE.Vector3; to: THREE.Vector3; t: number; speed: number }[] = [];
 	let settlementPositions: THREE.Vector3[] = [];
 	let lastInteraction = 0;
 	let autoRotateAngle = 0;
+	let buildGeneration = 0; // incremented each build to cancel stale async work
+	let prevTimeOfDay = -1;
+	let cachedDN: ReturnType<typeof computeDayNight> | null = null;
+	let lastShadowUpdate = 0;
+	let displayTime = 12;
 
 	// First-person mode state
 	let fpMode = $state(false);
@@ -85,6 +89,7 @@
 	let flythrough: FlythroughSystem | null = null;
 	let flythroughActive = $state(false);
 	let scatter: ScatterSystem | null = null;
+	let creatureSystem: CreatureSystem | null = null;
 	let fpAudio: HTMLAudioElement | null = null;
 	let pointerLocked = $state(false);
 
@@ -127,11 +132,12 @@
 		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
 		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
 		if (terrainSystem) { terrainSystem.dispose(); terrainSystem = null; }
+		if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
+		if (scatter) { scatter.dispose(); scatter = null; }
 		if (fillLight) { scene.remove(fillLight); fillLight = null; }
 		blockyTerrainGroup = null;
 		settlementLights = [];
 		fireParticles = [];
-		torchWanderers = [];
 		settlementPositions = [];
 	}
 
@@ -153,6 +159,10 @@
 		// Create FP controller
 		if (!fpController) {
 			fpController = createFPController(camera, renderer.domElement);
+			fpController.setOnExit(() => {
+				if (flythroughActive) stopFlythrough();
+				exitFPMode();
+			});
 		}
 		if (terrainSystem) {
 			fpController.setHeightFn(terrainSystem.getHeightAt);
@@ -162,11 +172,13 @@
 		camera.fov = 100;
 		camera.near = 0.01;
 		camera.far = 300;
+		camera.rotation.order = 'YXZ'; // Match PointerLockControls' Euler order
 		camera.updateProjectionMatrix();
 
-		// Position camera at center of map at eye height
+		// Position camera at center of map at eye height, reset rotation
 		const groundY = terrainSystem ? terrainSystem.getHeightAt(0, 0) : 0.1;
 		camera.position.set(0, groundY + 0.45, 0);
+		camera.rotation.set(0, 0, 0);
 
 		// Preetham atmospheric sky shader — replaces flat sky color
 		if (!fpSky) {
@@ -186,22 +198,15 @@
 		fpFog = new THREE.FogExp2(0x8ab4cc, 0.035);
 		scene.fog = fpFog;
 
-		// Post-processing pipeline (bloom, DOF, vignette, ACES, SMAA)
-		if (!postFX) {
-			renderer.toneMapping = THREE.NoToneMapping;
-			postFX = createPostFX(renderer, scene, camera);
-			postFX.resize(container.clientWidth, container.clientHeight);
-		}
-
 		// Atmosphere (player light, grass, mist, dust)
 		if (!atmosphere && terrainSystem) {
 			atmosphere = createAtmosphere(scene, grid, terrainSystem.getHeightAt);
 		}
 
-		// 4K shadows for ground-level detail
+		// Higher quality shadows for ground-level (2K — good balance of quality vs perf)
 		if (sunLight) {
-			sunLight.shadow.mapSize.width = 4096;
-			sunLight.shadow.mapSize.height = 4096;
+			sunLight.shadow.mapSize.width = 2048;
+			sunLight.shadow.mapSize.height = 2048;
 			sunLight.shadow.camera.near = 0.5;
 			sunLight.shadow.camera.far = 60;
 			sunLight.shadow.camera.left = -20;
@@ -213,16 +218,6 @@
 
 		// Boost ambient for ground-level (shadows are darker at eye level)
 		if (ambientLight) ambientLight.intensity *= 1.3;
-
-		// Scatter environmental models (async — loads in background)
-		if (!scatter && terrainSystem) {
-			createScatter(grid, terrainSystem.getHeightAt, 2000).then(s => {
-				scatter = s;
-				if (fpMode) scene.add(scatter.group);
-			});
-		} else if (scatter) {
-			scene.add(scatter.group);
-		}
 
 		// Play ambient music
 		if (!fpAudio) {
@@ -259,6 +254,7 @@
 		camera.fov = 60;
 		camera.near = 0.1;
 		camera.far = 250;
+		camera.rotation.order = 'XYZ'; // Restore default for orbit controls
 		camera.updateProjectionMatrix();
 		camera.position.set(28, 22, 28);
 		camera.lookAt(0, 0, 0);
@@ -266,14 +262,6 @@
 		// Remove fog
 		scene.fog = null;
 		fpFog = null;
-
-		// Dispose post-processing (restore renderer tone mapping)
-		if (postFX) {
-			postFX.dispose();
-			postFX = null;
-			renderer.toneMapping = THREE.ACESFilmicToneMapping;
-			renderer.toneMappingExposure = 1.15;
-		}
 
 		// Dispose atmosphere
 		if (atmosphere) {
@@ -284,8 +272,7 @@
 		// Restore ambient intensity
 		if (ambientLight) ambientLight.intensity = 0.45;
 
-		// Hide scatter (keep loaded for re-entry)
-		if (scatter) scene.remove(scatter.group);
+		// Scatter + creatures persist across modes
 
 		// Stop music
 		if (fpAudio) { fpAudio.pause(); fpAudio.currentTime = 0; }
@@ -320,6 +307,9 @@
 
 		lastInteraction = performance.now() / 1000;
 		autoRotateAngle = Math.atan2(camera.position.z, camera.position.x);
+
+		// Force sky/lighting restoration (applyDayNight cache would skip otherwise)
+		applyDayNight(timeOfDay, true);
 	}
 
 	function onFPUnlock() {
@@ -346,6 +336,13 @@
 		}
 	}
 
+	function onGlobalKeyDown(e: KeyboardEvent) {
+		if (e.code === 'Escape') {
+			if (flythroughActive) { stopFlythrough(); exitFPMode(); }
+			else if (fpMode) exitFPMode();
+		}
+	}
+
 	function startFlythrough() {
 		if (!scene || !camera || !grid?.length) return;
 
@@ -367,6 +364,7 @@
 		if (flythrough) {
 			flythrough.start(camera);
 			flythroughActive = true;
+			onFlythroughChange?.(true);
 		}
 	}
 
@@ -375,6 +373,7 @@
 			flythrough.stop();
 		}
 		flythroughActive = false;
+		onFlythroughChange?.(false);
 		// Return to FP walking mode
 		if (fpController) {
 			fpController.controls.addEventListener('unlock', onFPUnlock);
@@ -479,8 +478,15 @@
 		}
 	}
 
-	function buildScene() {
+	/** Yield one frame so the render loop can draw while we build */
+	function nextFrame(): Promise<void> {
+		return new Promise(resolve => requestAnimationFrame(() => resolve()));
+	}
+
+	async function buildScene() {
 		if (!grid?.length || !container) return;
+		displayTime = timeOfDay;
+		const gen = ++buildGeneration; // track this build — abort if superseded
 
 		cleanupSystems();
 		while (scene.children.length > 0) {
@@ -593,6 +599,9 @@
 		}
 		scene.add(blockyTerrainGroup);
 
+		await nextFrame();
+		if (gen !== buildGeneration) return; // superseded by newer build
+
 		// Build heightmap terrain (hidden initially, used in FP mode)
 		terrainSystem = createTerrain(grid);
 		terrainSystem.mesh.visible = false;
@@ -661,9 +670,8 @@
 		scene.add(canopy2Inst);
 		scene.add(canopy3Inst);
 
-		// Water is rendered as transparent blocks (same as other terrain types)
-
-		updateViewportOverlay(offsetX, offsetZ, cols, rows);
+		await nextFrame();
+		if (gen !== buildGeneration) return;
 
 		cloudSystem = createCloudSystem(scene);
 
@@ -671,7 +679,7 @@
 		waterfallSystem = createWaterfallSystem(scene, waterfallSources);
 
 		const settlementClusters = clusters.filter(c => c.terrainType === TerrainCode.SETTLEMENT);
-		wildlifeSystem = createWildlifeSystem(scene, settlementClusters, offsetX, offsetZ);
+		wildlifeSystem = createWildlifeSystem(scene);
 
 		// === Weather system ===
 		const mountainClusters = clusters.filter(c => c.terrainType === TerrainCode.MOUNTAIN);
@@ -698,8 +706,47 @@
 
 		weatherSystem = createWeatherSystem(scene, mountainPositions, lakePositions);
 
+		await nextFrame();
+		if (gen !== buildGeneration) return;
+
+		// === Creatures (humans, raiders, animals) — visible in orbit + FP ===
+		if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
+		const orbitHeightFn = (x: number, z: number) => {
+			const gx = Math.floor(x - offsetX);
+			const gz = Math.floor(z - offsetZ);
+			if (gz >= 0 && gz < rows && gx >= 0 && gx < cols) {
+				return getTerrainHeight(grid[gz][gx]) / 2;
+			}
+			return 0.06;
+		};
+		createCreatures(scene, grid, orbitHeightFn, settlementClusters).then(cs => {
+			if (gen === buildGeneration) creatureSystem = cs;
+		});
+
+		// === Scatter vegetation (trees, flowers, rocks) — always visible ===
+		if (scatter) { scatter.dispose(); scatter = null; }
+		createScatter(grid, terrainSystem.getHeightAt, 3000).then(s => {
+			if (gen !== buildGeneration) return;
+			scatter = s;
+			scene.add(scatter.group);
+		});
+
 		// === Roads between settlements ===
 		buildRoads(settlementClusters, offsetX, offsetZ);
+
+		// Restore FP/flythrough state if active during rebuild
+		if (fpMode && fpSky) {
+			scene.add(fpSky);
+			scene.background = null;
+		}
+		if (fpMode && terrainSystem) {
+			terrainSystem.mesh.visible = true;
+			if (blockyTerrainGroup) blockyTerrainGroup.visible = false;
+		}
+		if (flythroughActive && terrainSystem) {
+			flythrough = createFlythrough(grid, terrainSystem.getHeightAt);
+			flythrough.start(camera);
+		}
 	}
 
 	function buildRoads(settlements: Cluster[], ox: number, oz: number) {
@@ -1053,30 +1100,6 @@
 			}
 		}
 
-		// Torch wanderers between settlements
-		if (settlementPositions.length >= 2) {
-			const lastPos = settlementPositions[settlementPositions.length - 1];
-			const prevPos = settlementPositions[settlementPositions.length - 2];
-			const torchLight = new THREE.PointLight(0xff9944, 0.0, 3.5, 2);
-			torchLight.position.copy(lastPos);
-			scene.add(torchLight);
-
-			const torchGeo = new THREE.SphereGeometry(0.03, 4, 4);
-			const torchMat = new THREE.MeshBasicMaterial({ color: 0xff8833, transparent: true, opacity: 0 });
-			const torchMesh = new THREE.Mesh(torchGeo, torchMat);
-			torchMesh.position.copy(lastPos);
-			scene.add(torchMesh);
-
-			torchWanderers.push({
-				light: torchLight,
-				mesh: torchMesh,
-				from: prevPos.clone(),
-				to: lastPos.clone(),
-				t: rng(),
-				speed: 0.03 + rng() * 0.04
-			});
-		}
-
 		// Wooden walls — try GLB, fallback to procedural fence
 		if (isMedium) {
 			const cx = cluster.centerX + ox + 0.5;
@@ -1182,24 +1205,27 @@
 		}
 	}
 
-	function updateViewportOverlay(ox: number, oz: number, cols: number, rows: number) {
-		if (viewportMesh) { scene.remove(viewportMesh); viewportMesh.geometry.dispose(); }
-		if (!showViewport) return;
-		const vw = 15, vh = 15;
-		const boxGeo = new THREE.BoxGeometry(vw, 1.5, vh);
-		const edges = new THREE.EdgesGeometry(boxGeo);
-		const lineMat = new THREE.LineBasicMaterial({ color: 0xff8a65, transparent: true, opacity: 0.8 });
-		viewportMesh = new THREE.LineSegments(edges, lineMat);
-		viewportMesh.position.set(viewportX + ox + vw / 2, 0.75, viewportY + oz + vh / 2);
-		scene.add(viewportMesh);
-	}
 
-	function applyDayNight(hour: number) {
+	function applyDayNight(hour: number, force = false) {
+		// Skip if time hasn't changed (within 0.01 resolution)
+		const rounded = Math.round(hour * 100);
+		if (!force && rounded === prevTimeOfDay && cachedDN) return cachedDN;
+		prevTimeOfDay = rounded;
+
 		const dn = computeDayNight(hour);
+		cachedDN = dn;
+
 		if (sunLight) {
 			sunLight.position.copy(dn.sunPosition);
 			sunLight.color.copy(dn.sunColor);
 			sunLight.intensity = dn.sunIntensity;
+
+			// Throttle shadow re-renders to max once per 300ms — prevents slider lag
+			const now = performance.now();
+			if (force || now - lastShadowUpdate > 2000) {
+				sunLight.shadow.needsUpdate = true;
+				lastShadowUpdate = now;
+			}
 		}
 		if (ambientLight) {
 			ambientLight.color.copy(dn.ambientColor);
@@ -1210,10 +1236,11 @@
 			hemiLight.groundColor.copy(dn.hemiGroundColor);
 			hemiLight.intensity = dn.hemiIntensity;
 		}
-		if (scene) {
+		// Only set flat background when Preetham sky is NOT active
+		if (scene && !fpSky?.parent) {
 			scene.background = dn.skyColor;
 		}
-		if (celestialSystem) celestialSystem.update(dn.sunPosition, dn.moonPosition, dn.nightFade);
+		if (postFX) postFX.updateAtmosphere(hour, flythroughActive ? 'flythrough' : fpMode ? 'fp' : 'orbit');
 		return dn;
 	}
 
@@ -1225,11 +1252,19 @@
 
 		// (ocean rendered as transparent blocks, no separate plane)
 
-		if (viewportMesh) {
-			(viewportMesh.material as THREE.LineBasicMaterial).opacity = 0.5 + Math.sin(Date.now() * 0.003) * 0.3;
+		// Smooth time transitions — lerp toward target to avoid frame drops
+		const timeDiff = timeOfDay - displayTime;
+		if (Math.abs(timeDiff) > 0.005) {
+			displayTime += timeDiff * Math.min(1, dt * 5);
+		} else {
+			displayTime = timeOfDay;
 		}
+		const dn = applyDayNight(displayTime);
 
-		const dn = applyDayNight(timeOfDay);
+		// Update celestials every frame (world-space, large orbit radius)
+		if (celestialSystem && cachedDN) {
+			celestialSystem.update(cachedDN.sunPosition, cachedDN.moonPosition, cachedDN.nightFade);
+		}
 		if (cloudSystem) cloudSystem.update(dt, dn.skyColor);
 		if (waterfallSystem) waterfallSystem.update(dt);
 		if (wildlifeSystem) wildlifeSystem.update(dt, timeOfDay);
@@ -1258,30 +1293,15 @@
 			fp.position.y += Math.sin(now * 4 + fi * 2) * 0.0003;
 		}
 
-		// Torch wanderers — walk between settlements at night
-		for (const tw of torchWanderers) {
-			tw.t += dt * tw.speed;
-			if (tw.t >= 1) {
-				// Pick a new destination
-				tw.from.copy(tw.to);
-				if (settlementPositions.length > 1) {
-					const idx = Math.floor(Math.random() * settlementPositions.length);
-					tw.to.copy(settlementPositions[idx]);
-				}
-				tw.t = 0;
-			}
-			const pos = tw.from.clone().lerp(tw.to, tw.t);
-			pos.y = 0.25 + Math.sin(now * 3 + tw.t * 10) * 0.02; // slight bob
-			tw.light.position.copy(pos);
-			tw.mesh.position.copy(pos);
-
-			// Only visible at night
-			tw.light.intensity = fireIntensity * 0.8;
-			tw.light.distance = 2.5 + fireIntensity * 1.5;
-			(tw.mesh.material as THREE.MeshBasicMaterial).opacity = nightBlend * 0.9;
+		// First-person mode: update FP controller or flythrough
+		// Update creatures in all modes (walking, raiding, roaming)
+		if (creatureSystem) {
+			creatureSystem.update(dt, timeOfDay);
 		}
 
-		// First-person mode: update FP controller or flythrough
+		// Frustum + distance culling on scatter objects (all modes)
+		if (scatter) scatter.updateCulling(camera);
+
 		if (fpMode && fpController) {
 			// Flythrough overrides FP controls
 			if (flythroughActive && flythrough) {
@@ -1290,13 +1310,18 @@
 				fpController.update(dt);
 			}
 
-			// Sync Preetham sky with sun position from daynight system
-			if (fpSky && fpSkyUniforms && sunLight) {
-				const sunPos = sunLight.position.clone().normalize();
-				// Tilt the up vector slightly to avoid harsh zenith
-				fpSkyUniforms['sunPosition'].value.copy(sunPos);
+			// Sky dome follows camera so it always surrounds the viewer
+			if (fpSky) fpSky.position.copy(camera.position);
 
-				// Adjust sky params based on time of day
+			// Sync Preetham sky with sun position from daynight system
+			if (fpSky && fpSkyUniforms && cachedDN) {
+				// Use the daynight sun position as a direction for the sky shader
+				// sunPosition uniform expects a unit direction vector
+				fpSkyUniforms['sunPosition'].value
+					.copy(cachedDN.sunPosition)
+					.normalize();
+
+				// Adjust sky parameters based on time of day
 				const h = ((timeOfDay % 24) + 24) % 24;
 				const isDawnDusk = (h >= 5 && h <= 7) || (h >= 17 && h <= 19);
 				const isNight = h < 5 || h > 19;
@@ -1329,15 +1354,6 @@
 				atmosphere.update(camera, dt, timeOfDay);
 			}
 
-			// Update post-processing atmosphere (bloom/vignette intensity)
-			if (postFX) {
-				postFX.updateAtmosphere(timeOfDay);
-			}
-
-			// Frustum + distance culling on scatter objects
-			if (scatter) {
-				scatter.updateCulling(camera);
-			}
 		} else {
 			// Gentle idle auto-rotation after 10 seconds of no interaction
 			const idleTime = now - lastInteraction;
@@ -1354,8 +1370,8 @@
 			controls.update();
 		}
 
-		// Use post-processing composer in FP mode, direct render otherwise
-		if (fpMode && postFX) {
+		// Post-processing: bloom, DOF, vignette, ACES, SMAA — always active
+		if (postFX) {
 			postFX.render(dt);
 		} else {
 			renderer.render(scene, camera);
@@ -1376,8 +1392,8 @@
 		renderer.setSize(container.clientWidth, container.clientHeight);
 		renderer.shadowMap.enabled = true;
 		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-		renderer.toneMapping = THREE.ACESFilmicToneMapping;
-		renderer.toneMappingExposure = 1.15;
+		renderer.shadowMap.autoUpdate = false; // manual shadow updates on time change only
+		renderer.toneMapping = THREE.NoToneMapping; // postFX handles tone mapping
 		container.appendChild(renderer.domElement);
 
 		scene = new THREE.Scene();
@@ -1386,6 +1402,10 @@
 		camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 250);
 		camera.position.set(28, 22, 28);
 		camera.lookAt(0, 0, 0);
+
+		// Post-processing pipeline (bloom, DOF, vignette, ACES, SMAA) — always active
+		postFX = createPostFX(renderer, scene, camera);
+		postFX.resize(container.clientWidth, container.clientHeight);
 
 		controls = new OrbitControls(camera, renderer.domElement);
 		controls.enableDamping = true;
@@ -1407,12 +1427,13 @@
 
 		// Preload GLB models then build scene
 		preloadModels().then(() => {
-			buildScene();
+			buildScene().then(() => applyDayNight(timeOfDay, true));
 		}).catch(() => {
-			buildScene(); // build anyway with procedural fallbacks
+			buildScene().then(() => applyDayNight(timeOfDay, true));
 		});
 		animate();
 		window.addEventListener('resize', handleResize);
+		window.addEventListener('keydown', onGlobalKeyDown);
 
 		// Register capture function for parent component
 		if (onCaptureFn) {
@@ -1432,18 +1453,14 @@
 		if (atmosphere) { atmosphere.dispose(); atmosphere = null; }
 		if (fpSky) { fpSky.geometry.dispose(); (fpSky.material as THREE.Material).dispose(); fpSky = null; }
 		if (scatter) { scatter.dispose(); scatter = null; }
+		if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
 		if (flythrough) { flythrough.dispose(); flythrough = null; }
 		if (renderer) renderer.dispose();
 		window.removeEventListener('resize', handleResize);
+		window.removeEventListener('keydown', onGlobalKeyDown);
 	});
 
 	$effect(() => { grid; settlements; if (scene) buildScene(); });
-	$effect(() => {
-		showViewport; viewportX; viewportY;
-		if (scene && grid) {
-			updateViewportOverlay(-grid[0].length / 2, -grid.length / 2, grid[0].length, grid.length);
-		}
-	});
 </script>
 
 <div class="relative w-full h-full">
@@ -1510,5 +1527,37 @@
 				FP MODE &middot; WASD + Mouse &middot; Shift = Sprint
 			{/if}
 		</div>
+
+		<!-- Flythrough cinematic HUD -->
+		{#if flythroughActive}
+			<div class="absolute inset-0 pointer-events-none z-20 flex flex-col items-center"
+				style="animation: hudFadeIn 2s ease-out forwards">
+				<div class="mt-10 text-center">
+					<h1 class="text-5xl font-thin tracking-[0.4em] uppercase"
+						style="color: rgba(255,255,255,0.85);
+							text-shadow: 0 0 40px rgba(255,255,255,0.4), 0 0 80px rgba(135,206,235,0.25), 0 0 120px rgba(135,206,235,0.1);
+							filter: blur(0.3px)">
+						ASTAR ISLAND
+					</h1>
+					{#if roundLabel || seedLabel}
+						<p class="mt-3 text-base tracking-[0.25em] uppercase"
+							style="color: rgba(255,255,255,0.55);
+								text-shadow: 0 0 20px rgba(255,255,255,0.3), 0 0 40px rgba(135,206,235,0.15);
+								transition: opacity 0.8s ease">
+							{#if roundLabel}{roundLabel}{/if}
+							{#if roundLabel && seedLabel} &middot; {/if}
+							{#if seedLabel}{seedLabel}{/if}
+						</p>
+					{/if}
+				</div>
+			</div>
+		{/if}
 	{/if}
 </div>
+
+<style>
+	@keyframes hudFadeIn {
+		from { opacity: 0; transform: translateY(-10px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+</style>

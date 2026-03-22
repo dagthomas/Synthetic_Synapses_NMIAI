@@ -16,10 +16,12 @@ import {
 	DepthOfFieldEffect
 } from 'postprocessing';
 
+export type ViewMode = 'orbit' | 'fp' | 'flythrough';
+
 export interface PostFXPipeline {
 	composer: EffectComposer;
 	render(dt: number): void;
-	updateAtmosphere(timeOfDay: number): void;
+	updateAtmosphere(timeOfDay: number, mode?: ViewMode): void;
 	resize(width: number, height: number): void;
 	dispose(): void;
 }
@@ -50,7 +52,7 @@ export function createPostFX(
 	const dof = new DepthOfFieldEffect(camera, {
 		focusDistance: 0.02,
 		focalLength: 0.05,
-		bokehScale: 3.0
+		bokehScale: 1.5
 	});
 
 	// Vignette — cinematic dark edges
@@ -84,29 +86,29 @@ export function createPostFX(
 			composer.render(dt);
 		},
 
-		updateAtmosphere(timeOfDay: number) {
+		updateAtmosphere(timeOfDay: number, mode: ViewMode = 'orbit') {
 			const isNight = timeOfDay < 6 || timeOfDay > 18;
 			const isDawnDusk = (timeOfDay >= 5 && timeOfDay <= 7) || (timeOfDay >= 17 && timeOfDay <= 19);
 			const lumMat = bloom.luminanceMaterial;
 
+			// DOF scale per view mode: orbit = minimal, flythrough = moderate, FP = full
+			const dofBase = mode === 'fp' ? 1.0 : mode === 'flythrough' ? 0.6 : 0.15;
+
 			if (isDawnDusk) {
-				// Golden hour: heavy bloom, warm glow everywhere
 				bloom.intensity = 1.4;
 				lumMat.threshold = 0.35;
 				vignette.darkness = 0.6;
-				dof.bokehScale = 4.0;
+				dof.bokehScale = 4.0 * dofBase;
 			} else if (isNight) {
-				// Night: moody, dark vignette, fires glow hard
 				bloom.intensity = 1.1;
 				lumMat.threshold = 0.3;
 				vignette.darkness = 0.75;
-				dof.bokehScale = 2.5;
+				dof.bokehScale = 2.5 * dofBase;
 			} else {
-				// Day: clean, subtle effects
 				bloom.intensity = 0.7;
 				lumMat.threshold = 0.65;
 				vignette.darkness = 0.45;
-				dof.bokehScale = 3.0;
+				dof.bokehScale = 3.0 * dofBase;
 			}
 		},
 

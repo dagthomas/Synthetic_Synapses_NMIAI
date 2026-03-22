@@ -59,11 +59,11 @@ export function createCloudSystem(scene: THREE.Scene): CloudSystem {
 		});
 		const sprite = new THREE.Sprite(mat);
 
-		const scale = 4 + Math.random() * 8;
-		sprite.scale.set(scale, scale * 0.4, 1);
+		const scale = 10 + Math.random() * 16;
+		sprite.scale.set(scale, scale * 0.35, 1);
 		sprite.position.set(
 			(Math.random() - 0.5) * BOUNDS_X * 2,
-			8 + Math.random() * 12,
+			3 + Math.random() * 5,
 			(Math.random() - 0.5) * BOUNDS_X
 		);
 		sprite.renderOrder = 100;

@@ -45,6 +45,32 @@
 	let grid = $derived(currentDetail?.initial_states?.[selectedSeed]?.grid ?? null);
 	let settlements = $derived(currentDetail?.initial_states?.[selectedSeed]?.settlements ?? []);
 
+	// Flythrough round cycling
+	let flythroughActive = $state(false);
+	let roundCycleInterval: ReturnType<typeof setInterval> | undefined;
+	const ROUND_CYCLE_TIMES = [6, 10, 14, 18, 22];
+
+	function onFlythroughChange(active: boolean) {
+		flythroughActive = active;
+		if (active) {
+			const sorted = [...rounds].sort((a, b) => a.round_number - b.round_number);
+			let roundIdx = sorted.findIndex(r => r.id === selectedRoundId);
+			if (roundIdx < 0) roundIdx = 0;
+			roundCycleInterval = setInterval(async () => {
+				roundIdx = (roundIdx + 1) % sorted.length;
+				await selectRound(sorted[roundIdx].id);
+				timeOfDay = ROUND_CYCLE_TIMES[roundIdx % ROUND_CYCLE_TIMES.length];
+			}, 12000);
+		} else {
+			if (roundCycleInterval) { clearInterval(roundCycleInterval); roundCycleInterval = undefined; }
+		}
+	}
+
+	let seedLabel = $derived(`Seed ${selectedSeed}`);
+	let roundLabel = $derived(
+		currentDetail ? `Round ${currentDetail.round_number}` : ''
+	);
+
 	function getCurrentHour(): number {
 		const now = new Date();
 		return now.getHours() + now.getMinutes() / 60;
@@ -162,6 +188,7 @@
 
 	onDestroy(() => {
 		if (clockInterval) clearInterval(clockInterval);
+		if (roundCycleInterval) clearInterval(roundCycleInterval);
 	});
 
 	// Terrain breakdown
@@ -186,13 +213,13 @@
 			<IslandMap
 				{grid}
 				{settlements}
-				{showViewport}
 				{showScores}
-				{viewportX}
-				{viewportY}
 				{timeOfDay}
+				{seedLabel}
+				{roundLabel}
 				freezeCamera={generatingAll}
 				onCaptureFn={(fn) => (captureFn = fn)}
+				{onFlythroughChange}
 			/>
 		{:else}
 			<div class="flex items-center justify-center h-full text-cyber-muted">
