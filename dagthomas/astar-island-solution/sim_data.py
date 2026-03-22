@@ -31,9 +31,12 @@ ROUND_IDS = {
     "round15": "cc5442dd-bc5d-418b-911b-7eb960cb0390",
     "round16": "8f664aed-8839-4c85-bed0-77a2cac7c6f5",
     "round17": "3eb0c25d-28fa-48ca-b8e1-fc249e3918e9",
+    "round18": "b0f9d1bf-4b71-4e6e-816c-19c718d29056",
+    "round19": "597e60cf-d1a1-4627-ac4d-2a61da68b6df",
+    "round20": "fd82f643-15e2-40e7-9866-8d8f5157081c",
 }
 
-ALL_ROUNDS = [f"round{i}" for i in range(1, 18)]
+ALL_ROUNDS = [f"round{i}" for i in range(1, 21)]
 
 
 def terrain_to_class(code: int) -> int:

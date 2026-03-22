@@ -593,5 +593,110 @@
       "gt_forest_change": 0.3,
       "gt_survival": 0.2680172413793103
     }
+  },
+  {
+    "round": "round18",
+    "score": 80.29787084492965,
+    "params": {
+      "base_survival": 1.0594769267472675,
+      "expansion_str": 0.8367207211823363,
+      "expansion_scale": 5.842889703444235,
+      "decay_power": 2.575981406985008,
+      "max_reach": 11.463648472444362,
+      "coastal_mod": 0.8402619938100511,
+      "food_coeff": 1.9362688024419792,
+      "cluster_pen": 0.3053646707710964,
+      "cluster_optimal": 4.872678289555688,
+      "cluster_quad": -1.0053100049694192,
+      "ruin_rate": 0.28833600954292726,
+      "port_factor": 0.4188765773360061,
+      "forest_resist": 0.08478710924342438,
+      "forest_clear": 0.7181567859043334,
+      "forest_reclaim": 0.15617795794781222,
+      "exp_death": 0.2528962075724442
+    },
+    "features": {
+      "n_sett": 54,
+      "sett_density": 0.03375,
+      "coastal_sett_frac": 0.05555555555555555,
+      "forest_frac": 0.21625,
+      "avg_food": 3.5,
+      "avg_cluster": 0.5,
+      "gt_sett_rate": 0.4054930095658572,
+      "gt_port_rate": 0.025194996320824135,
+      "gt_ruin_rate": 0.027174392935982346,
+      "gt_forest_change": 0.3,
+      "gt_survival": 0.6237037037037038
+    }
+  },
+  {
+    "round": "round19",
+    "score": 86.41013721090745,
+    "params": {
+      "base_survival": -5.905631102105669,
+      "expansion_str": 0.9401511258333725,
+      "expansion_scale": 7.942212205196057,
+      "decay_power": 3.9727555203001623,
+      "max_reach": 12.389673112884516,
+      "coastal_mod": 0.6372064618095963,
+      "food_coeff": 2.9947320106063566,
+      "cluster_pen": 0.282735364213778,
+      "cluster_optimal": 0.7604510436660341,
+      "cluster_quad": -1.802596788651905,
+      "ruin_rate": 0.023542851430901304,
+      "port_factor": 0.3741019754678467,
+      "forest_resist": 0.24835112795665754,
+      "forest_clear": 0.7506837697953912,
+      "forest_reclaim": 0.17600042192290674,
+      "exp_death": 0.8970135815916029
+    },
+    "features": {
+      "n_sett": 61,
+      "sett_density": 0.038125,
+      "coastal_sett_frac": 0.0,
+      "forest_frac": 0.2225,
+      "avg_food": 3.5,
+      "avg_cluster": 0.5,
+      "gt_sett_rate": 0.014989185291997116,
+      "gt_port_rate": 0.00038572458543619317,
+      "gt_ruin_rate": 0.0035940879596250896,
+      "gt_forest_change": 0.3,
+      "gt_survival": 0.04295081967213115
+    }
+  },
+  {
+    "round": "round20",
+    "score": 78.2364504251722,
+    "params": {
+      "base_survival": -0.26988700462683557,
+      "expansion_str": 0.5795187909220597,
+      "expansion_scale": 6.363315278166748,
+      "decay_power": 3.9607859685393785,
+      "max_reach": 14.350288657276968,
+      "coastal_mod": -0.5772769898551977,
+      "food_coeff": 1.107242478869601,
+      "cluster_pen": -1.9984215164598291,
+      "cluster_optimal": 4.999312472551708,
+      "cluster_quad": -0.5966848222549672,
+      "ruin_rate": 0.06195306914697904,
+      "port_factor": 0.7910158709741381,
+      "forest_resist": 0.2106698192487074,
+      "forest_clear": 0.06033946492451406,
+      "forest_reclaim": 0.17323442551727034,
+      "exp_death": 0.6938110438554891
+    },
+    "features": {
+      "n_sett": 42,
+      "sett_density": 0.02625,
+      "coastal_sett_frac": 0.023809523809523808,
+      "forest_frac": 0.210625,
+      "avg_food": 3.5,
+      "avg_cluster": 0.5,
+      "gt_sett_rate": 0.038847891566265065,
+      "gt_port_rate": 0.0019540662650602406,
+      "gt_ruin_rate": 0.005158132530120482,
+      "gt_forest_change": 0.3,
+      "gt_survival": 0.1294047619047619
+    }
   }
 ]

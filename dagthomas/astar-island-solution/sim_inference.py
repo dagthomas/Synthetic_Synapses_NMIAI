@@ -403,11 +403,13 @@ def fit_all_rounds(n_sims: int = 500, max_evals: int = 400):
     return all_scores
 
 
-# Adaptive alpha: learned from backtest data
+# Adaptive alpha: learned from backtest data (updated 2026-03-22)
+# Boom: sim captures spatial dynamics well from obs
+# Collapse: obs-fitting is unreliable, keep alpha low
 REGIME_ALPHAS = {
-    "collapse": 0.25,
-    "moderate": 0.35,
-    "boom": 0.45,
+    "collapse": 0.15,
+    "moderate": 0.30,
+    "boom": 0.65,
 }
 
 

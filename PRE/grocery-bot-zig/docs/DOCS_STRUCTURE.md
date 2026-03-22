@@ -19,3 +19,10 @@ docs/
 │   └── getting-started.md   # Onboarding and setup
 └── DOCS_STRUCTURE.md        # This file
 ```
+
+## Mermaid Chart Guidelines
+
+- **>3 nodes**: Use vertical layout (`flowchart TB`). Horizontal charts with many boxes become unreadable.
+- **≤3 nodes**: Horizontal (`flowchart LR`) is fine.
+- **Sequence diagrams**: Keep as-is (vertical by nature).
+- Prefer simple node labels — move details into text below the chart.

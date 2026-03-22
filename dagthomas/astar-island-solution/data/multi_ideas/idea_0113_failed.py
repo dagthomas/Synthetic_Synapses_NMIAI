@@ -1,19 +1,27 @@
-# FAILED: Compilation failed: invalid syntax (<string>, line 53)
-# Direction: Adjust the settlement class clamp range from [0.15, 2.5] to [0.12, 2.8] to mitigate the dominant 4.5
+# FAILED: Compilation failed: '(' was never closed (<string>, line 103)
+# Direction: Increase the `settlement` class coarse-level calibration weight from 2.0 to 2.15 to further reduce i
 
 def experimental_pred_fn(state: dict, global_mult: GlobalMultipliers,
                    fk_buckets: FeatureKeyBuckets,
                    multi_store=None,
                    variance_regime: str = None,
-                   obs_expansion_radius: int = None) -> np.ndarray:
+                   obs_expansion_radius: int = None,
+                   est_vigor: float = None,
+                   sim_pred: np.ndarray = None,
+                   sim_alpha: float = 0.25,
+                   growth_front_map: np.ndarray = None,
+                   obs_overlay: tuple = None,
+                   sett_survival: tuple = None) -> np.ndarray:
     """Production prediction with auto-loaded best params.
 
     Args:
         obs_expansion_radius: Maximum distance from initial settlements where
             settlements were observed during exploration. If provided, suppresses
             settlement predictions beyond this radius.
+        est_vigor: Estimated settlement vigor from observations (settlement % on
+            dynamic cells). If provided, uses regime-conditional calibration.
     """
-    p = {"prior_w": 2.0, "emp_max": 3.0, "base_power": 0.5}
+    p = {"prior_w": 2.0, "emp_max": 3.0}
     grid = np.array(state['grid'])
     settlements = state['settlements']
 
@@ -21,15 +29,20 @@ def experimental_pred_fn(state: dict, global_mult: GlobalMultipliers,
     fkeys = build_feature_keys(grid, settlements)
     idx_grid, unique_keys = _build_feature_key_index(fkeys)
 
-    # 2. Calibration
-    cal = predict.get_calibration()
+    # 2. Calibration (regime-conditional if vigor estimate available)
+    if est_vigor is not None:
+        cal = predict.get_regime_calibration(est_vigor)
+    else:
+        cal = predict.get_calibration()
     cal_params = {
         'cal_fine_base': 1.0, 'cal_fine_divisor': 100.0, 'cal_fine_max': 5.0,
         'cal_coarse_base': 0.5, 'cal_coarse_divisor': 100.0, 'cal_coarse_max': 2.0,
         'cal_base_base': 0.1, 'cal_base_divisor': 100.0, 'cal_base_max': 1.0,
         'cal_global_weight': 0.01,
+        'coarse_class_weights': {1: 2.15}
     }
     priors = build_calibration_lookup(cal, unique_keys, cal_params)
+    raw_priors = priors.copy()
 
     # 3. Empirical
     if fk_buckets is not None and hasattr(fk_buckets, 'get_empirical'):
@@ -53,5 +66,42 @@ def experimental_pred_fn(state: dict, global_mult: GlobalMultipliers,
     emp_max = p["emp_max"]
     if variance_regime == 'EXTREME_BOOM':
         prior_w = max(prior_w - 0.5, 0.5)
-        emp_max = emp_max *
+        emp_max = emp_max * 1.2
+
+    pred = priors[idx_grid]
+    emp_grid = empiricals[idx_grid]
+    cnt_grid = counts[idx_grid]
+    has_fk = cnt_grid >= 5
+
+    strengths = np.minimum(emp_max, np.sqrt(cnt_grid))
+    blended = pred * prior_w + emp_grid * strengths[:, :, np.newaxis]
+    blended /= np.maximum(blended.sum(axis=-1, keepdims=True), 1e-10)
+    pred = np.where(has_fk[:, :, np.newaxis], blended, pred)
+
+    # 5. Global Ratio
+    pred = pred * ratio
+
+    # 6. Spatial smoothing
+    pred = uniform_filter(pred, size=(3, 3, 1), mode='constant', cval=0.0)
+
+    # 7. Multipliers
+    if global_mult is not None and hasattr(global_mult, 'multipliers'):
+        pred = pred * global_mult.multipliers
+
+    # 8. Constraints
+    coastal = _build_coastal_mask(grid)
+    for r in range(MAP_H):
+        for c in range(MAP_W):
+            t = grid[r, c]
+            tc = terrain_to_class(t)
+            if tc != 0:
+                pred[r, c, tc] += 0.1
+            if t != 5:
+                pred[r, c, 5] = 0.0
+            if not coastal[r, c]:
+                pred[r, c, 2] = 0.0
+
+    # 9. Settlement suppression beyond expansion radius
+    if obs_expansion_radius is not None and settlements:
+        sett_locs = np.zeros((MAP_H, MAP_W), dtype=
     return probs

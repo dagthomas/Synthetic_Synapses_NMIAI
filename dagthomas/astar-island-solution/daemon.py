@@ -411,8 +411,26 @@ def gpu_resubmit_round(client, round_id, detail, iteration: int = 0):
         )
 
     est_vigor = obs_features["sett_rate"] if obs_features["sett_rate"] > 0 else None
+
+    # Build GlobalMultipliers and FeatureKeyBuckets from observations
+    # (critical: without this, statistical baseline is uncorrected)
+    from calibration import build_feature_keys
+    from config import MAP_H, MAP_W, NUM_CLASSES
     gm = GlobalMultipliers()
     fk = FeatureKeyBuckets()
+    for obs in observations:
+        sid = obs.get("seed_index", 0)
+        vp, grid_obs = obs["viewport"], obs["grid"]
+        state_obs = initial_states[sid]
+        terrain_obs = np.array(state_obs["grid"], dtype=int)
+        fkeys = build_feature_keys(terrain_obs, state_obs["settlements"])
+        for row in range(len(grid_obs)):
+            for col in range(len(grid_obs[0]) if grid_obs else 0):
+                my, mx = vp["y"] + row, vp["x"] + col
+                if 0 <= my < MAP_H and 0 <= mx < MAP_W:
+                    oc = terrain_to_class(grid_obs[row][col])
+                    gm.add_observation(oc, np.full(NUM_CLASSES, 1.0 / NUM_CLASSES))
+                    fk.add_observation(fkeys[my][mx], oc)
 
     # Submit
     for seed_idx in range(seeds_count):
@@ -766,6 +784,8 @@ def main():
                                 f"{detail['seeds_count']} seeds")
                             run_submission(client, round_id, detail)
                             last_submitted = round_id
+                            last_gpu_resubmit = time.time()  # Wait before first GPU resubmit
+                            gpu_resubmit_count = 0
                         except Exception as e:
                             log(f"SUBMISSION FAILED: {e}", "ERROR")
                             traceback.print_exc()

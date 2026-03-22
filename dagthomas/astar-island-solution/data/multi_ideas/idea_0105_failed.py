@@ -1,19 +1,18 @@
-# FAILED: Crashed on round2 seed 0: name 'probs' is not defined
-# Direction: Adjust the `port` class global multiplier from 1.0 to 1.05 to address coastal underprediction withou
+# FAILED: Crashed on round2 seed 0: too many indices for array: array is 3-dimensional, but 4 were indexed
+# Direction: Increase the `port` class global multiplier from 1.0 to 1.12 to address the underprediction on coast
 
 def experimental_pred_fn(state: dict, global_mult: GlobalMultipliers,
                    fk_buckets: FeatureKeyBuckets,
                    multi_store=None,
                    variance_regime: str = None,
-                   obs_expansion_radius: int = None) -> np.ndarray:
-    """Production prediction with auto-loaded best params.
-
-    Args:
-        obs_expansion_radius: Maximum distance from initial settlements where
-            settlements were observed during exploration. If provided, suppresses
-            settlement predictions beyond this radius.
-    """
-    p = {"prior_w": 1.0, "emp_max": 3.0, "base_power": 0.5}
+                   obs_expansion_radius: int = None,
+                   est_vigor: float = None,
+                   sim_pred: np.ndarray = None,
+                   sim_alpha: float = 0.25,
+                   growth_front_map: np.ndarray = None,
+                   obs_overlay: tuple = None,
+                   sett_survival: tuple = None) -> np.ndarray:
+    p = {"prior_w": 1.0, "emp_max": 2.0, "ratio_power": 0.5}
     grid = np.array(state['grid'])
     settlements = state['settlements']
 
@@ -21,8 +20,11 @@ def experimental_pred_fn(state: dict, global_mult: GlobalMultipliers,
     fkeys = build_feature_keys(grid, settlements)
     idx_grid, unique_keys = _build_feature_key_index(fkeys)
 
-    # 2. Calibration
-    cal = predict.get_calibration()
+    # 2. Calibration (regime-conditional if vigor estimate available)
+    if est_vigor is not None:
+        cal = predict.get_regime_calibration(est_vigor)
+    else:
+        cal = predict.get_calibration()
     cal_params = {
         'cal_fine_base': 1.0, 'cal_fine_divisor': 100.0, 'cal_fine_max': 5.0,
         'cal_coarse_base': 0.5, 'cal_coarse_divisor': 100.0, 'cal_coarse_max': 2.0,
@@ -49,5 +51,57 @@ def experimental_pred_fn(state: dict, global_mult: GlobalMultipliers,
     exp_arr = np.maximum(exp_arr, 1e-6)
     ratio = obs / exp_arr
 
-    # 4. Vectorized FK_
+    # 4. Vectorized FK blending
+    prior_w = p["prior_w"]
+    emp_max = p["emp_max"]
+    if variance_regime == 'EXTREME_BOOM':
+        prior_w = max(prior_w - 0.5, 0.5)
+        emp_max = emp_max * 1.2
+
+    pred = priors[idx_grid]
+    emp_grid = empiricals[idx_grid]
+    cnt_grid = counts[idx_grid]
+    has_fk = cnt_grid >= 5
+
+    strengths = np.minimum(emp_max, np.sqrt(cnt_grid))
+    blended = pred * prior_w + emp_grid * strengths[:, :, np.newaxis]
+    blended /= np.maximum(blended.sum(axis=-1, keepdims=True), 1e-10)
+    pred = np.where(has_fk[:, :, np.newaxis], blended, pred)
+
+    # 5. Multipliers
+    pred *= (ratio ** p.get("ratio_power", 0.5))
+    
+    # MODIFICATION: Port class global multiplier
+    pred[:, :, 2] *= 1.12
+
+    if sim_pred is not None:
+        pred = pred * (1.0 - sim_alpha) + sim_pred * sim_alpha
+
+    # 6. Constraints
+    coastal_mask = _build_coastal_mask(grid)
+    is_mountain = (grid == 5)
+    
+    pred[~coastal_mask, 2] = 0.0
+    pred[~is_mountain, 5] = 0.0
+    pred[is_mountain, :] = 0.0
+    pred[is_mountain, 5] = 1.0
+
+    if obs_expansion_radius is not None and len(settlements) > 0:
+        sett_mask = np.zeros((MAP_H, MAP_W), dtype=bool)
+        for r, c in settlements:
+            if 0 <= r < MAP_H and 0 <= c < MAP_W:
+                sett_mask[r, c] = True
+        dist = distance_transform_cdt(~sett_mask, metric='chessboard')
+        pred[dist > obs_expansion_radius] = 0.0
+        pred[dist > obs_expansion_radius, 0] = 1.0
+
+    # Floor and normalize
+    pred = np.maximum(pred, 0.0)
+    nz_mask = pred > 0
+    pred[nz_mask] = np.maximum(pred[nz_mask], 0.005)
+    
+    row_sums = pred.sum(axis=-1, keepdims=True)
+    probs = np.where(row_sums > 0, pred / row_sums, 0.0)
+    probs[row_sums == 0, 0] = 1.0
+
     return probs

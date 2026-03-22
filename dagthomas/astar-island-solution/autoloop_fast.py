@@ -105,9 +105,12 @@ ROUND_IDS = {
     "round15": "cc5442dd-bc5d-418b-911b-7eb960cb0390",
     "round16": "8f664aed-8839-4c85-bed0-77a2cac7c6f5",
     "round17": "3eb0c25d-28fa-48ca-b8e1-fc249e3918e9",
+    "round18": "b0f9d1bf-4b71-4e6e-816c-19c718d29056",
+    "round19": "597e60cf-d1a1-4627-ac4d-2a61da68b6df",
+    "round20": "fd82f643-15e2-40e7-9866-8d8f5157081c",
 }
-ROUND_NAMES = ["round2", "round3", "round4", "round5", "round6", "round7", "round9", "round10", "round11", "round12", "round13", "round14", "round15", "round16", "round17"]
-BOOM_ROUNDS = {"round6", "round7", "round11", "round14", "round17"}  # For separate boom vs non-boom tracking
+ROUND_NAMES = ["round2", "round3", "round4", "round5", "round6", "round7", "round9", "round10", "round11", "round12", "round13", "round14", "round15", "round16", "round17", "round18", "round19", "round20"]
+BOOM_ROUNDS = {"round6", "round7", "round11", "round14", "round17", "round18"}  # For separate boom vs non-boom tracking
 
 # Import parameter space and defaults from autoloop
 from autoloop import PARAM_SPACE, DEFAULT_PARAMS, ExperimentLog, perturb_params
