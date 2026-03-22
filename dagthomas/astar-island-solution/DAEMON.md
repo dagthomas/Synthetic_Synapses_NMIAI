@@ -112,24 +112,19 @@ sequenceDiagram
 Most competition systems submit once and hope for the best. This system exploits the fact that predictions can be overwritten while a round is active:
 
 ```mermaid
-gantt
-    title Round Timeline (165 minutes)
-    dateFormat mm:ss
-    axisFormat %M:%S
+flowchart TB
+    OPEN[Round Opens] --> EXPLORE[Explore<br/>50 queries, ~2 min]
+    EXPLORE --> SUBMIT1[Initial Submit<br/>Statistical + GPU sim<br/>t = 2 min]
+    SUBMIT1 --> R0[GPU Resubmit iter 0<br/>2000 sims, 200 CMA evals<br/>t = 12 min]
+    R0 --> R1[GPU Resubmit iter 1<br/>2500 sims, 300 CMA evals<br/>t = 22 min]
+    R1 --> R2[GPU Resubmit iter 2<br/>3000 sims, 400 CMA evals<br/>t = 32 min]
+    R2 --> RN[...<br/>Up to 10 iterations<br/>Each with more compute]
+    RN --> FINAL[Final Resubmit<br/>6500 sims, 1100 CMA evals<br/>t = ~140 min]
+    FINAL --> CLOSE[Round Closes<br/>t = 165 min<br/>Last submission wins]
 
-    section Explore
-    50 queries across 5 seeds     :done, 00:00, 02:00
-
-    section Submissions
-    Initial fast submit            :crit, 02:00, 00:05
-    GPU resubmit iter 0 (2K sims)  :active, 02:05, 10:00
-    GPU resubmit iter 1 (2.5K)     :active, 12:05, 10:00
-    GPU resubmit iter 2 (3K)       :active, 22:05, 10:00
-    GPU resubmit iter 3 (3.5K)     :active, 32:05, 10:00
-    ...more iterations...          :active, 42:05, 98:00
-
-    section Background
-    Autoloop optimizing params     :done, 02:05, 138:00
+    style SUBMIT1 fill:#e17055,color:#fff
+    style FINAL fill:#00b894,color:#fff
+    style CLOSE fill:#0984e3,color:#fff
 ```
 
 Each iteration uses a different random seed and more compute, gradually converging on better simulator parameters. The system never regresses because each iteration also carries forward all the observation-corrected statistical model features.
@@ -137,14 +132,13 @@ Each iteration uses a different random seed and more compute, gradually convergi
 ## GPU Simulator
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph Input
         OBS[50 Observations<br/>Settlement positions<br/>Terrain snapshots]
         WS[KNN Warm Start<br/>3 nearest historical rounds<br/>Averaged params]
     end
 
     subgraph CMA["CMA-ES Optimizer (8s)"]
-        direction TB
         EVAL["Evaluate params:<br/>Run 2000-6500 Monte Carlo sims<br/>Compare to observed cells<br/>Log-likelihood objective"]
         PERTURB["Perturb 16 parameters:<br/>base_survival, expansion_str,<br/>expansion_scale, decay_power,<br/>max_reach, forest_resist, ..."]
         EVAL --> PERTURB --> EVAL
@@ -155,7 +149,7 @@ flowchart LR
     end
 
     subgraph Output
-        PRED["Prediction Tensor<br/>40×40×6 probabilities<br/>per settlement type"]
+        PRED["Prediction Tensor<br/>40x40x6 probabilities<br/>per settlement type"]
     end
 
     OBS --> CMA
@@ -179,11 +173,11 @@ The simulator captures spatial dynamics that the statistical model cannot — pa
 ## Regime Detection
 
 ```mermaid
-flowchart TD
+flowchart TB
     OBS[25 Scout Queries] --> VIGOR{Observed<br/>Settlement Rate}
-    VIGOR -->|< 2%| COLLAPSE[COLLAPSE<br/>α = 0.15<br/>Trust statistical model]
-    VIGOR -->|2-15%| MODERATE[MODERATE<br/>α = 0.30<br/>Balanced ensemble]
-    VIGOR -->|> 15%| BOOM[BOOM<br/>α = 0.65<br/>Trust GPU simulator]
+    VIGOR -->|"< 2%"| COLLAPSE[COLLAPSE<br/>α = 0.15<br/>Trust statistical model]
+    VIGOR -->|"2-15%"| MODERATE[MODERATE<br/>α = 0.30<br/>Balanced ensemble]
+    VIGOR -->|"> 15%"| BOOM[BOOM<br/>α = 0.65<br/>Trust GPU simulator]
 
     COLLAPSE --> PRED1[Low settlement prediction<br/>Conservative expansion]
     MODERATE --> PRED2[Mixed prediction<br/>Moderate expansion]
@@ -199,19 +193,19 @@ This classification happens within the first 25 queries (~1 minute) and shapes t
 ## Self-Improvement Loop
 
 ```mermaid
-flowchart LR
-    subgraph Round_N["Round N (Live)"]
+flowchart TB
+    subgraph RN["Round N (Live)"]
         SUBMIT_N[Submit Prediction]
     end
 
     subgraph After["After Round Closes"]
-        GT[Download<br/>Ground Truth]
-        CAL_UPDATE[Update<br/>Calibration<br/>Model]
-        SIM_FIT[GPU-fit<br/>Sim Params]
+        GT[Download Ground Truth]
+        CAL_UPDATE[Update Calibration Model]
+        SIM_FIT[GPU-fit Sim Params]
         AL_RESTART[Restart Autoloop<br/>with new data]
     end
 
-    subgraph Round_N1["Round N+1 (Live)"]
+    subgraph RN1["Round N+1 (Live)"]
         BETTER[Better Prediction<br/>More training data<br/>Better params<br/>Better KNN warm-starts]
     end
 
@@ -222,9 +216,9 @@ flowchart LR
     SIM_FIT --> AL_RESTART
     AL_RESTART --> BETTER
 
-    style Round_N fill:#00b894,color:#000
+    style RN fill:#00b894,color:#000
     style After fill:#fdcb6e,color:#000
-    style Round_N1 fill:#00b894,color:#000
+    style RN1 fill:#00b894,color:#000
 ```
 
 Every completed round makes the next round better. Ground truth is downloaded, calibration model is updated (now 20 rounds, 160K cells), simulator parameters are fitted for KNN warm-starts, and the autoloop restarts with the expanded dataset.

@@ -25,7 +25,7 @@ mindmap
         Hidden Parameters
             16 simulator params vary per round
             Lambda varies 14x between rounds
-            Can't be detected from initial state
+            Cannot be detected from initial state
             Must be estimated from observations
         Information Theory
             Entropy-weighted scoring
@@ -43,7 +43,7 @@ mindmap
             Forest clearing and reclamation
             Port formation on coasts
         Multi-Seed Reasoning
-            Same terrain, different outcomes
+            Same terrain different outcomes
             Cross-seed information sharing
             Variance estimation
             Regime classification
@@ -74,7 +74,6 @@ This isn't prompt engineering. This isn't a chatbot. This is a system where AI m
 ```mermaid
 graph TB
     subgraph Agents["Three Autonomous Research Agents"]
-        direction LR
         AL["Autoloop<br/>━━━━━━━━━━━━━━<br/>Brute Force Genius<br/>1,028,171 experiments<br/>44 parameters<br/>160K/hour"]
         MR["Multi-Researcher<br/>━━━━━━━━━━━━━━<br/>The Creative One<br/>617 iterations<br/>497 ideas generated<br/>32 breakthrough ideas"]
         GR["Gemini Researcher<br/>━━━━━━━━━━━━━━<br/>Structural Thinker<br/>1,247 iterations<br/>Algorithm redesigns<br/>Physics-informed"]
@@ -103,20 +102,14 @@ graph TB
 ### 1. The Autoloop — Brute Force Genius (1,028,171 experiments)
 
 ```mermaid
-flowchart LR
-    subgraph Loop["Infinite Loop (160K experiments/hour)"]
-        direction TB
-        BEST[Current Best Params<br/>44 continuous values]
-        PERTURB[Perturb 1-3 params<br/>Gaussian noise]
-        EVAL[Backtest against<br/>20 rounds × 5 seeds<br/>Vectorized numpy]
-        COMPARE{Better?}
-        ACCEPT[Accept + Sync<br/>to production]
-        REJECT[Reject + Continue]
-    end
-
-    BEST --> PERTURB --> EVAL --> COMPARE
-    COMPARE -->|Yes| ACCEPT --> BEST
-    COMPARE -->|No| REJECT --> BEST
+flowchart TB
+    BEST[Current Best Params<br/>44 continuous values] --> PERTURB[Perturb 1-3 params<br/>Gaussian noise]
+    PERTURB --> EVAL[Backtest against<br/>20 rounds x 5 seeds<br/>Vectorized numpy]
+    EVAL --> COMPARE{Better?}
+    COMPARE -->|Yes| ACCEPT[Accept + Sync<br/>to production]
+    COMPARE -->|No| REJECT[Reject + Continue]
+    ACCEPT --> BEST
+    REJECT --> BEST
 
     style ACCEPT fill:#00b894,color:#fff
     style REJECT fill:#d63031,color:#fff
@@ -144,13 +137,13 @@ sequenceDiagram
     loop Every 25 seconds
         F->>L: Read experiment history
         F->>F: Identify error patterns
-        F-->>P: "Settlement over-predicted at d=4+<br/>on collapse rounds. Try adding<br/>distance-dependent suppression."
+        F-->>P: Propose research direction
 
         P->>P: Write complete prediction function
         P-->>H: experimental_pred_fn()
 
         H->>H: Backtest against 20 rounds
-        H-->>L: Score: 86.7 ✓ GOOD
+        H-->>L: Score: 86.7 GOOD
 
         L-->>F: Updated experiment history
     end
@@ -190,13 +183,13 @@ These are the kind of ideas a PhD student might have after weeks of thinking abo
 ## The Research Speed Multiplier
 
 ```mermaid
-graph LR
+flowchart TB
     subgraph Human["Human Researcher"]
         H1[Read data<br/>1 hour] --> H2[Form hypothesis<br/>30 min]
         H2 --> H3[Write code<br/>2 hours]
         H3 --> H4[Run experiment<br/>10 min]
-        H4 --> H5[Analyze<br/>1 hour]
-        H5 --> H1
+        H4 --> H5[Analyze results<br/>1 hour]
+        H5 -->|~5 hours per cycle| H1
     end
 
     subgraph AI["AI Researcher"]
@@ -204,7 +197,7 @@ graph LR
         A2 --> A3[Generate code<br/>15 sec]
         A3 --> A4[Run backtest<br/>3 sec]
         A4 --> A5[Log + iterate<br/>instant]
-        A5 --> A1
+        A5 -->|~25 sec per cycle| A1
     end
 
     style Human fill:#d63031,color:#fff
@@ -224,7 +217,7 @@ But it's not just speed. It's **fearlessness**. A human researcher has ego, intu
 ## The Compound Effect
 
 ```mermaid
-flowchart TD
+flowchart TB
     AL1["Autoloop finds<br/>growth_front_boost = 0.74"]
     MR1["Multi-researcher discovers<br/>growth front + cluster density<br/>together score 86.7"]
     AL2["Autoloop optimizes<br/>cluster_optimal = 0.70<br/>cluster_quad_pen = -0.12"]
@@ -233,7 +226,10 @@ flowchart TD
     GPU["GPU simulator built from<br/>lambda discovery (varies 14x)"]
     ENSEMBLE["Ensemble: stat + sim<br/>+3 to +14 points"]
 
-    AL1 --> MR1 --> AL2 --> GR1 --> AL3
+    AL1 --> MR1
+    MR1 --> AL2
+    AL2 --> GR1
+    GR1 --> AL3
     MR1 -.->|"Insight: hidden params<br/>vary 14x between rounds"| GPU
     GPU --> ENSEMBLE
 
@@ -259,12 +255,13 @@ They don't communicate directly — they share a codebase and a parameter file. 
 The most impactful discovery from the research agents was identifying the **hidden parameter problem**: the simulation has 16 parameters that vary 14x between rounds, and they can't be predicted from the initial state.
 
 ```mermaid
-graph LR
+flowchart TB
     subgraph Discovery["Research Discovery"]
         D1["Lambda varies 14x<br/>between rounds"]
         D2["Controls settlement<br/>expansion radius"]
         D3["Not detectable from<br/>initial state"]
         D4["Estimable from 50<br/>observations (~7% error)"]
+        D1 --> D2 --> D3 --> D4
     end
 
     subgraph Engineering["Engineering Response"]
@@ -272,10 +269,10 @@ graph LR
         E2["CMA-ES fitting<br/>8 seconds on RTX 5090"]
         E3["23x speedup<br/>124K sims/sec"]
         E4["Ensemble: +3 to +14 pts<br/>per round"]
+        E1 --> E2 --> E3 --> E4
     end
 
-    D1 --> D2 --> D3 --> D4
-    D4 --> E1 --> E2 --> E3 --> E4
+    D4 --> E1
 
     style Discovery fill:#0984e3,color:#fff
     style Engineering fill:#76b900,color:#000
@@ -286,14 +283,51 @@ This wasn't in any plan. It emerged from the research agents discovering that "l
 ## The Full System in Action
 
 ```mermaid
-timeline
-    title 48 Hours of Autonomous Competition
-    section Hour 0-6 : System deployed : Autoloop starts optimizing : Researchers begin generating ideas
-    section Hour 6-12 : 200K experiments completed : First breakthrough idea (86.7) : Calibration: 15 rounds
-    section Hour 12-18 : Round 17 scores 93.0 (best ever) : Lambda discovery (varies 14x) : Settlement survival bias identified
-    section Hour 18-24 : GPU simulator built (23x speedup) : Iterative re-submission added : Bug found and fixed (empty gm/fk)
-    section Hour 24-36 : R19 submitted (collapse, 82.5) : R20 submitted (moderate, 89.4) : 900K+ experiments total
-    section Hour 36-48 : R21 submitted automatically : 1M experiments milestone : 20 rounds calibration : System fully autonomous
+flowchart TB
+    subgraph H0["Hour 0-6"]
+        A1[System deployed]
+        A2[Autoloop starts optimizing]
+        A3[Researchers begin generating ideas]
+    end
+
+    subgraph H1["Hour 6-12"]
+        B1[200K experiments completed]
+        B2[First breakthrough idea: 86.7]
+        B3[Calibration: 15 rounds loaded]
+    end
+
+    subgraph H2["Hour 12-18"]
+        C1["R17 scores 93.0 (best ever)"]
+        C2[Lambda discovery: varies 14x]
+        C3[Settlement survival bias identified]
+    end
+
+    subgraph H3["Hour 18-24"]
+        D1[GPU simulator built: 23x speedup]
+        D2[Iterative re-submission added]
+        D3["Critical bug found + fixed"]
+    end
+
+    subgraph H4["Hour 24-36"]
+        E1["R19 submitted (collapse, 82.5)"]
+        E2["R20 submitted (moderate, 89.4)"]
+        E3[900K+ experiments total]
+    end
+
+    subgraph H5["Hour 36-48"]
+        F1[R21 submitted automatically]
+        F2[1M experiments milestone]
+        F3[20 rounds calibration]
+    end
+
+    H0 --> H1 --> H2 --> H3 --> H4 --> H5
+
+    style H0 fill:#2d3436,color:#dfe6e9
+    style H1 fill:#2d3436,color:#dfe6e9
+    style H2 fill:#d63031,color:#fff
+    style H3 fill:#e17055,color:#fff
+    style H4 fill:#00b894,color:#fff
+    style H5 fill:#0984e3,color:#fff
 ```
 
 ## Results
@@ -308,16 +342,15 @@ timeline
 ## The Numbers
 
 ```mermaid
-graph LR
+flowchart TB
     subgraph Scale["Scale of Autonomous Research"]
-        direction TB
         N1["1,028,171<br/>Autoloop experiments"]
         N2["1,864<br/>Research iterations"]
         N3["497<br/>Code variants generated"]
         N4["32<br/>Breakthrough ideas"]
         N5["20<br/>Rounds of calibration"]
         N6["160,000<br/>Ground truth cells"]
-        N7["124,000<br/>GPU sims/second"]
+        N7["124,000<br/>GPU sims per second"]
         N8["24/7<br/>Autonomous operation"]
     end
 
@@ -332,23 +365,23 @@ Karpathy is right. The future of AI isn't chatbots — it's autonomous research 
 mindmap
     root((Auto-Research))
         Identify Problems
-            From data, not prompts
+            From data not prompts
             Error pattern analysis
             Cross-round correlation
         Generate Hypotheses
-            Ideas humans wouldn't think of
+            Ideas humans would not think of
             No ego or confirmation bias
-            Fearlessly tests "stupid" ideas
+            Fearlessly tests stupid ideas
         Test Immediately
             Zero friction from idea to experiment
             25 seconds per full cycle
-            3,456 ideas per day
+            3456 ideas per day
         Iterate at Machine Speed
             1000x faster than human research
             Runs at 3 AM
             Never gets tired or discouraged
         Compound Discoveries
-            Multiple agents, different timescales
+            Multiple agents different timescales
             Emergent collaboration
             Each discovery enables the next
 ```
