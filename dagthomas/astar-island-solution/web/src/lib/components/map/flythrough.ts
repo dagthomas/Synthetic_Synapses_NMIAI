@@ -201,6 +201,8 @@ export function createFlythrough(
 	const _up = new THREE.Vector3(0, 1, 0);
 	const _right = new THREE.Vector3();
 	const _prevTangent = new THREE.Vector3(0, 0, -1);
+	const _rollQuat = new THREE.Quaternion();
+	const _fwd = new THREE.Vector3();
 	let smoothRoll = 0;
 	let smoothPitch = 0;
 
@@ -245,20 +247,24 @@ export function createFlythrough(
 				_smoothLook.lerp(lookPos, Math.min(1, dt * 2.5));
 			}
 
+			// Force world-up before lookAt — prevents any flip
+			camera.up.set(0, 1, 0);
 			camera.lookAt(_smoothLook);
 
-			// Banking roll — stronger into swoops and turns
+			// Banking roll via quaternion around forward axis (never flips)
 			curve.getTangentAt(t, _tangent);
 			const crossTurn = _prevTangent.x * _tangent.z - _prevTangent.z * _tangent.x;
-			const turnMagnitude = Math.abs(crossTurn);
 
-			// More aggressive roll during high-speed swoops (steep tangent)
-			const swoopFactor = 1 + Math.abs(pitch) * 3;
-			const targetRoll = -crossTurn * 10 * swoopFactor;
-			const maxRoll = 0.40; // ~23 degrees
+			const swoopFactor = 1 + Math.abs(pitch) * 2;
+			const targetRoll = -crossTurn * 8 * swoopFactor;
+			const maxRoll = 0.25; // ~14 degrees — visible tilt, never flips
 			const clampedRoll = Math.max(-maxRoll, Math.min(maxRoll, targetRoll));
-			smoothRoll += (clampedRoll - smoothRoll) * Math.min(1, dt * 2.5);
-			camera.rotation.z = smoothRoll;
+			smoothRoll += (clampedRoll - smoothRoll) * Math.min(1, dt * 2.0);
+
+			// Apply roll as quaternion rotation around camera's forward vector
+			camera.getWorldDirection(_fwd);
+			_rollQuat.setFromAxisAngle(_fwd, smoothRoll);
+			camera.quaternion.premultiply(_rollQuat);
 
 			_prevTangent.copy(_tangent);
 		},
@@ -268,11 +274,11 @@ export function createFlythrough(
 			t = 0;
 			smoothRoll = 0;
 			smoothPitch = 0;
+			camera.up.set(0, 1, 0);
 			camera.position.copy(pathPoints[0]);
 			_smoothLook.copy(pathPoints[1] || pathPoints[0]);
 			_prevTangent.set(0, 0, -1);
 			camera.lookAt(_smoothLook);
-			camera.rotation.z = 0;
 		},
 
 		stop() {
