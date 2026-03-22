@@ -11,7 +11,7 @@ ENDPOINT = "http://localhost:8000/solve"
 AGENT_API_KEY = os.environ.get("AGENT_API_KEY", "")
 
 # Use real sandbox if available, otherwise mock
-BASE_URL = os.environ.get("TRIPLETEX_BASE_URL", "https://kkpqfuj-amager.tripletex.dev/v2")
+BASE_URL = os.environ.get("TRIPLETEX_BASE_URL", "https://YOUR-SANDBOX.tripletex.dev/v2")
 TOKEN = os.environ.get("TRIPLETEX_TOKEN", "fake-token-for-smoke-test")
 
 

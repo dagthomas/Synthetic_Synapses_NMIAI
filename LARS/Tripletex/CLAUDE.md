@@ -28,7 +28,7 @@ python simulator.py --batch 10             # batch of 10 random tasks
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GOOGLE_API_KEY` | Yes | Gemini API key (for agent LLM) |
-| `TRIPLETEX_BASE_URL` | Yes | Sandbox API URL (e.g. `https://kkpqfuj-amager.tripletex.dev/v2`) |
+| `TRIPLETEX_BASE_URL` | Yes | Sandbox API URL (e.g. `https://YOUR-SANDBOX.tripletex.dev/v2`) |
 | `TRIPLETEX_SESSION_TOKEN` | Yes | Sandbox session token |
 | `AGENT_API_KEY` | No | Bearer token to protect /solve endpoint |
 | `GEMINI_MODEL` | No | Model name (default: `gemini-2.5-pro`) |

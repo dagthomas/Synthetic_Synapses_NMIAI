@@ -80,7 +80,7 @@ Every team gets a free Tripletex sandbox to explore the API and web interface be
 ### Getting Your Sandbox
 
 1. Go to the Tripletex submission page on the platform and click **"Get Sandbox Account"**
-2. Go to `https://kkpqfuj-amager.tripletex.dev` → enter your email → click **"Forgot password"** to set up Visma Connect (first time only)
+2. Go to `https://YOUR-SANDBOX.tripletex.dev` → enter your email → click **"Forgot password"** to set up Visma Connect (first time only)
 3. Get your API base URL and session token from the sandbox card — valid until **March 31, 2026**
 
 Once you've set up Visma Connect, the same credentials work for all Tripletex test accounts, including the ones created during competition submissions.
@@ -90,7 +90,7 @@ Once you've set up Visma Connect, the same credentials work for all Tripletex te
 ```python
 import requests
 
-BASE_URL      = "https://kkpqfuj-amager.tripletex.dev/v2"
+BASE_URL      = "https://YOUR-SANDBOX.tripletex.dev/v2"
 SESSION_TOKEN = "your-session-token-here"
 
 # List employees
@@ -117,7 +117,7 @@ print(response.json())
 ```bash
 # curl example
 curl -u "0:your-session-token-here" \
-  "https://kkpqfuj-amager.tripletex.dev/v2/employee?fields=id,firstName,lastName"
+  "https://YOUR-SANDBOX.tripletex.dev/v2/employee?fields=id,firstName,lastName"
 ```
 
 ### Sandbox vs. Competition

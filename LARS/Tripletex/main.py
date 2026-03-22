@@ -136,7 +136,7 @@ class SolveRequest(BaseModel):
                     "prompt": "Opprett en ansatt med navn Ola Nordmann, ola@example.org. Han skal være kontoadministrator.",
                     "files": [],
                     "tripletex_credentials": {
-                        "base_url": "https://kkpqfuj-amager.tripletex.dev/v2",
+                        "base_url": "https://YOUR-SANDBOX.tripletex.dev/v2",
                         "session_token": "YOUR_TOKEN_HERE"
                     }
                 }

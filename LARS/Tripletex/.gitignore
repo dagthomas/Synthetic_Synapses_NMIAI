@@ -7,3 +7,6 @@ dashboard/.ainm_cookie
 dashboard/frontend/node_modules/
 dashboard/frontend/dist/
 payloads/
+e2e_report.md
+replay_report.md
+dashboard/seed_data.json

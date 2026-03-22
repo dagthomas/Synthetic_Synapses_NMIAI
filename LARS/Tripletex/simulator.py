@@ -51,7 +51,7 @@ def get_sandbox_client() -> TripletexClient:
     token = os.environ.get("TRIPLETEX_SESSION_TOKEN", "")
     if not base_url or not token:
         print("ERROR: Set TRIPLETEX_BASE_URL and TRIPLETEX_SESSION_TOKEN in .env")
-        print("  TRIPLETEX_BASE_URL=https://kkpqfuj-amager.tripletex.dev/v2")
+        print("  TRIPLETEX_BASE_URL=https://YOUR-SANDBOX.tripletex.dev/v2")
         print("  TRIPLETEX_SESSION_TOKEN=your-token-here")
         sys.exit(1)
     return TripletexClient(base_url, token)
