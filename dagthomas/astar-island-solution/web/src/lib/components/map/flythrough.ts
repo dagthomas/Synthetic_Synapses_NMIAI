@@ -107,6 +107,21 @@ function buildRandomFlightPath(
 		pts.push(new THREE.Vector3(target.x + dx * spread, groundH + rRange(2.5, 4), target.z + dz * spread));
 	}
 
+	// Ground buzz: fly very low across terrain, almost touching the ground
+	function buzz(target: THREE.Vector3, groundH: number) {
+		const angle = rAngle();
+		const dx = Math.cos(angle);
+		const dz = Math.sin(angle);
+		const spread = rRange(5, 9);
+
+		// Descend → skim ground → long low run → pull up
+		pts.push(new THREE.Vector3(target.x - dx * spread, groundH + rRange(1.5, 2.5), target.z - dz * spread));
+		pts.push(new THREE.Vector3(target.x - dx * 3, groundH + rRange(0.15, 0.25), target.z - dz * 3));
+		pts.push(new THREE.Vector3(target.x, groundH + rRange(0.12, 0.20), target.z));
+		pts.push(new THREE.Vector3(target.x + dx * 3, groundH + rRange(0.15, 0.25), target.z + dz * 3));
+		pts.push(new THREE.Vector3(target.x + dx * spread, groundH + rRange(2, 3.5), target.z + dz * spread));
+	}
+
 	// Random entry point from map edge
 	const entryAngle = rAngle();
 	pts.push(new THREE.Vector3(
@@ -117,20 +132,30 @@ function buildRandomFlightPath(
 
 	// Visit each selected feature with a random flight pattern
 	for (const feat of selected) {
-		// Transition: add a cruise point between features for spacing
+		// Transition: alternate altitude — if last point was high, cruise low; if low, cruise high
 		const lastPt = pts[pts.length - 1];
 		const mid = new THREE.Vector3().lerpVectors(lastPt, feat.pos, 0.5);
-		mid.y = feat.groundH + rRange(2, 4);
+		const wasHigh = lastPt.y > feat.groundH + 1.5;
+		mid.y = wasHigh ? feat.groundH + rRange(0.4, 1.0) : feat.groundH + rRange(2.5, 4.5);
 		// Offset mid sideways for less linear paths
 		mid.x += rRange(-3, 3);
 		mid.z += rRange(-3, 3);
 		pts.push(mid);
 
-		// Choose flight pattern based on feature type + randomness
+		// Alternate: if currently high → go low, if low → go higher
+		const currentAlt = pts[pts.length - 1].y;
+		const isHigh = currentAlt > feat.groundH + 1.5;
 		const pattern = Math.random();
-		if (feat.type === 'forest' || (feat.type === 'ruin' && pattern < 0.5)) {
-			skim(feat.pos, feat.groundH);
+
+		if (isHigh || pattern < 0.3) {
+			// We're high — dive low: buzz or deep swoop
+			if (pattern < 0.5) {
+				buzz(feat.pos, feat.groundH);
+			} else {
+				skim(feat.pos, feat.groundH);
+			}
 		} else {
+			// We're low — climb up: swoop with high peak
 			swoop(feat.pos, feat.groundH);
 		}
 	}

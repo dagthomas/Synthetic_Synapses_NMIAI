@@ -125,16 +125,11 @@
 		return heights[code] ?? 0.06;
 	}
 
-	function cleanupSystems() {
-		if (cloudSystem) { cloudSystem.dispose(); cloudSystem = null; }
-		if (waterfallSystem) { waterfallSystem.dispose(); waterfallSystem = null; }
-		if (celestialSystem) { celestialSystem.dispose(); celestialSystem = null; }
-		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
-		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
+	/** Cleanup grid-dependent systems only (terrain, creatures, scatter) */
+	function cleanupGridSystems() {
 		if (terrainSystem) { terrainSystem.dispose(); terrainSystem = null; }
 		if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
 		if (scatter) { scatter.dispose(); scatter = null; }
-		if (fillLight) { scene.remove(fillLight); fillLight = null; }
 		blockyTerrainGroup = null;
 		settlementLights = [];
 		fireParticles = [];
@@ -487,12 +482,30 @@
 		if (!grid?.length || !container) return;
 		displayTime = timeOfDay;
 		const gen = ++buildGeneration; // track this build — abort if superseded
+		const isFirstBuild = !hemiLight; // true on very first build only
 
-		cleanupSystems();
-		while (scene.children.length > 0) {
-			const child = scene.children[0];
-			scene.remove(child);
-			if (child instanceof THREE.Mesh) { child.geometry.dispose(); }
+		// Only clean grid-dependent parts (terrain, creatures, scatter)
+		cleanupGridSystems();
+
+		// Remove grid-dependent scene children (terrain group, trees, settlements, roads, slab)
+		// Keep lights, celestials, clouds, weather, wildlife, fpSky
+		const keep = new Set<THREE.Object3D>();
+		if (hemiLight) keep.add(hemiLight);
+		if (sunLight) keep.add(sunLight);
+		if (ambientLight) keep.add(ambientLight);
+		if (fillLight) keep.add(fillLight);
+		if (celestialSystem) { keep.add(celestialSystem.sunSprite); keep.add(celestialSystem.moonGroup); }
+		if (cloudSystem) for (const s of cloudSystem.sprites) keep.add(s);
+		if (wildlifeSystem) { /* birds are individual sprites — keep them */ }
+		if (fpSky) keep.add(fpSky);
+
+		// Remove non-kept children
+		for (let i = scene.children.length - 1; i >= 0; i--) {
+			const child = scene.children[i];
+			if (!keep.has(child)) {
+				scene.remove(child);
+				if (child instanceof THREE.Mesh) { child.geometry.dispose(); }
+			}
 		}
 
 		const rows = grid.length;
@@ -500,38 +513,38 @@
 		const offsetX = -cols / 2;
 		const offsetZ = -rows / 2;
 
-		// === Lighting — warm & bright like reference ===
-		hemiLight = new THREE.HemisphereLight(0x97c5e8, 0x8a7a5a, 0.6);
-		scene.add(hemiLight);
+		// === Lighting (first build only) ===
+		if (isFirstBuild) {
+			hemiLight = new THREE.HemisphereLight(0x97c5e8, 0x8a7a5a, 0.6);
+			scene.add(hemiLight);
 
-		sunLight = new THREE.DirectionalLight(0xffeedd, 1.6);
-		sunLight.position.set(20, 30, 10);
-		sunLight.castShadow = true;
-		sunLight.shadow.mapSize.width = 2048;
-		sunLight.shadow.mapSize.height = 2048;
-		sunLight.shadow.camera.near = 1;
-		sunLight.shadow.camera.far = 100;
-		sunLight.shadow.camera.left = -30;
-		sunLight.shadow.camera.right = 30;
-		sunLight.shadow.camera.top = 30;
-		sunLight.shadow.camera.bottom = -30;
-		scene.add(sunLight);
+			sunLight = new THREE.DirectionalLight(0xffeedd, 1.6);
+			sunLight.position.set(20, 30, 10);
+			sunLight.castShadow = true;
+			sunLight.shadow.mapSize.width = 2048;
+			sunLight.shadow.mapSize.height = 2048;
+			sunLight.shadow.camera.near = 1;
+			sunLight.shadow.camera.far = 100;
+			sunLight.shadow.camera.left = -30;
+			sunLight.shadow.camera.right = 30;
+			sunLight.shadow.camera.top = 30;
+			sunLight.shadow.camera.bottom = -30;
+			scene.add(sunLight);
 
-		ambientLight = new THREE.AmbientLight(0x909088, 0.45);
-		scene.add(ambientLight);
+			ambientLight = new THREE.AmbientLight(0x909088, 0.45);
+			scene.add(ambientLight);
 
-		// Secondary fill light — sky bounce from opposite side
-		fillLight = new THREE.DirectionalLight(0x99aabb, 0.2);
-		fillLight.position.set(-20, 15, -10);
-		scene.add(fillLight);
+			fillLight = new THREE.DirectionalLight(0x99aabb, 0.2);
+			fillLight.position.set(-20, 15, -10);
+			scene.add(fillLight);
+
+			celestialSystem = createCelestials(scene);
+		}
 
 		applyDayNight(timeOfDay);
 
 		// === Square island slab with earth layers ===
 		buildIslandSlab(cols, rows);
-
-		// === Celestials ===
-		celestialSystem = createCelestials(scene);
 
 		// Find clusters
 		const clusters = findClusters(grid);
@@ -673,44 +686,41 @@
 		await nextFrame();
 		if (gen !== buildGeneration) return;
 
-		cloudSystem = createCloudSystem(scene);
-
-		const waterfallSources = findWaterfallSources(grid, offsetX, offsetZ);
-		waterfallSystem = createWaterfallSystem(scene, waterfallSources);
-
 		const settlementClusters = clusters.filter(c => c.terrainType === TerrainCode.SETTLEMENT);
-		wildlifeSystem = createWildlifeSystem(scene);
 
-		// === Weather system ===
-		const mountainClusters = clusters.filter(c => c.terrainType === TerrainCode.MOUNTAIN);
-		const mountainPositions = mountainClusters.map(c => ({
-			x: c.centerX + offsetX + 0.5,
-			z: c.centerY + offsetZ + 0.5,
-			radius: Math.sqrt(c.size) * 0.6
-		}));
+		// === Ambient systems (first build only — grid-independent) ===
+		if (isFirstBuild) {
+			cloudSystem = createCloudSystem(scene);
+			wildlifeSystem = createWildlifeSystem(scene);
 
-		// Find interior water cells (not on perimeter) = lakes
-		const lakePositions: { x: number; z: number }[] = [];
-		for (let y = 1; y < rows - 1; y++) {
-			for (let x = 1; x < cols - 1; x++) {
-				if (grid[y][x] === TerrainCode.OCEAN) {
-					// Check if surrounded by non-ocean (interior water)
-					const neighbors = [grid[y-1]?.[x], grid[y+1]?.[x], grid[y]?.[x-1], grid[y]?.[x+1]];
-					const hasLand = neighbors.some(n => n !== undefined && n !== TerrainCode.OCEAN);
-					if (hasLand) {
-						lakePositions.push({ x: x + offsetX + 0.5, z: y + offsetZ + 0.5 });
+			const waterfallSources = findWaterfallSources(grid, offsetX, offsetZ);
+			waterfallSystem = createWaterfallSystem(scene, waterfallSources);
+
+			const mountainClusters = clusters.filter(c => c.terrainType === TerrainCode.MOUNTAIN);
+			const mountainPositions = mountainClusters.map(c => ({
+				x: c.centerX + offsetX + 0.5,
+				z: c.centerY + offsetZ + 0.5,
+				radius: Math.sqrt(c.size) * 0.6
+			}));
+			const lakePositions: { x: number; z: number }[] = [];
+			for (let y = 1; y < rows - 1; y++) {
+				for (let x = 1; x < cols - 1; x++) {
+					if (grid[y][x] === TerrainCode.OCEAN) {
+						const neighbors = [grid[y-1]?.[x], grid[y+1]?.[x], grid[y]?.[x-1], grid[y]?.[x+1]];
+						const hasLand = neighbors.some(n => n !== undefined && n !== TerrainCode.OCEAN);
+						if (hasLand) {
+							lakePositions.push({ x: x + offsetX + 0.5, z: y + offsetZ + 0.5 });
+						}
 					}
 				}
 			}
+			weatherSystem = createWeatherSystem(scene, mountainPositions, lakePositions);
 		}
-
-		weatherSystem = createWeatherSystem(scene, mountainPositions, lakePositions);
 
 		await nextFrame();
 		if (gen !== buildGeneration) return;
 
-		// === Creatures (humans, raiders, animals) — visible in orbit + FP ===
-		if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
+		// === Creatures (humans, raiders, animals) ===
 		const orbitHeightFn = (x: number, z: number) => {
 			const gx = Math.floor(x - offsetX);
 			const gz = Math.floor(z - offsetZ);
@@ -1447,7 +1457,14 @@
 	onDestroy(() => {
 		if (typeof window === 'undefined') return;
 		if (animationId) cancelAnimationFrame(animationId);
-		cleanupSystems();
+		// Full cleanup on destroy
+		cleanupGridSystems();
+		if (cloudSystem) { cloudSystem.dispose(); cloudSystem = null; }
+		if (waterfallSystem) { waterfallSystem.dispose(); waterfallSystem = null; }
+		if (celestialSystem) { celestialSystem.dispose(); celestialSystem = null; }
+		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
+		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
+		if (fillLight) { scene.remove(fillLight); fillLight = null; }
 		if (fpController) { fpController.dispose(); fpController = null; }
 		if (postFX) { postFX.dispose(); postFX = null; }
 		if (atmosphere) { atmosphere.dispose(); atmosphere = null; }

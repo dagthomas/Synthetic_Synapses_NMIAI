@@ -50,19 +50,60 @@
 	let roundCycleInterval: ReturnType<typeof setInterval> | undefined;
 	const ROUND_CYCLE_TIMES = [6, 10, 14, 18, 22];
 
+	let preloadedRound: Map<string, RoundDetail> = new Map();
+
 	function onFlythroughChange(active: boolean) {
 		flythroughActive = active;
 		if (active) {
 			const sorted = [...rounds].sort((a, b) => a.round_number - b.round_number);
-			let roundIdx = sorted.findIndex(r => r.id === selectedRoundId);
-			if (roundIdx < 0) roundIdx = 0;
+			// Always start from the lowest round
+			let roundIdx = 0;
+			if (sorted.length > 0 && sorted[0].id !== selectedRoundId) {
+				const firstId = sorted[0].id;
+				const preloaded = preloadedRound.get(firstId);
+				if (preloaded) {
+					currentDetail = preloaded;
+					selectedRoundId = firstId;
+					preloadedRound.delete(firstId);
+				} else {
+					fetchAPI<RoundDetail>(`/api/rounds/${firstId}`).then(d => {
+						currentDetail = d;
+						selectedRoundId = firstId;
+					}).catch(() => {});
+				}
+			}
+
+			// Preload next round immediately
+			const preloadNext = (idx: number) => {
+				const nextIdx = (idx + 1) % sorted.length;
+				const nextId = sorted[nextIdx].id;
+				if (!preloadedRound.has(nextId)) {
+					fetchAPI<RoundDetail>(`/api/rounds/${nextId}`).then(d => {
+						preloadedRound.set(nextId, d);
+					}).catch(() => {});
+				}
+			};
+			preloadNext(roundIdx);
+
 			roundCycleInterval = setInterval(async () => {
 				roundIdx = (roundIdx + 1) % sorted.length;
-				await selectRound(sorted[roundIdx].id);
+				const nextId = sorted[roundIdx].id;
+				// Use preloaded data if available — instant switch
+				const preloaded = preloadedRound.get(nextId);
+				if (preloaded) {
+					currentDetail = preloaded;
+					selectedRoundId = nextId;
+					preloadedRound.delete(nextId);
+				} else {
+					await selectRound(nextId);
+				}
 				timeOfDay = ROUND_CYCLE_TIMES[roundIdx % ROUND_CYCLE_TIMES.length];
+				// Preload the one after this
+				preloadNext(roundIdx);
 			}, 12000);
 		} else {
 			if (roundCycleInterval) { clearInterval(roundCycleInterval); roundCycleInterval = undefined; }
+			preloadedRound.clear();
 		}
 	}
 
