@@ -1,9 +1,23 @@
 import os
+import shutil
 import logging
 
 from kreuzberg import extract_file_sync
 
 log = logging.getLogger(__name__)
+
+SAVE_DIR = os.path.join(os.path.dirname(__file__), "..", "extracted_files")
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+
+def _save_copy(filepath: str) -> None:
+    """Save a copy of the input file to extracted_files/ for debugging."""
+    try:
+        dest = os.path.join(SAVE_DIR, os.path.basename(filepath))
+        shutil.copy2(filepath, dest)
+        log.info(f"Saved file copy to {dest}")
+    except Exception as e:
+        log.warning(f"Failed to save file copy: {e}")
 
 
 def build_file_tools(files_dir: str) -> dict:
@@ -40,10 +54,13 @@ def build_file_tools(files_dir: str) -> dict:
 
 def _extract_pdf(filepath: str) -> dict:
     """Extract text from PDF using kreuzberg."""
+    _save_copy(filepath)
     try:
         result = extract_file_sync(filepath)
         if result.content.strip():
             log.info(f"Successfully extracted PDF with kreuzberg: {filepath}")
+            preview = result.content[:2000]
+            log.info(f"PDF extracted text ({len(result.content)} chars):\n{preview}")
             return {"text": result.content}
         else:
             return {"error": True, "message": f"Kreuzberg returned empty text for {filepath}"}
@@ -53,11 +70,14 @@ def _extract_pdf(filepath: str) -> dict:
 
 def _extract_text(filepath: str) -> dict:
     """Extract content from text/CSV files."""
+    _save_copy(filepath)
     try:
         for encoding in ("utf-8", "latin-1", "cp1252"):
             try:
                 with open(filepath, "r", encoding=encoding) as f:
                     text = f.read()
+                preview = text[:2000]
+                log.info(f"Text file extracted ({len(text)} chars, {encoding}):\n{preview}")
                 return {"text": text}
             except UnicodeDecodeError:
                 continue
@@ -68,6 +88,7 @@ def _extract_text(filepath: str) -> dict:
 
 def _extract_excel(filepath: str) -> dict:
     """Extract content from Excel files."""
+    _save_copy(filepath)
     try:
         import openpyxl
         wb = openpyxl.load_workbook(filepath, data_only=True)
@@ -79,7 +100,10 @@ def _extract_excel(filepath: str) -> dict:
                 cells = [str(c) if c is not None else "" for c in row]
                 rows.append("\t".join(cells))
             texts.append(f"Sheet: {sheet_name}\n" + "\n".join(rows))
-        return {"text": "\n\n".join(texts)}
+        full = "\n\n".join(texts)
+        preview = full[:2000]
+        log.info(f"Excel extracted ({len(full)} chars, {len(wb.sheetnames)} sheets):\n{preview}")
+        return {"text": full}
     except ImportError:
         # Fallback: try CSV-like reading
         return _extract_text(filepath)
@@ -89,9 +113,12 @@ def _extract_excel(filepath: str) -> dict:
 
 def _extract_image(filepath: str) -> dict:
     """Extract text from image using kreuzberg."""
+    _save_copy(filepath)
     try:
         result = extract_file_sync(filepath)
         if result.content.strip():
+            preview = result.content[:2000]
+            log.info(f"Image extracted text ({len(result.content)} chars):\n{preview}")
             return {"text": result.content}
         else:
             return {"error": True, "message": f"Kreuzberg returned empty text for {filepath}"}

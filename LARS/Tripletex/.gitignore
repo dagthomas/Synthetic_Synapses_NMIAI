@@ -10,3 +10,13 @@ payloads/
 e2e_report.md
 replay_report.md
 dashboard/seed_data.json
+
+# Eval artifacts
+eval_results_*.json
+eval_classifier_*.json
+eval_targeted.json
+classifier_test.json
+*.log
+
+# Extracted file content
+extracted_files/

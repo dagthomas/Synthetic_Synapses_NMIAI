@@ -1,4 +1,26 @@
 from tripletex_client import TripletexClient
+from tools._helpers import recover_error
+
+
+def _fix_norwegian_bban(acct: str) -> str:
+    """Fix mod-11 check digit on a Norwegian 11-digit bank account number."""
+    digits = "".join(c for c in acct if c.isdigit())
+    if len(digits) < 10:
+        return ""
+    d = [int(c) for c in digits[:10]]
+    weights = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2]
+    s = sum(a * b for a, b in zip(d, weights))
+    remainder = s % 11
+    if remainder == 0:
+        check = 0
+    elif remainder == 1:
+        d[9] = (d[9] + 1) % 10
+        s = sum(a * b for a, b in zip(d, weights))
+        remainder = s % 11
+        check = 0 if remainder == 0 else 11 - remainder
+    else:
+        check = 11 - remainder
+    return "".join(str(x) for x in d) + str(check)
 
 
 def build_supplier_tools(client: TripletexClient) -> dict:
@@ -36,8 +58,8 @@ def build_supplier_tools(client: TripletexClient) -> dict:
             body["phoneNumber"] = phoneNumber
         if organizationNumber:
             body["organizationNumber"] = organizationNumber
-        if bankAccountNumber:
-            body["bankAccountPresentation"] = [{"bankAccountNumber": bankAccountNumber}]
+        # Note: bankAccountPresentation on POST causes 422 in some sandbox versions.
+        # Set bank account via PUT after creation instead.
         if addressLine1 or postalCode or city:
             addr = {}
             if addressLine1:
@@ -59,8 +81,28 @@ def build_supplier_tools(client: TripletexClient) -> dict:
                 params["name"] = name
             existing = client.get("/supplier", params=params)
             vals = existing.get("values", [])
+            # Prefer name match to avoid sandbox pollution
+            for v in vals:
+                if (v.get("name") or "").strip().lower() == name.strip().lower():
+                    return {"value": v, "_note": "Supplier already existed, returning existing."}
             if vals:
                 return {"value": vals[0], "_note": "Supplier already existed, returning existing."}
+
+        # Set bank account via PUT using bban field (correct OpenAPI field name)
+        # Some sandboxes reject bankAccountPresentation — recover silently
+        sup_id = result.get("value", {}).get("id")
+        if bankAccountNumber and sup_id:
+            try:
+                bban = _fix_norwegian_bban(bankAccountNumber)
+                if bban:
+                    ba_result = client.put(f"/supplier/{sup_id}", json={
+                        "id": sup_id, "name": name,
+                        "bankAccountPresentation": [{"bban": bban}],
+                    })
+                    if ba_result.get("error"):
+                        recover_error(client, f"/supplier/{sup_id}")
+            except Exception:
+                pass  # best-effort
 
         return result
 

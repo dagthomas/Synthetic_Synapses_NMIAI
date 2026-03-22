@@ -261,7 +261,8 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         """Create a free (user-defined) accounting dimension.
 
         Tripletex supports up to 3 free dimensions (index 1, 2, 3).
-        The next available index is assigned automatically.
+        If a dimension with the same name exists, returns it.
+        If all 3 slots are taken, renames the last (index 3) dimension.
 
         Args:
             name: The dimension name (e.g. "Marked", "Region").
@@ -270,6 +271,31 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Returns:
             The created dimension with id and dimensionIndex, or error.
         """
+        # Check existing dimensions first to avoid 422 on max-3
+        existing = client.get("/ledger/accountingDimensionName",
+                              params={"fields": "id,dimensionName,dimensionIndex,active"})
+        dims = existing.get("values", [])
+
+        # If one already has the requested name, reuse it
+        for d in dims:
+            if d.get("dimensionName", "").strip().lower() == name.strip().lower():
+                return {"value": d}
+
+        # If all 3 slots taken, rename the highest-index one
+        if len(dims) >= 3:
+            target = max(dims, key=lambda d: d.get("dimensionIndex", 0))
+            rename_body = {
+                "id": target["id"],
+                "dimensionName": name,
+                "dimensionIndex": target["dimensionIndex"],
+                "active": True,
+            }
+            if description:
+                rename_body["description"] = description
+            return client.put(f"/ledger/accountingDimensionName/{target['id']}",
+                              json=rename_body)
+
+        # Slots available — create normally
         body: dict = {"dimensionName": name}
         if description:
             body["description"] = description
@@ -286,6 +312,16 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         Returns:
             The created dimension value with id, or error.
         """
+        # Search first — avoid 422 "Navnet er i bruk"
+        existing = client.get("/ledger/accountingDimensionValue/search", params={
+            "dimensionIndex": dimensionIndex,
+            "fields": "id,displayName,dimensionIndex,number,active",
+        })
+        target = name.strip().lower()
+        for v in (existing.get("values") or []):
+            if (v.get("displayName") or "").strip().lower() == target:
+                return {"value": v, "_note": "Dimension value already existed."}
+
         body: dict = {
             "displayName": name,
             "dimensionIndex": dimensionIndex,
@@ -294,7 +330,22 @@ def build_ledger_tools(client: TripletexClient) -> dict:
         }
         if number:
             body["number"] = number
-        return client.post("/ledger/accountingDimensionValue", json=body)
+        result = client.post("/ledger/accountingDimensionValue", json=body)
+
+        # Auto-recover on 422 (name collision with existing value from renamed dimension)
+        if result.get("error") and result.get("status_code") == 422:
+            from tools._helpers import recover_error
+            recover_error(client, "/ledger/accountingDimensionValue")
+            # Re-search to find the existing value
+            existing2 = client.get("/ledger/accountingDimensionValue/search", params={
+                "dimensionIndex": dimensionIndex,
+                "fields": "id,displayName,dimensionIndex,number,active",
+            })
+            for v in (existing2.get("values") or []):
+                if (v.get("displayName") or "").strip().lower() == target:
+                    return {"value": v, "_note": "Dimension value already existed (recovered)."}
+
+        return result
 
     def search_accounting_dimensions() -> dict:
         """List all free accounting dimensions.

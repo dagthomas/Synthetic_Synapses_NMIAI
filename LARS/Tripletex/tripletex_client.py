@@ -104,7 +104,10 @@ class TripletexClient:
                 for vt in vat_result.json().get("values", []):
                     num, vid = vt.get("number"), vt.get("id")
                     if num is not None and vid is not None:
-                        num = int(num)
+                        try:
+                            num = int(num)
+                        except (ValueError, TypeError):
+                            continue
                         if num in _OUT:
                             vat_map[_OUT[num]] = vid
                         elif num in _ZERO:
@@ -129,6 +132,85 @@ class TripletexClient:
                 accts = acct_result.json().get("values", [])
                 if accts:
                     self._cache["acct_2400"] = accts[0]["id"]
+        except Exception:
+            pass
+        # Bank account 1920 (used by invoice/payment tools)
+        try:
+            ba_result = requests.get(
+                f"{self.base_url}/ledger/account",
+                auth=self.auth,
+                params={"number": "1920", "fields": "id,name,isBankAccount,bankAccountNumber"},
+                timeout=10,
+            )
+            if ba_result.status_code == 200:
+                accts = ba_result.json().get("values", [])
+                if accts:
+                    acct = accts[0]
+                    if acct.get("bankAccountNumber"):
+                        self._cache["bank_account_ensured"] = True
+                    else:
+                        # Set a bank account number so payments work
+                        try:
+                            requests.put(
+                                f"{self.base_url}/ledger/account/{acct['id']}",
+                                auth=self.auth, timeout=10,
+                                json={
+                                    "id": acct["id"], "number": 1920,
+                                    "name": acct["name"],
+                                    "isBankAccount": True,
+                                    "bankAccountNumber": "12345678903",
+                                },
+                            )
+                        except Exception:
+                            pass
+                        self._cache["bank_account_ensured"] = True
+        except Exception:
+            pass
+        # Company ID (used by project PM entitlements)
+        try:
+            who_result = requests.get(
+                f"{self.base_url}/token/session/>whoAmI",
+                auth=self.auth,
+                params={"fields": "companyId"},
+                timeout=10,
+            )
+            if who_result.status_code == 200:
+                cid = who_result.json().get("value", {}).get("companyId")
+                if cid:
+                    self._cache["company_id"] = cid
+        except Exception:
+            pass
+        # Admin employee ID (first employee — used as default project manager)
+        try:
+            emp_result = requests.get(
+                f"{self.base_url}/employee",
+                auth=self.auth,
+                params={"fields": "id", "count": 1},
+                timeout=10,
+            )
+            if emp_result.status_code == 200:
+                emps = emp_result.json().get("values", [])
+                if emps:
+                    self._cache["admin_employee_id"] = emps[0]["id"]
+        except Exception:
+            pass
+        # Payment type (bank — used by register_payment)
+        try:
+            pt_result = requests.get(
+                f"{self.base_url}/invoice/paymentType",
+                auth=self.auth,
+                params={"fields": "id,description", "count": 10},
+                timeout=10,
+            )
+            if pt_result.status_code == 200:
+                for pt in pt_result.json().get("values", []):
+                    if "bank" in pt.get("description", "").lower():
+                        self._cache["payment_type_bank"] = pt["id"]
+                        break
+                else:
+                    pts = pt_result.json().get("values", [])
+                    if pts:
+                        self._cache["payment_type_bank"] = pts[0]["id"]
         except Exception:
             pass
 

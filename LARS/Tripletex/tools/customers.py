@@ -31,16 +31,6 @@ def build_customer_tools(client: TripletexClient) -> dict:
         Returns:
             The created customer with id and fields, or an error message.
         """
-        # Search-first: avoid creating duplicates (Tripletex allows them!)
-        if organizationNumber:
-            existing = client.get("/customer", params={
-                "organizationNumber": organizationNumber,
-                "fields": "id,name,email,organizationNumber,isCustomer,isSupplier",
-            })
-            vals = existing.get("values", [])
-            if vals:
-                return {"value": vals[0], "_note": "Customer already existed, returning existing."}
-
         body = {"name": name, "isCustomer": isCustomer}
         if email:
             body["email"] = email
@@ -71,6 +61,10 @@ def build_customer_tools(client: TripletexClient) -> dict:
                 params["name"] = name
             existing = client.get("/customer", params=params)
             vals = existing.get("values", [])
+            # Prefer name match to avoid sandbox pollution
+            for v in vals:
+                if (v.get("name") or "").strip().lower() == name.strip().lower():
+                    return {"value": v, "_note": "Customer already existed, returning existing."}
             if vals:
                 return {"value": vals[0], "_note": "Customer already existed, returning existing."}
 

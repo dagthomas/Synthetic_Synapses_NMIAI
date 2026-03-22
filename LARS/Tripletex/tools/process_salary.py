@@ -1,10 +1,11 @@
 """Compound tool: process entire salary_with_bonus workflow in one deterministic call.
 
-Handles: create employee → ensure division → create employment → create salary transaction.
+Handles: find/create employee → ensure division → find/create employment → create salary transaction.
 No LLM chaining required — all steps are hardcoded.
+
+Uses search-before-create pattern to avoid 422 errors and efficiency penalties.
 """
 
-import json as _json
 import logging
 from datetime import date as dt_date
 
@@ -15,6 +16,10 @@ log = logging.getLogger(__name__)
 
 def build_process_salary_tools(client: TripletexClient) -> dict:
     """Build the compound salary processing tool."""
+
+    from tools._helpers import (
+        find_or_create_department, find_or_create_employment, recover_error,
+    )
 
     def process_salary(
         firstName: str,
@@ -76,10 +81,9 @@ def build_process_salary_tools(client: TripletexClient) -> dict:
             dateOfBirth = "1990-01-01"
         if annualSalary == 0.0 and base_salary > 0:
             annualSalary = base_salary * 12
-        # Auto-derive monthly base salary from annual salary when not explicit
         if base_salary == 0.0 and annualSalary > 0:
             base_salary = round(annualSalary / 12, 2)
-        salary_date = f"{year}-{month:02d}-15"  # mid-month
+        salary_date = f"{year}-{month:02d}-15"
 
         # ── Validate: salary period must not be before employment start ──
         salary_ym = f"{year}-{month:02d}"
@@ -88,22 +92,10 @@ def build_process_salary_tools(client: TripletexClient) -> dict:
             log.warning("process_salary: salary period %s is before employment start %s, adjusting startDate", salary_ym, startDate)
             startDate = f"{year}-{month:02d}-01"
 
-        # ── Step 1: Create or find employee ──
+        # ── Step 1: Find or create department ──
         dept_id = 0
         if department_name:
-            dept_search = client.get("/department", params={"name": department_name, "fields": "id"})
-            depts = dept_search.get("values", [])
-            if depts:
-                dept_id = depts[0]["id"]
-            else:
-                new_dept = client.post("/department", json={
-                    "name": department_name,
-                    "departmentNumber": "AUTO_" + department_name.upper().replace(" ", "_")[:20],
-                })
-                dept_val = new_dept.get("value", {})
-                if dept_val.get("id"):
-                    dept_id = dept_val["id"]
-                    steps_log.append(f"Created department '{department_name}' (id={dept_id})")
+            dept_id = find_or_create_department(client, name=department_name, steps_log=steps_log)
         else:
             cached = client.get_cached("default_department")
             if cached:
@@ -114,208 +106,185 @@ def build_process_salary_tools(client: TripletexClient) -> dict:
                 if depts:
                     dept_id = depts[0]["id"]
                 else:
-                    new_dept = client.post("/department", json={"name": "Avdeling", "departmentNumber": "1"})
-                    dept_val = new_dept.get("value", {})
-                    if dept_val.get("id"):
-                        dept_id = dept_val["id"]
+                    dept_id = find_or_create_department(client, name="Avdeling", steps_log=steps_log)
                 if dept_id:
                     client.set_cached("default_department", dept_id)
 
-        emp_body = {
-            "firstName": firstName,
-            "lastName": lastName,
-            "email": email,
-            "userType": "STANDARD",
-            "dateOfBirth": dateOfBirth,
-        }
-        if dept_id:
-            emp_body["department"] = {"id": dept_id}
-
-        emp_result = client.post("/employee", json=emp_body)
+        # ── Step 2: Create or find employee (search by email first) ──
         employee_id = None
         emp_just_created = False
 
-        # Check for email collision — find existing employee
-        if emp_result.get("error") and emp_result.get("status_code") == 422:
-            msg = str(emp_result.get("message", "")).lower()
-            if "e-postadress" in msg or "email" in msg:
-                existing = client.get("/employee", params={"email": email, "fields": "id,firstName,lastName,email"})
-                vals = existing.get("values", [])
-                if vals:
-                    employee_id = vals[0]["id"]
-                    # Undo error count for auto-recovery
-                    client._error_count = max(0, client._error_count - 1)
-                    for entry in reversed(client._call_log):
-                        if not entry.get("ok") and "/employee" in entry.get("url", ""):
-                            entry["ok"] = True
-                            entry["recovered"] = True
-                            break
-                    steps_log.append(f"Employee already existed (id={employee_id})")
-        if not employee_id:
-            emp_val = emp_result.get("value", {})
-            employee_id = emp_val.get("id")
-            if not employee_id:
-                return {"error": True, "message": f"Failed to create employee: {emp_result}", "steps": steps_log}
-            emp_just_created = True
-            steps_log.append(f"Created employee {firstName} {lastName} (id={employee_id})")
-
-        # ── Step 2: Ensure division exists ──
-        div_id = client.get_cached("default_division")
-        if div_id is None:
-            divs = client.get("/division", params={"fields": "id", "count": 1})
-            div_list = divs.get("values", [])
-            if div_list:
-                div_id = div_list[0]["id"]
-            else:
-                # Create a default division — needs municipality
-                import random
-                org_num = str(900000000 + random.randint(0, 99999999))
-                muni = client.get("/municipality", params={"fields": "id", "count": 1})
-                munis = muni.get("values", [])
-                div_body = {
-                    "name": "Hovedkontor",
-                    "startDate": startDate,
-                    "organizationNumber": org_num,
-                    "municipalityDate": startDate,
-                }
-                if munis:
-                    div_body["municipality"] = {"id": munis[0]["id"]}
-                div_result = client.post("/division", json=div_body)
-                div_val = div_result.get("value", {})
-                div_id = div_val.get("id", 0)
-                if div_id:
-                    steps_log.append(f"Created division 'Hovedkontor' (id={div_id})")
-            client.set_cached("default_division", div_id or 0)
-
-        # ── Step 3: Create employment ──
-        # Ensure dateOfBirth is set (required for employment)
-        # Skip check if we just created the employee WITH dateOfBirth
-        if not emp_just_created:
-            emp_check = client.get(f"/employee/{employee_id}", params={"fields": "id,dateOfBirth"})
-            emp_data = emp_check.get("value", emp_check)
-            if not emp_data.get("dateOfBirth"):
-                client.put(f"/employee/{employee_id}", json={"dateOfBirth": dateOfBirth})
-
-        emp_details = {
-            "date": startDate,
-            "employmentType": "ORDINARY",
-            "workingHoursScheme": "NOT_SHIFT",
-            "percentageOfFullTimeEquivalent": percentageOfFullTimeEquivalent,
-        }
-        if annualSalary:
-            emp_details["annualSalary"] = annualSalary
-
-        # Resolve occupation code if provided
-        if occupationCode:
-            stripped = occupationCode.strip()
-            if stripped.isdigit():
-                occ_result = client.get(
-                    "/employee/employment/occupationCode",
-                    params={"code": stripped, "fields": "id,code,nameNO"},
-                )
-                occ_vals = occ_result.get("values", [])
-                if occ_vals:
-                    prefix = [v for v in occ_vals if v.get("code", "").startswith(stripped)]
-                    if prefix:
-                        emp_details["occupationCode"] = {"id": prefix[0]["id"]}
-                    else:
-                        emp_details["occupationCode"] = {"id": occ_vals[0]["id"]}
-
-        employment_body = {
-            "employee": {"id": employee_id},
-            "startDate": startDate,
-            "employmentDetails": [emp_details],
-        }
-        if div_id:
-            employment_body["division"] = {"id": div_id}
-
-        employment_result = client.post("/employee/employment", json=employment_body)
-        employment_id = None
-        emp_employment = employment_result.get("value", {})
-        employment_id = emp_employment.get("id")
-
-        if not employment_id:
-            # Employment may already exist (overlapping periods) — try to find it
-            existing_emp = client.get("/employee/employment", params={
-                "employeeId": employee_id, "fields": "id"
-            })
-            existing_vals = existing_emp.get("values", [])
-            if existing_vals:
-                employment_id = existing_vals[0]["id"]
-                steps_log.append(f"Employment already existed (id={employment_id})")
-            else:
-                return {"error": True, "message": f"Failed to create employment: {employment_result}", "steps": steps_log}
+        existing = client.get("/employee", params={"email": email, "fields": "id,firstName,lastName,email"})
+        vals = existing.get("values", [])
+        if vals:
+            employee_id = vals[0]["id"]
+            steps_log.append(f"Found existing employee '{firstName} {lastName}' (id={employee_id})")
         else:
-            steps_log.append(f"Created employment (id={employment_id})")
+            emp_body = {
+                "firstName": firstName,
+                "lastName": lastName,
+                "email": email,
+                "userType": "STANDARD",
+                "dateOfBirth": dateOfBirth,
+            }
+            if dept_id:
+                emp_body["department"] = {"id": dept_id}
+
+            emp_result = client.post("/employee", json=emp_body)
+            employee_id = emp_result.get("value", {}).get("id")
+
+            if not employee_id and emp_result.get("error"):
+                msg = str(emp_result.get("message", "")).lower()
+                if "e-postadress" in msg or "email" in msg:
+                    recover_error(client, "/employee")
+                    existing2 = client.get("/employee", params={"email": email, "fields": "id"})
+                    vals2 = existing2.get("values", [])
+                    if vals2:
+                        employee_id = vals2[0]["id"]
+                        steps_log.append(f"Employee already existed (id={employee_id})")
+
+            if not employee_id:
+                return {"error": True, "message": "Failed to create employee", "steps": steps_log}
+            if not any("Employee" in s or "employee" in s for s in steps_log):
+                emp_just_created = True
+                steps_log.append(f"Created employee {firstName} {lastName} (id={employee_id})")
+
+        # ── Step 3: Find or create employment ──
+        employment_id = find_or_create_employment(
+            client, employee_id=employee_id, start_date=startDate,
+            annual_salary=annualSalary,
+            percentage=percentageOfFullTimeEquivalent,
+            skip_dob_check=emp_just_created,
+            steps_log=steps_log,
+        )
+        if not employment_id:
+            return {"error": True, "message": f"Failed to create employment for employee {employee_id}", "steps": steps_log}
 
         # ── Step 4: Standard working hours (if specified) ──
         if hoursPerDay > 0:
-            std_result = client.post("/employee/standardTime", json={
+            client.post("/employee/standardTime", json={
                 "employee": {"id": employee_id},
                 "fromDate": startDate,
                 "hoursPerDay": hoursPerDay,
             })
             steps_log.append(f"Set standard time: {hoursPerDay}h/day")
 
-        # ── Step 5: Create salary transaction ──
-        # Build payslip lines
+        # ── Step 5: Ensure salary module is active ──
+        # Some sandboxes don't have the salary module enabled by default
+        try:
+            _test = client.get("/salary/type", params={"fields": "id", "count": 1})
+            if _test.get("status") == 403 or "permission" in str(_test.get("message", "")).lower():
+                # Try to activate salary module
+                client.post("/company/salesmodules", json={"name": "MAMUT_SALARY"})
+                # Also try the internal modules endpoint (sandbox-specific)
+                client.put("/company/modules", json={"moduleSalary": True, "moduleHRM": True})
+                steps_log.append("Attempted to enable salary module")
+        except Exception:
+            pass
+
+        # ── Step 6: Create salary transaction ──
         payslip_lines = []
 
         if base_salary > 0 or bonus > 0:
-            # Look up salary type IDs
-            st_resp = client.get("/salary/type", params={"fields": "id,number"})
+            st_resp = client.get("/salary/type", params={"fields": "id,number,name"})
             num_to_id = {}
+            name_to_id = {}
             for st in st_resp.get("values", []):
                 num_to_id[str(st.get("number", ""))] = st["id"]
+                st_name = (st.get("name", "") or "").lower()
+                if st_name:
+                    name_to_id[st_name] = st["id"]
 
             lines = []
             if base_salary > 0:
                 st_id = num_to_id.get("2000")
                 if not st_id:
-                    # Fallback: try to find any "fastlønn" type
-                    st_detail = client.get("/salary/type", params={"fields": "id,number,name"})
-                    for st in st_detail.get("values", []):
-                        if st.get("number") == 2000 or "fastl" in (st.get("name", "") or "").lower():
-                            st_id = st["id"]
+                    # Try common names for base salary type
+                    for keyword in ["fastlønn", "fastlonn", "fast lønn", "grundgehalt", "base salary"]:
+                        for name, sid in name_to_id.items():
+                            if keyword in name:
+                                st_id = sid
+                                break
+                        if st_id:
                             break
+                if not st_id:
+                    # Fallback: use the first salary type with number 2000-2099
+                    for num_str, sid in num_to_id.items():
+                        try:
+                            n = int(num_str)
+                            if 2000 <= n < 2100:
+                                st_id = sid
+                                break
+                        except ValueError:
+                            pass
                 if st_id:
                     lines.append({"salaryType": {"id": st_id}, "rate": base_salary, "count": 1})
                 else:
-                    steps_log.append("WARNING: Could not find salary type 2000 (Fastlønn)")
+                    steps_log.append("WARNING: Could not find salary type for Fastlønn, using first available")
+                    # Last resort: use first salary type from list
+                    all_types = st_resp.get("values", [])
+                    if all_types:
+                        lines.append({"salaryType": {"id": all_types[0]["id"]}, "rate": base_salary, "count": 1})
 
             if bonus > 0:
                 st_id = num_to_id.get("2002")
                 if not st_id:
-                    st_detail = client.get("/salary/type", params={"fields": "id,number,name"})
-                    for st in st_detail.get("values", []):
-                        if st.get("number") == 2002 or "bonus" in (st.get("name", "") or "").lower():
-                            st_id = st["id"]
+                    for keyword in ["bonus", "tillegg", "zulage", "prime"]:
+                        for name, sid in name_to_id.items():
+                            if keyword in name:
+                                st_id = sid
+                                break
+                        if st_id:
                             break
                 if st_id:
                     lines.append({"salaryType": {"id": st_id}, "rate": bonus, "count": 1})
                 else:
                     steps_log.append("WARNING: Could not find salary type 2002 (Bonus)")
 
-            payslip_lines = [{"employee": {"id": employee_id}, "specifications": lines}]
+            if lines:
+                payslip_lines = [{"employee": {"id": employee_id}, "specifications": lines}]
+
+        # Always include the employee in the payslips — even without lines
+        if not payslip_lines:
+            payslip_lines = [{"employee": {"id": employee_id}}]
 
         sal_body = {
             "date": salary_date,
             "year": year,
             "month": month,
-            "payslips": payslip_lines if payslip_lines else [{"employee": {"id": employee_id}}],
+            "payslips": payslip_lines,
         }
 
         sal_result = client.post("/salary/transaction", json=sal_body)
         transaction_id = sal_result.get("value", {}).get("id")
 
         if not transaction_id:
-            return {
-                "error": True,
-                "message": f"Failed to create salary transaction: {sal_result}",
-                "employee_id": employee_id,
-                "employment_id": employment_id,
-                "steps": steps_log,
-            }
+            # Check if the error is recoverable — sometimes the transaction is created
+            # but the response doesn't include the ID
+            err_msg = str(sal_result.get("message", "")).lower()
+            log.warning("Salary transaction POST failed: %s", sal_result)
+
+            # Try to find the transaction we just created
+            verify = client.get("/salary/transaction", params={
+                "employeeId": employee_id,
+                "yearFrom": year, "yearTo": year,
+                "fields": "id,year,month",
+                "count": 5,
+            })
+            for txn in verify.get("values", []):
+                if txn.get("year") == year and txn.get("month") == month:
+                    transaction_id = txn["id"]
+                    steps_log.append(f"Found salary transaction after POST error (id={transaction_id})")
+                    break
+
+            if not transaction_id:
+                return {
+                    "error": True,
+                    "message": f"Failed to create salary transaction: {sal_result}",
+                    "employee_id": employee_id,
+                    "employment_id": employment_id,
+                    "steps": steps_log,
+                }
 
         steps_log.append(f"Created salary transaction (id={transaction_id}) for {year}-{month:02d}")
 

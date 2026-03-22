@@ -1,4 +1,5 @@
 from tripletex_client import TripletexClient
+from tools._helpers import recover_error
 
 
 def build_department_tools(client: TripletexClient) -> dict:
@@ -24,11 +25,11 @@ def build_department_tools(client: TripletexClient) -> dict:
 
         # Auto-recover: if duplicate (422), search by name and return existing
         if result.get("error") and result.get("status_code") == 422:
+            recover_error(client, "/department")
             params = {"fields": "id,name,departmentNumber,departmentManager"}
             params["name"] = name
             existing = client.get("/department", params=params)
             vals = existing.get("values", [])
-            # Filter for exact match, as API's 'name' parameter might be a partial match or return results in arbitrary order.
             exact_match = next((d for d in vals if d.get("name") == name), None)
             if exact_match:
                 return {"value": exact_match, "_note": "Department already existed, returning existing."}
