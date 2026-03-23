@@ -21,8 +21,9 @@
 	import { createFlythrough, type FlythroughSystem } from './flythrough';
 	import { createScatter, type ScatterSystem } from './scatter';
 	import { createCreatures, type CreatureSystem } from './creatures';
-	import { createWater, type WaterSystem } from './water';
+	import { createWater, createMoatAndWaterfalls, type WaterSystem, type MoatSystem } from './water';
 	import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
+	import { createWind, applyWindSway, type WindSystem } from './wind';
 
 	let {
 		grid,
@@ -104,6 +105,9 @@
 	let scatter: ScatterSystem | null = null;
 	let creatureSystem: CreatureSystem | null = null;
 	let waterSystem: WaterSystem | null = null;
+	let moatSystem: MoatSystem | null = null;
+	let windSystem: WindSystem | null = null;
+	let gridOverlay: THREE.Group | null = null;
 	let fpAudio: HTMLAudioElement | null = null;
 	let pointerLocked = $state(false);
 	let lastCamX: number | null = null;
@@ -156,12 +160,14 @@
 		return terrainSystem ? terrainSystem.getHeightAt(wx, wz) : 0.1;
 	}
 
-	/** Cleanup grid-dependent systems only (terrain, creatures, scatter, water) */
+	/** Cleanup grid-dependent systems only (terrain, creatures, scatter, water, weather) */
 	function cleanupGridSystems() {
 		if (terrainSystem) { terrainSystem.dispose(); terrainSystem = null; }
 		if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
 		if (scatter) { scatter.dispose(); scatter = null; }
 		if (waterSystem) { waterSystem.dispose(); waterSystem = null; }
+		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
+		if (moatSystem) { moatSystem.dispose(); moatSystem = null; }
 		blockyTerrainGroup = null;
 		settlementLights = [];
 		fireParticles = [];
@@ -257,10 +263,11 @@
 			atmosphere = createAtmosphere(scene, grid, terrainSystem.getHeightAt);
 		}
 
-		// Higher quality shadows for ground-level (4K for RTX class GPUs)
+		// Higher quality shadows for ground-level (1K flythrough, 4K walking)
 		if (sunLight) {
-			sunLight.shadow.mapSize.width = 4096;
-			sunLight.shadow.mapSize.height = 4096;
+			const shadowRes = flythroughActive ? 1024 : 4096;
+			sunLight.shadow.mapSize.width = shadowRes;
+			sunLight.shadow.mapSize.height = shadowRes;
 			sunLight.shadow.camera.near = 0.5;
 			sunLight.shadow.camera.far = 60;
 			sunLight.shadow.camera.left = -20;
@@ -411,6 +418,9 @@
 			if (flythroughActive) { stopFlythrough(); exitFPMode(); }
 			else if (fpMode) exitFPMode();
 		}
+		if (e.code === 'KeyG') {
+			if (gridOverlay) gridOverlay.visible = !gridOverlay.visible;
+		}
 	}
 
 	async function startFlythrough() {
@@ -477,17 +487,182 @@
 		}
 	}
 
+	// Grid overlay colors — bold, saturated, distinct per type
+	const TERRAIN_RGB: Record<number, [number, number, number]> = {
+		0:  [0.85, 0.75, 0.45],  // Sand: warm yellow-tan
+		1:  [0.90, 0.65, 0.15],  // Settlement: deep orange
+		2:  [0.20, 0.60, 0.95],  // Port: bright blue
+		3:  [0.80, 0.25, 0.20],  // Ruin: strong red
+		4:  [0.10, 0.45, 0.10],  // Forest: dark green
+		5:  [0.50, 0.50, 0.55],  // Mountain: steel gray
+		10: [0.10, 0.25, 0.70],  // Ocean: deep navy
+		11: [0.55, 0.80, 0.20],  // Plains: bright lime-green
+	};
+	const DEFAULT_RGB: [number, number, number] = [0.10, 0.45, 0.10];
+
+	/** Build a 3D grid overlay: floor tiles + 2m vertical walls per cell border,
+	 *  colored by terrain type, fading to transparent at the top. */
+	function buildGridOverlay(g: number[][], heightFn: (x: number, z: number) => number): THREE.Group {
+		const r = g.length, c = g[0].length;
+		const wallH = 2.0;
+		const group = new THREE.Group();
+
+		// --- Floor: colored transparent tiles ---
+		const floorPositions: number[] = [];
+		const floorColors: number[] = [];
+		const floorAlphas: number[] = [];
+		const floorIndices: number[] = [];
+
+		for (let z = 0; z < r; z++) {
+			for (let x = 0; x < c; x++) {
+				const code = g[z][x];
+				const rgb = TERRAIN_RGB[code] ?? DEFAULT_RGB;
+				const wx = x - c / 2 + 0.5;
+				const wz = z - r / 2 + 0.5;
+				const h = heightFn(wx, wz) + 0.06;
+				const hs = 0.48; // half cell size (slight gap)
+				const vi = floorPositions.length / 3;
+
+				// 4 corners of the cell
+				floorPositions.push(wx - hs, h, wz - hs);
+				floorPositions.push(wx + hs, h, wz - hs);
+				floorPositions.push(wx + hs, h, wz + hs);
+				floorPositions.push(wx - hs, h, wz + hs);
+				for (let k = 0; k < 4; k++) {
+					floorColors.push(rgb[0], rgb[1], rgb[2]);
+					floorAlphas.push(0.45);
+				}
+				floorIndices.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
+			}
+		}
+
+		const floorGeo = new THREE.BufferGeometry();
+		floorGeo.setAttribute('position', new THREE.Float32BufferAttribute(floorPositions, 3));
+		floorGeo.setAttribute('color', new THREE.Float32BufferAttribute(floorColors, 3));
+		floorGeo.setAttribute('aAlpha', new THREE.Float32BufferAttribute(floorAlphas, 1));
+		floorGeo.setIndex(floorIndices);
+
+		// --- Flood-fill cluster sizes per cell (connected same-type neighbors) ---
+		const clusterSize = new Int32Array(c * r);
+		const visited = new Uint8Array(c * r);
+		for (let z = 0; z < r; z++) {
+			for (let x = 0; x < c; x++) {
+				if (visited[z * c + x]) continue;
+				const code = g[z][x];
+				// BFS flood fill
+				const queue: [number, number][] = [[x, z]];
+				const cells: number[] = [];
+				visited[z * c + x] = 1;
+				while (queue.length > 0) {
+					const [cx, cz] = queue.pop()!;
+					cells.push(cz * c + cx);
+					for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]] as const) {
+						const nx = cx + dx, nz = cz + dz;
+						if (nx >= 0 && nx < c && nz >= 0 && nz < r && !visited[nz * c + nx] && g[nz][nx] === code) {
+							visited[nz * c + nx] = 1;
+							queue.push([nx, nz]);
+						}
+					}
+				}
+				for (const idx of cells) clusterSize[idx] = cells.length;
+			}
+		}
+
+		// --- Walls: vertical quads at cell borders, height scales with cluster size ---
+		const wallPositions: number[] = [];
+		const wallColors: number[] = [];
+		const wallAlphas: number[] = [];
+		const wallIndices: number[] = [];
+
+		function addWall(x1: number, z1: number, x2: number, z2: number, rgb: [number, number, number], h: number) {
+			const h1 = heightFn((x1 + x2) / 2, (z1 + z2) / 2) + 0.06;
+			const vi = wallPositions.length / 3;
+			wallPositions.push(x1, h1, z1);
+			wallPositions.push(x2, h1, z2);
+			wallPositions.push(x2, h1 + h, z2);
+			wallPositions.push(x1, h1 + h, z1);
+
+			for (let k = 0; k < 4; k++) wallColors.push(rgb[0], rgb[1], rgb[2]);
+			wallAlphas.push(0.5, 0.5, 0.0, 0.0);
+			wallIndices.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
+		}
+
+		const PLAINS_CODE = 11;
+		for (let z = 0; z <= r; z++) {
+			for (let x = 0; x <= c; x++) {
+				const wx = x - c / 2;
+				const wz = z - r / 2;
+				const ci = Math.min(z, r - 1) * c + Math.min(x, c - 1);
+				const cellCode = g[Math.min(z, r - 1)]?.[Math.min(x, c - 1)] ?? 0;
+				const rgb = TERRAIN_RGB[cellCode] ?? DEFAULT_RGB;
+
+				// Wall height: base 1.0, scales up with cluster size (except plains)
+				const cs = clusterSize[ci] ?? 1;
+				const cellWallH = cellCode === PLAINS_CODE
+					? wallH * 0.5
+					: wallH * (0.5 + Math.min(cs, 20) / 20 * 1.5);
+
+				if (x < c) addWall(wx, wz, wx + 1, wz, rgb, cellWallH);
+				if (z < r) addWall(wx, wz, wx, wz + 1, rgb, cellWallH);
+			}
+		}
+
+		const wallGeo = new THREE.BufferGeometry();
+		wallGeo.setAttribute('position', new THREE.Float32BufferAttribute(wallPositions, 3));
+		wallGeo.setAttribute('color', new THREE.Float32BufferAttribute(wallColors, 3));
+		wallGeo.setAttribute('aAlpha', new THREE.Float32BufferAttribute(wallAlphas, 1));
+		wallGeo.setIndex(wallIndices);
+
+		// Shared shader material: vertex colors + per-vertex alpha
+		const gridMat = new THREE.ShaderMaterial({
+			vertexShader: /* glsl */ `
+				attribute float aAlpha;
+				varying vec3 vColor;
+				varying float vAlpha;
+				void main() {
+					vColor = color;
+					vAlpha = aAlpha;
+					gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+				}
+			`,
+			fragmentShader: /* glsl */ `
+				varying vec3 vColor;
+				varying float vAlpha;
+				void main() {
+					gl_FragColor = vec4(vColor, vAlpha);
+				}
+			`,
+			transparent: true,
+			depthWrite: false,
+			side: THREE.DoubleSide,
+			vertexColors: true,
+		});
+
+		const floorMesh = new THREE.Mesh(floorGeo, gridMat);
+		floorMesh.renderOrder = 10;
+		group.add(floorMesh);
+
+		const wallMesh = new THREE.Mesh(wallGeo, gridMat);
+		wallMesh.renderOrder = 10;
+		group.add(wallMesh);
+
+		group.visible = false; // G to toggle
+		return group;
+	}
+
 	// --- Floating island cone with earthy underside ---
 	function buildIslandSlab(cols: number, rows: number) {
 		const rng = mulberry32(12345);
-		const topRadius = Math.max(cols, rows) / 2 + 2;
-		const bottomRadius = 1.5;
-		const coneHeight = 10.0;
-		const radialSegs = 48;
-		const heightSegs = 20;
+		// Diagonal radius covers rectangular terrain corners
+		const topRadius = Math.sqrt(cols * cols + rows * rows) / 2 + 4;
+		const bottomRadius = 2.0;
+		const coneHeight = 26.0;
+		const radialSegs = 56;
+		const heightSegs = 24;
 
 		// Inverted cone: wide at top (terrain level), narrows to a point below
-		const geo = new THREE.CylinderGeometry(topRadius, bottomRadius, coneHeight, radialSegs, heightSegs, false);
+		// openEnded=true so the top cap doesn't hide terrain lakes/ocean tiles
+		const geo = new THREE.CylinderGeometry(topRadius, bottomRadius, coneHeight, radialSegs, heightSegs, true);
 
 		// Perturb vertices: heavy noise for organic mud/roots/carved stone look
 		const pos = geo.attributes.position;
@@ -498,41 +673,54 @@
 			const z = pos.getZ(i);
 
 			// Heavy noise for carved stone effect, more in the middle
-			const noiseScale = Math.sin(normalizedY * Math.PI) * 1.2;
+			const noiseScale = Math.sin(normalizedY * Math.PI) * 1.5;
 			// Vertical ridges (root-like grooves)
 			const angle = Math.atan2(z, x);
-			const ridgeNoise = Math.sin(angle * 8 + normalizedY * 12) * 0.3 * (1 - normalizedY);
+			const ridgeNoise = Math.sin(angle * 8 + normalizedY * 12) * 0.4 * (1 - normalizedY);
 			const jitterX = (rng() - 0.5) * noiseScale + Math.cos(angle) * ridgeNoise;
 			const jitterZ = (rng() - 0.5) * noiseScale + Math.sin(angle) * ridgeNoise;
-			const jitterY = (rng() - 0.5) * 0.25;
+			const jitterY = (rng() - 0.5) * 0.3;
 
 			pos.setX(i, pos.getX(i) + jitterX);
 			pos.setZ(i, pos.getZ(i) + jitterZ);
-			if (normalizedY < 0.93) {
+			if (normalizedY < 0.95) {
 				pos.setY(i, pos.getY(i) + jitterY);
 			}
 		}
 		pos.needsUpdate = true;
 		geo.computeVertexNormals();
 
-		// Vertex colors: grass rim → wet mud → dark earth with roots → gray stone
+		// Vertex colors: terrain-matched rim → wet mud → dark earth → gray stone
 		const colors = new Float32Array(pos.count * 3);
-		const grassCol = [0.32, 0.50, 0.20];
 		const mudCol   = [0.40, 0.30, 0.18]; // wet dark mud
 		const rootCol  = [0.30, 0.22, 0.12]; // dark root/earth
 		const stoneCol = [0.28, 0.26, 0.24]; // carved stone
+		const ox = -cols / 2;
+		const oz = -rows / 2;
 
 		for (let i = 0; i < pos.count; i++) {
+			const vx = pos.getX(i);
+			const vz = pos.getZ(i);
 			const y = pos.getY(i);
 			const t = (y + coneHeight / 2) / coneHeight;
+
+			// Sample grid terrain color at top-rim vertex position
+			const gx = Math.floor(vx - ox);
+			const gz = Math.floor(vz - oz);
+			let rimCol = DEFAULT_RGB;
+			if (gx >= 0 && gx < cols && gz >= 0 && gz < rows) {
+				const code = grid[gz][gx];
+				rimCol = TERRAIN_RGB[code] ?? DEFAULT_RGB;
+			}
+
 			let r: number, g: number, b: number;
-			if (t > 0.88) {
-				const blend = (t - 0.88) / 0.12;
-				r = mudCol[0] + (grassCol[0] - mudCol[0]) * blend;
-				g = mudCol[1] + (grassCol[1] - mudCol[1]) * blend;
-				b = mudCol[2] + (grassCol[2] - mudCol[2]) * blend;
+			if (t > 0.90) {
+				const blend = (t - 0.90) / 0.10;
+				r = mudCol[0] + (rimCol[0] - mudCol[0]) * blend;
+				g = mudCol[1] + (rimCol[1] - mudCol[1]) * blend;
+				b = mudCol[2] + (rimCol[2] - mudCol[2]) * blend;
 			} else if (t > 0.55) {
-				const blend = (t - 0.55) / 0.33;
+				const blend = (t - 0.55) / 0.35;
 				r = rootCol[0] + (mudCol[0] - rootCol[0]) * blend;
 				g = rootCol[1] + (mudCol[1] - rootCol[1]) * blend;
 				b = rootCol[2] + (mudCol[2] - rootCol[2]) * blend;
@@ -544,8 +732,8 @@
 			} else {
 				r = stoneCol[0]; g = stoneCol[1]; b = stoneCol[2];
 			}
-			// More aggressive noise for mottled mud/stone look
-			const noise = (rng() - 0.5) * 0.10;
+			// Slight noise for mottled look
+			const noise = (rng() - 0.5) * 0.08;
 			colors[i * 3] = Math.max(0, r + noise);
 			colors[i * 3 + 1] = Math.max(0, g + noise);
 			colors[i * 3 + 2] = Math.max(0, b + noise);
@@ -560,27 +748,226 @@
 		});
 
 		const mesh = new THREE.Mesh(geo, mat);
-		mesh.position.set(0, -coneHeight / 2 - 0.15, 0); // top flush with terrain base
+		// Position cone so its top surface sits flush with terrain base (y=0)
+		mesh.position.set(0, -coneHeight / 2 + 0.05, 0);
 		mesh.receiveShadow = true;
 		mesh.castShadow = true;
 		scene.add(mesh);
 
+		// --- Opaque moat floor (prevents seeing inside the open cone) ---
+		const moatW = 2.5;
+		const mfOuterW = cols / 2 + moatW, mfOuterH = rows / 2 + moatW;
+		const mfInnerW = cols / 2 - 0.3, mfInnerH = rows / 2 - 0.3;
+		const cr = 2.0; // corner radius matching moat water shader
+		function rrect(t: THREE.Shape | THREE.Path, hw: number, hh: number, r: number) {
+			t.moveTo(-hw + r, -hh);
+			t.lineTo(hw - r, -hh);
+			t.absarc(hw - r, -hh + r, r, -Math.PI / 2, 0, false);
+			t.lineTo(hw, hh - r);
+			t.absarc(hw - r, hh - r, r, 0, Math.PI / 2, false);
+			t.lineTo(-hw + r, hh);
+			t.absarc(-hw + r, hh - r, r, Math.PI / 2, Math.PI, false);
+			t.lineTo(-hw, -hh + r);
+			t.absarc(-hw + r, -hh + r, r, Math.PI, Math.PI * 1.5, false);
+		}
+		const mfShape = new THREE.Shape();
+		rrect(mfShape, mfOuterW, mfOuterH, cr);
+		mfShape.closePath();
+		const mfHole = new THREE.Path();
+		rrect(mfHole, mfInnerW, mfInnerH, cr * 0.5);
+		mfHole.closePath();
+		mfShape.holes.push(mfHole);
+		const mfGeo = new THREE.ShapeGeometry(mfShape);
+		mfGeo.rotateX(-Math.PI / 2);
+		const mfMat = new THREE.MeshStandardMaterial({ color: 0x2a5a3a, roughness: 0.85, metalness: 0.02 });
+		const mfMesh = new THREE.Mesh(mfGeo, mfMat);
+		mfMesh.position.y = 0.03;
+		mfMesh.receiveShadow = true;
+		scene.add(mfMesh);
+
+		// --- Rim ground (between moat and cone edge) with terrain-matching colors ---
+		const rimInnerW = mfOuterW, rimInnerH = mfOuterH;
+		const rimCircleSegs = 64;
+		const rimShape = new THREE.Shape();
+		for (let i = 0; i < rimCircleSegs; i++) {
+			const a = (i / rimCircleSegs) * Math.PI * 2;
+			const rx = Math.cos(a) * (topRadius - 0.2);
+			const rz = Math.sin(a) * (topRadius - 0.2);
+			if (i === 0) rimShape.moveTo(rx, rz);
+			else rimShape.lineTo(rx, rz);
+		}
+		rimShape.closePath();
+		const rimHole = new THREE.Path();
+		rrect(rimHole, rimInnerW, rimInnerH, cr);
+		rimHole.closePath();
+		rimShape.holes.push(rimHole);
+		const rimGeo = new THREE.ShapeGeometry(rimShape);
+		rimGeo.rotateX(-Math.PI / 2);
+		// Add vertex colors with noise to match terrain palette
+		const rimPA = rimGeo.attributes.position;
+		const rimCols = new Float32Array(rimPA.count * 3);
+		for (let vi = 0; vi < rimPA.count; vi++) {
+			const vx = rimPA.getX(vi), vz = rimPA.getZ(vi);
+			const n = Math.sin(vx * 2.3 + vz * 1.7) * 0.04 + (rng() - 0.5) * 0.05;
+			rimCols[vi * 3]     = Math.max(0, Math.min(1, 0.34 + n));
+			rimCols[vi * 3 + 1] = Math.max(0, Math.min(1, 0.56 + n));
+			rimCols[vi * 3 + 2] = Math.max(0, Math.min(1, 0.19 + n * 0.7));
+		}
+		rimGeo.setAttribute('color', new THREE.BufferAttribute(rimCols, 3));
+		const rimMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.02 });
+		const rimMesh = new THREE.Mesh(rimGeo, rimMat);
+		rimMesh.position.y = 0.05;
+		rimMesh.receiveShadow = true;
+		scene.add(rimMesh);
+
 		// A few hanging stalactites at the bottom
 		const stalMat = new THREE.MeshStandardMaterial({ color: 0x5a5248, roughness: 0.9, flatShading: true });
-		for (let i = 0; i < 6; i++) {
+		for (let i = 0; i < 8; i++) {
 			const angle = rng() * Math.PI * 2;
-			const dist = rng() * bottomRadius * 0.6;
+			const dist = rng() * bottomRadius * 0.7;
 			const sx = Math.cos(angle) * dist;
 			const sz = Math.sin(angle) * dist;
-			const stalH = 0.3 + rng() * 0.8;
-			const stalR = 0.08 + rng() * 0.15;
+			const stalH = 0.4 + rng() * 1.0;
+			const stalR = 0.10 + rng() * 0.18;
 			const stalGeo = new THREE.ConeGeometry(stalR, stalH, 5);
 			const stal = new THREE.Mesh(stalGeo, stalMat);
-			stal.position.set(sx, -coneHeight - 0.15 - stalH / 2, sz);
+			stal.position.set(sx, -coneHeight + 0.05 - stalH / 2, sz);
 			stal.rotation.x = Math.PI;
 			stal.castShadow = true;
 			scene.add(stal);
 		}
+	}
+
+	// --- Rim scenery: trees, rocks, lakes, bushes outside play grid ---
+	function buildRimScenery(cols: number, rows: number) {
+		const rng = mulberry32(54321);
+		const moatWidth = 2.5;
+		const halfW = cols / 2, halfH = rows / 2;
+		const outerW = halfW + moatWidth, outerH = halfH + moatWidth;
+		const topRadius = Math.sqrt(cols * cols + rows * rows) / 2 + 4;
+		const groundY = 0.06;
+		const riverHW = 1.0;
+
+		function onRim(x: number, z: number): boolean {
+			if (x * x + z * z > (topRadius - 1) * (topRadius - 1)) return false;
+			if (Math.abs(x) < outerW + 0.3 && Math.abs(z) < outerH + 0.3) return false;
+			if (Math.abs(x) < riverHW && Math.abs(z) > outerH) return false;
+			if (Math.abs(z) < riverHW && Math.abs(x) > outerW) return false;
+			return true;
+		}
+
+		// Gather random rim positions
+		const pts: { x: number; z: number }[] = [];
+		for (let i = 0; i < 800 && pts.length < 120; i++) {
+			const a = rng() * Math.PI * 2;
+			const r = Math.sqrt(rng()) * topRadius;
+			const x = Math.cos(a) * r, z = Math.sin(a) * r;
+			if (onRim(x, z)) pts.push({ x, z });
+		}
+
+		const dummy = new THREE.Object3D();
+
+		// --- Pine trees (first 40 positions) ---
+		const ntrees = Math.min(40, pts.length);
+		const trunkG = new THREE.CylinderGeometry(0.06, 0.10, 0.6, 5);
+		const canG1 = new THREE.ConeGeometry(0.35, 0.55, 7);
+		const canG2 = new THREE.ConeGeometry(0.28, 0.45, 7);
+		const canG3 = new THREE.ConeGeometry(0.18, 0.4, 7);
+		const trunkM = new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 0.9 });
+		const canM = new THREE.MeshStandardMaterial({ color: 0x2d6b1e, roughness: 0.8 });
+
+		const trI = new THREE.InstancedMesh(trunkG, trunkM, ntrees);
+		const c1I = new THREE.InstancedMesh(canG1, canM, ntrees);
+		const c2I = new THREE.InstancedMesh(canG2, canM, ntrees);
+		const c3I = new THREE.InstancedMesh(canG3, canM, ntrees);
+		trI.castShadow = c1I.castShadow = c2I.castShadow = c3I.castShadow = true;
+
+		for (let i = 0; i < ntrees; i++) {
+			const p = pts[i];
+			const s = 0.8 + rng() * 0.8;
+			dummy.rotation.set(0, rng() * Math.PI * 2, 0);
+			dummy.scale.setScalar(s);
+
+			dummy.position.set(p.x, groundY + 0.25 * s, p.z);
+			dummy.updateMatrix(); trI.setMatrixAt(i, dummy.matrix);
+			dummy.position.y = groundY + 0.55 * s;
+			dummy.updateMatrix(); c1I.setMatrixAt(i, dummy.matrix);
+			dummy.position.y = groundY + 0.8 * s;
+			dummy.updateMatrix(); c2I.setMatrixAt(i, dummy.matrix);
+			dummy.position.y = groundY + 1.05 * s;
+			dummy.updateMatrix(); c3I.setMatrixAt(i, dummy.matrix);
+		}
+		trI.instanceMatrix.needsUpdate = c1I.instanceMatrix.needsUpdate =
+		c2I.instanceMatrix.needsUpdate = c3I.instanceMatrix.needsUpdate = true;
+		scene.add(trI); scene.add(c1I); scene.add(c2I); scene.add(c3I);
+
+		// --- Rocks (next 30) ---
+		const nrocks = Math.min(30, Math.max(0, pts.length - ntrees));
+		const rockG = new THREE.DodecahedronGeometry(0.15, 1);
+		const rockM = new THREE.MeshStandardMaterial({ color: 0x7a7a72, roughness: 0.95, flatShading: true });
+		const rockI = new THREE.InstancedMesh(rockG, rockM, Math.max(1, nrocks));
+		rockI.castShadow = true;
+
+		for (let i = 0; i < nrocks; i++) {
+			const p = pts[ntrees + i];
+			if (!p) break;
+			const s = 0.5 + rng() * 1.5;
+			dummy.position.set(p.x, groundY + 0.05 * s, p.z);
+			dummy.scale.set(s * (0.7 + rng() * 0.6), s * (0.5 + rng() * 0.5), s * (0.7 + rng() * 0.6));
+			dummy.rotation.set(rng() * 0.4, rng() * 6.28, rng() * 0.4);
+			dummy.updateMatrix();
+			rockI.setMatrixAt(i, dummy.matrix);
+		}
+		rockI.instanceMatrix.needsUpdate = true;
+		rockI.count = nrocks;
+		scene.add(rockI);
+
+		// --- Small lakes (circular water pools) ---
+		const lakePts: { x: number; z: number }[] = [];
+		for (let i = 0; i < 300 && lakePts.length < 4; i++) {
+			const a = rng() * Math.PI * 2;
+			const minR = Math.max(outerW, outerH) + 1;
+			const r = minR + rng() * (topRadius - minR - 2);
+			const x = Math.cos(a) * r, z = Math.sin(a) * r;
+			if (!onRim(x, z)) continue;
+			let ok = true;
+			for (const lp of lakePts) if (Math.hypot(x - lp.x, z - lp.z) < 4) { ok = false; break; }
+			if (ok) lakePts.push({ x, z });
+		}
+		for (const lp of lakePts) {
+			const lr = 0.8 + rng() * 1.2;
+			const lG = new THREE.CircleGeometry(lr, 16);
+			lG.rotateX(-Math.PI / 2);
+			const lM = new THREE.MeshStandardMaterial({
+				color: 0x1a6e7a, transparent: true, opacity: 0.65,
+				roughness: 0.1, metalness: 0.2, depthWrite: false,
+			});
+			const lMesh = new THREE.Mesh(lG, lM);
+			lMesh.position.set(lp.x, groundY + 0.01, lp.z);
+			lMesh.renderOrder = 3;
+			scene.add(lMesh);
+		}
+
+		// --- Bushes (near trees) ---
+		const nbush = Math.min(30, ntrees);
+		const bushG = new THREE.SphereGeometry(0.12, 5, 4);
+		const bushM = new THREE.MeshStandardMaterial({ color: 0x3a7a28, roughness: 0.9 });
+		const bushI = new THREE.InstancedMesh(bushG, bushM, Math.max(1, nbush));
+
+		for (let i = 0; i < nbush; i++) {
+			const tp = pts[i % ntrees];
+			const off = 0.3 + rng() * 0.8;
+			const ba = rng() * Math.PI * 2;
+			const s = 0.8 + rng() * 1.2;
+			dummy.position.set(tp.x + Math.cos(ba) * off, groundY + 0.06 * s, tp.z + Math.sin(ba) * off);
+			dummy.scale.set(s * (0.8 + rng() * 0.4), s * (0.5 + rng() * 0.5), s * (0.8 + rng() * 0.4));
+			dummy.rotation.y = rng() * 6.28;
+			dummy.updateMatrix();
+			bushI.setMatrixAt(i, dummy.matrix);
+		}
+		bushI.instanceMatrix.needsUpdate = true;
+		bushI.count = nbush;
+		scene.add(bushI);
 	}
 
 	/** Minimap Svelte action: draws grid cells and camera position */
@@ -598,7 +985,7 @@
 			const ctx = canvas.getContext('2d');
 			if (!ctx) return;
 			const rows = g.length, cols = g[0].length;
-			const s = 3; // pixels per cell
+			const s = 4; // pixels per cell
 			for (let z = 0; z < rows; z++) {
 				for (let x = 0; x < cols; x++) {
 					ctx.fillStyle = MINIMAP_COLORS[g[z][x]] ?? '#666';
@@ -675,6 +1062,7 @@
 			// Null out so new build gets fresh systems
 			terrainSystem = null;
 			waterSystem = null;
+			moatSystem = null;
 			creatureSystem = null;
 			scatter = null;
 			blockyTerrainGroup = null;
@@ -751,6 +1139,12 @@
 		const treeTrunkMat = new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 0.9 });
 		const treeCanopyMat = new THREE.MeshStandardMaterial({ color: 0x2d6b1e, roughness: 0.8 });
 
+		// Apply wind sway to tree materials
+		if (windSystem) {
+			applyWindSway(treeCanopyMat, windSystem.uniforms);
+			applyWindSway(treeTrunkMat, windSystem.uniforms);
+		}
+
 		const trunkInst = new THREE.InstancedMesh(treeTrunkGeo, treeTrunkMat, treeCount);
 		const canopy1Inst = new THREE.InstancedMesh(treeCanopy1Geo, treeCanopyMat, treeCount);
 		const canopy2Inst = new THREE.InstancedMesh(treeCanopy2Geo, treeCanopyMat, treeCount);
@@ -765,12 +1159,25 @@
 		terrainSystem = createTerrain(grid);
 		scene.add(terrainSystem.mesh);
 
+		// 3D grid overlay (G key toggle)
+		gridOverlay = buildGridOverlay(grid, terrainSystem.getHeightAt);
+		scene.add(gridOverlay);
+
 		// Water surface + caustic floor
 		waterSystem = createWater(cols, rows, grid);
 		scene.add(waterSystem.mesh);
 
+		// Moat water ring + river-waterfalls
+		moatSystem = createMoatAndWaterfalls(cols, rows);
+		scene.add(moatSystem.group);
+
+		// Rim scenery (trees, rocks, lakes, bushes outside play grid)
+		buildRimScenery(cols, rows);
+
 		await nextFrame();
 		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
+		// Re-assert redirect after potential concurrent build cancellations
+		scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
 
 		// Add 3D cluster objects
 		const dummy = new THREE.Object3D();
@@ -807,6 +1214,7 @@
 
 		await nextFrame();
 		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
+		scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
 
 		const settlementClusters = clusters.filter(c => c.terrainType === TerrainCode.SETTLEMENT);
 
@@ -819,6 +1227,7 @@
 
 		await nextFrame();
 		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
+		scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
 
 		// === Roads between settlements ===
 		buildRoads(settlementClusters, offsetX, offsetZ);
@@ -834,11 +1243,28 @@
 
 		// === Environmental scatter (rocks, vegetation, dead trees) ===
 		if (terrainSystem) {
-			createScatter(grid, terrainSystem.getHeightAt).then(s => {
+			createScatter(grid, terrainSystem.getHeightAt, 800, windSystem?.uniforms).then(s => {
 				if (gen !== buildGeneration) { s.dispose(); return; }
 				scatter = s;
 				newGroup.add(s.group);
 			}).catch(() => {});
+		}
+
+		// === Weather: rain, lightning, fog (uses mountain positions) ===
+		const mountainClusters = clusters.filter(c => c.terrainType === TerrainCode.MOUNTAIN);
+		const mountainPositions = mountainClusters.map(c => ({
+			x: c.centerX + offsetX + 0.5,
+			z: c.centerY + offsetZ + 0.5,
+			radius: Math.sqrt(c.size) * 0.6
+		}));
+		const portClusters = clusters.filter(c => c.terrainType === TerrainCode.PORT);
+		const lakePositions = portClusters.map(c => ({
+			x: c.centerX + offsetX + 0.5,
+			z: c.centerY + offsetZ + 0.5
+		}));
+		{
+			const mapRadius = Math.max(cols, rows) / 2 + 2;
+			weatherSystem = createWeatherSystem(scene, mountainPositions, lakePositions, mapRadius);
 		}
 
 		// === Wildlife: birds (first build only — grid-independent) ===
@@ -1330,13 +1756,14 @@
 			sunLight.color.copy(dn.sunColor);
 			sunLight.intensity = dn.sunIntensity;
 
-			// Throttle shadow re-renders — orbit=5s, FP=2s
+			// Throttle shadow re-renders — orbit=5s, FP=3s, flythrough=5s
 			const now = performance.now();
-			const shadowInterval = fpMode ? 2000 : 5000;
+			const shadowInterval = flythroughActive ? 8000 : fpMode ? 3000 : 5000;
 			if (force || now - lastShadowUpdate > shadowInterval) {
 				sunLight.shadow.needsUpdate = true;
 				lastShadowUpdate = now;
-				lightProbeNeedsUpdate = true;
+				// Stagger light probe 500ms after shadow to avoid double-spike
+				if (!flythroughActive) lightProbeNeedsUpdate = true;
 			}
 		}
 		if (ambientLight) {
@@ -1365,9 +1792,11 @@
 		// (ocean rendered as transparent blocks, no separate plane)
 
 		// Smooth time transitions — lerp toward target to avoid frame drops
+		// Flythrough uses slower lerp for gentler lighting changes
 		const timeDiff = timeOfDay - displayTime;
+		const timeLerpSpeed = flythroughActive ? 1.2 : 5;
 		if (Math.abs(timeDiff) > 0.005) {
-			displayTime += timeDiff * Math.min(1, dt * 5);
+			displayTime += timeDiff * Math.min(1, dt * timeLerpSpeed);
 		} else {
 			displayTime = timeOfDay;
 		}
@@ -1391,7 +1820,10 @@
 			}
 		}
 
-		if (cloudSystem) cloudSystem.update(dt, dn.skyColor);
+		// Wind drives clouds and vegetation sway (uniforms auto-propagate to shaders)
+		if (windSystem) windSystem.update(dt);
+		if (cloudSystem) cloudSystem.update(dt, dn.skyColor, windSystem?.direction, windSystem?.strength, windSystem?.stormIntensity);
+		if (weatherSystem) weatherSystem.update(dt, displayTime, windSystem?.stormIntensity);
 		// waterfallSystem removed for performance
 		if (prevWaterSystem) prevWaterSystem.update(dt, cachedDN?.sunPosition); // keep old water animating during cross-fade
 		if (waterSystem) {
@@ -1413,6 +1845,7 @@
 			lastCamX = camera.position.x;
 			lastCamZ = camera.position.z;
 		}
+		if (moatSystem) moatSystem.update(dt, cachedDN?.sunPosition);
 		if (wildlifeSystem) wildlifeSystem.update(dt, displayTime);
 		if (creatureSystem) creatureSystem.update(dt, displayTime, camera);
 
@@ -1555,6 +1988,9 @@
 		postFX = createPostFX(renderer, scene, camera);
 		postFX.resize(container.clientWidth, container.clientHeight);
 
+		// Global wind system
+		windSystem = createWind();
+
 		controls = new OrbitControls(camera, renderer.domElement);
 		controls.enableDamping = true;
 		controls.dampingFactor = 0.05;
@@ -1632,6 +2068,38 @@
 	{#if fpsDisplay && !flythroughActive}
 		<div class="absolute bottom-2 left-2 z-10 px-2 py-1 text-[10px] font-mono text-cyber-muted bg-cyber-bg/70 rounded backdrop-blur-sm pointer-events-none">
 			{fpsDisplay} · {drawCallsDisplay}
+		</div>
+	{/if}
+
+	<!-- Minimap (all modes) -->
+	{#if grid && !flythroughLoading}
+		{@const terrainColors = { 0: '#2a2a3a', 1: '#d4a843', 2: '#4fc3f7', 3: '#e53935', 4: '#2e7d32', 5: '#8a8a8a', 10: '#1565c0', 11: '#558b2f' } as Record<number, string>}
+		{@const terrainNames = new Map([[0,'Sand'],[1,'Town'],[2,'Port'],[3,'Ruin'],[4,'Forest'],[5,'Mountain'],[10,'Ocean'],[11,'Plains']])}
+		{@const total = grid.length * grid[0].length}
+		{@const terrainCounts = (() => {
+			const c: [number, number][] = [];
+			const m = new Map<number, number>();
+			for (const row of grid) for (const cell of row) m.set(cell, (m.get(cell) || 0) + 1);
+			m.forEach((v, k) => c.push([k, v]));
+			return c.sort((a, b) => b[1] - a[1]);
+		})()}
+		<div class="absolute bottom-4 right-4 z-10 pointer-events-none flex gap-3 items-end" style="animation: hudFadeIn 1s ease-out forwards; opacity: {flythroughActive ? 0.6 : 0.8};">
+			<div class="text-[9px] font-mono leading-relaxed space-y-0.5 px-2 py-1.5 rounded" style="background: rgba(0,0,0,0.45); backdrop-filter: blur(4px);">
+				{#each terrainCounts as [code, count]}
+					<div class="flex items-center gap-1.5">
+						<span class="text-white/70 w-[52px] inline-block">{terrainNames.get(code) ?? '?'}</span>
+						<span class="text-white/50 w-[24px] inline-block text-right">{(count / total * 100).toFixed(0)}%</span>
+						<span class="w-2 h-2 rounded-sm shrink-0" style="background: {terrainColors[code] ?? '#333'}"></span>
+					</div>
+				{/each}
+			</div>
+			<canvas
+				class="rounded border border-white/20"
+				width={grid[0].length * 4}
+				height={grid.length * 4}
+				style="width: {Math.min(140, grid[0].length * 4)}px; height: {Math.min(140, grid.length * 4)}px; image-rendering: pixelated;"
+				use:drawMinimap={grid}
+			></canvas>
 		</div>
 	{/if}
 
@@ -1737,38 +2205,6 @@
 				</div>
 				</div>
 			</div>
-
-			<!-- Minimap + terrain breakdown (bottom-right) -->
-			{#if grid}
-				{@const terrainColors = { 0: '#2a2a3a', 1: '#d4a843', 2: '#4fc3f7', 3: '#e53935', 4: '#2e7d32', 5: '#8a8a8a', 10: '#1565c0', 11: '#558b2f' } as Record<number, string>}
-				{@const terrainNames = new Map([[0,'Sand'],[1,'Town'],[2,'Port'],[3,'Ruin'],[4,'Forest'],[5,'Mountain'],[10,'Ocean'],[11,'Plains']])}
-				{@const total = grid.length * grid[0].length}
-				{@const terrainCounts = (() => {
-					const c: [number, number][] = [];
-					const m = new Map<number, number>();
-					for (const row of grid) for (const cell of row) m.set(cell, (m.get(cell) || 0) + 1);
-					m.forEach((v, k) => c.push([k, v]));
-					return c.sort((a, b) => b[1] - a[1]);
-				})()}
-				<div class="absolute bottom-4 right-4 z-20 pointer-events-none flex gap-3 items-end" style="animation: hudFadeIn 2s ease-out forwards">
-					<div class="text-[9px] font-mono leading-relaxed text-right space-y-0.5">
-						{#each terrainCounts as [code, count]}
-							<div class="flex items-center gap-1.5 justify-end">
-								<span class="w-2 h-2 rounded-sm shrink-0" style="background: {terrainColors[code] ?? '#333'}"></span>
-								<span class="text-white/50">{terrainNames.get(code) ?? '?'}</span>
-								<span class="text-white/40">{(count / total * 100).toFixed(0)}%</span>
-							</div>
-						{/each}
-					</div>
-					<canvas
-						class="rounded border border-white/20"
-						width={grid[0].length * 3}
-						height={grid.length * 3}
-						style="width: {Math.min(120, grid[0].length * 3)}px; height: {Math.min(120, grid.length * 3)}px; image-rendering: pixelated;"
-						use:drawMinimap={grid}
-					></canvas>
-				</div>
-			{/if}
 
 			<!-- Exit hint (click anywhere) -->
 			<div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 text-[10px] text-white/30 pointer-events-none">

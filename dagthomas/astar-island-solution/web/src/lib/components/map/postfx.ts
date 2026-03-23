@@ -113,18 +113,19 @@ export function createPostFX(
 			const dofBase = mode === 'fp' ? 1.0 : mode === 'flythrough' ? 0.3 : 0.0;
 
 			if (isDawnDusk) {
-				bloom.intensity = 1.4;
-				lumMat.threshold = 0.35;
+				bloom.intensity = 1.5;
+				lumMat.threshold = 0.30;
 				vignette.darkness = 0.6;
 				dof.bokehScale = 4.0 * dofBase;
 			} else if (isNight) {
-				bloom.intensity = 1.6;
-				lumMat.threshold = 0.25;
+				bloom.intensity = 1.7;
+				lumMat.threshold = 0.20;
 				vignette.darkness = 0.65;
 				dof.bokehScale = 2.5 * dofBase;
 			} else {
-				bloom.intensity = 0.7;
-				lumMat.threshold = 0.65;
+				// Bloom visible in all modes — lower threshold so terrain/buildings glow softly
+				bloom.intensity = 0.9;
+				lumMat.threshold = 0.45;
 				vignette.darkness = 0.45;
 				dof.bokehScale = 3.0 * dofBase;
 			}

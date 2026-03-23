@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NM i AI 2026 — Post-Mortem</title>
+
+    <!-- Fonts: Archivo Black (display) + Space Grotesk (body) -->
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* ===========================================
+           CSS CUSTOM PROPERTIES (BOLD SIGNAL THEME)
+           =========================================== */
+        :root {
+            --bg-primary: #1a1a1a;
+            --bg-gradient: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%);
+            --card-bg: #FF5722;
+            --card-bg-alt: #2979FF;
+            --card-bg-green: #00C853;
+            --card-bg-purple: #AA00FF;
+            --card-bg-red: #D50000;
+            --card-bg-yellow: #FFD600;
+            --text-primary: #ffffff;
+            --text-secondary: #999999;
+            --text-muted: #666666;
+            --text-on-card: #1a1a1a;
+
+            --font-display: 'Archivo Black', sans-serif;
+            --font-body: 'Space Grotesk', sans-serif;
+            --title-size: clamp(1.8rem, 5vw, 4rem);
+            --h2-size: clamp(1.25rem, 3.5vw, 2.5rem);
+            --h3-size: clamp(1rem, 2.5vw, 1.75rem);
+            --body-size: clamp(0.75rem, 1.5vw, 1.125rem);
+            --small-size: clamp(0.65rem, 1vw, 0.875rem);
+            --slide-padding: clamp(1.5rem, 4vw, 4rem);
+            --content-gap: clamp(0.5rem, 2vw, 2rem);
+            --element-gap: clamp(0.25rem, 1vw, 1rem);
+
+            --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+            --duration-normal: 0.6s;
+        }
+
+        /* ===========================================
+           BASE RESET
+           =========================================== */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        /* ===========================================
+           VIEWPORT FITTING: MANDATORY BASE STYLES
+           =========================================== */
+        html, body { height: 100%; overflow-x: hidden; }
+        html { scroll-snap-type: y mandatory; scroll-behavior: smooth; }
+
+        .slide {
+            width: 100vw; height: 100vh; height: 100dvh;
+            overflow: hidden; scroll-snap-align: start;
+            display: flex; flex-direction: column;
+            position: relative;
+            background: var(--bg-gradient);
+            font-family: var(--font-body);
+            color: var(--text-primary);
+        }
+
+        .slide-content {
+            flex: 1; display: flex; flex-direction: column;
+            justify-content: center; max-height: 100%;
+            overflow: hidden; padding: var(--slide-padding);
+        }
+
+        .card, .container, .content-box {
+            max-width: min(90vw, 1000px);
+            max-height: min(80vh, 700px);
+        }
+
+        .feature-list, .bullet-list { gap: clamp(0.4rem, 1vh, 1rem); }
+        .feature-list li, .bullet-list li { font-size: var(--body-size); line-height: 1.4; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+            gap: clamp(0.5rem, 1.5vw, 1rem);
+        }
+
+        img, .image-container {
+            max-width: 100%; max-height: min(50vh, 400px); object-fit: contain;
+        }
+
+        /* === RESPONSIVE BREAKPOINTS === */
+        @media (max-height: 700px) {
+            :root {
+                --slide-padding: clamp(0.75rem, 3vw, 2rem);
+                --content-gap: clamp(0.4rem, 1.5vw, 1rem);
+                --title-size: clamp(1.25rem, 4.5vw, 2.5rem);
+                --h2-size: clamp(1rem, 3vw, 1.75rem);
+            }
+        }
+        @media (max-height: 600px) {
+            :root {
+                --slide-padding: clamp(0.5rem, 2.5vw, 1.5rem);
+                --content-gap: clamp(0.3rem, 1vw, 0.75rem);
+                --title-size: clamp(1.1rem, 4vw, 2rem);
+                --body-size: clamp(0.7rem, 1.2vw, 0.95rem);
+            }
+            .nav-dots, .keyboard-hint, .decorative { display: none; }
+        }
+        @media (max-height: 500px) {
+            :root {
+                --slide-padding: clamp(0.4rem, 2vw, 1rem);
+                --title-size: clamp(1rem, 3.5vw, 1.5rem);
+                --h2-size: clamp(0.9rem, 2.5vw, 1.25rem);
+                --body-size: clamp(0.65rem, 1vw, 0.85rem);
+            }
+        }
+        @media (max-width: 600px) {
+            :root { --title-size: clamp(1.25rem, 7vw, 2.5rem); }
+            .grid { grid-template-columns: 1fr; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.2s !important;
+            }
+            html { scroll-behavior: auto; }
+        }
+
+        /* ===========================================
+           BOLD SIGNAL — THEME STYLES
+           =========================================== */
+        body { background: var(--bg-primary); }
+
+        /* Section numbers */
+        .section-num {
+            font-family: var(--font-display);
+            font-size: clamp(4rem, 12vw, 10rem);
+            line-height: 0.85;
+            color: rgba(255,255,255,0.04);
+            position: absolute;
+            top: clamp(0.5rem, 2vh, 1.5rem);
+            left: clamp(1rem, 3vw, 3rem);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        /* Navigation breadcrumbs */
+        .slide-nav {
+            position: absolute;
+            top: clamp(0.8rem, 2vh, 1.5rem);
+            right: clamp(1rem, 3vw, 3rem);
+            display: flex; gap: clamp(0.5rem, 1.2vw, 1rem);
+            z-index: 3;
+        }
+        .slide-nav span {
+            font-size: clamp(0.45rem, 0.7vw, 0.6rem);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+        .slide-nav span.active { color: var(--card-bg); }
+
+        /* Titles */
+        h1 {
+            font-family: var(--font-display);
+            font-size: var(--title-size);
+            line-height: 1.05;
+        }
+        h2 {
+            font-family: var(--font-display);
+            font-size: var(--h2-size);
+            line-height: 1.1;
+        }
+        h3 {
+            font-family: var(--font-display);
+            font-size: var(--h3-size);
+            line-height: 1.15;
+        }
+        .subtitle {
+            font-size: clamp(0.7rem, 1.3vw, 1rem);
+            color: var(--text-secondary);
+            max-width: 500px;
+        }
+        .tag {
+            font-size: clamp(0.5rem, 0.8vw, 0.65rem);
+            text-transform: uppercase;
+            letter-spacing: 0.25em;
+            color: var(--text-muted);
+            margin-bottom: clamp(0.4rem, 1vh, 0.8rem);
+        }
+
+        /* Bold cards */
+        .bold-card {
+            background: var(--card-bg);
+            border-radius: clamp(8px, 1.5vw, 16px);
+            padding: clamp(1.2rem, 2.5vw, 2.5rem);
+            color: var(--text-on-card);
+        }
+        .bold-card.blue { background: var(--card-bg-alt); color: #fff; }
+        .bold-card.green { background: var(--card-bg-green); }
+        .bold-card.purple { background: var(--card-bg-purple); color: #fff; }
+        .bold-card.red { background: var(--card-bg-red); color: #fff; }
+        .bold-card.yellow { background: var(--card-bg-yellow); }
+        .bold-card.dark { background: #2d2d2d; color: #fff; }
+
+        /* Stats */
+        .stat-row {
+            display: flex; gap: clamp(1rem, 3vw, 3rem);
+            flex-wrap: wrap;
+        }
+        .stat { text-align: center; }
+        .stat-num {
+            font-family: var(--font-display);
+            font-size: clamp(1.8rem, 4.5vw, 3.5rem);
+        }
+        .stat-label {
+            font-size: var(--small-size);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-top: 0.15em;
+        }
+        .stat-num.orange { color: var(--card-bg); }
+        .stat-num.blue { color: var(--card-bg-alt); }
+        .stat-num.green { color: var(--card-bg-green); }
+
+        /* Two-column layouts */
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: clamp(1rem, 3vw, 3rem);
+            align-items: center;
+        }
+        @media (max-width: 768px) {
+            .two-col { grid-template-columns: 1fr; }
+        }
+
+        /* Three-column grid */
+        .three-col {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: clamp(0.5rem, 1.5vw, 1.5rem);
+        }
+        @media (max-width: 768px) {
+            .three-col { grid-template-columns: 1fr; }
+        }
+
+        /* Lists */
+        .war-list {
+            list-style: none; display: flex; flex-direction: column;
+            gap: clamp(0.3rem, 0.8vh, 0.6rem);
+        }
+        .war-list li {
+            font-size: var(--body-size);
+            padding-left: 1.5em;
+            position: relative;
+            line-height: 1.4;
+        }
+        .war-list li::before {
+            content: '>';
+            position: absolute; left: 0;
+            font-family: var(--font-display);
+            color: var(--card-bg);
+        }
+        .war-list li.fail::before { content: '!'; color: var(--card-bg-red); }
+        .war-list li.win::before { content: '+'; color: var(--card-bg-green); }
+
+        /* Code blocks */
+        .code-block {
+            background: #111; border-radius: 8px;
+            padding: clamp(0.5rem, 1.5vw, 1.5rem);
+            font-family: 'Courier New', monospace;
+            font-size: clamp(0.55rem, 0.9vw, 0.8rem);
+            color: #ccc; line-height: 1.6;
+            overflow: hidden;
+        }
+        .code-block .kw { color: var(--card-bg); }
+        .code-block .str { color: var(--card-bg-green); }
+        .code-block .cmt { color: #666; }
+
+        /* Table-like rows */
+        .data-row {
+            display: flex; justify-content: space-between;
+            align-items: center;
+            padding: clamp(0.3rem, 0.8vh, 0.6rem) 0;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            font-size: var(--body-size);
+        }
+        .data-row:last-child { border-bottom: none; }
+        .data-row .label { color: var(--text-secondary); }
+        .data-row .value { font-weight: 600; }
+        .data-row .value.good { color: var(--card-bg-green); }
+        .data-row .value.bad { color: var(--card-bg-red); }
+        .data-row .value.mid { color: var(--card-bg-yellow); }
+
+        /* Quote */
+        .big-quote {
+            font-family: var(--font-display);
+            font-size: clamp(1.2rem, 3vw, 2.2rem);
+            line-height: 1.2;
+            color: var(--text-primary);
+            max-width: 700px;
+        }
+        .big-quote .hl { color: var(--card-bg); }
+
+        /* Pipeline diagram */
+        .pipeline {
+            display: flex; align-items: center;
+            gap: clamp(0.3rem, 0.8vw, 0.6rem);
+            flex-wrap: wrap;
+        }
+        .pipeline-step {
+            background: #2d2d2d;
+            padding: clamp(0.3rem, 0.6vw, 0.5rem) clamp(0.5rem, 1vw, 0.8rem);
+            border-radius: 6px;
+            font-size: clamp(0.5rem, 0.8vw, 0.7rem);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .pipeline-step.accent { background: var(--card-bg); color: var(--text-on-card); }
+        .pipeline-arrow {
+            font-size: clamp(0.5rem, 0.8vw, 0.7rem);
+            color: var(--text-muted);
+        }
+
+        /* Footer credit */
+        .slide-footer {
+            position: absolute; bottom: clamp(0.5rem, 1.5vh, 1rem);
+            left: clamp(1rem, 3vw, 3rem);
+            font-size: clamp(0.4rem, 0.6vw, 0.5rem);
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+        }
+
+        /* ===========================================
+           REVEAL ANIMATIONS
+           =========================================== */
+        .reveal {
+            opacity: 0; transform: translateY(25px);
+            transition: opacity var(--duration-normal) var(--ease-out-expo),
+                        transform var(--duration-normal) var(--ease-out-expo);
+        }
+        .slide.visible .reveal { opacity: 1; transform: translateY(0); }
+        .slide.visible .reveal:nth-child(1) { transition-delay: 0.05s; }
+        .slide.visible .reveal:nth-child(2) { transition-delay: 0.15s; }
+        .slide.visible .reveal:nth-child(3) { transition-delay: 0.25s; }
+        .slide.visible .reveal:nth-child(4) { transition-delay: 0.35s; }
+        .slide.visible .reveal:nth-child(5) { transition-delay: 0.45s; }
+        .slide.visible .reveal:nth-child(6) { transition-delay: 0.55s; }
+
+        .reveal-left {
+            opacity: 0; transform: translateX(-40px);
+            transition: opacity var(--duration-normal) var(--ease-out-expo),
+                        transform var(--duration-normal) var(--ease-out-expo);
+        }
+        .slide.visible .reveal-left { opacity: 1; transform: translateX(0); }
+
+        .reveal-scale {
+            opacity: 0; transform: scale(0.92);
+            transition: opacity 0.5s var(--ease-out-expo),
+                        transform 0.5s var(--ease-out-expo);
+        }
+        .slide.visible .reveal-scale { opacity: 1; transform: scale(1); }
+
+        /* Counter animation */
+        .counter { display: inline-block; }
+
+        /* ===========================================
+           PROGRESS BAR
+           =========================================== */
+        .progress-bar {
+            position: fixed; top: 0; left: 0;
+            height: 3px; background: var(--card-bg);
+            z-index: 9999; width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        /* ===========================================
+           NAVIGATION DOTS
+           =========================================== */
+        .nav-dots {
+            position: fixed; right: clamp(0.5rem, 1.5vw, 1.5rem);
+            top: 50%; transform: translateY(-50%);
+            display: flex; flex-direction: column;
+            gap: clamp(4px, 0.5vh, 8px);
+            z-index: 999;
+        }
+        .nav-dot {
+            width: clamp(6px, 0.5vw, 8px);
+            height: clamp(6px, 0.5vw, 8px);
+            border-radius: 50%;
+            background: rgba(255,255,255,0.15);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none; padding: 0;
+        }
+        .nav-dot.active {
+            background: var(--card-bg);
+            transform: scale(1.4);
+        }
+        .nav-dot:hover {
+            background: rgba(255,255,255,0.4);
+        }
+
+        /* ===========================================
+           INLINE EDITING
+           =========================================== */
+        .edit-hotzone {
+            position: fixed; top: 0; left: 0;
+            width: 80px; height: 80px;
+            z-index: 10000; cursor: pointer;
+        }
+        .edit-toggle {
+            position: fixed; top: 12px; left: 12px;
+            background: var(--card-bg); color: var(--text-on-card);
+            border: none; border-radius: 8px;
+            padding: 8px 14px; font-size: 14px;
+            cursor: pointer; font-family: var(--font-body);
+            font-weight: 600;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.3s ease;
+            z-index: 10001;
+        }
+        .edit-toggle.show, .edit-toggle.active {
+            opacity: 1; pointer-events: auto;
+        }
+        .edit-banner {
+            position: fixed; top: 0; left: 0; right: 0;
+            background: var(--card-bg); color: var(--text-on-card);
+            text-align: center; padding: 6px;
+            font-size: 12px; font-family: var(--font-body);
+            font-weight: 600; z-index: 9998;
+            display: none;
+        }
+        .edit-banner.show { display: block; }
+        [contenteditable="true"] {
+            outline: 2px dashed var(--card-bg);
+            outline-offset: 4px;
+            cursor: text;
+        }
+
+        /* ===========================================
+           TITLE SLIDE SPECIAL
+           =========================================== */
+        .title-slide {
+            background: linear-gradient(135deg, #1a1a1a 0%, #252525 40%, #1a1a1a 100%);
+        }
+        .title-slide .slide-content {
+            display: grid;
+            grid-template-columns: 1.1fr 0.9fr;
+            align-items: center;
+            gap: clamp(1rem, 3vw, 3rem);
+        }
+        @media (max-width: 768px) {
+            .title-slide .slide-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Rank badge */
+        .rank-badge {
+            display: flex; align-items: baseline; gap: 0.3em;
+            margin-bottom: clamp(0.2rem, 0.5vh, 0.4rem);
+        }
+        .rank-badge .num {
+            font-family: var(--font-display);
+            font-size: clamp(1.2rem, 2.5vw, 2rem);
+        }
+        .rank-badge .name {
+            font-size: clamp(0.55rem, 0.9vw, 0.75rem);
+            font-weight: 500;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Progress Bar -->
+<div class="progress-bar" id="progressBar"></div>
+
+<!-- Navigation Dots -->
+<nav class="nav-dots" id="navDots" aria-label="Slide navigation"></nav>
+
+<!-- Edit Mode (inline editing) -->
+<div class="edit-hotzone" id="editHotzone"></div>
+<button class="edit-toggle" id="editToggle" title="Edit mode (E)">Edit</button>
+<div class="edit-banner" id="editBanner">EDIT MODE — Click any text to edit. Ctrl+S to save. Press E or click Edit to exit.</div>
+
+
+<!-- ===========================================
+     SLIDE 01: TITLE
+     =========================================== -->
+<section class="slide title-slide" data-section="Intro">
+    <div class="section-num">01</div>
+    <div class="slide-nav">
+        <span class="active">INTRO</span><span>NORGESGRUPPEN</span><span>ASTAR</span><span>TRIPLETEX</span><span>TOOLS</span><span>TAKEAWAYS</span>
+    </div>
+    <div class="slide-content">
+        <div>
+            <div class="tag reveal">NM i AI 2026 // Post-Mortem</div>
+            <h1 class="reveal">We Built Agents That Built Solutions</h1>
+            <p class="subtitle reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">A 69-hour sprint of autonomous AI research, GPU solvers, and questionable life choices.</p>
+        </div>
+        <div class="bold-card reveal-scale" style="max-width:360px;">
+            <h3 style="margin-bottom:clamp(0.8rem,2vh,1.5rem)">The Scoreboard</h3>
+            <div class="rank-badge"><span class="num">#40</span><span class="name">Norgesgruppen</span></div>
+            <div class="rank-badge"><span class="num">#44</span><span class="name">Astar Island</span></div>
+            <div class="rank-badge"><span class="num">#132</span><span class="name">Tripletex</span></div>
+            <div style="margin-top:clamp(0.8rem,2vh,1.2rem);padding-top:clamp(0.4rem,1vh,0.8rem);border-top:2px solid rgba(26,26,26,0.2)">
+                <div style="font-family:var(--font-display);font-size:clamp(2rem,5vw,3.5rem)">69h</div>
+                <div style="font-size:clamp(0.45rem,0.7vw,0.6rem);text-transform:uppercase;letter-spacing:0.15em;opacity:0.7">of beautiful suffering</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-footer">Synthetic Synapses // March 2026</div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 02: THE COMPETITION
+     =========================================== -->
+<section class="slide" data-section="Intro">
+    <div class="section-num">02</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">What is NM i AI?</div>
+        <h2 class="reveal">The Norwegian AI Championship</h2>
+        <p class="subtitle reveal">69 hours. Three tasks. Hundreds of teams. One leaderboard.</p>
+        <div class="three-col reveal" style="margin-top:clamp(0.8rem,2vh,1.5rem)">
+            <div class="bold-card">
+                <h3 style="font-size:clamp(0.8rem,1.5vw,1.2rem);margin-bottom:0.5em">Object Detection</h3>
+                <p style="font-size:var(--small-size)">Identify 357 grocery products on store shelves using computer vision</p>
+            </div>
+            <div class="bold-card blue">
+                <h3 style="font-size:clamp(0.8rem,1.5vw,1.2rem);margin-bottom:0.5em">Norse Prediction</h3>
+                <p style="font-size:var(--small-size)">Predict Norse civilization outcomes through limited observations</p>
+            </div>
+            <div class="bold-card dark">
+                <h3 style="font-size:clamp(0.8rem,1.5vw,1.2rem);margin-bottom:0.5em">Accounting Agent</h3>
+                <p style="font-size:var(--small-size)">AI agent that performs accounting tasks via Tripletex REST API</p>
+            </div>
+        </div>
+        <p class="reveal" style="font-size:var(--small-size);color:var(--text-muted);margin-top:clamp(0.5rem,1vh,1rem)">Our approach: Let autonomous AI agents do the research. Sleep is optional. Coffee is mandatory.</p>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 03: FINAL SCOREBOARD
+     =========================================== -->
+<section class="slide" data-section="Intro">
+    <div class="section-num">03</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Final Standing</div>
+        <h2 class="reveal">Overall Rank: <span style="color:var(--card-bg)">#73</span></h2>
+        <div class="reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div class="data-row">
+                <span class="label">Norgesgruppen (Object Detection)</span>
+                <span class="value good">#40 — Score: 0.9118</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Astar Island (Norse Prediction)</span>
+                <span class="value good">#44 — Best: 93.0 pts</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Tripletex (Accounting Agent)</span>
+                <span class="value bad">#132 — Score: 31/124</span>
+            </div>
+        </div>
+        <div class="reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div class="bold-card dark" style="display:inline-block">
+                <p style="font-size:var(--body-size)">Approach: <strong style="color:var(--card-bg)">Pure autonomous agents.</strong> No manual feature engineering. No hand-tuned models. Just agents researching, training, and submitting — while we watched.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 04: NORGESGRUPPEN — THE TASK
+     =========================================== -->
+<section class="slide" data-section="Norgesgruppen">
+    <div class="section-num">04</div>
+    <div class="slide-nav">
+        <span>INTRO</span><span class="active">NORGESGRUPPEN</span><span>ASTAR</span><span>TRIPLETEX</span><span>TOOLS</span><span>TAKEAWAYS</span>
+    </div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Task 1 // #40</div>
+        <h2 class="reveal">Norgesgruppen: Shelf Detective</h2>
+        <p class="subtitle reveal">Find and identify 357 grocery products across 248 shelf images</p>
+        <div class="two-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div>
+                <div class="data-row"><span class="label">Images</span><span class="value">248 shelf photos</span></div>
+                <div class="data-row"><span class="label">Categories</span><span class="value">357 products</span></div>
+                <div class="data-row"><span class="label">Annotations</span><span class="value">22,700 bounding boxes</span></div>
+                <div class="data-row"><span class="label">Scoring</span><span class="value">70% detection + 30% classification mAP</span></div>
+                <div class="data-row"><span class="label">Hardware</span><span class="value">NVIDIA RTX 5090 (32 GB)</span></div>
+            </div>
+            <div class="bold-card" style="text-align:center">
+                <div style="font-family:var(--font-display);font-size:clamp(2.5rem,6vw,4rem)">#40</div>
+                <div style="font-size:var(--small-size);text-transform:uppercase;letter-spacing:0.1em;opacity:0.8">Final Rank</div>
+                <div style="margin-top:clamp(0.5rem,1vh,1rem);font-size:clamp(1.5rem,3vw,2.2rem);font-family:var(--font-display)">0.9118</div>
+                <div style="font-size:var(--small-size);opacity:0.7">mAP Score (Leader: 0.9255)</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 05: NORGESGRUPPEN — ARCHITECTURE
+     =========================================== -->
+<section class="slide" data-section="Norgesgruppen">
+    <div class="section-num">05</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Architecture</div>
+        <h2 class="reveal">Two-Stage Ensemble Pipeline</h2>
+        <div class="pipeline reveal" style="margin-top:clamp(0.5rem,1vh,0.8rem)">
+            <span class="pipeline-step accent">Input 1536px</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">YOLOv8x-A (TTA)</span>
+            <span class="pipeline-arrow">+</span>
+            <span class="pipeline-step">YOLOv8x-B (TTA)</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step accent">WBF Fusion</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">Crop 256px</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">ConvNeXt-V2</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step accent">Blend + Filter</span>
+        </div>
+        <div class="two-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div>
+                <h3 style="font-size:clamp(0.8rem,1.3vw,1rem);margin-bottom:0.4em;color:var(--card-bg)">Detection (70% of score)</h3>
+                <ul class="war-list">
+                    <li>Dual YOLOv8x models, different seeds</li>
+                    <li>Weighted Boxes Fusion merges predictions</li>
+                    <li>Cloud-trained on A100 GPUs</li>
+                    <li>Confidence threshold: 0.001 (max recall)</li>
+                </ul>
+            </div>
+            <div>
+                <h3 style="font-size:clamp(0.8rem,1.3vw,1rem);margin-bottom:0.4em;color:var(--card-bg-alt)">Classification (30% of score)</h3>
+                <ul class="war-list">
+                    <li>ConvNeXt-V2 nano (15M params, 30MB)</li>
+                    <li>Class 356: "background" false-positive filter</li>
+                    <li>Score blending on agreement/disagreement</li>
+                    <li>24 submission iterations to dial in</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 06: NORGESGRUPPEN — WAR STORIES
+     =========================================== -->
+<section class="slide" data-section="Norgesgruppen">
+    <div class="section-num">06</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">War Stories</div>
+        <h2 class="reveal">Things That Went Sideways</h2>
+        <ul class="war-list reveal" style="margin-top:clamp(0.3rem,1vh,0.8rem)">
+            <li class="fail">Missing .jpeg files — glob used *.jpg, missed 38 images. Trained on 210/248 images without noticing</li>
+            <li class="fail">SAHI tiling backfire — expected to help small products, actually created massive conflicting detections (-0.009 mAP)</li>
+            <li class="fail">Rotation augmentation disaster — degrees=10.0 on upright grocery products. Products don't rotate IRL</li>
+            <li class="fail">1920px inference on 1280px-trained model — higher res made it worse (-0.011 mAP)</li>
+            <li class="fail">Mixup augmentation creates ghost products on dense shelves</li>
+            <li class="win">Background rejection class (356) — trained on empty shelf crops, filters false positives for free</li>
+        </ul>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 07: NORGESGRUPPEN — KEY INSIGHT
+     =========================================== -->
+<section class="slide" data-section="Norgesgruppen">
+    <div class="section-num">07</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Key Insight</div>
+        <div class="big-quote reveal">
+            Train set mAP saturated at <span class="hl">0.978</span> across all configs. The 0.07 gap to leader wasn't model quality — it was <span class="hl">generalization to unseen shelves</span>.
+        </div>
+        <div class="stat-row reveal" style="margin-top:clamp(1rem,3vh,2rem)">
+            <div class="stat"><div class="stat-num orange">24</div><div class="stat-label">Submissions</div></div>
+            <div class="stat"><div class="stat-num orange">6</div><div class="stat-label">Cloud Models</div></div>
+            <div class="stat"><div class="stat-num orange">33</div><div class="stat-label">YOLO Configs Swept</div></div>
+                    </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 08: ASTAR ISLAND — THE TASK
+     =========================================== -->
+<section class="slide" data-section="Astar">
+    <div class="section-num">08</div>
+    <div class="slide-nav">
+        <span>INTRO</span><span>NORGESGRUPPEN</span><span class="active">ASTAR</span><span>TRIPLETEX</span><span>TOOLS</span><span>TAKEAWAYS</span>
+    </div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Task 2 // #44</div>
+        <h2 class="reveal">Astar Island: Norse Civilization Oracle</h2>
+        <p class="subtitle reveal">Predict how Norse settlements expand, collapse, and transform on a hidden 40x40 island simulator</p>
+        <div class="two-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div>
+                <div class="data-row"><span class="label">Grid</span><span class="value">40 x 40 cells, 6 terrain types</span></div>
+                <div class="data-row"><span class="label">Observations</span><span class="value">50 viewport queries per round</span></div>
+                <div class="data-row"><span class="label">Time Window</span><span class="value">165 minutes per round</span></div>
+                <div class="data-row"><span class="label">Scoring</span><span class="value">KL divergence (lower = better)</span></div>
+                <div class="data-row"><span class="label">Rounds</span><span class="value">20+ rounds, new daily</span></div>
+            </div>
+            <div class="bold-card blue" style="text-align:center">
+                <div style="font-family:var(--font-display);font-size:clamp(2.5rem,6vw,4rem)">#44</div>
+                <div style="font-size:var(--small-size);text-transform:uppercase;letter-spacing:0.1em;opacity:0.8">Final Rank</div>
+                <div style="margin-top:clamp(0.5rem,1vh,1rem);font-size:clamp(1.5rem,3vw,2.2rem);font-family:var(--font-display)">93.0</div>
+                <div style="font-size:var(--small-size);opacity:0.7">Best Round Score (R17)</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 09: ASTAR — THE AUTONOMOUS DAEMON
+     =========================================== -->
+<section class="slide" data-section="Astar">
+    <div class="section-num">09</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">The Crown Jewel</div>
+        <h2 class="reveal">24/7 Autonomous Research Daemon</h2>
+        <p class="subtitle reveal">Zero human intervention. Detects rounds, explores, predicts, submits, improves — on its own.</p>
+        <div class="code-block reveal" style="margin-top:clamp(0.5rem,1vh,0.8rem)">
+            <span class="cmt">// daemon.py — runs forever</span><br>
+            <span class="kw">while</span> True:<br>
+            &nbsp;&nbsp;round = <span class="kw">poll_api</span>()&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cmt"># Every 90s</span><br>
+            &nbsp;&nbsp;<span class="kw">explore</span>(50 viewports)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cmt"># Adaptive entropy-targeted</span><br>
+            &nbsp;&nbsp;pred = <span class="kw">ensemble</span>(stat, gpu)&nbsp;<span class="cmt"># Dual prediction</span><br>
+            &nbsp;&nbsp;<span class="kw">submit</span>(pred)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cmt"># t+2 min</span><br>
+            &nbsp;&nbsp;<span class="kw">for</span> i <span class="kw">in</span> range(10):&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cmt"># Iterative re-submission</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">refine_and_resubmit</span>()&nbsp;&nbsp;<span class="cmt"># More compute each time</span><br>
+            &nbsp;&nbsp;<span class="kw">download_ground_truth</span>()<br>
+            &nbsp;&nbsp;<span class="kw">update_calibration</span>()&nbsp;&nbsp;&nbsp;&nbsp;<span class="cmt"># Self-improve for next round</span>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 10: ASTAR — THREE RESEARCH AGENTS
+     =========================================== -->
+<section class="slide" data-section="Astar">
+    <div class="section-num">10</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Three Agents, One Brain</div>
+        <h2 class="reveal">The Research Swarm</h2>
+        <div class="three-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div class="bold-card">
+                <h3 style="font-size:clamp(0.75rem,1.3vw,1rem);margin-bottom:0.4em">Autoloop</h3>
+                <div style="font-size:clamp(1.2rem,2.5vw,2rem);font-family:var(--font-display);margin-bottom:0.3em">1M+</div>
+                <div style="font-size:var(--small-size);opacity:0.8">experiments</div>
+                <p style="font-size:var(--small-size);margin-top:0.5em;opacity:0.7">Hill-climbing + Metropolis across 44 continuous params. 160K/hr.</p>
+            </div>
+            <div class="bold-card blue">
+                <h3 style="font-size:clamp(0.75rem,1.3vw,1rem);margin-bottom:0.4em;color:#fff">Multi-Researcher</h3>
+                <div style="font-size:clamp(1.2rem,2.5vw,2rem);font-family:var(--font-display);margin-bottom:0.3em">497</div>
+                <div style="font-size:var(--small-size);opacity:0.8">code variants</div>
+                <p style="font-size:var(--small-size);margin-top:0.5em;opacity:0.7">Gemini Flash analyzes errors, Gemini Pro writes code. 32 breakthroughs.</p>
+            </div>
+            <div class="bold-card dark" style="border:1px solid rgba(255,255,255,0.1)">
+                <h3 style="font-size:clamp(0.75rem,1.3vw,1rem);margin-bottom:0.4em">Gemini Researcher</h3>
+                <div style="font-size:clamp(1.2rem,2.5vw,2rem);font-family:var(--font-display);margin-bottom:0.3em">1,247</div>
+                <div style="font-size:var(--small-size);opacity:0.8">iterations</div>
+                <p style="font-size:var(--small-size);margin-top:0.5em;opacity:0.7">Structural algorithm redesigns. "Replace distance model with diffusion field."</p>
+            </div>
+        </div>
+        <p class="reveal" style="font-size:var(--small-size);color:var(--text-muted);margin-top:clamp(0.3rem,0.8vh,0.5rem)">Emergent collaboration: agents don't talk to each other — they share a codebase. Autoloop picks up structural changes; researchers see autoloop baselines.</p>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 11: ASTAR — MACHINE SPEED
+     =========================================== -->
+<section class="slide" data-section="Astar">
+    <div class="section-num">11</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Research Speed</div>
+        <h2 class="reveal">720x Faster Than Humans</h2>
+        <div class="reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div class="data-row">
+                <span class="label">Time per iteration</span>
+                <span><span style="color:var(--text-muted)">Human: 5 hours</span> &rarr; <span class="value good">AI: 25 seconds</span></span>
+            </div>
+            <div class="data-row">
+                <span class="label">Ideas per day</span>
+                <span><span style="color:var(--text-muted)">Human: 3-4</span> &rarr; <span class="value good">AI: 3,456</span></span>
+            </div>
+            <div class="data-row">
+                <span class="label">Ego / domain bias</span>
+                <span><span style="color:var(--text-muted)">Human: yes</span> &rarr; <span class="value good">AI: none</span></span>
+            </div>
+            <div class="data-row">
+                <span class="label">Tests "stupid" ideas</span>
+                <span><span style="color:var(--text-muted)">Human: rarely</span> &rarr; <span class="value good">AI: always</span></span>
+            </div>
+        </div>
+        <div class="bold-card dark reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem);display:inline-block;border:1px solid rgba(255,255,255,0.1)">
+            <p style="font-size:var(--body-size)">AI researchers have no domain intuition, which is a <strong style="color:var(--card-bg)">feature</strong>. They fearlessly test hypotheses humans would dismiss — sometimes discovering gold.</p>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 12: ASTAR — GPU SIMULATOR
+     =========================================== -->
+<section class="slide" data-section="Astar">
+    <div class="section-num">12</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">GPU Firepower</div>
+        <h2 class="reveal">Monte Carlo on an RTX 5090</h2>
+        <div class="two-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div>
+                <ul class="war-list">
+                    <li>Discovery: expansion radius (lambda) varies <strong>14x between rounds</strong></li>
+                    <li>16 hidden parameters fitted via CMA-ES in ~8 seconds</li>
+                    <li>124,000 simulations/second on CUDA</li>
+                    <li>KNN warm-start from 3 nearest historical rounds</li>
+                    <li>Regime-adaptive blending (15% collapse, 65% boom)</li>
+                </ul>
+            </div>
+            <div class="bold-card green" style="text-align:center">
+                <div style="font-size:var(--small-size);text-transform:uppercase;letter-spacing:0.1em;opacity:0.8">Score Impact</div>
+                <div style="font-family:var(--font-display);font-size:clamp(2rem,4vw,3rem);margin:0.3em 0">+28 pts</div>
+                <div style="font-size:var(--small-size);opacity:0.7">R19 Collapse regime</div>
+                <div style="font-size:var(--small-size);margin-top:0.5em;opacity:0.6">54.6 stat-only &rarr; 82.5 ensemble</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 13: ASTAR — 3D ISLAND EXPLORER
+     =========================================== -->
+<section class="slide" data-section="Astar">
+    <div class="section-num">13</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">The Cool Stuff</div>
+        <h2 class="reveal">3D Island Explorer (Three.js)</h2>
+        <p class="subtitle reveal">Because if you're building an AI system, you might as well make it look incredible</p>
+        <div class="three-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div class="bold-card dark" style="border:1px solid rgba(255,255,255,0.1)">
+                <h3 style="font-size:clamp(0.7rem,1.1vw,0.9rem);margin-bottom:0.3em;color:var(--card-bg-alt)">Terrain</h3>
+                <p style="font-size:var(--small-size);color:#aaa">40x40 procedural island with floating earth layers, 58 GLB settlement models, Kruskal's MST road networks</p>
+            </div>
+            <div class="bold-card dark" style="border:1px solid rgba(255,255,255,0.1)">
+                <h3 style="font-size:clamp(0.7rem,1.1vw,0.9rem);margin-bottom:0.3em;color:var(--card-bg-alt)">Atmosphere</h3>
+                <p style="font-size:var(--small-size);color:#aaa">Astronomically accurate moon (synodic month), 8-phase day/night cycle, weather with localized rain and lightning bolts</p>
+            </div>
+            <div class="bold-card dark" style="border:1px solid rgba(255,255,255,0.1)">
+                <h3 style="font-size:clamp(0.7rem,1.1vw,0.9rem);margin-bottom:0.3em;color:var(--card-bg-alt)">Wildlife</h3>
+                <p style="font-size:var(--small-size);color:#aaa">4 bird flocks with sinusoidal oscillation, 15 wandering traders, war parties with smoke trails, waterfalls with mist</p>
+            </div>
+        </div>
+        <p class="reveal" style="font-size:var(--small-size);color:var(--text-muted);margin-top:clamp(0.3rem,0.8vh,0.5rem)">+ SvelteKit dashboard with 10 pages (daemon control, flow visualization, research tabs, real-time SSE logs) and a Go TUI with Bubble Tea</p>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 14: ASTAR — WAR STORIES
+     =========================================== -->
+<section class="slide" data-section="Astar">
+    <div class="section-num">14</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">War Stories</div>
+        <h2 class="reveal">When AI Research Goes Wrong</h2>
+        <ul class="war-list reveal" style="margin-top:clamp(0.3rem,1vh,0.8rem)">
+            <li class="fail">R8 Unicode Crash — A unicode arrow (&rarr;) in a print statement crashed Windows (cp1252). Observations collected but never saved. Score: 66.9</li>
+            <li class="fail">R4 Floor Disaster — floor=0.015 instead of 0.005. KL divergence exploded on structural zeros. Score dropped from 88.7 to 53.3</li>
+            <li class="fail">R7 Undetectable Boom — 384% expansion happened but was invisible in observation window. Information-theoretically impossible to solve</li>
+            <li class="fail">Per-cell Bayesian catastrophe — with 1-2 observations, updates overfit to noise. Lost 30 points</li>
+            <li class="win">Vectorization breakthrough — Python loops to numpy fancy indexing: 27x speedup (6K &rarr; 160K experiments/hr)</li>
+            <li class="win">R5 deployed new pipeline — jumped to rank #1 with 86.3 points</li>
+        </ul>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 15: ASTAR — SCORE JOURNEY
+     =========================================== -->
+<section class="slide" data-section="Astar">
+    <div class="section-num">15</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Score Evolution</div>
+        <h2 class="reveal">The Self-Improving Loop</h2>
+        <div class="reveal" style="margin-top:clamp(0.3rem,1vh,0.8rem)">
+            <div class="data-row"><span class="label">R2</span><span class="value mid">66.4 — Old code, no calibration</span></div>
+            <div class="data-row"><span class="label">R3</span><span class="value mid">68.0 — Rank #11</span></div>
+            <div class="data-row"><span class="label">R4</span><span class="value bad">53.3 — Floor bug disaster</span></div>
+            <div class="data-row"><span class="label">R5</span><span class="value good">86.3 — New pipeline, RANK #1</span></div>
+            <div class="data-row"><span class="label">R6</span><span class="value good">87.6 — Rank #2, Gemini improvements</span></div>
+            <div class="data-row"><span class="label">R17</span><span class="value good">93.0 — Best score ever</span></div>
+        </div>
+        <div class="pipeline reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <span class="pipeline-step accent">Submit</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">Download GT</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">Update Calibration</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">Restart Autoloop</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step accent">Better Predictions</span>
+        </div>
+        <p class="reveal" style="font-size:var(--small-size);color:var(--text-muted);margin-top:clamp(0.3rem,0.5vh,0.4rem)">Every completed round makes the next one better. Calibration grows from 20 rounds &times; 1600 cells = 160K data points.</p>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 16: TRIPLETEX — THE HORROR
+     =========================================== -->
+<section class="slide" data-section="Tripletex">
+    <div class="section-num">16</div>
+    <div class="slide-nav">
+        <span>INTRO</span><span>NORGESGRUPPEN</span><span>ASTAR</span><span class="active">TRIPLETEX</span><span>TOOLS</span><span>TAKEAWAYS</span>
+    </div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Task 3 // #132</div>
+        <h2 class="reveal">Tripletex: <span style="color:var(--card-bg-red)">Sparked No Joy</span></h2>
+        <p class="subtitle reveal">An AI accounting agent for Norwegian bookkeeping. More horrible than our day jobs.</p>
+        <div class="two-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div>
+                <div class="data-row"><span class="label">Task Types</span><span class="value">30 across 3 tiers</span></div>
+                <div class="data-row"><span class="label">Languages</span><span class="value">7 (nb, en, es, pt, nn, de, fr)</span></div>
+                <div class="data-row"><span class="label">Tool Functions</span><span class="value">137 total, 2-10 per task</span></div>
+                <div class="data-row"><span class="label">Total Attempts</span><span class="value bad">161</span></div>
+                <div class="data-row"><span class="label">Score</span><span class="value bad">31 / 124 points (25%)</span></div>
+            </div>
+            <div class="bold-card red" style="text-align:center">
+                <div style="font-family:var(--font-display);font-size:clamp(2.5rem,6vw,4rem)">#132</div>
+                <div style="font-size:var(--small-size);text-transform:uppercase;letter-spacing:0.1em;opacity:0.8">Final Rank</div>
+                <div style="margin-top:clamp(0.5rem,1vh,1rem);font-size:clamp(0.7rem,1.1vw,0.9rem)">Basically a more horrible version of our day jobs</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 17: TRIPLETEX — WHAT WE BUILT
+     =========================================== -->
+<section class="slide" data-section="Tripletex">
+    <div class="section-num">17</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Despite Everything</div>
+        <h2 class="reveal">We Actually Built Cool Stuff</h2>
+        <div class="pipeline reveal" style="margin-top:clamp(0.3rem,0.8vh,0.5rem)">
+            <span class="pipeline-step accent">HTTP POST /solve</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">Task Router (30 types)</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">Gemini 2.5 Pro</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step">Tool Filter (2-10)</span>
+            <span class="pipeline-arrow">&rarr;</span>
+            <span class="pipeline-step accent">Tripletex API</span>
+        </div>
+        <div class="two-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div>
+                <h3 style="font-size:clamp(0.75rem,1.2vw,0.95rem);margin-bottom:0.4em;color:var(--card-bg-green)">What Worked</h3>
+                <ul class="war-list">
+                    <li class="win">Task router: 137 &rarr; 2-10 tools per task (77% token savings)</li>
+                    <li class="win">Create operations: 57% success (7/9 tasks)</li>
+                    <li class="win">Email collision recovery — auto-catch, zero retries</li>
+                </ul>
+            </div>
+            <div>
+                <h3 style="font-size:clamp(0.75rem,1.2vw,0.95rem);margin-bottom:0.4em;color:var(--card-bg-red)">What Didn't</h3>
+                <ul class="war-list">
+                    <li class="fail">Invoicing: 29 tries, 0 points (4 tasks!)</li>
+                    <li class="fail">Updates: Creates work, updates crash (0.29 pts)</li>
+                    <li class="fail">VAT calculations: cryptic 422 errors for hours</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 18: TRIPLETEX — THE INVOICING BLACK HOLE
+     =========================================== -->
+<section class="slide" data-section="Tripletex">
+    <div class="section-num">18</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">The Black Hole</div>
+        <h2 class="reveal" style="color:var(--card-bg-red)">29 Tries. 0 Points.</h2>
+        <p class="subtitle reveal">The invoicing pipeline consumed our soul and returned nothing.</p>
+        <div class="two-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div>
+                <ul class="war-list">
+                    <li class="fail">Tasks 10, 11, 12, 16: all invoice variants</li>
+                    <li class="fail">29 attempts across all four</li>
+                    <li class="fail">Missing invoiceDueDate? Wrong orderLines JSON?</li>
+                    <li class="fail">The agent architecture works fine for Task 17 (3.5/4.0)</li>
+                    <li>The bug was in the tools, not the agent</li>
+                </ul>
+            </div>
+            <div class="bold-card dark" style="border:1px solid rgba(255,255,255,0.1)">
+                <p style="font-size:var(--body-size);color:#aaa">Lesson learned:</p>
+                <p style="font-size:var(--body-size);margin-top:0.5em"><strong style="color:var(--card-bg)">When a task type fails 29 times, debug the tool directly against the API.</strong> Don't throw more agent turns at it.</p>
+                <p style="font-size:var(--small-size);color:#666;margin-top:0.8em">Also: accounting is inherently adversarial.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 19: THE TECH STACK
+     =========================================== -->
+<section class="slide" data-section="Tools">
+    <div class="section-num">19</div>
+    <div class="slide-nav">
+        <span>INTRO</span><span>NORGESGRUPPEN</span><span>ASTAR</span><span>TRIPLETEX</span><span class="active">TOOLS</span><span>TAKEAWAYS</span>
+    </div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">The Arsenal</div>
+        <h2 class="reveal">Tech Stack From Hell</h2>
+        <div class="three-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div class="bold-card">
+                <h3 style="font-size:clamp(0.7rem,1.1vw,0.9rem);margin-bottom:0.3em">AI / ML</h3>
+                <p style="font-size:var(--small-size);opacity:0.8">PyTorch + CUDA (RTX 5090, 32GB)<br>YOLOv8x + ConvNeXt-V2<br>Google ADK + Gemini Pro/Flash<br>CMA-ES optimization</p>
+            </div>
+            <div class="bold-card blue">
+                <h3 style="font-size:clamp(0.7rem,1.1vw,0.9rem);margin-bottom:0.3em">Languages</h3>
+                <p style="font-size:var(--small-size);opacity:0.8">Python — 79K lines<br>Svelte — 15K lines<br>Zig 0.15.2 — 12K lines<br>Go — 9.5K lines<br>Rust — 8K lines<br>TypeScript — 5.5K lines<br>JavaScript — 6.9K lines</p>
+            </div>
+            <div class="bold-card dark" style="border:1px solid rgba(255,255,255,0.1)">
+                <h3 style="font-size:clamp(0.7rem,1.1vw,0.9rem);margin-bottom:0.3em">Infrastructure</h3>
+                <p style="font-size:var(--small-size);color:#aaa">PostgreSQL (replay DB)<br>Three.js (3D visualization)<br>SvelteKit (dashboards)<br>GCE A100 (cloud training)</p>
+            </div>
+        </div>
+        <div class="stat-row reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div class="stat"><div class="stat-num orange">155K</div><div class="stat-label">Lines of Code</div></div>
+            <div class="stat"><div class="stat-num blue">7</div><div class="stat-label">Languages</div></div>
+            <div class="stat"><div class="stat-num green">10</div><div class="stat-label">Dashboard Pages</div></div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 20: THE AUTONOMOUS PHILOSOPHY
+     =========================================== -->
+<section class="slide" data-section="Tools">
+    <div class="section-num">20</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Philosophy</div>
+        <div class="big-quote reveal">
+            The most interesting thing about AI isn't that it can <span class="hl">answer</span> questions — it's that it can <span class="hl">ask</span> them.
+        </div>
+        <div class="reveal" style="margin-top:clamp(0.8rem,2vh,1.5rem)">
+            <ul class="war-list">
+                <li>Autonomous research: proposes hypotheses, designs experiments, runs them, analyzes results, iterates</li>
+                <li>Zero human intervention for 48+ hours straight</li>
+                <li>Emergent collaboration: three agents on different timescales, no direct communication</li>
+                <li>Fearless exploration: tests "stupid" ideas humans would skip — sometimes they're winners</li>
+            </ul>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 21: WHAT WORKED
+     =========================================== -->
+<section class="slide" data-section="Takeaways">
+    <div class="section-num">21</div>
+    <div class="slide-nav">
+        <span>INTRO</span><span>NORGESGRUPPEN</span><span>ASTAR</span><span>TRIPLETEX</span><span>TOOLS</span><span class="active">TAKEAWAYS</span>
+    </div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Takeaways</div>
+        <h2 class="reveal" style="color:var(--card-bg-green)">What Worked</h2>
+        <ul class="war-list reveal" style="margin-top:clamp(0.3rem,1vh,0.8rem)">
+            <li class="win">Autonomous daemon ran 48+ hours, achieving rank #1 in Astar R5</li>
+            <li class="win">Self-improving loops: each round calibrates the next (66.4 &rarr; 93.0)</li>
+            <li class="win">Multi-model ensembles in both Norgesgruppen (dual YOLO) and Astar (stat + GPU)</li>
+            <li class="win">GPU acceleration everywhere: 124K sims/sec, 160K experiments/hr</li>
+            <li class="win">Iterative re-submission: 10 attempts per round, each with more compute</li>
+            <li class="win">Tool filtering in Tripletex: 137 &rarr; 2-10 tools = 77% token savings</li>
+        </ul>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 22: WHAT FAILED
+     =========================================== -->
+<section class="slide" data-section="Takeaways">
+    <div class="section-num">22</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">Takeaways</div>
+        <h2 class="reveal" style="color:var(--card-bg-red)">What Failed Spectacularly</h2>
+        <ul class="war-list reveal" style="margin-top:clamp(0.3rem,1vh,0.8rem)">
+            <li class="fail">Unicode arrow crashed the entire daemon on Windows (cp1252 encoding)</li>
+            <li class="fail">*.jpg glob missed 38 .jpeg images in training data</li>
+            <li class="fail">Floor=0.015 instead of 0.005 cost us 35 points in one round</li>
+            <li class="fail">75+ Claude Opus modifications to Astar — none beat baseline</li>
+            <li class="fail">Invoicing: 29 tries, 0 points, no diagnosis. Bug is still there.</li>
+            <li class="fail">Per-cell Bayesian with 1-2 observations: classic overfitting (-30 pts)</li>
+        </ul>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 23: BY THE NUMBERS
+     =========================================== -->
+<section class="slide" data-section="Takeaways">
+    <div class="section-num">23</div>
+    <div class="slide-content" style="gap:var(--content-gap)">
+        <div class="tag reveal">69 Hours Condensed</div>
+        <h2 class="reveal">By The Numbers</h2>
+        <div class="two-col reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem)">
+            <div>
+                <div class="data-row"><span class="label">Total experiments (Autoloop)</span><span class="value good">1,028,171</span></div>
+                <div class="data-row"><span class="label">AI code variants generated</span><span class="value">497</span></div>
+                <div class="data-row"><span class="label">Breakthrough discoveries</span><span class="value good">32</span></div>
+                <div class="data-row"><span class="label">Research iterations</span><span class="value">1,864</span></div>
+                <div class="data-row"><span class="label">YOLO configs swept</span><span class="value">33</span></div>
+                <div class="data-row"><span class="label">Norgesgruppen submissions</span><span class="value">24</span></div>
+            </div>
+            <div>
+                <div class="data-row"><span class="label">Tripletex API attempts</span><span class="value bad">161</span></div>
+                <div class="data-row"><span class="label">GPU sim throughput</span><span class="value good">124K/sec</span></div>
+                <div class="data-row"><span class="label">Lines of Python</span><span class="value">79,510</span></div>
+                <div class="data-row"><span class="label">Lines of Svelte</span><span class="value">15,475</span></div>
+                <div class="data-row"><span class="label">Lines of Zig</span><span class="value">11,933</span></div>
+                <div class="data-row"><span class="label">Lines of Go</span><span class="value">9,474</span></div>
+                <div class="data-row"><span class="label">Lines of Rust</span><span class="value">8,040</span></div>
+                <div class="data-row"><span class="label">Lines of TypeScript</span><span class="value">5,512</span></div>
+                <div class="data-row"><span class="label">Lines of JavaScript</span><span class="value">6,884</span></div>
+                <div class="data-row"><span class="label">Dashboard pages</span><span class="value">10</span></div>
+                            </div>
+        </div>
+    </div>
+</section>
+
+
+<!-- ===========================================
+     SLIDE 24: THANK YOU
+     =========================================== -->
+<section class="slide" data-section="Takeaways">
+    <div class="section-num" style="color:rgba(255,87,34,0.08)">GG</div>
+    <div class="slide-content" style="align-items:center;text-align:center">
+        <div class="tag reveal">NM i AI 2026 // Synthetic Synapses</div>
+        <h1 class="reveal" style="max-width:700px">Thanks for<br>listening.</h1>
+        <p class="subtitle reveal" style="margin-top:clamp(0.5rem,1.5vh,1rem);text-align:center;max-width:500px">Overall rank #73 out of pure autonomous agent chaos. We'll be back.</p>
+        <div class="stat-row reveal" style="margin-top:clamp(1.5rem,4vh,3rem)">
+            <div class="stat"><div class="stat-num orange">#40</div><div class="stat-label">Norgesgruppen</div></div>
+            <div class="stat"><div class="stat-num blue">#44</div><div class="stat-label">Astar Island</div></div>
+            <div class="stat"><div class="stat-num" style="color:var(--card-bg-red)">#132</div><div class="stat-label">Tripletex</div></div>
+        </div>
+    </div>
+    <div class="slide-footer">github.com/dagthomas/AINM</div>
+</section>
+
+
+<!-- ===========================================
+     JAVASCRIPT: SLIDE CONTROLLER
+     =========================================== -->
+<script>
+/* === SLIDE PRESENTATION CONTROLLER === */
+class SlidePresentation {
+    constructor() {
+        this.slides = document.querySelectorAll('.slide');
+        this.currentSlide = 0;
+        this.isScrolling = false;
+
+        this.setupIntersectionObserver();
+        this.setupKeyboardNav();
+        this.setupTouchNav();
+        this.setupProgressBar();
+        this.setupNavDots();
+        this.setupWheelNav();
+    }
+
+    /* Intersection Observer: add .visible class for CSS reveal animations */
+    setupIntersectionObserver() {
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    const idx = Array.from(this.slides).indexOf(entry.target);
+                    if (idx !== -1) {
+                        this.currentSlide = idx;
+                        this.updateProgressBar();
+                        this.updateNavDots();
+                    }
+                }
+            });
+        }, { threshold: 0.5 });
+
+        this.slides.forEach(slide => observer.observe(slide));
+    }
+
+    /* Keyboard: arrow keys, space, page up/down */
+    setupKeyboardNav() {
+        document.addEventListener('keydown', (e) => {
+            if (e.target.getAttribute('contenteditable')) return;
+            switch(e.key) {
+                case 'ArrowDown': case 'ArrowRight': case ' ': case 'PageDown':
+                    e.preventDefault();
+                    this.goToSlide(this.currentSlide + 1);
+                    break;
+                case 'ArrowUp': case 'ArrowLeft': case 'PageUp':
+                    e.preventDefault();
+                    this.goToSlide(this.currentSlide - 1);
+                    break;
+                case 'Home':
+                    e.preventDefault();
+                    this.goToSlide(0);
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    this.goToSlide(this.slides.length - 1);
+                    break;
+            }
+        });
+    }
+
+    /* Touch/Swipe support */
+    setupTouchNav() {
+        let startY = 0;
+        document.addEventListener('touchstart', (e) => { startY = e.touches[0].clientY; });
+        document.addEventListener('touchend', (e) => {
+            const diff = startY - e.changedTouches[0].clientY;
+            if (Math.abs(diff) > 50) {
+                this.goToSlide(this.currentSlide + (diff > 0 ? 1 : -1));
+            }
+        });
+    }
+
+    /* Mouse wheel with debounce */
+    setupWheelNav() {
+        let lastWheel = 0;
+        document.addEventListener('wheel', (e) => {
+            const now = Date.now();
+            if (now - lastWheel < 800) return;
+            lastWheel = now;
+            if (Math.abs(e.deltaY) > 30) {
+                this.goToSlide(this.currentSlide + (e.deltaY > 0 ? 1 : -1));
+            }
+        }, { passive: true });
+    }
+
+    /* Navigate to slide */
+    goToSlide(index) {
+        if (index < 0 || index >= this.slides.length) return;
+        this.currentSlide = index;
+        this.slides[index].scrollIntoView({ behavior: 'smooth' });
+    }
+
+    /* Progress bar */
+    setupProgressBar() {
+        this.progressBar = document.getElementById('progressBar');
+        this.updateProgressBar();
+    }
+
+    updateProgressBar() {
+        if (!this.progressBar) return;
+        const pct = ((this.currentSlide + 1) / this.slides.length) * 100;
+        this.progressBar.style.width = pct + '%';
+    }
+
+    /* Navigation dots */
+    setupNavDots() {
+        const container = document.getElementById('navDots');
+        if (!container) return;
+        this.slides.forEach((_, i) => {
+            const dot = document.createElement('button');
+            dot.className = 'nav-dot' + (i === 0 ? ' active' : '');
+            dot.setAttribute('aria-label', `Slide ${i + 1}`);
+            dot.addEventListener('click', () => this.goToSlide(i));
+            container.appendChild(dot);
+        });
+        this.dots = container.querySelectorAll('.nav-dot');
+    }
+
+    updateNavDots() {
+        if (!this.dots) return;
+        this.dots.forEach((dot, i) => {
+            dot.classList.toggle('active', i === this.currentSlide);
+        });
+    }
+}
+
+
+/* === INLINE EDITOR === */
+class InlineEditor {
+    constructor() {
+        this.isActive = false;
+        this.editableSelectors = 'h1, h2, h3, p, li, .stat-num, .stat-label, .tag, .subtitle, .rank-badge .num, .rank-badge .name, .pipeline-step, .data-row .label, .data-row .value';
+    }
+
+    toggleEditMode() {
+        this.isActive = !this.isActive;
+        const toggle = document.getElementById('editToggle');
+        const banner = document.getElementById('editBanner');
+
+        if (this.isActive) {
+            toggle.classList.add('active');
+            toggle.textContent = 'Exit Edit';
+            banner.classList.add('show');
+            document.querySelectorAll(this.editableSelectors).forEach(el => {
+                el.setAttribute('contenteditable', 'true');
+            });
+        } else {
+            toggle.classList.remove('active');
+            toggle.textContent = 'Edit';
+            banner.classList.remove('show');
+            document.querySelectorAll('[contenteditable]').forEach(el => {
+                el.removeAttribute('contenteditable');
+            });
+            this.save();
+        }
+    }
+
+    save() {
+        const data = {};
+        document.querySelectorAll('.slide').forEach((slide, i) => {
+            data[`slide_${i}`] = slide.innerHTML;
+        });
+        localStorage.setItem('nm-ai-postmortem-edits', JSON.stringify(data));
+    }
+
+    load() {
+        const raw = localStorage.getItem('nm-ai-postmortem-edits');
+        if (!raw) return;
+        try {
+            const data = JSON.parse(raw);
+            document.querySelectorAll('.slide').forEach((slide, i) => {
+                if (data[`slide_${i}`]) slide.innerHTML = data[`slide_${i}`];
+            });
+        } catch(e) { /* ignore corrupt data */ }
+    }
+
+    exportFile() {
+        const html = document.documentElement.outerHTML;
+        const blob = new Blob([html], { type: 'text/html' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'nm-i-ai-postmortem-edited.html';
+        a.click();
+    }
+}
+
+
+/* === INIT === */
+const presentation = new SlidePresentation();
+const editor = new InlineEditor();
+editor.load();
+
+/* Edit toggle: hotzone hover with 400ms grace */
+const hotzone = document.getElementById('editHotzone');
+const editToggle = document.getElementById('editToggle');
+let hideTimeout = null;
+
+hotzone.addEventListener('mouseenter', () => {
+    clearTimeout(hideTimeout);
+    editToggle.classList.add('show');
+});
+hotzone.addEventListener('mouseleave', () => {
+    hideTimeout = setTimeout(() => {
+        if (!editor.isActive) editToggle.classList.remove('show');
+    }, 400);
+});
+editToggle.addEventListener('mouseenter', () => { clearTimeout(hideTimeout); });
+editToggle.addEventListener('mouseleave', () => {
+    hideTimeout = setTimeout(() => {
+        if (!editor.isActive) editToggle.classList.remove('show');
+    }, 400);
+});
+editToggle.addEventListener('click', () => { editor.toggleEditMode(); });
+hotzone.addEventListener('click', () => { editor.toggleEditMode(); });
+
+/* E key toggle (skip when editing text) */
+document.addEventListener('keydown', (e) => {
+    if ((e.key === 'e' || e.key === 'E') && !e.target.getAttribute('contenteditable')) {
+        editor.toggleEditMode();
+    }
+});
+
+/* Ctrl+S to save edits */
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 's') {
+        e.preventDefault();
+        editor.save();
+        editor.exportFile();
+    }
+});
+</script>
+
+</body>
+</html>

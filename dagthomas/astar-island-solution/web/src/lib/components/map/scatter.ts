@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mulberry32 } from './prng';
+import { applyWindSway, type WindSystem } from './wind';
 
 export interface ScatterSystem {
 	group: THREE.Group;
@@ -44,17 +45,7 @@ const SCATTER_DEFS: Record<number, ScatterDef> = {
 		scale: [0.06, 0.14],
 		yOffset: 0
 	},
-	// Mountain (5): rocks and dead trees only — skip pebbles
-	5: {
-		files: [
-			'Rock Medium.glb', 'Rock Medium-JQxF95498B.glb', 'Rock Medium-s1OJ3bBzqc.glb',
-			'Dead Tree.glb', 'Dead Tree-CD4edbPSGm.glb', 'Dead Tree-Mcd2zYqyww.glb',
-			'Twisted Tree.glb', 'Twisted Tree-7PDBpElkQr.glb', 'Twisted Tree-8oraKn9m0x.glb'
-		],
-		density: 1,
-		scale: [0.08, 0.20],
-		yOffset: 0
-	},
+	// Mountain (5): skip — terrain heightmap handles mountain visuals
 	// Ruin (3): dead trees and rocks only
 	3: {
 		files: [
@@ -124,7 +115,8 @@ function meshKey(geo: THREE.BufferGeometry, mat: THREE.Material | THREE.Material
 export async function createScatter(
 	grid: number[][],
 	heightFn: (x: number, z: number) => number,
-	maxInstances = 800
+	maxInstances = 800,
+	windUniforms?: WindSystem['uniforms']
 ): Promise<ScatterSystem> {
 	const rows = grid.length;
 	const cols = grid[0].length;
@@ -229,12 +221,19 @@ export async function createScatter(
 		}
 	}
 
-	// Create InstancedMesh for each bucket
+	// Create InstancedMesh for each bucket, with wind sway on vegetation
 	for (const bucket of buckets.values()) {
 		const count = bucket.matrices.length;
 		if (count === 0) continue;
 
-		const instMesh = new THREE.InstancedMesh(bucket.geometry, bucket.material, count);
+		// Clone material so onBeforeCompile doesn't affect cached originals
+		let mat: THREE.Material | THREE.Material[] = bucket.material;
+		if (windUniforms && !Array.isArray(mat) && (mat as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
+			mat = (mat as THREE.MeshStandardMaterial).clone();
+			applyWindSway(mat as THREE.MeshStandardMaterial, windUniforms);
+		}
+
+		const instMesh = new THREE.InstancedMesh(bucket.geometry, mat, count);
 		instMesh.castShadow = false; // small vegetation — shadow cost >> visual benefit
 		instMesh.receiveShadow = true;
 		instMesh.frustumCulled = true; // let Three.js handle frustum culling on the bounding sphere

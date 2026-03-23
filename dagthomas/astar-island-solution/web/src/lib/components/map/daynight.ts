@@ -69,26 +69,34 @@ export function computeDayNight(hour: number): DayNightState {
 	const dayFade = smoothstep(7, 8, h) * (1 - smoothstep(17, 18, h));
 	_state.nightFade = nightFade;
 
-	// Sun color (mutate in-place)
+	// Sun color (mutate in-place) — saturated at dawn/dusk for strong color cast
 	if (dawnFade > 0.01) {
-		lerpHex(0xffb347, 0xfff8e1, smoothstep(6, 8, h), _state.sunColor);
+		lerpHex(0xff8c00, 0xfff0d0, smoothstep(6, 8, h), _state.sunColor);
 	} else if (duskFade > 0.01) {
-		lerpHex(0xfff8e1, 0xff7043, smoothstep(17, 19, h), _state.sunColor);
+		lerpHex(0xfff0d0, 0xff4500, smoothstep(17, 19, h), _state.sunColor);
 	} else if (dayFade > 0.5) {
 		_state.sunColor.set(0xfff8e1);
 	} else {
-		_state.sunColor.set(0x8899cc); // cool bluish-white moonlight for specular
+		_state.sunColor.set(0x6688bb); // cool blue moonlight
 	}
 
-	// Night uses sunLight as bright moonlight for specular highlights
-	_state.sunIntensity = dayFade * 1.2 + dawnFade * 0.6 + duskFade * 0.6 + nightFade * 0.55;
+	// Stronger sun at golden hours so colored light dominates over ambient
+	_state.sunIntensity = dayFade * 1.3 + dawnFade * 1.1 + duskFade * 1.1 + nightFade * 0.45;
 
-	lerpHex(0x4466aa, 0x606080, 1 - nightFade, _state.ambientColor);
-	_state.ambientIntensity = 0.35 + dayFade * 0.15 + (dawnFade + duskFade) * 0.15 + nightFade * 0.25;
+	// Lower ambient so directional color cast is visible on surfaces
+	lerpHex(0x223366, 0x505060, 1 - nightFade, _state.ambientColor);
+	_state.ambientIntensity = 0.18 + dayFade * 0.12 + (dawnFade + duskFade) * 0.08 + nightFade * 0.15;
 
-	lerpHex(0x2a3870, 0x87ceeb, 1 - nightFade * 0.7, _state.hemiSkyColor);
-	lerpHex(0x182030, 0x5d4e37, 1 - nightFade * 0.6, _state.hemiGroundColor);
-	_state.hemiIntensity = 0.30 + dayFade * 0.35 + (dawnFade + duskFade) * 0.2 + nightFade * 0.22;
+	// Hemisphere light carries time-of-day tint — warm at dawn/dusk, cool at night
+	if (dawnFade > 0.1) {
+		lerpHex(0x2a3870, 0xffaa66, dawnFade, _state.hemiSkyColor);
+	} else if (duskFade > 0.1) {
+		lerpHex(0x87ceeb, 0xff6633, duskFade, _state.hemiSkyColor);
+	} else {
+		lerpHex(0x2a3870, 0x87ceeb, 1 - nightFade * 0.7, _state.hemiSkyColor);
+	}
+	lerpHex(0x0f1520, 0x5d4e37, 1 - nightFade * 0.6, _state.hemiGroundColor);
+	_state.hemiIntensity = 0.25 + dayFade * 0.30 + (dawnFade + duskFade) * 0.25 + nightFade * 0.18;
 
 	// Sky color
 	if (nightFade > 0.8) {

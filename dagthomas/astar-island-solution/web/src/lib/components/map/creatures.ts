@@ -372,14 +372,16 @@ export async function createCreatures(
 					c.progress = 0;
 				}
 
-				// Lerp position
+				// Lerp XZ position, sample live terrain height
 				c.model.position.lerpVectors(c.from, c.to, c.progress);
+				const px = c.model.position.x;
+				const pz = c.model.position.z;
+				c.model.position.y = heightFn(px, pz) + 0.01;
 
 				// Walking bob for models without embedded animations
 				if (!c.mixer) {
 					const bobPhase = performance.now() / 1000 * 6 * c.speed;
 					c.model.position.y += Math.abs(Math.sin(bobPhase)) * 0.015;
-					c.model.rotation.z = Math.sin(bobPhase * 0.5) * 0.03;
 				}
 
 				// Face movement direction
@@ -388,6 +390,15 @@ export async function createCreatures(
 				if (dx * dx + dz * dz > 0.01) {
 					c.model.rotation.y = Math.atan2(dx, dz);
 				}
+
+				// Align to terrain slope
+				const eps = 0.15;
+				const slopeX = (heightFn(px + eps, pz) - heightFn(px - eps, pz)) / (2 * eps);
+				const slopeZ = (heightFn(px, pz + eps) - heightFn(px, pz - eps)) / (2 * eps);
+				const cosF = Math.cos(c.model.rotation.y);
+				const sinF = Math.sin(c.model.rotation.y);
+				c.model.rotation.x = -(slopeX * sinF + slopeZ * cosF) * 0.6;
+				c.model.rotation.z = (slopeX * cosF - slopeZ * sinF) * 0.4;
 			}
 
 			// Cleanup finished raids

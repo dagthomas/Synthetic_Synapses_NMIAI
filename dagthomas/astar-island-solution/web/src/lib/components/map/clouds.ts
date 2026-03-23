@@ -3,13 +3,13 @@
 import * as THREE from 'three';
 
 const CLOUD_COUNT = 10;
-const BOUNDS_X = 30; // respawn bounds
+const BOUNDS = 30; // respawn bounds
 const _tint = new THREE.Color();
 
 export interface CloudSystem {
 	sprites: THREE.Sprite[];
 	speeds: number[];
-	update(dt: number, skyColor: THREE.Color): void;
+	update(dt: number, skyColor: THREE.Color, windDir?: THREE.Vector2, windStrength?: number, stormIntensity?: number): void;
 	dispose(): void;
 }
 
@@ -63,9 +63,9 @@ export function createCloudSystem(scene: THREE.Scene): CloudSystem {
 		const scale = 10 + Math.random() * 16;
 		sprite.scale.set(scale, scale * 0.35, 1);
 		sprite.position.set(
-			(Math.random() - 0.5) * BOUNDS_X * 2,
+			(Math.random() - 0.5) * BOUNDS * 2,
 			3 + Math.random() * 5,
-			(Math.random() - 0.5) * BOUNDS_X
+			(Math.random() - 0.5) * BOUNDS
 		);
 		sprite.renderOrder = 100;
 
@@ -77,18 +77,42 @@ export function createCloudSystem(scene: THREE.Scene): CloudSystem {
 	return {
 		sprites,
 		speeds,
-		update(dt: number, skyColor: THREE.Color) {
+		update(dt: number, skyColor: THREE.Color, windDir?: THREE.Vector2, windStrength?: number, stormIntensity?: number) {
+			const wdx = windDir?.x ?? 1;
+			const wdz = windDir?.y ?? 0;
+			const ws = windStrength ?? 0.4;
+			const si = stormIntensity ?? 0;
+
+			// Storm cloud color: white → gray → dark gray
+			const stormGray = Math.max(0.25, 1.0 - si * 0.7);
+			const _stormColor = new THREE.Color(stormGray, stormGray, stormGray);
+
 			for (let i = 0; i < sprites.length; i++) {
-				sprites[i].position.x += speeds[i] * dt;
-				// Respawn at opposite edge
-				if (sprites[i].position.x > BOUNDS_X) {
-					sprites[i].position.x = -BOUNDS_X;
-					sprites[i].position.z = (Math.random() - 0.5) * BOUNDS_X;
+				const speed = speeds[i] * (0.5 + ws * 0.8);
+				sprites[i].position.x += wdx * speed * dt;
+				sprites[i].position.z += wdz * speed * dt;
+
+				// Lower clouds during storms
+				if (si > 0.1) {
+					const targetY = 2 + Math.random() * 2;
+					sprites[i].position.y += (targetY - sprites[i].position.y) * dt * 0.1 * si;
 				}
-				// Tint clouds with sky color (warm at dusk, gray at night)
+
+				// Respawn at upwind edge when cloud drifts out of bounds
+				const px = sprites[i].position.x;
+				const pz = sprites[i].position.z;
+				if (px > BOUNDS || px < -BOUNDS || pz > BOUNDS || pz < -BOUNDS) {
+					sprites[i].position.x = -wdx * BOUNDS + (Math.random() - 0.5) * BOUNDS * 0.5;
+					sprites[i].position.z = -wdz * BOUNDS + (Math.random() - 0.5) * BOUNDS * 0.5;
+					sprites[i].position.y = si > 0.3 ? 2 + Math.random() * 2 : 3 + Math.random() * 5;
+				}
+
+				// Tint: blend sky color with storm darkness
 				const mat = sprites[i].material as THREE.SpriteMaterial;
 				_tint.set(0xffffff).lerp(skyColor, 0.25);
+				_tint.lerp(_stormColor, si);
 				mat.color.copy(_tint);
+				mat.opacity = 0.5 + si * 0.25; // denser during storms
 			}
 		},
 		dispose() {

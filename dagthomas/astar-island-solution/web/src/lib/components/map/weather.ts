@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 
 export interface WeatherSystem {
-	update(dt: number, timeOfDay: number): void;
+	update(dt: number, timeOfDay: number, stormIntensity?: number): void;
 	dispose(): void;
 }
 
@@ -34,7 +34,8 @@ interface FogSprite {
 export function createWeatherSystem(
 	scene: THREE.Scene,
 	mountainPositions: { x: number; z: number; radius: number }[],
-	lakePositions: { x: number; z: number }[]
+	lakePositions: { x: number; z: number }[],
+	mapRadius = 12
 ): WeatherSystem {
 	const rainZones: RainZone[] = [];
 	const fogSprites: FogSprite[] = [];
@@ -46,9 +47,47 @@ export function createWeatherSystem(
 		boltLine: null
 	};
 
-	// --- Rain near mountains ---
+	// --- Global rain covering entire map ---
+	{
+		const particleCount = 600;
+		const spread = mapRadius;
+		const geo = new THREE.BufferGeometry();
+		const positions = new Float32Array(particleCount * 3);
+		const velocities = new Float32Array(particleCount);
+
+		for (let i = 0; i < particleCount; i++) {
+			positions[i * 3] = (Math.random() - 0.5) * spread * 2;
+			positions[i * 3 + 1] = Math.random() * 12 + 2;
+			positions[i * 3 + 2] = (Math.random() - 0.5) * spread * 2;
+			velocities[i] = 6 + Math.random() * 4;
+		}
+
+		geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+		const mat = new THREE.PointsMaterial({
+			color: 0xaabbcc,
+			size: 0.04,
+			transparent: true,
+			opacity: 0.25,
+			depthWrite: false,
+			blending: THREE.NormalBlending
+		});
+
+		const points = new THREE.Points(geo, mat);
+		points.visible = false;
+		scene.add(points);
+
+		rainZones.push({
+			center: new THREE.Vector3(0, 0, 0),
+			radius: spread,
+			points,
+			velocities
+		});
+	}
+
+	// --- Extra rain near mountains ---
 	for (const mt of mountainPositions) {
-		const particleCount = Math.round(80 + mt.radius * 20);
+		const particleCount = Math.round(60 + mt.radius * 15);
 		const spread = Math.max(2.5, mt.radius);
 		const geo = new THREE.BufferGeometry();
 		const positions = new Float32Array(particleCount * 3);
@@ -58,7 +97,7 @@ export function createWeatherSystem(
 			positions[i * 3] = mt.x + (Math.random() - 0.5) * spread * 2;
 			positions[i * 3 + 1] = Math.random() * 10 + 2;
 			positions[i * 3 + 2] = mt.z + (Math.random() - 0.5) * spread * 2;
-			velocities[i] = 6 + Math.random() * 4; // fall speed
+			velocities[i] = 6 + Math.random() * 4;
 		}
 
 		geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -73,6 +112,7 @@ export function createWeatherSystem(
 		});
 
 		const points = new THREE.Points(geo, mat);
+		points.visible = false;
 		scene.add(points);
 
 		rainZones.push({
@@ -142,91 +182,110 @@ export function createWeatherSystem(
 	}
 
 	return {
-		update(dt: number, timeOfDay: number) {
-			// --- Update rain ---
+		update(dt: number, timeOfDay: number, stormIntensity = 0) {
+			// --- Update rain (scale by storm intensity) ---
+			const rainActive = stormIntensity > 0.1;
 			for (const zone of rainZones) {
+				zone.points.visible = rainActive;
+				if (!rainActive) continue;
+
+				const speedMult = 1 + stormIntensity * 2; // faster rain in storms
+				const mat = zone.points.material as THREE.PointsMaterial;
+				mat.opacity = 0.15 + stormIntensity * 0.35;
+				mat.size = 0.03 + stormIntensity * 0.02;
+
+				// Wider spread during storms
+				const spreadMult = 1 + stormIntensity * 1.5;
+
 				const pos = zone.points.geometry.attributes.position as THREE.BufferAttribute;
 				const arr = pos.array as Float32Array;
 				for (let i = 0; i < pos.count; i++) {
-					arr[i * 3 + 1] -= zone.velocities[i] * dt;
+					arr[i * 3 + 1] -= zone.velocities[i] * dt * speedMult;
 					if (arr[i * 3 + 1] < 0.1) {
-						arr[i * 3] = zone.center.x + (Math.random() - 0.5) * zone.radius * 2;
+						arr[i * 3] = zone.center.x + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;
 						arr[i * 3 + 1] = 8 + Math.random() * 4;
-						arr[i * 3 + 2] = zone.center.z + (Math.random() - 0.5) * zone.radius * 2;
+						arr[i * 3 + 2] = zone.center.z + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;
 					}
 				}
 				pos.needsUpdate = true;
 			}
 
-			// --- Update lightning ---
+			// --- Update lightning (only during rain/storm) ---
 			if (lightning.flashLight && mountainPositions.length > 0) {
-				lightning.nextStrike -= dt;
+				if (stormIntensity > 0.2) {
+					lightning.nextStrike -= dt;
 
-				if (lightning.nextStrike <= 0 && lightning.flashPhase === 0) {
-					// Start a flash
-					lightning.flashPhase = 1;
-					lightning.flashTimer = 0;
-					const target = mountainPositions[Math.floor(Math.random() * mountainPositions.length)];
-					lightning.flashLight.position.set(target.x, 15, target.z);
+					// Storm: strike every 1-3s. Rain: every 8-15s
+					const isStorm = stormIntensity > 0.6;
 
-					// Create bolt line
-					if (lightning.boltLine) {
-						scene.remove(lightning.boltLine);
-						lightning.boltLine.geometry.dispose();
-					}
-					const boltPoints = [];
-					let bx = target.x + (Math.random() - 0.5) * 2;
-					let bz = target.z + (Math.random() - 0.5) * 2;
-					boltPoints.push(new THREE.Vector3(bx, 15, bz));
-					for (let seg = 0; seg < 3; seg++) {
-						bx += (Math.random() - 0.5) * 1.5;
-						bz += (Math.random() - 0.5) * 1.5;
-						const by = 15 - (seg + 1) * (14.5 / 4);
-						boltPoints.push(new THREE.Vector3(bx, by, bz));
-					}
-					boltPoints.push(new THREE.Vector3(bx + (Math.random() - 0.5) * 0.5, 0.5, bz + (Math.random() - 0.5) * 0.5));
+					if (lightning.nextStrike <= 0 && lightning.flashPhase === 0) {
+						lightning.flashPhase = 1;
+						lightning.flashTimer = 0;
+						const target = mountainPositions[Math.floor(Math.random() * mountainPositions.length)];
+						lightning.flashLight.position.set(target.x, 15, target.z);
 
-					const boltGeo = new THREE.BufferGeometry().setFromPoints(boltPoints);
-					const boltMat = new THREE.LineBasicMaterial({
-						color: new THREE.Color(3, 3, 4), // HDR white-blue — triggers bloom
-						transparent: true,
-						opacity: 1.0,
-						linewidth: 2
-					});
-					lightning.boltLine = new THREE.Line(boltGeo, boltMat);
-					scene.add(lightning.boltLine);
-				}
-
-				if (lightning.flashPhase > 0) {
-					lightning.flashTimer += dt;
-					// 2-3 rapid brightness spikes over 0.3s
-					const t = lightning.flashTimer;
-					if (t < 0.05) {
-						lightning.flashLight.intensity = 15.0;
-					} else if (t < 0.1) {
-						lightning.flashLight.intensity = 2.0;
-					} else if (t < 0.15) {
-						lightning.flashLight.intensity = 12.0;
-					} else if (t < 0.2) {
-						lightning.flashLight.intensity = 1.0;
-					} else if (t < 0.25) {
-						lightning.flashLight.intensity = 8.0;
-					} else {
-						lightning.flashLight.intensity = 0;
-						lightning.flashPhase = 0;
-						lightning.nextStrike = 5 + Math.random() * 5;
 						if (lightning.boltLine) {
 							scene.remove(lightning.boltLine);
 							lightning.boltLine.geometry.dispose();
-							lightning.boltLine = null;
 						}
+						const boltPoints = [];
+						let bx = target.x + (Math.random() - 0.5) * 3;
+						let bz = target.z + (Math.random() - 0.5) * 3;
+						boltPoints.push(new THREE.Vector3(bx, 15, bz));
+						const segments = isStorm ? 5 : 3;
+						for (let seg = 0; seg < segments; seg++) {
+							bx += (Math.random() - 0.5) * 2;
+							bz += (Math.random() - 0.5) * 2;
+							const by = 15 - (seg + 1) * (14.5 / (segments + 1));
+							boltPoints.push(new THREE.Vector3(bx, by, bz));
+						}
+						boltPoints.push(new THREE.Vector3(bx + (Math.random() - 0.5) * 0.5, 0.5, bz + (Math.random() - 0.5) * 0.5));
+
+						const boltGeo = new THREE.BufferGeometry().setFromPoints(boltPoints);
+						const brightness = isStorm ? 5 : 3;
+						const boltMat = new THREE.LineBasicMaterial({
+							color: new THREE.Color(brightness, brightness, brightness + 1),
+							transparent: true,
+							opacity: 1.0,
+							linewidth: 2
+						});
+						lightning.boltLine = new THREE.Line(boltGeo, boltMat);
+						scene.add(lightning.boltLine);
 					}
 
-					// Fade bolt opacity
-					if (lightning.boltLine) {
-						const mat = lightning.boltLine.material as THREE.LineBasicMaterial;
-						mat.opacity = Math.max(0, 1 - t * 3);
+					if (lightning.flashPhase > 0) {
+						lightning.flashTimer += dt;
+						const t = lightning.flashTimer;
+						const peak = isStorm ? 25.0 : 15.0;
+						if (t < 0.05) {
+							lightning.flashLight.intensity = peak;
+						} else if (t < 0.1) {
+							lightning.flashLight.intensity = 2.0;
+						} else if (t < 0.15) {
+							lightning.flashLight.intensity = peak * 0.8;
+						} else if (t < 0.2) {
+							lightning.flashLight.intensity = 1.0;
+						} else if (t < 0.25) {
+							lightning.flashLight.intensity = peak * 0.5;
+						} else {
+							lightning.flashLight.intensity = 0;
+							lightning.flashPhase = 0;
+							lightning.nextStrike = isStorm ? 1 + Math.random() * 2 : 8 + Math.random() * 7;
+							if (lightning.boltLine) {
+								scene.remove(lightning.boltLine);
+								lightning.boltLine.geometry.dispose();
+								lightning.boltLine = null;
+							}
+						}
+
+						if (lightning.boltLine) {
+							const mat = lightning.boltLine.material as THREE.LineBasicMaterial;
+							mat.opacity = Math.max(0, 1 - t * 3);
+						}
 					}
+				} else {
+					// No lightning when calm
+					lightning.flashLight.intensity = 0;
 				}
 			}
 

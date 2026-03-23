@@ -1,0 +1,2 @@
+fn(axum::extract::State<Pool<Sqlite>>, AdminAuth, axum::Json<models::CreateRoundRequest>) -> impl std::future::Future<Output = Result<axum::Json<JsonValue>, (axum::http::StatusCode, std::string::String)>> {create_round}
+fn(axum::extract::State<Pool<Sqlite>>, AdminAuth, axum::Json<models::CreateRoundRequest>) -> impl std::future::Future<Output = Result<axum::Json<JsonValue>, (axum::http::StatusCode, std::string::String)>> {create_round}: Handler<_, Pool<Sqlite>>
