@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: astar
+      POSTGRES_PASSWORD: astar
+      POSTGRES_DB: astar_island
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "9743:5432"
+
+  astar-island:
+    build: .
+    ports:
+      - "9742:8080"
+    depends_on:
+      - postgres
+    environment:
+      - DATABASE_URL=postgres://astar:astar@postgres:5432/astar_island
+      - JWT_SECRET=change-me-in-production
+      - LISTEN_ADDR=0.0.0.0:8080
+      - RUST_LOG=info
+    restart: unless-stopped
+
+volumes:
+  pgdata:

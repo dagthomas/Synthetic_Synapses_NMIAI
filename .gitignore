@@ -17,6 +17,9 @@ node_modules/
 *.cookie
 .ainm_cookie
 
+# Rust/Cargo build artifacts
+**/target/
+
 # Windows artifacts
 nul
 

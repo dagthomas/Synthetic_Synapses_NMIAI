@@ -1,9 +1,11 @@
-// Localized weather: rain near mountains, lightning flashes, fog around lakes
+// Localized weather: rain/snow near mountains, lightning flashes, fog around lakes
+// Season-aware: winter=snow, autumn=more lightning
 
 import * as THREE from 'three';
+import type { Season } from './terrain';
 
 export interface WeatherSystem {
-	update(dt: number, timeOfDay: number, stormIntensity?: number): void;
+	update(dt: number, timeOfDay: number, stormIntensity?: number, season?: Season): void;
 	dispose(): void;
 }
 
@@ -47,7 +49,7 @@ export function createWeatherSystem(
 		boltLine: null
 	};
 
-	// --- Global rain covering entire map ---
+	// --- Global rain/snow covering entire map ---
 	{
 		const particleCount = 600;
 		const spread = mapRadius;
@@ -182,41 +184,74 @@ export function createWeatherSystem(
 	}
 
 	return {
-		update(dt: number, timeOfDay: number, stormIntensity = 0) {
-			// --- Update rain (scale by storm intensity) ---
+		update(dt: number, timeOfDay: number, stormIntensity = 0, season: Season = 'summer') {
+			const isWinter = season === 'winter';
+			const isAutumn = season === 'autumn';
+
+			// --- Update rain/snow (scale by storm intensity) ---
 			const rainActive = stormIntensity > 0.1;
 			for (const zone of rainZones) {
 				zone.points.visible = rainActive;
 				if (!rainActive) continue;
 
-				const speedMult = 1 + stormIntensity * 2; // faster rain in storms
 				const mat = zone.points.material as THREE.PointsMaterial;
-				mat.opacity = 0.15 + stormIntensity * 0.35;
-				mat.size = 0.03 + stormIntensity * 0.02;
 
-				// Wider spread during storms
-				const spreadMult = 1 + stormIntensity * 1.5;
+				if (isWinter) {
+					// Snow: white, larger, slower, more visible
+					mat.color.setHex(0xeeeeff);
+					mat.size = 0.08 + stormIntensity * 0.04;
+					mat.opacity = 0.4 + stormIntensity * 0.3;
+					const speedMult = 0.3 + stormIntensity * 0.3; // much slower fall
+					const spreadMult = 1 + stormIntensity * 1.5;
 
-				const pos = zone.points.geometry.attributes.position as THREE.BufferAttribute;
-				const arr = pos.array as Float32Array;
-				for (let i = 0; i < pos.count; i++) {
-					arr[i * 3 + 1] -= zone.velocities[i] * dt * speedMult;
-					if (arr[i * 3 + 1] < 0.1) {
-						arr[i * 3] = zone.center.x + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;
-						arr[i * 3 + 1] = 8 + Math.random() * 4;
-						arr[i * 3 + 2] = zone.center.z + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;
+					const pos = zone.points.geometry.attributes.position as THREE.BufferAttribute;
+					const arr = pos.array as Float32Array;
+					for (let i = 0; i < pos.count; i++) {
+						// Snow drifts sideways
+						arr[i * 3] += Math.sin(arr[i * 3 + 1] * 2 + i) * dt * 0.3;
+						arr[i * 3 + 1] -= zone.velocities[i] * dt * speedMult;
+						if (arr[i * 3 + 1] < 0.1) {
+							arr[i * 3] = zone.center.x + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;
+							arr[i * 3 + 1] = 8 + Math.random() * 4;
+							arr[i * 3 + 2] = zone.center.z + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;
+						}
 					}
+					pos.needsUpdate = true;
+				} else {
+					// Rain: normal behavior
+					mat.color.setHex(0xaabbcc);
+					mat.opacity = 0.15 + stormIntensity * 0.35;
+					mat.size = 0.03 + stormIntensity * 0.02;
+					const speedMult = 1 + stormIntensity * 2;
+					const spreadMult = 1 + stormIntensity * 1.5;
+
+					const pos = zone.points.geometry.attributes.position as THREE.BufferAttribute;
+					const arr = pos.array as Float32Array;
+					for (let i = 0; i < pos.count; i++) {
+						arr[i * 3 + 1] -= zone.velocities[i] * dt * speedMult;
+						if (arr[i * 3 + 1] < 0.1) {
+							arr[i * 3] = zone.center.x + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;
+							arr[i * 3 + 1] = 8 + Math.random() * 4;
+							arr[i * 3 + 2] = zone.center.z + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;
+						}
+					}
+					pos.needsUpdate = true;
 				}
-				pos.needsUpdate = true;
 			}
 
-			// --- Update lightning (only during rain/storm) ---
+			// --- Update lightning ---
+			// Autumn: much more frequent lightning, stronger flashes
+			// Winter: no lightning (snow storms don't have lightning)
 			if (lightning.flashLight && mountainPositions.length > 0) {
-				if (stormIntensity > 0.2) {
+				const lightningThreshold = isAutumn ? 0.05 : 0.2;
+				const lightningActive = !isWinter && stormIntensity > lightningThreshold;
+
+				if (lightningActive) {
 					lightning.nextStrike -= dt;
 
-					// Storm: strike every 1-3s. Rain: every 8-15s
 					const isStorm = stormIntensity > 0.6;
+					// Autumn: strikes 2-4x more frequently
+					const autumnMult = isAutumn ? 0.3 : 1.0;
 
 					if (lightning.nextStrike <= 0 && lightning.flashPhase === 0) {
 						lightning.flashPhase = 1;
@@ -232,7 +267,8 @@ export function createWeatherSystem(
 						let bx = target.x + (Math.random() - 0.5) * 3;
 						let bz = target.z + (Math.random() - 0.5) * 3;
 						boltPoints.push(new THREE.Vector3(bx, 15, bz));
-						const segments = isStorm ? 5 : 3;
+						// Autumn: more bolt segments for dramatic forks
+						const segments = isAutumn ? 7 : isStorm ? 5 : 3;
 						for (let seg = 0; seg < segments; seg++) {
 							bx += (Math.random() - 0.5) * 2;
 							bz += (Math.random() - 0.5) * 2;
@@ -242,7 +278,7 @@ export function createWeatherSystem(
 						boltPoints.push(new THREE.Vector3(bx + (Math.random() - 0.5) * 0.5, 0.5, bz + (Math.random() - 0.5) * 0.5));
 
 						const boltGeo = new THREE.BufferGeometry().setFromPoints(boltPoints);
-						const brightness = isStorm ? 5 : 3;
+						const brightness = isAutumn ? 6 : isStorm ? 5 : 3;
 						const boltMat = new THREE.LineBasicMaterial({
 							color: new THREE.Color(brightness, brightness, brightness + 1),
 							transparent: true,
@@ -256,7 +292,7 @@ export function createWeatherSystem(
 					if (lightning.flashPhase > 0) {
 						lightning.flashTimer += dt;
 						const t = lightning.flashTimer;
-						const peak = isStorm ? 25.0 : 15.0;
+						const peak = isAutumn ? 30.0 : isStorm ? 25.0 : 15.0;
 						if (t < 0.05) {
 							lightning.flashLight.intensity = peak;
 						} else if (t < 0.1) {
@@ -270,7 +306,12 @@ export function createWeatherSystem(
 						} else {
 							lightning.flashLight.intensity = 0;
 							lightning.flashPhase = 0;
-							lightning.nextStrike = isStorm ? 1 + Math.random() * 2 : 8 + Math.random() * 7;
+							// Autumn: very frequent strikes (0.5-1.5s), others normal
+							if (isAutumn) {
+								lightning.nextStrike = 0.5 + Math.random() * 1.0;
+							} else {
+								lightning.nextStrike = (isStorm ? 1 + Math.random() * 2 : 8 + Math.random() * 7) * autumnMult;
+							}
 							if (lightning.boltLine) {
 								scene.remove(lightning.boltLine);
 								lightning.boltLine.geometry.dispose();
@@ -284,22 +325,21 @@ export function createWeatherSystem(
 						}
 					}
 				} else {
-					// No lightning when calm
 					lightning.flashLight.intensity = 0;
 				}
 			}
 
 			// --- Update fog ---
 			const h = ((timeOfDay % 24) + 24) % 24;
-			// More visible at dawn/dusk, dimmer at bright day
 			const isDawnDusk = (h > 5 && h < 8) || (h > 17 && h < 20);
 			const isNight = h < 5 || h > 20;
-			const fogOpacityMult = isDawnDusk ? 1.2 : isNight ? 0.9 : 0.6;
+			// Winter: more fog. Autumn: slightly more
+			const seasonFogMult = isWinter ? 1.6 : isAutumn ? 1.2 : 1.0;
+			const fogOpacityMult = (isDawnDusk ? 1.2 : isNight ? 0.9 : 0.6) * seasonFogMult;
 
 			for (const fog of fogSprites) {
 				fog.phase += dt * 0.4;
 
-				// Oscillate around base position (never drifts away)
 				fog.sprite.position.x = fog.baseX + Math.sin(fog.phase) * fog.driftRadius;
 				fog.sprite.position.z = fog.baseZ + Math.cos(fog.phase * 0.7) * fog.driftRadius * 0.6;
 				fog.sprite.position.y = fog.baseY + Math.sin(fog.phase * 1.3) * 0.1;
@@ -312,7 +352,7 @@ export function createWeatherSystem(
 				} else if (isDawnDusk) {
 					mat.color.setHex(0xddccaa);
 				} else {
-					mat.color.setHex(0xffffff);
+					mat.color.setHex(isWinter ? 0xdde0ee : 0xffffff);
 				}
 			}
 		},

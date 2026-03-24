@@ -1,5 +1,5 @@
 use axum::{extract::State, http::StatusCode, Json};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::auth::middleware::AuthTeam;
 use crate::config;
@@ -7,12 +7,12 @@ use crate::models::*;
 
 /// POST /astar-island/submit — Submit prediction tensor for one seed.
 pub async fn submit(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     AuthTeam(claims): AuthTeam,
     Json(req): Json<SubmitRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
     // Validate round is active
-    let status: Option<String> = sqlx::query_scalar("SELECT status FROM rounds WHERE id = ?")
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM rounds WHERE id = $1")
         .bind(&req.round_id)
         .fetch_optional(&pool)
         .await
@@ -69,8 +69,8 @@ pub async fn submit(
 
     // Upsert: replace previous submission for same team+round+seed
     sqlx::query(
-        "INSERT INTO predictions (id, team_id, round_id, seed_index, tensor) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(team_id, round_id, seed_index) DO UPDATE SET tensor = excluded.tensor, submitted_at = datetime('now'), score = NULL"
+        "INSERT INTO predictions (id, team_id, round_id, seed_index, tensor) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT(team_id, round_id, seed_index) DO UPDATE SET tensor = excluded.tensor, submitted_at = NOW()::TEXT, score = NULL"
     )
     .bind(&id)
     .bind(&claims.team_id)

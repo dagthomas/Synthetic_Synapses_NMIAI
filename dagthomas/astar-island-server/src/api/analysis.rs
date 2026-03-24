@@ -1,17 +1,17 @@
 use axum::{extract::{Path, State}, http::StatusCode, Json};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::auth::middleware::AuthTeam;
 use crate::models::AnalysisResponse;
 
 /// GET /astar-island/analysis/{round_id}/{seed_index} — Post-round ground truth comparison.
 pub async fn analysis(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     AuthTeam(claims): AuthTeam,
     Path((round_id, seed_index)): Path<(String, i64)>,
 ) -> Result<Json<AnalysisResponse>, (StatusCode, String)> {
     // Check round is completed or scoring
-    let status: Option<String> = sqlx::query_scalar("SELECT status FROM rounds WHERE id = ?")
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM rounds WHERE id = $1")
         .bind(&round_id)
         .fetch_optional(&pool)
         .await
@@ -24,7 +24,7 @@ pub async fn analysis(
 
     // Load ground truth
     let seed_row: Option<(String, String)> = sqlx::query_as(
-        "SELECT initial_grid, ground_truth FROM seeds WHERE round_id = ? AND seed_index = ?",
+        "SELECT initial_grid, ground_truth FROM seeds WHERE round_id = $1 AND seed_index = $2",
     )
     .bind(&round_id)
     .bind(seed_index)
@@ -55,7 +55,7 @@ pub async fn analysis(
 
     // Load team's prediction
     let pred_row: Option<(String, Option<f64>)> = sqlx::query_as(
-        "SELECT tensor, score FROM predictions WHERE team_id = ? AND round_id = ? AND seed_index = ?",
+        "SELECT tensor, score::DOUBLE PRECISION FROM predictions WHERE team_id = $1 AND round_id = $2 AND seed_index = $3",
     )
     .bind(&claims.team_id)
     .bind(&round_id)

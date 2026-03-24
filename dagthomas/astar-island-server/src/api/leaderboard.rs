@@ -1,11 +1,11 @@
 use axum::{extract::State, http::StatusCode, Json};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::models::LeaderboardEntry;
 
 /// GET /astar-island/leaderboard — Global leaderboard sorted by best weighted score.
 pub async fn leaderboard(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
 ) -> Result<Json<Vec<LeaderboardEntry>>, (StatusCode, String)> {
     // For each team, compute: best (avg_seed_score * round_weight) across all completed rounds
     let rows: Vec<(String, String)> =
@@ -19,9 +19,9 @@ pub async fn leaderboard(
     for (team_id, team_name) in &rows {
         // Get all completed rounds this team participated in
         let round_scores: Vec<(String, f64)> = sqlx::query_as(
-            "SELECT r.id, r.round_weight FROM rounds r
+            "SELECT r.id, r.round_weight::DOUBLE PRECISION FROM rounds r
              WHERE r.status = 'completed'
-             AND EXISTS (SELECT 1 FROM predictions p WHERE p.round_id = r.id AND p.team_id = ?)"
+             AND EXISTS (SELECT 1 FROM predictions p WHERE p.round_id = r.id AND p.team_id = $1)"
         )
         .bind(team_id)
         .fetch_all(&pool)
@@ -36,11 +36,11 @@ pub async fn leaderboard(
 
             // Average seed score for this team+round
             let avg_score: Option<f64> = sqlx::query_scalar(
-                "SELECT AVG(score) FROM predictions WHERE team_id = ? AND round_id = ? AND score IS NOT NULL"
+                "SELECT AVG(score::DOUBLE PRECISION) FROM predictions WHERE team_id = $1 AND round_id = $2 AND score IS NOT NULL"
             )
             .bind(team_id)
             .bind(rid)
-            .fetch_optional(&pool)
+            .fetch_one(&pool)
             .await
             .unwrap_or(None);
 

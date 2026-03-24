@@ -3,6 +3,8 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { isLoggedIn, login } from '$lib/api';
 	import { browser } from '$app/environment';
+	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
 
 	let { children } = $props();
 	let loggedIn = $state(browser ? isLoggedIn() : false);
@@ -22,36 +24,47 @@
 </script>
 
 <svelte:head>
-	<title>Astar Island Admin</title>
+	<title>Q* Frontier // Command Center</title>
 </svelte:head>
 
 {#if !loggedIn}
-	<div class="min-h-screen bg-gray-950 flex items-center justify-center">
-		<div class="bg-gray-900 border border-gray-800 rounded-lg p-8 w-80">
-			<h1 class="text-xl font-bold text-white mb-6">Astar Island Admin</h1>
+	<div class="min-h-screen bg-cyber-bg flex items-center justify-center">
+		<div class="glass glass-glow p-8 w-96">
+			<div class="flex items-center gap-3 mb-8">
+				<div class="w-2 h-8 bg-neon-cyan rounded-full animate-pulse-glow"></div>
+				<h1 class="text-xl font-bold text-neon-cyan neon-text tracking-wider uppercase">Q* Frontier</h1>
+			</div>
+			<p class="text-cyber-muted text-xs mb-6 tracking-wide uppercase">Command Center</p>
 			<form onsubmit={(e) => { e.preventDefault(); handleLogin(); }}>
-				<input
-					bind:value={username}
-					placeholder="Username"
-					class="w-full mb-3 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
-				/>
-				<input
-					bind:value={password}
-					type="password"
-					placeholder="Password"
-					class="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
-				/>
+				<div class="mb-3">
+					<Input
+						bind:value={username}
+						placeholder="Username"
+						class="w-full bg-cyber-surface border-cyber-border text-cyber-fg placeholder:text-cyber-muted focus:border-neon-cyan focus:ring-neon-cyan/20"
+					/>
+				</div>
+				<div class="mb-4">
+					<Input
+						bind:value={password}
+						type="password"
+						placeholder="Password"
+						class="w-full bg-cyber-surface border-cyber-border text-cyber-fg placeholder:text-cyber-muted focus:border-neon-cyan focus:ring-neon-cyan/20"
+					/>
+				</div>
 				{#if error}
-					<p class="text-red-400 text-sm mb-3">{error}</p>
+					<p class="text-score-bad text-sm mb-3">{error}</p>
 				{/if}
-				<button class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded text-sm font-medium">
-					Login
-				</button>
+				<Button
+					type="submit"
+					class="w-full bg-neon-cyan/10 border border-neon-cyan/40 text-neon-cyan hover:bg-neon-cyan/20 hover:border-neon-cyan/60 hover:shadow-[0_0_15px_rgba(0,255,240,0.2)] transition-all"
+				>
+					Access Terminal
+				</Button>
 			</form>
 		</div>
 	</div>
 {:else}
-	<div class="min-h-screen bg-gray-950 text-gray-200 flex">
+	<div class="min-h-screen bg-cyber-bg text-cyber-fg flex">
 		<Sidebar />
 		<main class="flex-1 p-6 overflow-auto">
 			{@render children()}

@@ -362,16 +362,32 @@ void main() {
 }
 `;
 
-/** Build a continuous river→waterfall strip following the cone surface */
+/** Cubic bezier interpolation */
+function bezier3(p0: number, p1: number, p2: number, p3: number, t: number): number {
+	const u = 1 - t;
+	return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+}
+
+/** Build a meandering river→waterfall strip with bezier curves */
 function buildRiverFallGeo(
-	dir: { dx: number; dz: number; startDist: number },
+	dir: { dx: number; dz: number; startDist: number; offsetPerp: number; seed: number },
 	width: number, topRadius: number, bottomRadius: number,
 	coneHeight: number, moatY: number, fallHeight: number
 ): THREE.BufferGeometry {
-	const riverSegs = 8, fallSegs = 16;
+	const riverSegs = 16, fallSegs = 16;
 	const total = riverSegs + fallSegs;
 	const riverLen = topRadius - dir.startDist - 0.3;
-	const px = -dir.dz, pz = dir.dx; // perpendicular
+	const perpX = -dir.dz, perpZ = dir.dx; // perpendicular direction
+
+	// Seeded random for consistent curves
+	let s = dir.seed;
+	const rng = () => { s = (s * 1664525 + 1013904223) & 0x7fffffff; return s / 0x7fffffff; };
+
+	// Bezier control points for the river (perpendicular meander offsets)
+	const meander1 = (rng() - 0.5) * 3.0; // first curve
+	const meander2 = (rng() - 0.5) * 3.0; // second curve
+	// Start offset from moat edge
+	const startPerp = dir.offsetPerp;
 
 	const pos: number[] = [], uvs: number[] = [], idx: number[] = [];
 	for (let j = 0; j <= total; j++) {
@@ -379,17 +395,39 @@ function buildRiverFallGeo(
 		if (j <= riverSegs) {
 			const t = j / riverSegs;
 			const d = dir.startDist + riverLen * t;
-			x = dir.dx * d; z = dir.dz * d; y = moatY;
+			// Bezier meander perpendicular to flow direction
+			const perpOffset = bezier3(startPerp, startPerp + meander1, meander2, 0, t);
+			x = dir.dx * d + perpX * perpOffset;
+			z = dir.dz * d + perpZ * perpOffset;
+			y = moatY;
+			// Width narrows slightly toward the falls
+			w = width * (1.0 - t * 0.15);
 		} else {
 			const t = (j - riverSegs) / fallSegs;
 			y = moatY - t * fallHeight;
 			const ncy = Math.max(0, Math.min(1, (y + coneHeight - 0.05) / coneHeight));
 			const cr = bottomRadius + (topRadius - bottomRadius) * ncy + 0.1;
-			x = dir.dx * cr; z = dir.dz * cr;
-			w = width * (1 - t * 0.4);
+			x = dir.dx * cr;
+			z = dir.dz * cr;
+			w = width * (0.85 - t * 0.35);
+		}
+		// Compute local perpendicular (approximate tangent from neighbors)
+		let tx = perpX, tz = perpZ;
+		if (j > 0 && j <= riverSegs) {
+			const t2 = Math.min(1, (j + 0.5) / riverSegs);
+			const t1 = Math.max(0, (j - 0.5) / riverSegs);
+			const d2 = dir.startDist + riverLen * t2;
+			const d1 = dir.startDist + riverLen * t1;
+			const p2o = bezier3(startPerp, startPerp + meander1, meander2, 0, t2);
+			const p1o = bezier3(startPerp, startPerp + meander1, meander2, 0, t1);
+			const dx = dir.dx * (d2 - d1) + perpX * (p2o - p1o);
+			const dz = dir.dz * (d2 - d1) + perpZ * (p2o - p1o);
+			const len = Math.sqrt(dx * dx + dz * dz) || 1;
+			tx = -dz / len;
+			tz = dx / len;
 		}
 		const hw = w / 2;
-		pos.push(x + px * hw, y, z + pz * hw, x - px * hw, y, z - pz * hw);
+		pos.push(x + tx * hw, y, z + tz * hw, x - tx * hw, y, z - tz * hw);
 		uvs.push(0, j / total, 1, j / total);
 	}
 	for (let j = 0; j < total; j++) {
@@ -452,11 +490,12 @@ export function createMoatAndWaterfalls(cols: number, rows: number): MoatSystem 
 		fogColor:    { value: new THREE.Color(0x8ab4cc) },
 		fogDensity:  { value: 0.035 },
 	};
+	// Rivers offset from center, each with a unique seed for meander variation
 	const dirs = [
-		{ dx: 0, dz: -1, startDist: outerH },
-		{ dx: 0, dz:  1, startDist: outerH },
-		{ dx:-1, dz:  0, startDist: outerW },
-		{ dx: 1, dz:  0, startDist: outerW },
+		{ dx: 0, dz: -1, startDist: outerH, offsetPerp: -1.8, seed: 12345 },
+		{ dx: 0, dz:  1, startDist: outerH, offsetPerp:  2.1, seed: 54321 },
+		{ dx:-1, dz:  0, startDist: outerW, offsetPerp:  1.5, seed: 67890 },
+		{ dx: 1, dz:  0, startDist: outerW, offsetPerp: -1.2, seed: 98765 },
 	];
 	for (const d of dirs) {
 		const g = buildRiverFallGeo(d, riverWidth, topRadius, bottomRadius, coneHeight, moatY, fallHeight);

@@ -1,6 +1,6 @@
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use super::jwt;
 use super::middleware::AuthTeam;
@@ -33,7 +33,7 @@ pub struct TeamInfo {
 }
 
 pub async fn register(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
     if req.name.trim().is_empty() || req.password.len() < 3 {
@@ -44,14 +44,15 @@ pub async fn register(
     let hash = jwt::hash_password(&req.password)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    sqlx::query("INSERT INTO teams (id, name, password_hash) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO teams (id, name, password_hash) VALUES ($1, $2, $3)")
         .bind(&id)
         .bind(&req.name)
         .bind(&hash)
         .execute(&pool)
         .await
         .map_err(|e| {
-            if e.to_string().contains("UNIQUE") {
+            let msg = e.to_string();
+            if msg.contains("UNIQUE") || msg.contains("duplicate key") || msg.contains("unique constraint") {
                 (StatusCode::CONFLICT, format!("Team name '{}' already taken", req.name))
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}"))
@@ -70,11 +71,11 @@ pub async fn register(
 }
 
 pub async fn login(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
     let row: Option<(String, String, bool)> = sqlx::query_as(
-        "SELECT id, password_hash, is_admin FROM teams WHERE name = ?",
+        "SELECT id, password_hash, is_admin FROM teams WHERE name = $1",
     )
     .bind(&req.name)
     .fetch_optional(&pool)

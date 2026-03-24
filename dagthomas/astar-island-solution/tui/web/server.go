@@ -64,6 +64,7 @@ func (s *Server) ListenAndServe(addr string) error {
 	mux.HandleFunc("GET /api/rounds", s.handleRounds)
 	mux.HandleFunc("GET /api/rounds/{id}", s.handleRoundDetail)
 	mux.HandleFunc("GET /api/rounds/{id}/seeds/{idx}/analysis", s.handleAnalysis)
+	mux.HandleFunc("GET /api/local/analysis/{roundNum}/{idx}", s.handleLocalAnalysis)
 	mux.HandleFunc("GET /api/budget", s.handleBudget)
 	mux.HandleFunc("GET /api/my-rounds", s.handleMyRounds)
 	mux.HandleFunc("GET /api/leaderboard", s.handleLeaderboard)
@@ -157,6 +158,20 @@ func (s *Server) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, analysis)
+}
+
+func (s *Server) handleLocalAnalysis(w http.ResponseWriter, r *http.Request) {
+	roundNum := r.PathValue("roundNum")
+	idxStr := r.PathValue("idx")
+	// Read from local calibration data
+	path := filepath.Join("data", "calibration", "round"+roundNum, "analysis_seed_"+idxStr+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		writeError(w, 404, fmt.Sprintf("local analysis not found: %s", path))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
 }
 
 func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {

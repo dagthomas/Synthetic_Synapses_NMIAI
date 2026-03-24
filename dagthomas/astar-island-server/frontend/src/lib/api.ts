@@ -59,5 +59,11 @@ export const admin = {
 	scoreRound: (id: string) =>
 		apiFetch<any>(`/admin/api/rounds/${id}/score`, { method: 'POST' }),
 	teams: () => apiFetch<any[]>('/admin/api/teams'),
-	stats: () => apiFetch<any>('/admin/api/stats')
+	teamDetail: (id: string) => apiFetch<any>(`/admin/api/teams/${id}`),
+	stats: () => apiFetch<any>('/admin/api/stats'),
+	statsRounds: () => apiFetch<any>('/admin/api/stats/rounds'),
+	statsTeams: () => apiFetch<any>('/admin/api/stats/teams'),
+	statsPredictions: () => apiFetch<any>('/admin/api/stats/predictions'),
+	statsQueries: () => apiFetch<any>('/admin/api/stats/queries'),
+	statsParams: () => apiFetch<any>('/admin/api/stats/params')
 };

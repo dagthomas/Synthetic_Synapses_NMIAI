@@ -7,6 +7,7 @@
 	import { TerrainNames, TerrainColors } from '$lib/types';
 	import type { GalleryEntry, GeneratedImage, RoundDetail } from '$lib/types';
 	import { fetchAPI, postAPI, deleteAPI, GO_API } from '$lib/api';
+	import { getCurrentSeason, type Season } from '$lib/components/map/terrain';
 
 	export const ssr = false;
 
@@ -15,10 +16,14 @@
 	let selectedSeed = $state(0);
 	let showViewport = $state(true);
 	let showScores = $state(false);
+	let showGrid = $state(false);
+	let showPrediction = $state(false);
+	let showTerrain = $state(true);
 	let viewportX = $state(12);
 	let viewportY = $state(12);
 	let timeOfDay = $state(getCurrentHour());
 	let autoTime = $state(true);
+	let season: Season = $state(getCurrentSeason());
 	let clockInterval: ReturnType<typeof setInterval> | undefined;
 
 	// Round switching state
@@ -49,6 +54,7 @@
 	let flythroughActive = $state(false);
 	let roundCycleInterval: ReturnType<typeof setInterval> | undefined;
 	const ROUND_CYCLE_TIMES = [6, 10, 14, 18, 22];
+	const ROUND_CYCLE_SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter', 'summer'];
 
 	let preloadedRound: Map<string, RoundDetail> = new Map();
 
@@ -98,6 +104,7 @@
 					await selectRound(nextId);
 				}
 				timeOfDay = ROUND_CYCLE_TIMES[roundIdx % ROUND_CYCLE_TIMES.length];
+				season = ROUND_CYCLE_SEASONS[roundIdx % ROUND_CYCLE_SEASONS.length];
 				// Preload the one after this
 				preloadNext(roundIdx);
 			}, 12000);
@@ -255,12 +262,19 @@
 				{grid}
 				{settlements}
 				{showScores}
+				{showGrid}
+				{showPrediction}
+				{showTerrain}
 				{timeOfDay}
 				{seedLabel}
 				{roundLabel}
+				roundId={selectedRoundId}
+				roundNumber={currentDetail?.round_number}
+				seedIndex={selectedSeed}
 				freezeCamera={generatingAll}
 				onCaptureFn={(fn) => (captureFn = fn)}
 				{onFlythroughChange}
+				{season}
 			/>
 		{:else}
 			<div class="flex items-center justify-center h-full text-cyber-muted">
@@ -311,6 +325,24 @@
 					<!-- Time of day slider -->
 					<TimeSlider bind:timeOfDay bind:autoMode={autoTime} />
 
+					<!-- Season selector -->
+					<div>
+						<div class="text-[10px] text-cyber-muted mb-1">Season</div>
+						<div class="flex gap-1">
+							{#each (['spring', 'summer', 'autumn', 'winter'] as const) as s}
+								<button
+									class="flex-1 px-1.5 py-1 text-[10px] rounded border transition-colors
+										{season === s
+											? 'border-neon-cyan bg-neon-cyan/15 text-neon-cyan'
+											: 'border-cyber-border text-cyber-muted hover:border-neon-cyan/40'}"
+									onclick={() => (season = s)}
+								>
+									{s[0].toUpperCase() + s.slice(1, 3)}
+								</button>
+							{/each}
+						</div>
+					</div>
+
 					<!-- Viewport position -->
 					<div>
 						<div class="text-[10px] text-cyber-muted mb-1">Viewport Position</div>
@@ -336,23 +368,31 @@
 					</div>
 
 					<!-- Toggles -->
-					<div class="space-y-2">
-						<label class="flex items-center gap-2 text-[11px] cursor-pointer">
-							<input
-								type="checkbox"
-								bind:checked={showViewport}
-								class="accent-neon-cyan"
-							/>
-							<span class="text-cyber-fg">Viewport overlay</span>
-						</label>
-						<label class="flex items-center gap-2 text-[11px] cursor-pointer">
-							<input
-								type="checkbox"
-								bind:checked={showScores}
-								class="accent-neon-cyan"
-							/>
-							<span class="text-cyber-fg">Score overlay</span>
-						</label>
+					<div class="space-y-1.5">
+						{#each [
+							{ get: () => showViewport, set: (v: boolean) => showViewport = v, label: 'Viewport overlay' },
+							{ get: () => showScores, set: (v: boolean) => showScores = v, label: 'Score overlay' },
+							{ get: () => showGrid, set: (v: boolean) => showGrid = v, label: 'Grid overlay', key: 'G' },
+							{ get: () => showPrediction, set: (v: boolean) => showPrediction = v, label: 'Prediction', key: 'P' },
+							{ get: () => showTerrain, set: (v: boolean) => showTerrain = v, label: 'Terrain height', key: 'T' },
+						] as toggle}
+							<button
+								class="flex items-center gap-2 text-[11px] w-full text-left px-1 py-0.5 rounded hover:bg-cyber-surface/50 transition-colors"
+								onclick={() => toggle.set(!toggle.get())}
+							>
+								<span
+									class="w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors {toggle.get()
+										? 'bg-neon-cyan/20 border-neon-cyan text-neon-cyan'
+										: 'border-cyber-border bg-cyber-surface text-transparent'}"
+								>
+									{#if toggle.get()}✓{/if}
+								</span>
+								<span class="text-cyber-fg">{toggle.label}</span>
+								{#if toggle.key}
+									<kbd class="text-[9px] text-cyber-muted ml-auto">{toggle.key}</kbd>
+								{/if}
+							</button>
+						{/each}
 					</div>
 				</div>
 			{/if}

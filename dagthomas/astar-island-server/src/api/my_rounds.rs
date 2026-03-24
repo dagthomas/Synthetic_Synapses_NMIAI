@@ -1,5 +1,5 @@
 use axum::{extract::{Path, State}, http::StatusCode, Json};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::auth::middleware::AuthTeam;
 use crate::config;
@@ -7,12 +7,12 @@ use crate::models::*;
 
 /// GET /astar-island/my-rounds — Rounds enriched with team's scores.
 pub async fn my_rounds(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     AuthTeam(claims): AuthTeam,
 ) -> Result<Json<Vec<MyRoundEntry>>, (StatusCode, String)> {
     let rounds: Vec<(String, i64, String, i64, i64, i64, f64, Option<String>, Option<String>)> =
         sqlx::query_as(
-            "SELECT id, round_number, status, map_width, map_height, prediction_window_minutes, round_weight, started_at, closes_at FROM rounds ORDER BY round_number DESC"
+            "SELECT id, round_number::BIGINT, status, map_width::BIGINT, map_height::BIGINT, prediction_window_minutes::BIGINT, round_weight::DOUBLE PRECISION, started_at, closes_at FROM rounds ORDER BY round_number DESC"
         )
         .fetch_all(&pool)
         .await
@@ -21,7 +21,7 @@ pub async fn my_rounds(
     let mut entries = Vec::new();
     for (id, round_number, status, mw, mh, pw, rw, started_at, closes_at) in rounds {
         let queries_used: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM query_log WHERE team_id = ? AND round_id = ?",
+            "SELECT COUNT(*)::BIGINT FROM query_log WHERE team_id = $1 AND round_id = $2",
         )
         .bind(&claims.team_id)
         .bind(&id)
@@ -30,7 +30,7 @@ pub async fn my_rounds(
         .unwrap_or(0);
 
         let seeds_submitted: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM predictions WHERE team_id = ? AND round_id = ?",
+            "SELECT COUNT(*)::BIGINT FROM predictions WHERE team_id = $1 AND round_id = $2",
         )
         .bind(&claims.team_id)
         .bind(&id)
@@ -40,7 +40,7 @@ pub async fn my_rounds(
 
         // Get per-seed scores
         let seed_scores_rows: Vec<(i64, Option<f64>)> = sqlx::query_as(
-            "SELECT seed_index, score FROM predictions WHERE team_id = ? AND round_id = ? ORDER BY seed_index",
+            "SELECT seed_index::BIGINT, score::DOUBLE PRECISION FROM predictions WHERE team_id = $1 AND round_id = $2 ORDER BY seed_index",
         )
         .bind(&claims.team_id)
         .bind(&id)
@@ -91,12 +91,12 @@ pub async fn my_rounds(
 
 /// GET /astar-island/my-predictions/{round_id} — Team's predictions with argmax/confidence.
 pub async fn my_predictions(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     AuthTeam(claims): AuthTeam,
     Path(round_id): Path<String>,
 ) -> Result<Json<Vec<MyPredictionEntry>>, (StatusCode, String)> {
     let rows: Vec<(i64, String, Option<f64>, Option<String>)> = sqlx::query_as(
-        "SELECT seed_index, tensor, score, submitted_at FROM predictions WHERE team_id = ? AND round_id = ? ORDER BY seed_index",
+        "SELECT seed_index::BIGINT, tensor, score::DOUBLE PRECISION, submitted_at FROM predictions WHERE team_id = $1 AND round_id = $2 ORDER BY seed_index",
     )
     .bind(&claims.team_id)
     .bind(&round_id)

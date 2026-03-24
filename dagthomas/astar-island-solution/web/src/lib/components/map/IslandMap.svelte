@@ -13,7 +13,7 @@
 	import { createWildlifeSystem, type WildlifeSystem } from './wildlife';
 	import { preloadModels, placeModel } from './models';
 	import { createWeatherSystem, type WeatherSystem } from './weather';
-	import { createTerrain, type TerrainSystem } from './terrain';
+	import { createTerrain, computeTerrainMorphData, applyNormalMap, updateTerrainHeightFn, getCurrentSeason, getSeasonalTreeTint, WATER_LEVEL, type TerrainSystem, type Season } from './terrain';
 	import { createFPController, type FPController } from './fpcontrols';
 	import { createPostFX, type PostFXPipeline } from './postfx';
 	import { createAtmosphere, type AtmosphereSystem } from './atmosphere';
@@ -24,27 +24,42 @@
 	import { createWater, createMoatAndWaterfalls, type WaterSystem, type MoatSystem } from './water';
 	import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
 	import { createWind, applyWindSway, type WindSystem } from './wind';
+	import { createNightSky, type NightSkySystem } from './nightsky';
 
 	let {
 		grid,
 		settlements = [],
 		showScores = false,
+		showGrid = false,
+		showPrediction = false,
+		showTerrain = true,
 		timeOfDay = 12,
 		freezeCamera = false,
 		seedLabel = '',
 		roundLabel = '',
+		roundId = undefined,
+		roundNumber = undefined,
+		seedIndex = undefined,
 		onCaptureFn = undefined,
-		onFlythroughChange = undefined
+		onFlythroughChange = undefined,
+		season = getCurrentSeason()
 	}: {
 		grid: number[][];
 		settlements?: Settlement[];
 		showScores?: boolean;
+		showGrid?: boolean;
+		showPrediction?: boolean;
+		showTerrain?: boolean;
 		timeOfDay?: number;
 		freezeCamera?: boolean;
 		seedLabel?: string;
 		roundLabel?: string;
+		roundId?: string | null;
+		roundNumber?: number;
+		seedIndex?: number;
 		onCaptureFn?: (fn: () => string) => void;
 		onFlythroughChange?: (active: boolean) => void;
+		season?: Season;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -73,11 +88,88 @@
 	let cubeRenderTarget: THREE.WebGLCubeRenderTarget | null = null;
 	let lightProbeNeedsUpdate = false;
 	let settlementLights: THREE.PointLight[] = [];
+	let activeWaterfalls: {
+		points: THREE.Points; topH: number; botH: number; midX: number; midZ: number;
+		peakX: number; peakZ: number; peakH: number;
+		edgeX: number; edgeZ: number; edgeH: number;
+		watX: number; watZ: number; watH: number;
+	}[] = [];
 	let fireParticles: THREE.Mesh[] = [];
 	let settlementPositions: THREE.Vector3[] = [];
 	let lastInteraction = 0;
 	let autoRotateAngle = 0;
+
+	// Idle cinema mode — random still shots with handheld sway, camera looks toward center
+	const IDLE_SHOT_DURATION = 10;
+	const IDLE_TRANSITION_DURATION = 2;
+	let idleCinemaActive = false;
+	let idleShotTimer = 0;
+	let idleShotPhase: 'hold' | 'transition' = 'hold';
+	let idleTransitionProgress = 0;
+	let idleCamFrom = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0 };
+	let idleCamTo = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0 };
+	let idleCamCurrent = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0 };
+	let idleHandheldTime = 0;
+
+	function generateIdleShot(): { px: number; py: number; pz: number; lx: number; ly: number; lz: number } {
+		const rows = grid?.length ?? 40;
+		const cols = grid?.[0]?.length ?? 40;
+		// Try up to 10 random positions, prefer land (height > 0)
+		let bestPx = 0, bestPz = 0, bestH = -999;
+		for (let attempt = 0; attempt < 10; attempt++) {
+			const angle = Math.random() * Math.PI * 2;
+			const radius = 6 + Math.random() * 12;
+			const px = Math.cos(angle) * radius;
+			const pz = Math.sin(angle) * radius;
+			const h = gY(px, pz);
+			if (h > bestH) {
+				bestPx = px;
+				bestPz = pz;
+				bestH = h;
+			}
+			if (h > 0.05) break; // found land, good enough
+		}
+		// Camera 10m above ground, minimum 1m above water
+		const py = Math.max(bestH + 10, 1);
+		// Look toward center, ground level clamped above water
+		const centerY = Math.max(gY(0, 0), 0.1);
+		return { px: bestPx, py, pz: bestPz, lx: 0, ly: centerY, lz: 0 };
+	}
+
+	function smoothstep(t: number): number {
+		return t * t * (3 - 2 * t);
+	}
 	let buildGeneration = 0; // incremented each build to cancel stale async work
+	let morphFrameCount = 0;
+	let terrainWorker: Worker | null = null;
+
+	function getTerrainWorker(): Worker {
+		if (terrainWorker) return terrainWorker;
+		// Inline Blob worker — self-contained, no import issues
+		// Seasonal biome colors and snow thresholds passed via message
+		const code = `
+const BH={0:.12,1:.16,2:.04,3:.16,4:.2,5:.36,10:-.55,11:.14};
+const SBC={summer:{0:[.82,.74,.5],1:[.7,.6,.38],2:[.45,.55,.52],3:[.56,.52,.44],4:[.2,.44,.14],5:[.5,.48,.44],10:[.1,.25,.42],11:[.36,.62,.18]},spring:{0:[.82,.74,.5],1:[.68,.6,.4],2:[.45,.55,.52],3:[.52,.52,.42],4:[.28,.52,.18],5:[.5,.48,.44],10:[.1,.26,.44],11:[.42,.65,.22]},autumn:{0:[.8,.72,.48],1:[.68,.56,.36],2:[.44,.52,.5],3:[.58,.5,.4],4:[.55,.35,.12],5:[.5,.48,.44],10:[.1,.22,.38],11:[.62,.52,.2]},winter:{0:[.78,.74,.58],1:[.64,.58,.46],2:[.48,.54,.54],3:[.54,.52,.48],4:[.3,.28,.24],5:[.58,.56,.54],10:[.08,.2,.38],11:[.45,.4,.32]}};
+const SNT={summer:{s:2.4,f:3.5},spring:{s:2,f:3.2},autumn:{s:1.8,f:2.8},winter:{s:.8,f:1.6}};
+const SC=[.94,.94,.97],WC=[.58,.52,.38],DC=[.65,.58,.42];
+const NA={0:.018,1:.012,2:.01,3:.03,4:.035,5:.12,10:.008,11:.02};
+function h(x,y){const n=Math.sin(x*127.1+y*311.7)*43758.5453;return n-Math.floor(n)}
+function sn(x,z){const ix=Math.floor(x),iz=Math.floor(z),fx=x-ix,fz=z-iz,sx=fx*fx*(3-2*fx),sz=fz*fz*(3-2*fz);return h(ix,iz)*(1-sx)*(1-sz)+h(ix+1,iz)*sx*(1-sz)+h(ix,iz+1)*(1-sx)*sz+h(ix+1,iz+1)*sx*sz}
+function fbm(x,z,o,l,g){let v=0,a=1,f=1,m=0;for(let i=0;i<o;i++){v+=sn(x*f,z*f)*a;m+=a;a*=g;f*=l}return v/m}
+function rn(x,z,o){let v=0,a=1,f=1,m=0;for(let i=0;i<o;i++){let n=sn(x*f,z*f);n=1-Math.abs(n*2-1);n*=n;v+=n*a;m+=a;a*=.5;f*=2.1}return v/m}
+function wfbm(x,z,o){return fbm(x+fbm(x+5.2,z+1.3,3,2,.5)*1.5,z+fbm(x+1.7,z+9.2,3,2,.5)*1.5,o,2,.5)}
+function bmf(g){const r=g.length,c=g[0].length,f=new Float32Array(r*c);for(let y=0;y<r;y++)for(let x=0;x<c;x++){let n=0;for(let dy=-3;dy<=3;dy++)for(let dx=-3;dx<=3;dx++){const cx=x+dx,cy=y+dy;if(cx>=0&&cx<c&&cy>=0&&cy<r&&g[cy][cx]===5)n++}f[y*c+x]=n}return f}
+function smf(f,c,r,gx,gz){const cx=Math.max(0,Math.min(c-1.001,gx)),cz=Math.max(0,Math.min(r-1.001,gz)),ix=Math.floor(cx),iz=Math.floor(cz),fx=cx-ix,fz=cz-iz,ix1=Math.min(ix+1,c-1),iz1=Math.min(iz+1,r-1);return f[iz*c+ix]*(1-fx)*(1-fz)+f[iz*c+ix1]*fx*(1-fz)+f[iz1*c+ix]*(1-fx)*fz+f[iz1*c+ix1]*fx*fz}
+function bbh(g,gx,gz){const r=g.length,c=g[0].length,s2=1.8;let t=0,w=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const cx=Math.round(gx)+dx,cy=Math.round(gz)+dy;if(cx<0||cx>=c||cy<0||cy>=r)continue;const d2=(gx-cx)*(gx-cx)+(gz-cy)*(gz-cy),wt=Math.exp(-d2/s2);t+=(BH[g[cy][cx]]??0.06)*wt;w+=wt}return w>0?t/w:.06}
+function sfbm(x,z){return fbm(x,z,2,2,.5)}
+function ch(g,mf,c,r,gx,gz){let ht=bbh(g,gx,gz);const tix=Math.floor(Math.max(0,Math.min(c-1,gx+.5))),tiy=Math.floor(Math.max(0,Math.min(r-1,gz+.5))),code=g[tiy]?.[tix]??0;let mp=0;for(let dy=-3;dy<=3;dy++)for(let dx=-3;dx<=3;dx++){const cx=Math.round(gx)+dx,cy=Math.round(gz)+dy;if(cx<0||cx>=c||cy<0||cy>=r||g[cy][cx]!==5)continue;const d=Math.sqrt((gx-cx)*(gx-cx)+(gz-cy)*(gz-cy)),R=2.8;if(d>=R)continue;const t=d/R;mp=Math.max(mp,(1-t*t)*(1-t*t))}if(mp>0){const dn=smf(mf,c,r,gx,gz),ps=dn>=12?4:dn>=6?3.2:dn>=3?2.2:1.5;ht+=mp*ps}ht+=(sfbm(gx*.8,gz*.8)-.5)*2*(NA[code]??.015);if(mp>.2)ht+=rn(gx*.5,gz*.5,2)*mp*.6;return ht}
+function bc(g,gx,gz,BC){const r=g.length,c=g[0].length,s2=1.4;let R=0,G=0,B=0,w=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const cx=Math.round(gx)+dx,cy=Math.round(gz)+dy;if(cx<0||cx>=c||cy<0||cy>=r)continue;const d2=(gx-cx)*(gx-cx)+(gz-cy)*(gz-cy),wt=Math.exp(-d2/s2),cl=BC[g[cy][cx]]??DC;R+=cl[0]*wt;G+=cl[1]*wt;B+=cl[2]*wt;w+=wt}return w>0?[R/w,G/w,B/w]:[...DC]}
+self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC[sn]||SBC.summer,st=SNT[sn]||SNT.summer,r=g.length,c=g[0].length,mf=bmf(g),sd=2,sx=c*sd,sz=r*sd,vc=(sx+1)*(sz+1),hs=new Float32Array(vc),cs=new Float32Array(vc*3);for(let iz=0;iz<=sz;iz++)for(let ix=0;ix<=sx;ix++){const i=iz*(sx+1)+ix,wx=(ix/sx-.5)*c,wz=(iz/sz-.5)*r,gx=wx+c/2-.5,gz=wz+r/2-.5,ht=ch(g,mf,c,r,gx,gz);hs[i]=ht;let[R,G,B]=bc(g,gx,gz,BC);if(ht>st.s){const t=Math.min(1,(ht-st.s)/(st.f-st.s));R=R*(1-t)+SC[0]*t;G=G*(1-t)+SC[1]*t;B=B*(1-t)+SC[2]*t}if(ht>-.15&&ht<.12){const wt=1-Math.max(0,Math.min(1,(ht+.15)/.27));R=R*(1-wt*.6)+WC[0]*wt*.6;G=G*(1-wt*.6)+WC[1]*wt*.6;B=B*(1-wt*.6)+WC[2]*wt*.6}const cn=(sfbm(gx*2.5,gz*2.5)-.5)*.05;cs[i*3]=Math.max(0,Math.min(1,R+cn));cs[i*3+1]=Math.max(0,Math.min(1,G+cn*.7));cs[i*3+2]=Math.max(0,Math.min(1,B+cn*.5))}self.postMessage({heights:hs,colors:cs,vertexCount:vc},[hs.buffer,cs.buffer])};
+`;
+		const blob = new Blob([code], { type: 'application/javascript' });
+		terrainWorker = new Worker(URL.createObjectURL(blob));
+		return terrainWorker;
+	}
 	let prevTimeOfDay = -1;
 	let cachedDN: ReturnType<typeof computeDayNight> | null = null;
 	let lastShadowUpdate = 0;
@@ -106,8 +198,16 @@
 	let creatureSystem: CreatureSystem | null = null;
 	let waterSystem: WaterSystem | null = null;
 	let moatSystem: MoatSystem | null = null;
+	let nightSkySystem: NightSkySystem | null = null;
 	let windSystem: WindSystem | null = null;
 	let gridOverlay: THREE.Group | null = null;
+	let predictionOverlay: THREE.Group | null = null;
+	let terrainMorphOldHeights: Float32Array | null = null;
+	let terrainMorphNewHeights: Float32Array | null = null;
+	let terrainMorphOldNormals: Float32Array | null = null;
+	let terrainMorphNewNormals: Float32Array | null = null;
+	let predictionAnalysis: { ground_truth: number[][][]; prediction: number[][][] } | null = null;
+	let predictionLoading = false;
 	let fpAudio: HTMLAudioElement | null = null;
 	let pointerLocked = $state(false);
 	let lastCamX: number | null = null;
@@ -122,6 +222,38 @@
 	let transitionAlpha = 1.0;
 	let transitioning = false;
 	const TRANSITION_DURATION = 2.0;
+
+	// --- Terrain-only height morph state ---
+	let terrainMorphing = false;
+	let terrainMorphAlpha = 0;
+	let terrainMorphStartHeights: Float32Array | null = null;
+	let terrainMorphTargetHeights: Float32Array | null = null;
+	let terrainMorphStartColors: Float32Array | null = null;
+	let terrainMorphTargetColors: Float32Array | null = null;
+	let pendingTerrainSystem: TerrainSystem | null = null;
+	let pendingMorphGrid: number[][] | null = null;
+	let lastGridRows = 0;
+	let lastGridCols = 0;
+	const TERRAIN_MORPH_DURATION = 0.8;
+
+	// --- Scenery sink/rise state ---
+	let sceneryGroup: THREE.Group | null = null;
+	let sceneryPhase: 'sinking' | 'rising' | null = null;
+	let sceneryAlpha = 0;
+	let pendingGrid: number[][] | null = null;
+	let pendingSettlements: typeof settlements | null = null;
+	const SCENERY_SINK_DURATION = 0.8; // match TERRAIN_MORPH_DURATION to avoid force-snap
+	const SCENERY_RISE_DURATION = 0.6;
+	const SCENERY_SINK_DEPTH = 4.0;
+
+	// --- Sky transition state ---
+	let skyFrozen = false;
+	let skyFrozenTime = 0;
+	let skyTransitionActive = false;
+	let skyTransitionAlpha = 0;
+	let skyTransitionFrom = 0;
+	let skyTransitionTo = 0;
+	const SKY_TRANSITION_DURATION = 2.5;
 
 	// --- Terrain colors matching reference image ---
 	// Reference: sandy tan base, green grass patches, blue water, gray stone
@@ -160,14 +292,13 @@
 		return terrainSystem ? terrainSystem.getHeightAt(wx, wz) : 0.1;
 	}
 
-	/** Cleanup grid-dependent systems only (terrain, creatures, scatter, water, weather) */
+	/** Cleanup grid-dependent systems only (terrain, creatures, scatter, weather).
+	 *  Water/moat are kept alive — they only depend on grid dimensions, not content. */
 	function cleanupGridSystems() {
 		if (terrainSystem) { terrainSystem.dispose(); terrainSystem = null; }
 		if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
 		if (scatter) { scatter.dispose(); scatter = null; }
-		if (waterSystem) { waterSystem.dispose(); waterSystem = null; }
 		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
-		if (moatSystem) { moatSystem.dispose(); moatSystem = null; }
 		blockyTerrainGroup = null;
 		settlementLights = [];
 		fireParticles = [];
@@ -226,12 +357,12 @@
 
 		// Terrain already visible — just ensure it exists
 		if (!terrainSystem) {
-			terrainSystem = createTerrain(grid);
+			terrainSystem = createTerrain(grid, { season });
 			scene.add(terrainSystem.mesh);
 		}
 
 		// Camera: wide FOV, close near plane for immersion
-		camera.fov = 100;
+		camera.fov = 115;
 		camera.near = 0.01;
 		camera.far = 300;
 		camera.rotation.order = 'YXZ';
@@ -263,7 +394,7 @@
 			atmosphere = createAtmosphere(scene, grid, terrainSystem.getHeightAt);
 		}
 
-		// Higher quality shadows for ground-level (1K flythrough, 4K walking)
+		// Higher quality shadows for ground-level
 		if (sunLight) {
 			const shadowRes = flythroughActive ? 1024 : 4096;
 			sunLight.shadow.mapSize.width = shadowRes;
@@ -421,6 +552,154 @@
 		if (e.code === 'KeyG') {
 			if (gridOverlay) gridOverlay.visible = !gridOverlay.visible;
 		}
+		if (e.code === 'KeyP') {
+			togglePredictionOverlay();
+		}
+		if (e.code === 'KeyT') {
+			if (terrainSystem) terrainSystem.mesh.visible = !terrainSystem.mesh.visible;
+		}
+	}
+
+	async function togglePredictionOverlay() {
+		if (!scene || !grid?.length) return;
+
+		// If overlay exists, toggle visibility
+		if (predictionOverlay) {
+			predictionOverlay.visible = !predictionOverlay.visible;
+			return;
+		}
+
+		// Fetch analysis data if not loaded — try local calibration first, then API
+		if (!predictionAnalysis && !predictionLoading) {
+			predictionLoading = true;
+			const si = seedIndex ?? 0;
+			let loaded = false;
+
+			// Try local calibration data (by round number)
+			if (roundNumber) {
+				try {
+					const localUrl = `http://localhost:7091/api/local/analysis/${roundNumber}/${si}`;
+						const resp = await fetch(localUrl);
+					if (resp.ok) {
+						predictionAnalysis = await resp.json();
+						loaded = true;
+						}
+				} catch { /* fall through to API */ }
+			}
+
+			// Fall back to external API
+			if (!loaded && roundId) {
+				try {
+					const apiUrl = `http://localhost:7091/api/rounds/${roundId}/seeds/${si}/analysis`;
+						const resp = await fetch(apiUrl);
+					if (resp.ok) {
+						predictionAnalysis = await resp.json();
+						loaded = true;
+						} else {
+						}
+				} catch (e) { /* fetch failed */ }
+			}
+
+				predictionLoading = false;
+		}
+
+		if (!predictionAnalysis?.prediction || !predictionAnalysis?.ground_truth) {
+				return;
+		}
+
+		// Build the overlay
+		predictionOverlay = buildPredictionOverlay(predictionAnalysis, grid);
+		scene.add(predictionOverlay);
+		}
+
+	function argmax(probs: number[]): number {
+		let best = 0;
+		for (let i = 1; i < probs.length; i++) {
+			if (probs[i] > probs[best]) best = i;
+		}
+		return best;
+	}
+
+	function buildPredictionOverlay(
+		analysis: { ground_truth: number[][][]; prediction: number[][][] },
+		g: number[][]
+	): THREE.Group {
+		const rows = g.length, cols = g[0].length;
+		const ox = -cols / 2 + 0.5, oz = -rows / 2 + 0.5;
+		const cellCount = rows * cols;
+
+		const positions = new Float32Array(cellCount * 4 * 3); // 4 verts per cell
+		const colors = new Float32Array(cellCount * 4 * 4);    // RGBA
+		const indices: number[] = [];
+
+		const GREEN = [0.1, 0.85, 0.2, 0.5];
+		const RED   = [0.9, 0.15, 0.1, 0.5];
+
+		for (let r = 0; r < rows; r++) {
+			for (let c = 0; c < cols; c++) {
+				const idx = r * cols + c;
+				const wx = c + ox, wz = r + oz;
+				const h = gY(wx, wz) + 0.12;
+
+				// Compare prediction vs ground truth
+				const predClass = argmax(analysis.prediction[r][c]);
+				const trueClass = argmax(analysis.ground_truth[r][c]);
+				const correct = predClass === trueClass;
+				const col = correct ? GREEN : RED;
+
+				// 4 vertices for quad
+				const vi = idx * 4;
+				const pi = vi * 3, ci = vi * 4;
+				const half = 0.48;
+
+				positions[pi]     = wx - half; positions[pi + 1] = h; positions[pi + 2]  = wz - half;
+				positions[pi + 3] = wx + half; positions[pi + 4] = h; positions[pi + 5]  = wz - half;
+				positions[pi + 6] = wx + half; positions[pi + 7] = h; positions[pi + 8]  = wz + half;
+				positions[pi + 9] = wx - half; positions[pi + 10] = h; positions[pi + 11] = wz + half;
+
+				for (let v = 0; v < 4; v++) {
+					colors[ci + v * 4]     = col[0];
+					colors[ci + v * 4 + 1] = col[1];
+					colors[ci + v * 4 + 2] = col[2];
+					colors[ci + v * 4 + 3] = col[3];
+				}
+
+				indices.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
+			}
+		}
+
+		const geo = new THREE.BufferGeometry();
+		geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+		geo.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+		geo.setIndex(indices);
+		geo.computeVertexNormals();
+
+		const mat = new THREE.ShaderMaterial({
+			vertexShader: `
+				attribute vec4 color;
+				varying vec4 vColor;
+				void main() {
+					vColor = color;
+					gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+				}
+			`,
+			fragmentShader: `
+				varying vec4 vColor;
+				void main() {
+					gl_FragColor = vColor;
+				}
+			`,
+			transparent: true,
+			depthWrite: false,
+			side: THREE.DoubleSide,
+		});
+
+		const mesh = new THREE.Mesh(geo, mat);
+		mesh.renderOrder = 5;
+
+		const group = new THREE.Group();
+		group.add(mesh);
+		return group;
 	}
 
 	async function startFlythrough() {
@@ -433,7 +712,7 @@
 		// Step 1: Terrain
 		flythroughLoadProgress = 0.1;
 		if (!terrainSystem) {
-			terrainSystem = createTerrain(grid);
+			terrainSystem = createTerrain(grid, { season });
 			scene.add(terrainSystem.mesh);
 		}
 		await nextFrame();
@@ -487,18 +766,18 @@
 		}
 	}
 
-	// Grid overlay colors — bold, saturated, distinct per type
+	// Grid overlay colors — maximally distinct, high saturation
 	const TERRAIN_RGB: Record<number, [number, number, number]> = {
-		0:  [0.85, 0.75, 0.45],  // Sand: warm yellow-tan
-		1:  [0.90, 0.65, 0.15],  // Settlement: deep orange
-		2:  [0.20, 0.60, 0.95],  // Port: bright blue
-		3:  [0.80, 0.25, 0.20],  // Ruin: strong red
-		4:  [0.10, 0.45, 0.10],  // Forest: dark green
-		5:  [0.50, 0.50, 0.55],  // Mountain: steel gray
-		10: [0.10, 0.25, 0.70],  // Ocean: deep navy
-		11: [0.55, 0.80, 0.20],  // Plains: bright lime-green
+		0:  [0.90, 0.80, 0.35],  // Empty/Sand: bright gold
+		1:  [1.00, 0.50, 0.00],  // Settlement: vivid orange
+		2:  [0.00, 0.55, 1.00],  // Port: bright cyan-blue
+		3:  [0.90, 0.15, 0.15],  // Ruin: vivid red
+		4:  [0.05, 0.35, 0.05],  // Forest: dark deep green
+		5:  [0.60, 0.55, 0.70],  // Mountain: lavender-gray
+		10: [0.05, 0.10, 0.55],  // Ocean: dark navy
+		11: [0.70, 0.95, 0.10],  // Plains: neon yellow-green
 	};
-	const DEFAULT_RGB: [number, number, number] = [0.10, 0.45, 0.10];
+	const DEFAULT_RGB: [number, number, number] = [0.50, 0.50, 0.50];
 
 	/** Build a 3D grid overlay: floor tiles + 2m vertical walls per cell border,
 	 *  colored by terrain type, fading to transparent at the top. */
@@ -507,6 +786,13 @@
 		const wallH = 2.0;
 		const group = new THREE.Group();
 
+		// Debug: log terrain code distribution
+		const codeCounts = new Map<number, number>();
+		for (let z = 0; z < r; z++) for (let x = 0; x < c; x++) {
+			const code = g[z][x];
+			codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+		}
+	
 		// --- Floor: colored transparent tiles ---
 		const floorPositions: number[] = [];
 		const floorColors: number[] = [];
@@ -523,6 +809,10 @@
 				const hs = 0.48; // half cell size (slight gap)
 				const vi = floorPositions.length / 3;
 
+				// Water cells: very transparent to blend with actual water below
+				const isWater = code === 10 || code === 2;
+				const floorAlpha = isWater ? 0.12 : 0.45;
+
 				// 4 corners of the cell
 				floorPositions.push(wx - hs, h, wz - hs);
 				floorPositions.push(wx + hs, h, wz - hs);
@@ -530,7 +820,7 @@
 				floorPositions.push(wx - hs, h, wz + hs);
 				for (let k = 0; k < 4; k++) {
 					floorColors.push(rgb[0], rgb[1], rgb[2]);
-					floorAlphas.push(0.45);
+					floorAlphas.push(floorAlpha);
 				}
 				floorIndices.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
 			}
@@ -598,9 +888,12 @@
 
 				// Wall height: base 1.0, scales up with cluster size (except plains)
 				const cs = clusterSize[ci] ?? 1;
+				const isWaterCell = cellCode === 10 || cellCode === 2;
 				const cellWallH = cellCode === PLAINS_CODE
 					? wallH * 0.5
-					: wallH * (0.5 + Math.min(cs, 20) / 20 * 1.5);
+					: isWaterCell
+						? wallH * 0.3
+						: wallH * (0.5 + Math.min(cs, 20) / 20 * 1.5);
 
 				if (x < c) addWall(wx, wz, wx + 1, wz, rgb, cellWallH);
 				if (z < r) addWall(wx, wz, wx, wz + 1, rgb, cellWallH);
@@ -748,16 +1041,16 @@
 		});
 
 		const mesh = new THREE.Mesh(geo, mat);
-		// Position cone so its top surface sits flush with terrain base (y=0)
-		mesh.position.set(0, -coneHeight / 2 + 0.05, 0);
-		mesh.receiveShadow = true;
-		mesh.castShadow = true;
+		// Position cone so its top overlaps terrain base — prevents gap/shadow strip
+		mesh.position.set(0, -coneHeight / 2 + 0.20, 0);
+		mesh.receiveShadow = false;
+		mesh.castShadow = false;
 		scene.add(mesh);
 
 		// --- Opaque moat floor (prevents seeing inside the open cone) ---
 		const moatW = 2.5;
 		const mfOuterW = cols / 2 + moatW, mfOuterH = rows / 2 + moatW;
-		const mfInnerW = cols / 2 - 0.3, mfInnerH = rows / 2 - 0.3;
+		const mfInnerW = cols / 2 - 1.5, mfInnerH = rows / 2 - 1.5;
 		const cr = 2.0; // corner radius matching moat water shader
 		function rrect(t: THREE.Shape | THREE.Path, hw: number, hh: number, r: number) {
 			t.moveTo(-hw + r, -hh);
@@ -781,8 +1074,8 @@
 		mfGeo.rotateX(-Math.PI / 2);
 		const mfMat = new THREE.MeshStandardMaterial({ color: 0x2a5a3a, roughness: 0.85, metalness: 0.02 });
 		const mfMesh = new THREE.Mesh(mfGeo, mfMat);
-		mfMesh.position.y = 0.03;
-		mfMesh.receiveShadow = true;
+		mfMesh.position.y = -0.15; // below water level so it doesn't show through
+		mfMesh.receiveShadow = false;
 		scene.add(mfMesh);
 
 		// --- Rim ground (between moat and cone edge) with terrain-matching colors ---
@@ -817,7 +1110,7 @@
 		const rimMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.02 });
 		const rimMesh = new THREE.Mesh(rimGeo, rimMat);
 		rimMesh.position.y = 0.05;
-		rimMesh.receiveShadow = true;
+		rimMesh.receiveShadow = false;
 		scene.add(rimMesh);
 
 		// A few hanging stalactites at the bottom
@@ -831,7 +1124,7 @@
 			const stalR = 0.10 + rng() * 0.18;
 			const stalGeo = new THREE.ConeGeometry(stalR, stalH, 5);
 			const stal = new THREE.Mesh(stalGeo, stalMat);
-			stal.position.set(sx, -coneHeight + 0.05 - stalH / 2, sz);
+			stal.position.set(sx, -coneHeight + 0.20 - stalH / 2, sz);
 			stal.rotation.x = Math.PI;
 			stal.castShadow = true;
 			scene.add(stal);
@@ -867,49 +1160,15 @@
 
 		const dummy = new THREE.Object3D();
 
-		// --- Pine trees (first 40 positions) ---
-		const ntrees = Math.min(40, pts.length);
-		const trunkG = new THREE.CylinderGeometry(0.06, 0.10, 0.6, 5);
-		const canG1 = new THREE.ConeGeometry(0.35, 0.55, 7);
-		const canG2 = new THREE.ConeGeometry(0.28, 0.45, 7);
-		const canG3 = new THREE.ConeGeometry(0.18, 0.4, 7);
-		const trunkM = new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 0.9 });
-		const canM = new THREE.MeshStandardMaterial({ color: 0x2d6b1e, roughness: 0.8 });
-
-		const trI = new THREE.InstancedMesh(trunkG, trunkM, ntrees);
-		const c1I = new THREE.InstancedMesh(canG1, canM, ntrees);
-		const c2I = new THREE.InstancedMesh(canG2, canM, ntrees);
-		const c3I = new THREE.InstancedMesh(canG3, canM, ntrees);
-		trI.castShadow = c1I.castShadow = c2I.castShadow = c3I.castShadow = true;
-
-		for (let i = 0; i < ntrees; i++) {
-			const p = pts[i];
-			const s = 0.8 + rng() * 0.8;
-			dummy.rotation.set(0, rng() * Math.PI * 2, 0);
-			dummy.scale.setScalar(s);
-
-			dummy.position.set(p.x, groundY + 0.25 * s, p.z);
-			dummy.updateMatrix(); trI.setMatrixAt(i, dummy.matrix);
-			dummy.position.y = groundY + 0.55 * s;
-			dummy.updateMatrix(); c1I.setMatrixAt(i, dummy.matrix);
-			dummy.position.y = groundY + 0.8 * s;
-			dummy.updateMatrix(); c2I.setMatrixAt(i, dummy.matrix);
-			dummy.position.y = groundY + 1.05 * s;
-			dummy.updateMatrix(); c3I.setMatrixAt(i, dummy.matrix);
-		}
-		trI.instanceMatrix.needsUpdate = c1I.instanceMatrix.needsUpdate =
-		c2I.instanceMatrix.needsUpdate = c3I.instanceMatrix.needsUpdate = true;
-		scene.add(trI); scene.add(c1I); scene.add(c2I); scene.add(c3I);
-
-		// --- Rocks (next 30) ---
-		const nrocks = Math.min(30, Math.max(0, pts.length - ntrees));
+		// --- Rocks (first 30 positions) ---
+		const nrocks = Math.min(30, pts.length);
 		const rockG = new THREE.DodecahedronGeometry(0.15, 1);
 		const rockM = new THREE.MeshStandardMaterial({ color: 0x7a7a72, roughness: 0.95, flatShading: true });
 		const rockI = new THREE.InstancedMesh(rockG, rockM, Math.max(1, nrocks));
 		rockI.castShadow = true;
 
 		for (let i = 0; i < nrocks; i++) {
-			const p = pts[ntrees + i];
+			const p = pts[i];
 			if (!p) break;
 			const s = 0.5 + rng() * 1.5;
 			dummy.position.set(p.x, groundY + 0.05 * s, p.z);
@@ -948,14 +1207,14 @@
 			scene.add(lMesh);
 		}
 
-		// --- Bushes (near trees) ---
-		const nbush = Math.min(30, ntrees);
+		// --- Bushes (near rocks) ---
+		const nbush = Math.min(30, nrocks);
 		const bushG = new THREE.SphereGeometry(0.12, 5, 4);
 		const bushM = new THREE.MeshStandardMaterial({ color: 0x3a7a28, roughness: 0.9 });
 		const bushI = new THREE.InstancedMesh(bushG, bushM, Math.max(1, nbush));
 
 		for (let i = 0; i < nbush; i++) {
-			const tp = pts[i % ntrees];
+			const tp = pts[i % nrocks];
 			const off = 0.3 + rng() * 0.8;
 			const ba = rng() * Math.PI * 2;
 			const s = 0.8 + rng() * 1.2;
@@ -992,6 +1251,19 @@
 					ctx.fillRect(x * s, z * s, s, s);
 				}
 			}
+			// Prediction overlay on minimap
+			if (predictionOverlay?.visible && predictionAnalysis?.prediction && predictionAnalysis?.ground_truth) {
+				const pa = predictionAnalysis;
+				for (let pz = 0; pz < rows; pz++) {
+					for (let px = 0; px < cols; px++) {
+						if (!pa.prediction[pz]?.[px] || !pa.ground_truth[pz]?.[px]) continue;
+						const pred = argmax(pa.prediction[pz][px]);
+						const truth = argmax(pa.ground_truth[pz][px]);
+						ctx.fillStyle = pred === truth ? 'rgba(25,210,60,0.55)' : 'rgba(220,40,30,0.55)';
+						ctx.fillRect(px * s, pz * s, s, s);
+					}
+				}
+			}
 			// Camera dot
 			if (camera) {
 				const cx = (camera.position.x + cols / 2) * s;
@@ -1024,14 +1296,113 @@
 		return new Promise(resolve => requestAnimationFrame(() => resolve()));
 	}
 
-	async function buildScene() {
+	function rebuildSceneryForNewGrid() {
+		if (!pendingGrid || !terrainSystem || !worldGroup) {
+			sceneryPhase = null;
+			return;
+		}
+		// Save old scenery — keep it visible while new one builds
+		const oldSceneryGroup = sceneryGroup;
+		const oldCreatures = creatureSystem;
+		const oldScatter = scatter;
+		const oldWeather = weatherSystem;
+		sceneryGroup = null;
+		creatureSystem = null;
+		scatter = null;
+		weatherSystem = null;
+		activeWaterfalls = [];
+
+		// Move water/moat to worldGroup so they stay visible during rebuild
+		if (oldSceneryGroup) {
+			if (waterSystem?.mesh?.parent === oldSceneryGroup) {
+				oldSceneryGroup.remove(waterSystem.mesh);
+				worldGroup.add(waterSystem.mesh);
+			}
+			if (moatSystem?.group?.parent === oldSceneryGroup) {
+				oldSceneryGroup.remove(moatSystem.group);
+				worldGroup.add(moatSystem.group);
+			}
+		}
+
+		// Build new scenery in background — old stays visible
+		buildScene(terrainSystem).then(() => {
+			if (sceneryGroup) sceneryGroup.position.y = 0;
+
+			// NOW remove old scenery (new one is ready — no blink)
+			if (oldSceneryGroup && worldGroup) {
+				worldGroup.remove(oldSceneryGroup);
+				setTimeout(() => disposeGroup(oldSceneryGroup), 50);
+			}
+			if (oldCreatures) oldCreatures.dispose();
+			if (oldScatter) oldScatter.dispose();
+			if (oldWeather) oldWeather.dispose();
+
+			sceneryPhase = null;
+			pendingGrid = null;
+			pendingSettlements = null;
+			if (sunLight) sunLight.shadow.needsUpdate = true;
+			lastShadowUpdate = performance.now();
+			lightProbeNeedsUpdate = true;
+			if (flythroughActive && terrainSystem && flythrough) {
+				flythrough.transitionToNewPath(grid, terrainSystem.getHeightAt);
+			}
+		});
+	}
+
+	function morphTerrainTo(newGrid: number[][]) {
+		if (!terrainSystem) return;
+
+		// Clean up any pending terrain from a previous interrupted morph
+		if (pendingTerrainSystem) { pendingTerrainSystem.dispose(); pendingTerrainSystem = null; }
+
+		// Store start state (fast — just copying existing arrays)
+		const oldPos = terrainSystem.mesh.geometry.attributes.position;
+		const oldCol = terrainSystem.mesh.geometry.attributes.color as THREE.BufferAttribute;
+		terrainMorphStartHeights = new Float32Array(oldPos.count);
+		for (let i = 0; i < oldPos.count; i++) terrainMorphStartHeights[i] = oldPos.getY(i);
+		terrainMorphStartColors = new Float32Array(oldCol.array as Float32Array);
+
+		// Keep scenery visible — NO sinking. Store pending grid for rebuild after morph.
+		pendingGrid = newGrid;
+		pendingSettlements = settlements;
+
+		// Compute morph targets in Web Worker (off main thread — zero stutter)
+		const worker = getTerrainWorker();
+		worker.onmessage = (e: MessageEvent<{ heights: Float32Array; colors: Float32Array }>) => {
+			terrainMorphTargetHeights = e.data.heights;
+			terrainMorphTargetColors = e.data.colors;
+			terrainMorphing = true;
+			terrainMorphAlpha = 0;
+			pendingMorphGrid = newGrid;
+		};
+		worker.onerror = () => {
+			const morphData = computeTerrainMorphData(newGrid, season);
+			terrainMorphTargetHeights = morphData.heights;
+			terrainMorphTargetColors = morphData.colors;
+			terrainMorphing = true;
+			terrainMorphAlpha = 0;
+			pendingMorphGrid = newGrid;
+		};
+		const plainGrid = newGrid.map(row => Array.from(row));
+		worker.postMessage({ grid: plainGrid, season });
+	}
+
+	async function buildScene(reuseTerrainSystem?: TerrainSystem) {
 		if (!grid?.length || !container) return;
 		displayTime = timeOfDay;
 		const gen = ++buildGeneration; // track this build — abort if superseded
 		const isFirstBuild = !hemiLight; // true on very first build only
-		const isFlythroughTransition = flythroughActive && worldGroup !== null;
+		// Animate terrain morph whenever there's an existing world to transition from
+		const shouldTransition = !reuseTerrainSystem && worldGroup !== null;
 
-		if (!isFlythroughTransition) {
+		if (reuseTerrainSystem) {
+			// Keep terrain mesh — only rebuild scenery objects
+			terrainSystem = reuseTerrainSystem;
+			// Clean non-terrain systems only
+			if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
+			if (scatter) { scatter.dispose(); scatter = null; }
+			if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
+		} else if (!shouldTransition) {
 			// Normal build: clean everything immediately
 			cleanupGridSystems();
 
@@ -1043,9 +1414,12 @@
 			if (ambientLight) keep.add(ambientLight);
 			if (fillLight) keep.add(fillLight);
 			if (celestialSystem) { keep.add(celestialSystem.sunSprite); keep.add(celestialSystem.moonGroup); }
+			if (nightSkySystem) keep.add(nightSkySystem.group);
 			if (cloudSystem) for (const s of cloudSystem.sprites) keep.add(s);
-			if (wildlifeSystem) { /* birds are individual sprites — keep them */ }
+			if (wildlifeSystem) keep.add(wildlifeSystem.group);
 			if (fpSky) keep.add(fpSky);
+			if (predictionOverlay) keep.add(predictionOverlay);
+			if (gridOverlay) keep.add(gridOverlay);
 
 			for (let i = scene.children.length - 1; i >= 0; i--) {
 				const child = scene.children[i];
@@ -1055,13 +1429,27 @@
 				}
 			}
 		} else {
-			// Flythrough transition: keep old world for cross-fade, move references
+			// Transition: preserve old world for cross-fade morph
+			// Clean up any in-progress transition before starting a new one
+			if (prevWorldGroup) {
+				disposeGroup(prevWorldGroup);
+				scene.remove(prevWorldGroup);
+			}
+			if (prevTerrainSystem) { prevTerrainSystem.dispose(); prevTerrainSystem = null; }
+			if (prevWaterSystem) { prevWaterSystem.dispose(); prevWaterSystem = null; }
+			terrainMorphOldHeights = null;
+			terrainMorphNewHeights = null;
+			terrainMorphOldNormals = null;
+			terrainMorphNewNormals = null;
+
+			// Move current world to prev for cross-fade
 			prevWorldGroup = worldGroup;
 			prevTerrainSystem = terrainSystem;
 			prevWaterSystem = waterSystem;
 			// Null out so new build gets fresh systems
 			terrainSystem = null;
 			waterSystem = null;
+			weatherSystem = null;
 			moatSystem = null;
 			creatureSystem = null;
 			scatter = null;
@@ -1118,6 +1506,11 @@
 			// Temporarily restore scene.add so celestials go to real scene
 			scene.add = _realSceneAdd;
 			celestialSystem = createCelestials(scene);
+
+			// Night sky (stars + aurora) — persistent, added to real scene
+			nightSkySystem = createNightSky();
+			_realSceneAdd(nightSkySystem.group);
+
 			scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
 		}
 
@@ -1129,46 +1522,44 @@
 		// Find clusters
 		const clusters = findClusters(grid);
 
-		// === Multi-layered pine trees (instanced) ===
-		const treeCount = countTrees(clusters);
-		const treeTrunkGeo = new THREE.CylinderGeometry(0.04, 0.07, 0.5, 5);
-		const treeCanopy1Geo = new THREE.ConeGeometry(0.28, 0.45, 7);
-		const treeCanopy2Geo = new THREE.ConeGeometry(0.22, 0.4, 7);
-		const treeCanopy3Geo = new THREE.ConeGeometry(0.15, 0.35, 7);
-
-		const treeTrunkMat = new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 0.9 });
-		const treeCanopyMat = new THREE.MeshStandardMaterial({ color: 0x2d6b1e, roughness: 0.8 });
-
-		// Apply wind sway to tree materials
-		if (windSystem) {
-			applyWindSway(treeCanopyMat, windSystem.uniforms);
-			applyWindSway(treeTrunkMat, windSystem.uniforms);
+		// Compute road bezier paths for terrain baking
+		const settlementClusters = clusters.filter(c => c.terrainType === TerrainCode.SETTLEMENT);
+		const roadPaths = computeRoadPaths(settlementClusters, offsetX, offsetZ);
+	
+		// Build heightmap terrain — skip if reusing existing (morph transition)
+		if (!reuseTerrainSystem) {
+			terrainSystem = createTerrain(grid, { roads: roadPaths, season });
+			scene.add(terrainSystem.mesh);
 		}
+		lastGridRows = grid.length;
+		lastGridCols = grid[0].length;
 
-		const trunkInst = new THREE.InstancedMesh(treeTrunkGeo, treeTrunkMat, treeCount);
-		const canopy1Inst = new THREE.InstancedMesh(treeCanopy1Geo, treeCanopyMat, treeCount);
-		const canopy2Inst = new THREE.InstancedMesh(treeCanopy2Geo, treeCanopyMat, treeCount);
-		const canopy3Inst = new THREE.InstancedMesh(treeCanopy3Geo, treeCanopyMat, treeCount);
-		trunkInst.castShadow = true;
-		canopy1Inst.castShadow = true;
-		canopy2Inst.castShadow = true;
-		canopy3Inst.castShadow = true;
-		let treeIdx = 0;
-
-		// Build heightmap terrain (always visible — replaces blocky tiles)
-		terrainSystem = createTerrain(grid);
-		scene.add(terrainSystem.mesh);
-
-		// 3D grid overlay (G key toggle)
-		gridOverlay = buildGridOverlay(grid, terrainSystem.getHeightAt);
+		// 3D grid overlay — added to worldGroup directly (persists across scenery rebuilds)
+		const wasGridVisible = gridOverlay?.visible ?? false;
+		if (gridOverlay?.parent) gridOverlay.parent.remove(gridOverlay);
+		gridOverlay = buildGridOverlay(grid, terrainSystem!.getHeightAt);
+		gridOverlay.visible = wasGridVisible || showGrid;
+		// Add to newGroup (goes to worldGroup), NOT sceneryGrp
 		scene.add(gridOverlay);
 
-		// Water surface + caustic floor
-		waterSystem = createWater(cols, rows, grid);
+		// All non-terrain objects go into sceneryGroup
+		const sceneryGrp = new THREE.Group();
+		scene.add = (...args: THREE.Object3D[]) => { sceneryGrp.add(...args); return scene; };
+
+		// Water surface + caustic floor — reuse if dimensions unchanged
+		if (!waterSystem) {
+			waterSystem = createWater(cols, rows, grid);
+		}
 		scene.add(waterSystem.mesh);
 
-		// Moat water ring + river-waterfalls
-		moatSystem = createMoatAndWaterfalls(cols, rows);
+		await nextFrame();
+		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
+		scene.add = (...args: THREE.Object3D[]) => { sceneryGrp.add(...args); return scene; };
+
+		// Moat water ring + river-waterfalls — reuse if dimensions unchanged
+		if (!moatSystem) {
+			moatSystem = createMoatAndWaterfalls(cols, rows);
+		}
 		scene.add(moatSystem.group);
 
 		// Rim scenery (trees, rocks, lakes, bushes outside play grid)
@@ -1177,67 +1568,122 @@
 		await nextFrame();
 		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
 		// Re-assert redirect after potential concurrent build cancellations
-		scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
+		scene.add = (...args: THREE.Object3D[]) => { sceneryGrp.add(...args); return scene; };
 
 		// Add 3D cluster objects
 		const dummy = new THREE.Object3D();
 
-		for (const cluster of clusters) {
-			switch (cluster.terrainType) {
-				case TerrainCode.FOREST:
-					treeIdx = addForest(cluster, offsetX, offsetZ, trunkInst, canopy1Inst, canopy2Inst, canopy3Inst, treeIdx, dummy);
-					break;
-				case TerrainCode.SETTLEMENT:
-					addSettlement(cluster, offsetX, offsetZ, clusters.filter(c => c.terrainType === TerrainCode.SETTLEMENT));
-					break;
-				case TerrainCode.PORT:
-					addPort(cluster, offsetX, offsetZ);
-					break;
-				case TerrainCode.RUIN:
-					addRuin(cluster, offsetX, offsetZ);
-					break;
+		// Process clusters in batches with frame yields to avoid stutter
+		const forestClusters = clusters.filter(c => c.terrainType === TerrainCode.FOREST);
+		// settlementClusters already computed above for road paths
+		const portClusters2 = clusters.filter(c => c.terrainType === TerrainCode.PORT);
+		const ruinClusters = clusters.filter(c => c.terrainType === TerrainCode.RUIN);
+
+		// Forests — procedural low-poly trees (instanced)
+		// Hash grid content so different maps get different tree styles
+		let gridHash = 0;
+		for (let y = 0; y < Math.min(5, rows); y++)
+			for (let x = 0; x < Math.min(5, cols); x++)
+				gridHash = (gridHash * 31 + (grid[y][x] ?? 0)) | 0;
+		const mapTreeRng = mulberry32(gridHash ^ 999);
+		const mapIsPine = mapTreeRng() > 0.5;
+		const treeColors = getTreeColors(season, mapIsPine);
+
+		// Count total tree slots (2 per cell for small clusters, 1 for large)
+		let totalTreeSlots = 0;
+		for (const c of forestClusters) {
+			const perCell = c.cells.length <= 8 ? 2 : 1;
+			totalTreeSlots += c.cells.length * perCell;
+		}
+		totalTreeSlots = Math.max(totalTreeSlots, 1);
+
+		// Trunk instances
+		const trunkGeo = new THREE.CylinderGeometry(0.04, 0.08, 1, 4);
+		const trunkMat = new THREE.MeshStandardMaterial({ color: treeColors.trunk, roughness: 0.9, flatShading: true });
+		const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, totalTreeSlots);
+		trunkInst.castShadow = true;
+
+		// Canopy instances (3 layers for pine, 1 for deciduous but we allocate 3 either way)
+		const canopyGeos = mapIsPine
+			? [new THREE.ConeGeometry(0.35, 0.5, 5), new THREE.ConeGeometry(0.28, 0.45, 5), new THREE.ConeGeometry(0.2, 0.4, 5)]
+			: [new THREE.DodecahedronGeometry(0.3, 0), new THREE.DodecahedronGeometry(0.3, 0), new THREE.DodecahedronGeometry(0.3, 0)];
+		const canopyInsts = canopyGeos.map((geo, i) => {
+			const color = treeColors.canopy[i % treeColors.canopy.length];
+			const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true });
+			const inst = new THREE.InstancedMesh(geo, mat, totalTreeSlots);
+			inst.castShadow = true;
+			return inst;
+		});
+
+		// Apply wind sway to canopy materials
+		if (windSystem) {
+			for (const ci of canopyInsts) {
+				applyWindSway(ci.material as THREE.MeshStandardMaterial, windSystem.uniforms);
 			}
 		}
 
-		trunkInst.instanceMatrix.needsUpdate = true;
-		canopy1Inst.instanceMatrix.needsUpdate = true;
-		canopy2Inst.instanceMatrix.needsUpdate = true;
-		canopy3Inst.instanceMatrix.needsUpdate = true;
+		// Winter: add snow caps on canopy
+		if (season === 'winter') {
+			trunkMat.color.set(0x4a3a2a);
+			if (!mapIsPine) {
+				// Bare deciduous — very few leaves, mostly trunk
+				for (const ci of canopyInsts) {
+					(ci.material as THREE.MeshStandardMaterial).color.set(0x8a7a6a);
+					(ci.material as THREE.MeshStandardMaterial).opacity = 0.4;
+					(ci.material as THREE.MeshStandardMaterial).transparent = true;
+				}
+			}
+		}
+
+		let treeIdx = 0;
+		for (const cluster of forestClusters) {
+			treeIdx = addForest(cluster, offsetX, offsetZ, mapIsPine, trunkInst, canopyInsts, treeIdx, dummy);
+		}
 		trunkInst.count = treeIdx;
-		canopy1Inst.count = treeIdx;
-		canopy2Inst.count = treeIdx;
-		canopy3Inst.count = treeIdx;
+		trunkInst.instanceMatrix.needsUpdate = true;
 		scene.add(trunkInst);
-		scene.add(canopy1Inst);
-		scene.add(canopy2Inst);
-		scene.add(canopy3Inst);
+		for (const ci of canopyInsts) {
+			ci.count = treeIdx;
+			ci.instanceMatrix.needsUpdate = true;
+			scene.add(ci);
+		}
 
 		await nextFrame();
 		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
-		scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
+		scene.add = (...args: THREE.Object3D[]) => { sceneryGrp.add(...args); return scene; };
 
-		const settlementClusters = clusters.filter(c => c.terrainType === TerrainCode.SETTLEMENT);
+		// Settlements (GLB models — moderate cost)
+		for (const cluster of settlementClusters) {
+			addSettlement(cluster, offsetX, offsetZ, settlementClusters);
+		}
+
+		await nextFrame();
+		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
+		scene.add = (...args: THREE.Object3D[]) => { sceneryGrp.add(...args); return scene; };
+
+		// Ports + ruins (lighter)
+		for (const cluster of portClusters2) addPort(cluster, offsetX, offsetZ);
+		for (const cluster of ruinClusters) addRuin(cluster, offsetX, offsetZ);
 
 		// === Ambient systems (first build only — grid-independent, add to real scene) ===
 		if (isFirstBuild) {
 			scene.add = _realSceneAdd;
 			cloudSystem = createCloudSystem(scene);
-			scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
+			scene.add = (...args: THREE.Object3D[]) => { sceneryGrp.add(...args); return scene; };
 		}
 
 		await nextFrame();
 		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
-		scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
+		scene.add = (...args: THREE.Object3D[]) => { sceneryGrp.add(...args); return scene; };
 
-		// === Roads between settlements ===
-		buildRoads(settlementClusters, offsetX, offsetZ);
+		// Roads are baked into terrain — no separate mesh needed
 
 		// === Living world: creatures walking between settlements ===
 		if (terrainSystem && settlementClusters.length >= 2) {
 			createCreatures(scene, grid, terrainSystem.getHeightAt, settlementClusters).then(cs => {
 				if (gen !== buildGeneration) { cs.dispose(); return; }
 				creatureSystem = cs;
-				newGroup.add(cs.group);
+				sceneryGrp.add(cs.group);
 			}).catch(() => {});
 		}
 
@@ -1246,12 +1692,17 @@
 			createScatter(grid, terrainSystem.getHeightAt, 800, windSystem?.uniforms).then(s => {
 				if (gen !== buildGeneration) { s.dispose(); return; }
 				scatter = s;
-				newGroup.add(s.group);
+				sceneryGrp.add(s.group);
 			}).catch(() => {});
 		}
 
-		// === Weather: rain, lightning, fog (uses mountain positions) ===
+		// === Waterfalls: mountain cells adjacent to water ===
 		const mountainClusters = clusters.filter(c => c.terrainType === TerrainCode.MOUNTAIN);
+		for (const mc of mountainClusters) {
+			addMountainWaterfalls(mc, offsetX, offsetZ);
+		}
+
+		// === Weather: rain, lightning, fog (uses mountain positions) ===
 		const mountainPositions = mountainClusters.map(c => ({
 			x: c.centerX + offsetX + 0.5,
 			z: c.centerY + offsetZ + 0.5,
@@ -1267,36 +1718,71 @@
 			weatherSystem = createWeatherSystem(scene, mountainPositions, lakePositions, mapRadius);
 		}
 
-		// === Wildlife: birds (first build only — grid-independent) ===
-		if (isFirstBuild) {
+		// === Wildlife: birds — recreate each build to ensure visibility ===
+		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
+		{
+			const savedAdd = scene.add;
 			scene.add = _realSceneAdd;
 			wildlifeSystem = createWildlifeSystem(scene);
-			scene.add = (...args: THREE.Object3D[]) => { newGroup.add(...args); return scene; };
+			scene.add = savedAdd;
 		}
+
+		// Add scenery sub-group to world group
+		sceneryGroup = sceneryGrp;
 
 		// Restore scene.add
 		scene.add = _realSceneAdd;
 
-		// Add the new world group to the real scene
-		if (isFlythroughTransition) {
-			// Remove old world immediately to prevent floating objects
-			// (cross-fade causes old trees/people to hover over new terrain)
-			if (prevWorldGroup) {
-				disposeGroup(prevWorldGroup);
-				scene.remove(prevWorldGroup);
-				prevWorldGroup = null;
+		if (reuseTerrainSystem) {
+			// Scenery-only rebuild: terrain mesh stays, add new scenery to worldGroup
+			newGroup.add(sceneryGrp);
+			while (newGroup.children.length > 0) {
+				worldGroup!.add(newGroup.children[0]);
 			}
-			if (prevTerrainSystem) { prevTerrainSystem.dispose(); prevTerrainSystem = null; }
-			if (prevWaterSystem) { prevWaterSystem.dispose(); prevWaterSystem = null; }
-			// Fade in new world only
-			setGroupOpacity(newGroup, 0);
-			_realSceneAdd(newGroup);
-			transitioning = true;
-			transitionAlpha = 0;
 		} else {
-			_realSceneAdd(newGroup);
+			// Full build: add sceneryGroup to newGroup, add newGroup to scene
+			newGroup.add(sceneryGrp);
+
+			if (shouldTransition) {
+				// Cross-fade: keep old world, fade out while new fades in
+				setGroupOpacity(newGroup, 0);
+				_realSceneAdd(newGroup);
+				transitioning = true;
+				transitionAlpha = 0;
+
+				// Store old terrain heights + normals for morphing
+				if (prevTerrainSystem) {
+					const oldPos = prevTerrainSystem.mesh.geometry.attributes.position;
+					terrainMorphOldHeights = new Float32Array(oldPos.count);
+					for (let i = 0; i < oldPos.count; i++) terrainMorphOldHeights[i] = oldPos.getY(i);
+					const oldNorm = prevTerrainSystem.mesh.geometry.attributes.normal;
+					terrainMorphOldNormals = new Float32Array(oldNorm.count * 3);
+					for (let i = 0; i < oldNorm.count; i++) {
+						terrainMorphOldNormals[i * 3] = oldNorm.getX(i);
+						terrainMorphOldNormals[i * 3 + 1] = oldNorm.getY(i);
+						terrainMorphOldNormals[i * 3 + 2] = oldNorm.getZ(i);
+					}
+				}
+				// Store new terrain heights + normals (start at flat, morph to actual)
+				if (terrainSystem) {
+					const newPos = terrainSystem.mesh.geometry.attributes.position;
+					terrainMorphNewHeights = new Float32Array(newPos.count);
+					for (let i = 0; i < newPos.count; i++) terrainMorphNewHeights[i] = newPos.getY(i);
+					const newNorm = terrainSystem.mesh.geometry.attributes.normal;
+					terrainMorphNewNormals = new Float32Array(newNorm.count * 3);
+					for (let i = 0; i < newNorm.count; i++) {
+						terrainMorphNewNormals[i * 3] = newNorm.getX(i);
+						terrainMorphNewNormals[i * 3 + 1] = newNorm.getY(i);
+						terrainMorphNewNormals[i * 3 + 2] = newNorm.getZ(i);
+					}
+					for (let i = 0; i < newPos.count; i++) newPos.setY(i, 0.0);
+					newPos.needsUpdate = true;
+				}
+			} else {
+				_realSceneAdd(newGroup);
+			}
+			worldGroup = newGroup;
 		}
-		worldGroup = newGroup;
 
 		// Restore FP/flythrough state if active during rebuild
 		if (fpMode && fpSky) {
@@ -1320,15 +1806,12 @@
 		lightProbeNeedsUpdate = true;
 	}
 
-	function buildRoads(settlements: Cluster[], ox: number, oz: number) {
-		if (settlements.length < 2) return;
-		const roadMat = new THREE.MeshStandardMaterial({ color: 0xa89060, roughness: 0.95 });
+	/** Compute bezier road paths between settlements (MST). Returns path data for terrain baking. */
+	function computeRoadPaths(settlements: Cluster[], ox: number, oz: number): import('./terrain').RoadPath[] {
+		if (settlements.length < 2) return [];
 
-		// Connect each settlement to its nearest neighbor (minimum spanning tree approach)
-		const connected = new Set<number>();
+		// MST edges
 		const edges: { from: number; to: number; dist: number }[] = [];
-
-		// Calculate all distances
 		for (let i = 0; i < settlements.length; i++) {
 			for (let j = i + 1; j < settlements.length; j++) {
 				const dx = settlements[i].centerX - settlements[j].centerX;
@@ -1337,118 +1820,129 @@
 			}
 		}
 		edges.sort((a, b) => a.dist - b.dist);
-
-		// Kruskal-like: connect nearest pairs, up to N-1 edges
 		const parent = settlements.map((_, i) => i);
 		function find(x: number): number { return parent[x] === x ? x : (parent[x] = find(parent[x])); }
 		const roadEdges: { from: number; to: number }[] = [];
-
 		for (const e of edges) {
-			const pf = find(e.from);
-			const pt = find(e.to);
-			if (pf !== pt) {
-				parent[pf] = pt;
-				roadEdges.push(e);
-				if (roadEdges.length >= settlements.length - 1) break;
-			}
+			const pf = find(e.from), pt = find(e.to);
+			if (pf !== pt) { parent[pf] = pt; roadEdges.push(e); if (roadEdges.length >= settlements.length - 1) break; }
 		}
 
-		// Draw roads as segmented strips that follow terrain height
+		// Cubic bezier helper
+		const bez = (a: number, b: number, c: number, d: number, t: number) => {
+			const u = 1 - t;
+			return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
+		};
+
+		const paths: import('./terrain').RoadPath[] = [];
+		let seed = 42;
+		const rng = () => { seed = (seed * 1664525 + 1013904223) & 0x7fffffff; return seed / 0x7fffffff; };
+
 		for (const edge of roadEdges) {
-			const a = settlements[edge.from];
-			const b = settlements[edge.to];
-			const ax = a.centerX + ox + 0.5;
-			const az = a.centerY + oz + 0.5;
-			const bx = b.centerX + ox + 0.5;
-			const bz = b.centerY + oz + 0.5;
+			const a = settlements[edge.from], b = settlements[edge.to];
+			const ax = a.centerX + ox + 0.5, az = a.centerY + oz + 0.5;
+			const bx = b.centerX + ox + 0.5, bz = b.centerY + oz + 0.5;
+			const dx = bx - ax, dz = bz - az;
+			const len = Math.sqrt(dx * dx + dz * dz);
+			const perpX = -dz / len, perpZ = dx / len;
 
-			const dx = bx - ax;
-			const dz = bz - az;
-			const totalLen = Math.sqrt(dx * dx + dz * dz);
-			const segments = Math.max(2, Math.ceil(totalLen));
-			const angle = Math.atan2(dz, dx);
+			// Two bezier control points with random perpendicular offset
+			const c1x = ax + dx * 0.33 + perpX * (rng() - 0.5) * len * 0.3;
+			const c1z = az + dz * 0.33 + perpZ * (rng() - 0.5) * len * 0.3;
+			const c2x = ax + dx * 0.66 + perpX * (rng() - 0.5) * len * 0.3;
+			const c2z = az + dz * 0.66 + perpZ * (rng() - 0.5) * len * 0.3;
 
-			for (let s = 0; s < segments; s++) {
-				const t0 = s / segments;
-				const t1 = (s + 1) / segments;
-				const mx = ax + dx * (t0 + t1) / 2;
-				const mz = az + dz * (t0 + t1) / 2;
-				const segLen = totalLen / segments;
-				const segY = gY(mx, mz) + 0.02;
-
-				// Tilt segment to match terrain slope
-				const y0 = gY(ax + dx * t0, az + dz * t0);
-				const y1 = gY(ax + dx * t1, az + dz * t1);
-				const slopeAngle = Math.atan2(y1 - y0, segLen);
-
-				const segGeo = new THREE.BoxGeometry(segLen + 0.02, 0.015, 0.18);
-				const seg = new THREE.Mesh(segGeo, roadMat);
-				seg.position.set(mx, segY, mz);
-				seg.rotation.y = -angle;
-				seg.rotation.z = slopeAngle;
-				seg.receiveShadow = true;
-				scene.add(seg);
+			// Sample bezier curve
+			const segs = Math.max(8, Math.ceil(len * 3));
+			const points: [number, number][] = [];
+			for (let s = 0; s <= segs; s++) {
+				const t = s / segs;
+				points.push([bez(ax, c1x, c2x, bx, t), bez(az, c1z, c2z, bz, t)]);
 			}
+
+			paths.push({ points, width: 0.75 });
+		}
+
+		return paths;
+	}
+
+	// Seasonal low-poly tree colors
+	function getTreeColors(s: Season, isPine: boolean): { trunk: number; canopy: number[] } {
+		const trunk = isPine ? 0x5a4030 : 0x6b4a2a;
+		switch (s) {
+			case 'spring':
+				return { trunk, canopy: isPine
+					? [0x4a9e3a, 0x5cb84a, 0x3d8a2e]
+					: [0x7dca5c, 0x9ddb7a, 0x5fb840] };
+			case 'summer':
+				return { trunk, canopy: isPine
+					? [0x2d6b1e, 0x3a7a28, 0x1f5a14]
+					: [0x4a9030, 0x5da03e, 0x3b8024] };
+			case 'autumn':
+				return { trunk, canopy: isPine
+					? [0x3a6a22, 0x4a7a2e, 0x2e5a18]
+					: [0xc86420, 0xd4882c, 0xb84818, 0xd4a030] };
+			case 'winter':
+				return { trunk, canopy: isPine
+					? [0x2a5a1a, 0x325e22, 0x1e4e14]
+					: [0x6a5a4a, 0x7a6a5a, 0x5a4a3a] };
 		}
 	}
 
-	function countTrees(clusters: Cluster[]): number {
-		let count = 0;
-		for (const c of clusters) {
-			if (c.terrainType !== TerrainCode.FOREST) continue;
-			const treesPerCell = c.size >= 9 ? 4 : c.size >= 4 ? 3 : c.size >= 2 ? 2 : 1;
-			count += c.cells.length * treesPerCell;
-		}
-		return Math.max(count, 1);
-	}
-
-	// --- Multi-layered pine tree (3 canopy cones stacked) ---
 	function addForest(
-		cluster: Cluster, ox: number, oz: number,
-		trunkInst: THREE.InstancedMesh,
-		canopy1: THREE.InstancedMesh, canopy2: THREE.InstancedMesh, canopy3: THREE.InstancedMesh,
+		cluster: Cluster, ox: number, oz: number, isPine: boolean,
+		trunkInst: THREE.InstancedMesh, canopyInsts: THREE.InstancedMesh[],
 		startIdx: number, dummy: THREE.Object3D
 	): number {
 		let idx = startIdx;
-		const treesPerCell = cluster.size >= 9 ? 4 : cluster.size >= 4 ? 3 : cluster.size >= 2 ? 2 : 1;
-		const baseHeight = cluster.size >= 9 ? 2.2 : cluster.size >= 4 ? 1.5 : cluster.size >= 2 ? 0.9 : 0.5;
+		// Dense clumps: 2 trees per cell for small clusters, 1 for large
+		const treesPerCell = cluster.cells.length <= 8 ? 2 : 1;
 
-		for (const cell of cluster.cells) {
-			const rng = mulberry32(cellSeed(cell.x, cell.y, 200));
-			for (let t = 0; t < treesPerCell; t++) {
-				const px = cell.x + ox + 0.15 + rng() * 0.7;
-				const pz = cell.y + oz + 0.15 + rng() * 0.7;
-				const h = baseHeight * (0.7 + rng() * 0.3);
-				const s = 0.8 + rng() * 0.4; // width variation
-				const groundH = gY(px, pz);
+		for (let ci = 0; ci < cluster.cells.length; ci++) {
+			const cell = cluster.cells[ci];
+			for (let ti = 0; ti < treesPerCell; ti++) {
+			const rng = mulberry32(cellSeed(cell.x, cell.y, 200 + ti * 77));
+			// Clump closer to cell center for dense look
+			const spread = 0.15 + rng() * 0.7;
+			const px = cell.x + ox + spread;
+			const pz = cell.y + oz + 0.15 + rng() * 0.7;
+			const groundH = gY(px, pz);
+			const h = 0.5 + rng() * 0.9; // bigger trees with good variance
+			const w = 0.5 + rng() * 0.7; // wider variance
 
-				// Trunk
-				dummy.position.set(px, groundH + h * 0.25, pz);
-				dummy.scale.set(s * 0.8, h * 1.0, s * 0.8);
-				dummy.rotation.set(0, 0, 0);
-				dummy.updateMatrix();
-				trunkInst.setMatrixAt(idx, dummy.matrix);
+			// Trunk
+			dummy.position.set(px, groundH + h * 0.3, pz);
+			dummy.scale.set(w * 0.3, h * 0.6, w * 0.3);
+			dummy.rotation.set(0, rng() * Math.PI * 2, 0);
+			dummy.updateMatrix();
+			trunkInst.setMatrixAt(idx, dummy.matrix);
 
-				// Bottom canopy layer (widest)
-				dummy.position.set(px, groundH + h * 0.45, pz);
-				dummy.scale.set(s * 1.3, h * 0.9, s * 1.3);
-				dummy.updateMatrix();
-				canopy1.setMatrixAt(idx, dummy.matrix);
-
-				// Middle canopy layer
+			if (isPine) {
+				// Pine: 3 stacked cones, progressively smaller
+				const layers = [
+					{ yOff: 0.4, scaleW: 1.0, scaleH: 0.8 },
+					{ yOff: 0.6, scaleW: 0.75, scaleH: 0.7 },
+					{ yOff: 0.78, scaleW: 0.5, scaleH: 0.6 },
+				];
+				for (let li = 0; li < layers.length; li++) {
+					const l = layers[li];
+					dummy.position.set(px, groundH + h * l.yOff, pz);
+					dummy.scale.set(w * l.scaleW, h * l.scaleH, w * l.scaleW);
+					dummy.updateMatrix();
+					canopyInsts[li].setMatrixAt(idx, dummy.matrix);
+				}
+			} else {
+				// Deciduous: single blocky sphere/dodecahedron
 				dummy.position.set(px, groundH + h * 0.65, pz);
-				dummy.scale.set(s * 1.1, h * 0.8, s * 1.1);
+				const spread = w * (0.8 + rng() * 0.4);
+				dummy.scale.set(spread, h * 0.7, spread);
 				dummy.updateMatrix();
-				canopy2.setMatrixAt(idx, dummy.matrix);
-
-				// Top canopy layer (narrowest)
-				dummy.position.set(px, groundH + h * 0.82, pz);
-				dummy.scale.set(s * 0.85, h * 0.7, s * 0.85);
-				dummy.updateMatrix();
-				canopy3.setMatrixAt(idx, dummy.matrix);
-
-				idx++;
+				for (const ci2 of canopyInsts) {
+					ci2.setMatrixAt(idx, dummy.matrix);
+				}
 			}
+			idx++;
+			} // end treesPerCell loop
 		}
 		return idx;
 	}
@@ -1507,6 +2001,89 @@
 		}
 	}
 
+	/** Add particle waterfalls that flow from mountain peak down the ridge into adjacent water */
+	function addMountainWaterfalls(cluster: Cluster, ox: number, oz: number) {
+		const rows = grid.length, cols = grid[0].length;
+		const WATER_CODES = new Set([10, 2]); // ocean, port
+		const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+		const added = new Set<string>(); // avoid duplicate waterfalls per edge
+
+		// Find cluster peak (highest point)
+		const peakX = cluster.centerX + ox + 0.5;
+		const peakZ = cluster.centerY + oz + 0.5;
+		const peakH = gY(peakX, peakZ);
+
+		for (const cell of cluster.cells) {
+			for (const [ddx, ddz] of dirs) {
+				const nx = cell.x + ddx, nz = cell.y + ddz;
+				if (nx < 0 || nx >= cols || nz < 0 || nz >= rows) continue;
+				if (!WATER_CODES.has(grid[nz][nx])) continue;
+
+				const key = `${Math.min(cell.x, nx)},${Math.min(cell.y, nz)},${ddx},${ddz}`;
+				if (added.has(key)) continue;
+				added.add(key);
+
+				const edgeX = cell.x + ox + 0.5;
+				const edgeZ = cell.y + oz + 0.5;
+				const watX = nx + ox + 0.5;
+				const watZ = nz + oz + 0.5;
+				const edgeH = gY(edgeX, edgeZ);
+				const watH = gY(watX, watZ);
+				if (edgeH - watH < 0.15) continue;
+
+				// Flow path: peak → edge → water (sampled along the ridge)
+				const count = 60;
+				const geo = new THREE.BufferGeometry();
+				const positions = new Float32Array(count * 3);
+				const rng = mulberry32(cellSeed(cell.x, cell.y, 500 + ddx * 10 + ddz));
+
+				for (let i = 0; i < count; i++) {
+					const t = rng(); // 0=peak, 1=water
+					// Path: lerp from peak → edge (t=0..0.6) then edge → water (t=0.6..1)
+					let px: number, pz: number, py: number;
+					if (t < 0.6) {
+						const s = t / 0.6;
+						px = peakX + (edgeX - peakX) * s + (rng() - 0.5) * 0.25;
+						pz = peakZ + (edgeZ - peakZ) * s + (rng() - 0.5) * 0.25;
+						py = peakH + (edgeH - peakH) * s;
+					} else {
+						const s = (t - 0.6) / 0.4;
+						px = edgeX + (watX - edgeX) * s + (rng() - 0.5) * 0.2;
+						pz = edgeZ + (watZ - edgeZ) * s + (rng() - 0.5) * 0.2;
+						py = edgeH + (watH - edgeH) * s;
+					}
+					positions[i * 3] = px;
+					positions[i * 3 + 1] = py + 0.05;
+					positions[i * 3 + 2] = pz;
+				}
+				geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+				const mat = new THREE.PointsMaterial({
+					color: 0x88ccee, size: 0.06,
+					transparent: true, opacity: 0.5, depthWrite: false,
+				});
+				const points = new THREE.Points(geo, mat);
+				scene.add(points);
+				activeWaterfalls.push({
+					points, topH: peakH, botH: watH,
+					midX: (peakX + watX) / 2, midZ: (peakZ + watZ) / 2,
+					// Store flow path for animation
+					peakX, peakZ, peakH, edgeX, edgeZ, edgeH, watX, watZ, watH
+				});
+
+				// Foam splash at water entry
+				const foamGeo = new THREE.CircleGeometry(0.25, 6);
+				foamGeo.rotateX(-Math.PI / 2);
+				const foamMat = new THREE.MeshStandardMaterial({
+					color: 0xddeeff, transparent: true, opacity: 0.4,
+					depthWrite: false, roughness: 0.1,
+				});
+				const foam = new THREE.Mesh(foamGeo, foamMat);
+				foam.position.set((edgeX + watX) / 2, Math.max(watH, WATER_LEVEL) + 0.02, (edgeZ + watZ) / 2);
+				scene.add(foam);
+			}
+		}
+	}
+
 	function addSettlement(cluster: Cluster, ox: number, oz: number, allSettlements: Cluster[]) {
 		const rng = mulberry32(cellSeed(Math.round(cluster.centerX), Math.round(cluster.centerY), 300));
 		const isLarge = cluster.size >= 7;
@@ -1544,31 +2121,31 @@
 				if (isCenter && isLarge) {
 					// Town center: market or fortress
 					const special = townSpecials[Math.floor(rng() * townSpecials.length)];
-					const m = placeModel(special, new THREE.Vector3(px, groundH, pz), rot, 0.55);
+					const m = placeModel(special, new THREE.Vector3(px, groundH, pz), rot, 0.825);
 					if (m) scene.add(m);
 				} else if (isCenter && isMedium) {
-					const m = placeModel('pfMarket', new THREE.Vector3(px, groundH, pz), rot, 0.48);
+					const m = placeModel('pfMarket', new THREE.Vector3(px, groundH, pz), rot, 0.72);
 					if (m) scene.add(m);
 				} else {
 					// Mix of houses and farms
 					const pick = townBuildings[Math.floor(rng() * townBuildings.length)];
-					const scale = pick.startsWith('pf') ? 0.38 + rng() * 0.10 : 0.50 + rng() * 0.12;
+					const scale = pick.startsWith('pf') ? 0.57 + rng() * 0.15 : 0.75 + rng() * 0.18;
 					const m = placeModel(pick, new THREE.Vector3(px + jx, groundH, pz + jz), rot, scale);
 					if (m) scene.add(m);
 					else {
 						// Procedural fallback
 						const wallMat = new THREE.MeshStandardMaterial({ color: 0x8a6a40, roughness: 0.8 });
-						const hutS = 0.45 + rng() * 0.15;
-						const hut = new THREE.Mesh(new THREE.BoxGeometry(hutS, 0.32, hutS), wallMat);
-						hut.position.set(px + jx, groundH + 0.16, pz + jz);
+						const hutS = 0.675 + rng() * 0.225;
+						const hut = new THREE.Mesh(new THREE.BoxGeometry(hutS, 0.48, hutS), wallMat);
+						hut.position.set(px + jx, groundH + 0.24, pz + jz);
 						hut.castShadow = true;
 						scene.add(hut);
 						const roof = new THREE.Mesh(
-							new THREE.ConeGeometry(hutS * 0.8, 0.24, 4),
+							new THREE.ConeGeometry(hutS * 0.8, 0.36, 4),
 							new THREE.MeshStandardMaterial({ color: 0x7a6a52, roughness: 0.9 })
 						);
 						roof.position.copy(hut.position);
-						roof.position.y += 0.28;
+						roof.position.y += 0.42;
 						roof.rotation.y = Math.PI / 4;
 						scene.add(roof);
 					}
@@ -1577,26 +2154,26 @@
 				// Village: mostly huts, small farms, crops
 				if (isCenter && isMedium) {
 					// Central building for medium village
-					const m = placeModel('house', new THREE.Vector3(px, groundH, pz), rot, 0.55);
+					const m = placeModel('house', new THREE.Vector3(px, groundH, pz), rot, 0.825);
 					if (m) scene.add(m);
 				} else {
 					const pick = villageBuildings[Math.floor(rng() * villageBuildings.length)];
-					const scale = pick.startsWith('pf') ? 0.36 + rng() * 0.08 : 0.28 + rng() * 0.10;
+					const scale = pick.startsWith('pf') ? 0.54 + rng() * 0.12 : 0.42 + rng() * 0.15;
 					const m = placeModel(pick, new THREE.Vector3(px + jx, groundH, pz + jz), rot, scale);
 					if (m) scene.add(m);
 					else {
 						const wallMat = new THREE.MeshStandardMaterial({ color: 0x8a6a40, roughness: 0.8 });
-						const hutS = 0.40 + rng() * 0.12;
-						const hut = new THREE.Mesh(new THREE.BoxGeometry(hutS, 0.28, hutS), wallMat);
-						hut.position.set(px + jx, groundH + 0.14, pz + jz);
+						const hutS = 0.60 + rng() * 0.18;
+						const hut = new THREE.Mesh(new THREE.BoxGeometry(hutS, 0.42, hutS), wallMat);
+						hut.position.set(px + jx, groundH + 0.21, pz + jz);
 						hut.castShadow = true;
 						scene.add(hut);
 						const roof = new THREE.Mesh(
-							new THREE.ConeGeometry(hutS * 0.8, 0.16, 4),
+							new THREE.ConeGeometry(hutS * 0.8, 0.24, 4),
 							new THREE.MeshStandardMaterial({ color: 0x7a6a52, roughness: 0.9 })
 						);
 						roof.position.copy(hut.position);
-						roof.position.y += 0.19;
+						roof.position.y += 0.285;
 						roof.rotation.y = Math.PI / 4;
 						scene.add(roof);
 					}
@@ -1621,7 +2198,7 @@
 				const wx = fcx + Math.cos(angle) * fenceR;
 				const wz = fcz + Math.sin(angle) * fenceR;
 				const wH = gY(wx, wz);
-				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.22);
+				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.33);
 				if (wm) scene.add(wm);
 			}
 		} else if (isMedium) {
@@ -1634,7 +2211,7 @@
 				const wx = fcx + Math.cos(angle) * fenceR;
 				const wz = fcz + Math.sin(angle) * fenceR;
 				const wH = gY(wx, wz);
-				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.18);
+				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.27);
 				if (wm) scene.add(wm);
 			}
 		}
@@ -1650,12 +2227,12 @@
 				const wx = cx + Math.cos(angle) * fenceR;
 				const wz = cz + Math.sin(angle) * fenceR;
 				const wH = gY(wx, wz);
-				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.20);
+				const wm = placeModel('woodenWall', new THREE.Vector3(wx, wH, wz), angle + Math.PI / 2, 0.30);
 				if (wm) { scene.add(wm); }
 				else {
 					const fenceMat = new THREE.MeshStandardMaterial({ color: 0x6a5030, roughness: 0.9 });
-					const postH = 0.22;
-					const post = new THREE.Mesh(new THREE.BoxGeometry(0.04, postH, 0.04), fenceMat);
+					const postH = 0.33;
+					const post = new THREE.Mesh(new THREE.BoxGeometry(0.06, postH, 0.06), fenceMat);
 					post.position.set(wx, wH + postH / 2, wz);
 					scene.add(post);
 				}
@@ -1669,12 +2246,12 @@
 		for (const cell of cluster.cells) {
 			const px = cell.x + ox + 0.5;
 			const pz = cell.y + oz + 0.5;
-			const dm = placeModel('dock', new THREE.Vector3(px, 0.05, pz), rng() * Math.PI * 2);
-			if (dm) { scene.add(dm); }
+			const dm = placeModel('dock', new THREE.Vector3(px, 0.05, pz), rng() * Math.PI * 2, undefined);
+			if (dm) { dm.scale.multiplyScalar(1.5); scene.add(dm); }
 			else {
 				const dockMat = new THREE.MeshStandardMaterial({ color: 0x6a5038, roughness: 0.9 });
-				const dock = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 0.4), dockMat);
-				dock.position.set(px, 0.02, pz);
+				const dock = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.06, 0.6), dockMat);
+				dock.position.set(px, 0.03, pz);
 				scene.add(dock);
 			}
 		}
@@ -1683,20 +2260,20 @@
 		if (cluster.size >= 2) {
 			const cx = cluster.centerX + ox + 0.5;
 			const cz = cluster.centerY + oz + 0.5;
-			const pm = placeModel('port', new THREE.Vector3(cx, 0.05, cz + 0.8), rng() * Math.PI * 2, 0.25);
+			const pm = placeModel('port', new THREE.Vector3(cx, 0.05, cz + 0.8), rng() * Math.PI * 2, 0.375);
 			if (pm) { scene.add(pm); }
 			else {
 				// Procedural ship fallback
 				const hullMat = new THREE.MeshStandardMaterial({ color: 0x5a3a20, roughness: 0.85 });
-				const hull = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.12, 0.22), hullMat);
+				const hull = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.18, 0.33), hullMat);
 				hull.position.set(cx, -0.02, cz + 1.2);
 				hull.castShadow = true;
 				scene.add(hull);
 				const mast = new THREE.Mesh(
-					new THREE.CylinderGeometry(0.02, 0.02, 0.5, 4),
+					new THREE.CylinderGeometry(0.03, 0.03, 0.75, 4),
 					new THREE.MeshStandardMaterial({ color: 0x6a5038 })
 				);
-				mast.position.set(cx, 0.25, cz + 1.2);
+				mast.position.set(cx, 0.375, cz + 1.2);
 				scene.add(mast);
 			}
 		}
@@ -1710,8 +2287,8 @@
 			const rng = mulberry32(cellSeed(cell.x, cell.y, 500));
 			const count = 1 + Math.floor(rng() * 2);
 			for (let i = 0; i < count; i++) {
-				const h = 0.2 + rng() * 0.35;
-				const w = 0.06 + rng() * 0.06;
+				const h = 0.3 + rng() * 0.525;
+				const w = 0.09 + rng() * 0.09;
 				// Standing stone (tall thin box)
 				const stoneGeo = new THREE.BoxGeometry(w, h, w * 0.6);
 				const stone = new THREE.Mesh(stoneGeo, stoneMat);
@@ -1729,7 +2306,7 @@
 			// Rubble stones
 			const rubbleMat = new THREE.MeshStandardMaterial({ color: 0x9a9a90, roughness: 0.9, flatShading: true });
 			for (let i = 0; i < 2; i++) {
-				const rs = 0.04 + rng() * 0.06;
+				const rs = 0.06 + rng() * 0.09;
 				const rubbleGeo = new THREE.DodecahedronGeometry(rs, 0);
 				const rubble = new THREE.Mesh(rubbleGeo, rubbleMat);
 				const rx = cell.x + ox + 0.2 + rng() * 0.6;
@@ -1756,14 +2333,13 @@
 			sunLight.color.copy(dn.sunColor);
 			sunLight.intensity = dn.sunIntensity;
 
-			// Throttle shadow re-renders — orbit=5s, FP=3s, flythrough=5s
+			// Throttle shadow re-renders — orbit=5s, FP/flythrough=3s
 			const now = performance.now();
-			const shadowInterval = flythroughActive ? 8000 : fpMode ? 3000 : 5000;
+			const shadowInterval = fpMode || flythroughActive ? 3000 : 5000;
 			if (force || now - lastShadowUpdate > shadowInterval) {
 				sunLight.shadow.needsUpdate = true;
 				lastShadowUpdate = now;
-				// Stagger light probe 500ms after shadow to avoid double-spike
-				if (!flythroughActive) lightProbeNeedsUpdate = true;
+				lightProbeNeedsUpdate = true;
 			}
 		}
 		if (ambientLight) {
@@ -1791,20 +2367,38 @@
 
 		// (ocean rendered as transparent blocks, no separate plane)
 
-		// Smooth time transitions — lerp toward target to avoid frame drops
-		// Flythrough uses slower lerp for gentler lighting changes
-		const timeDiff = timeOfDay - displayTime;
-		const timeLerpSpeed = flythroughActive ? 1.2 : 5;
-		if (Math.abs(timeDiff) > 0.005) {
-			displayTime += timeDiff * Math.min(1, dt * timeLerpSpeed);
+		// Smooth time transitions
+		if (skyFrozen) {
+			// During scene transition: hold sky at frozen time
+			displayTime = skyFrozenTime;
+		} else if (skyTransitionActive) {
+			// After scene transition: smooth cubic ease-in-out to new time
+			skyTransitionAlpha = Math.min(1.0, skyTransitionAlpha + dt / SKY_TRANSITION_DURATION);
+			const t = skyTransitionAlpha;
+			const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+			displayTime = skyTransitionFrom + (skyTransitionTo - skyTransitionFrom) * eased;
+			if (skyTransitionAlpha >= 1.0) {
+				skyTransitionActive = false;
+				displayTime = skyTransitionTo;
+			}
 		} else {
-			displayTime = timeOfDay;
+			// Normal: lerp toward target
+			const timeDiff = timeOfDay - displayTime;
+			const timeLerpSpeed = flythroughActive ? 1.2 : 5;
+			if (Math.abs(timeDiff) > 0.005) {
+				displayTime += timeDiff * Math.min(1, dt * timeLerpSpeed);
+			} else {
+				displayTime = timeOfDay;
+			}
 		}
 		const dn = applyDayNight(displayTime);
 
 		// Update celestials every frame (world-space, large orbit radius)
 		if (celestialSystem && cachedDN) {
 			celestialSystem.update(cachedDN.sunPosition, cachedDN.moonPosition, cachedDN.nightFade);
+		}
+		if (nightSkySystem && cachedDN) {
+			nightSkySystem.update(dt, cachedDN.nightFade);
 		}
 		// Update light probe for soft indirect lighting (throttled with shadows)
 		if (lightProbeNeedsUpdate && cubeCamera && cubeRenderTarget && lightProbe && renderer) {
@@ -1823,8 +2417,41 @@
 		// Wind drives clouds and vegetation sway (uniforms auto-propagate to shaders)
 		if (windSystem) windSystem.update(dt);
 		if (cloudSystem) cloudSystem.update(dt, dn.skyColor, windSystem?.direction, windSystem?.strength, windSystem?.stormIntensity);
-		if (weatherSystem) weatherSystem.update(dt, displayTime, windSystem?.stormIntensity);
-		// waterfallSystem removed for performance
+		if (weatherSystem) weatherSystem.update(dt, displayTime, windSystem?.stormIntensity, season);
+		// Animate mountain waterfalls — particles flow along ridge then fall
+		for (const wf of activeWaterfalls) {
+			const pos = wf.points.geometry.attributes.position as THREE.BufferAttribute;
+			const arr = pos.array as Float32Array;
+			const speed = dt * 1.2;
+			for (let i = 0; i < pos.count; i++) {
+				// Move particle toward water along the path
+				const px = arr[i * 3], py = arr[i * 3 + 1], pz = arr[i * 3 + 2];
+				// Direction: peak → edge → water (use distance to edge as phase)
+				const dEdge = Math.sqrt((px - wf.edgeX) ** 2 + (pz - wf.edgeZ) ** 2);
+				const dWat = Math.sqrt((px - wf.watX) ** 2 + (pz - wf.watZ) ** 2);
+				let tx: number, tz: number, ty: number;
+				if (dEdge > 0.3) {
+					// Moving toward edge (down the ridge)
+					tx = wf.edgeX; tz = wf.edgeZ; ty = wf.edgeH;
+				} else {
+					// Past edge, falling toward water
+					tx = wf.watX; tz = wf.watZ; ty = wf.watH;
+				}
+				const dx = tx - px, dz = tz - pz, dl = Math.sqrt(dx * dx + dz * dz) || 1;
+				arr[i * 3] += (dx / dl) * speed + (Math.random() - 0.5) * 0.01;
+				arr[i * 3 + 1] -= speed * (wf.peakH - wf.watH) * 0.4; // gravity along height diff
+				arr[i * 3 + 2] += (dz / dl) * speed + (Math.random() - 0.5) * 0.01;
+
+				// Recycle when past water or below water level
+				if (arr[i * 3 + 1] < wf.watH - 0.1 || dWat < 0.2) {
+					// Respawn near peak with slight randomness
+					arr[i * 3]     = wf.peakX + (Math.random() - 0.5) * 0.3;
+					arr[i * 3 + 1] = wf.peakH + 0.05;
+					arr[i * 3 + 2] = wf.peakZ + (Math.random() - 0.5) * 0.3;
+				}
+			}
+			pos.needsUpdate = true;
+		}
 		if (prevWaterSystem) prevWaterSystem.update(dt, cachedDN?.sunPosition); // keep old water animating during cross-fade
 		if (waterSystem) {
 			waterSystem.update(dt, cachedDN?.sunPosition);
@@ -1849,11 +2476,60 @@
 		if (wildlifeSystem) wildlifeSystem.update(dt, displayTime);
 		if (creatureSystem) creatureSystem.update(dt, displayTime, camera);
 
-		// Cross-fade transition: animate opacity between old and new world
+		// Cross-fade transition: morph terrain + fade objects
 		if (transitioning) {
 			transitionAlpha = Math.min(1.0, transitionAlpha + dt / TRANSITION_DURATION);
-			setGroupOpacity(worldGroup, transitionAlpha);
-			if (prevWorldGroup) setGroupOpacity(prevWorldGroup, 1.0 - transitionAlpha);
+			const t = transitionAlpha;
+			const eased = t * t * (3 - 2 * t); // smoothstep
+
+			// Fade new world in, old world out
+			setGroupOpacity(worldGroup, eased);
+			if (prevWorldGroup) setGroupOpacity(prevWorldGroup, 1.0 - eased);
+
+			// Morph old terrain heights → flat, lerp normals → up
+			if (prevTerrainSystem && terrainMorphOldHeights) {
+				const pos = prevTerrainSystem.mesh.geometry.attributes.position;
+				for (let i = 0; i < pos.count; i++) {
+					pos.setY(i, terrainMorphOldHeights[i] * (1 - eased));
+				}
+				pos.needsUpdate = true;
+				if (terrainMorphOldNormals) {
+					const norms = prevTerrainSystem.mesh.geometry.attributes.normal;
+					const arr = norms.array as Float32Array;
+					const src = terrainMorphOldNormals;
+					const inv = 1 - eased;
+					for (let i = 0, len = norms.count; i < len; i++) {
+						const i3 = i * 3;
+						arr[i3]     = src[i3] * inv;
+						arr[i3 + 1] = src[i3 + 1] * inv + eased;
+						arr[i3 + 2] = src[i3 + 2] * inv;
+					}
+					(norms as THREE.BufferAttribute).needsUpdate = true;
+				}
+			}
+
+			// Morph new terrain heights flat → actual, lerp normals up → actual
+			if (terrainSystem && terrainMorphNewHeights) {
+				const pos = terrainSystem.mesh.geometry.attributes.position;
+				for (let i = 0; i < pos.count; i++) {
+					pos.setY(i, terrainMorphNewHeights[i] * eased);
+				}
+				pos.needsUpdate = true;
+				if (terrainMorphNewNormals) {
+					const norms = terrainSystem.mesh.geometry.attributes.normal;
+					const arr = norms.array as Float32Array;
+					const src = terrainMorphNewNormals;
+					const inv = 1 - eased;
+					for (let i = 0, len = norms.count; i < len; i++) {
+						const i3 = i * 3;
+						arr[i3]     = src[i3] * eased;
+						arr[i3 + 1] = inv + src[i3 + 1] * eased;
+						arr[i3 + 2] = src[i3 + 2] * eased;
+					}
+					(norms as THREE.BufferAttribute).needsUpdate = true;
+				}
+			}
+
 			if (transitionAlpha >= 1.0) {
 				transitioning = false;
 				if (prevWorldGroup) {
@@ -1863,8 +2539,109 @@
 				}
 				if (prevTerrainSystem) { prevTerrainSystem.dispose(); prevTerrainSystem = null; }
 				if (prevWaterSystem) { prevWaterSystem.dispose(); prevWaterSystem = null; }
-				// Restore full opacity on new world
+				terrainMorphOldHeights = null;
+				terrainMorphNewHeights = null;
+				terrainMorphOldNormals = null;
+				terrainMorphNewNormals = null;
 				setGroupOpacity(worldGroup, 1.0);
+			}
+		}
+
+		// Terrain-only height morph (no scene rebuild)
+		if (terrainMorphing && terrainSystem && terrainMorphStartHeights && terrainMorphTargetHeights) {
+			terrainMorphAlpha = Math.min(1.0, terrainMorphAlpha + dt / TERRAIN_MORPH_DURATION);
+			const t = terrainMorphAlpha;
+			const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+			// Morph heights — direct Float32Array access (no getY/setY overhead)
+			const posArr = (terrainSystem.mesh.geometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
+			const sh = terrainMorphStartHeights, th = terrainMorphTargetHeights;
+			const stride = 3; // x,y,z per vertex
+			for (let i = 0, len = sh.length; i < len; i++) {
+				posArr[i * stride + 1] = sh[i] + (th[i] - sh[i]) * eased;
+			}
+			(terrainSystem.mesh.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+
+			// Smoothly lerp vertex colors during morph
+			if (terrainMorphStartColors && terrainMorphTargetColors) {
+				const colAttr = terrainSystem.mesh.geometry.attributes.color as THREE.BufferAttribute;
+				const colArr = colAttr.array as Float32Array;
+				const sc = terrainMorphStartColors, tc = terrainMorphTargetColors;
+				for (let i = 0, len = sc.length; i < len; i++) {
+					colArr[i] = sc[i] + (tc[i] - sc[i]) * eased;
+				}
+				colAttr.needsUpdate = true;
+			}
+
+			if (terrainMorphAlpha >= 1.0) {
+				terrainMorphing = false;
+
+				// Final snap (ensure exact target colors)
+				if (terrainMorphStartColors && terrainMorphTargetColors) {
+					const colAttr = terrainSystem.mesh.geometry.attributes.color as THREE.BufferAttribute;
+					(colAttr.array as Float32Array).set(terrainMorphTargetColors);
+					colAttr.needsUpdate = true;
+				}
+				terrainSystem.mesh.geometry.computeVertexNormals();
+
+				terrainMorphStartHeights = null;
+				terrainMorphTargetHeights = null;
+				terrainMorphStartColors = null;
+				terrainMorphTargetColors = null;
+
+				// Keep existing terrain mesh — just update getHeightAt for new grid
+				pendingMorphGrid = null;
+				if (terrainSystem && pendingGrid) {
+					updateTerrainHeightFn(terrainSystem, pendingGrid);
+					lastGridRows = pendingGrid.length;
+					lastGridCols = pendingGrid[0].length;
+				}
+				// Rebuild scenery (trees, settlements, etc.) on the existing terrain
+				if (pendingGrid) {
+					rebuildSceneryForNewGrid();
+				}
+			}
+		}
+
+		// Scenery sink/rise animation
+		if (sceneryPhase === 'sinking' && sceneryGroup) {
+			sceneryAlpha = Math.min(1.0, sceneryAlpha + dt / SCENERY_SINK_DURATION);
+			const t = sceneryAlpha;
+			const eased = t * t * (3 - 2 * t); // smoothstep
+			sceneryGroup.position.y = -SCENERY_SINK_DEPTH * eased;
+
+			if (sceneryAlpha >= 1.0) {
+				// Scenery fully sunk — rebuild immediately (don't wait for terrain morph)
+				rebuildSceneryForNewGrid();
+			}
+		}
+		if (sceneryPhase === 'rising' && sceneryGroup) {
+			sceneryAlpha = Math.min(1.0, sceneryAlpha + dt / SCENERY_RISE_DURATION);
+			const t = sceneryAlpha;
+			const eased = t * t * (3 - 2 * t); // smoothstep
+			sceneryGroup.position.y = -SCENERY_SINK_DEPTH * (1 - eased);
+
+			if (sceneryAlpha >= 1.0) {
+				sceneryGroup.position.y = 0;
+				sceneryPhase = null;
+				pendingGrid = null;
+				pendingSettlements = null;
+				// Force shadow update after new scenery is in place
+				if (sunLight) sunLight.shadow.needsUpdate = true;
+				lastShadowUpdate = performance.now();
+				lightProbeNeedsUpdate = true;
+				// Update flythrough path for new terrain if active
+				if (flythroughActive && terrainSystem && flythrough) {
+					flythrough.transitionToNewPath(grid, terrainSystem.getHeightAt);
+				}
+				// Start smooth sky transition now that scene is ready
+				if (skyFrozen) {
+					skyFrozen = false;
+					skyTransitionActive = true;
+					skyTransitionAlpha = 0;
+					skyTransitionFrom = skyFrozenTime;
+					skyTransitionTo = timeOfDay;
+				}
 			}
 		}
 
@@ -1923,16 +2700,72 @@
 			}
 
 		} else {
-			// Gentle idle auto-rotation after 10 seconds of no interaction
+			// Idle cinema mode — random still shots with handheld sway
 			const idleTime = now - lastInteraction;
 			if (!freezeCamera && idleTime > 10 && controls) {
-				autoRotateAngle += dt * 0.08; // slow orbit
-				const dist = camera.position.length();
-				const baseY = camera.position.y;
-				camera.position.x = Math.cos(autoRotateAngle) * dist * 0.7;
-				camera.position.z = Math.sin(autoRotateAngle) * dist * 0.7;
-				camera.position.y = baseY + Math.sin(autoRotateAngle * 0.3) * 0.5;
-				camera.lookAt(0, 0, 0);
+				// Initialize cinema mode on first idle frame
+				if (!idleCinemaActive) {
+					idleCinemaActive = true;
+					idleShotTimer = 0;
+					idleShotPhase = 'transition';
+					idleTransitionProgress = 0;
+					idleHandheldTime = 0;
+					// Current camera position as "from"
+					idleCamFrom = {
+						px: camera.position.x, py: camera.position.y, pz: camera.position.z,
+						lx: 0, ly: gY(0, 0), lz: 0
+					};
+					idleCamTo = generateIdleShot();
+					idleCamCurrent = { ...idleCamFrom };
+				}
+
+				idleShotTimer += dt;
+				idleHandheldTime += dt;
+
+				if (idleShotPhase === 'transition') {
+					idleTransitionProgress = Math.min(1, idleTransitionProgress + dt / IDLE_TRANSITION_DURATION);
+					const t = smoothstep(idleTransitionProgress);
+					idleCamCurrent.px = idleCamFrom.px + (idleCamTo.px - idleCamFrom.px) * t;
+					idleCamCurrent.py = idleCamFrom.py + (idleCamTo.py - idleCamFrom.py) * t;
+					idleCamCurrent.pz = idleCamFrom.pz + (idleCamTo.pz - idleCamFrom.pz) * t;
+					idleCamCurrent.lx = idleCamFrom.lx + (idleCamTo.lx - idleCamFrom.lx) * t;
+					idleCamCurrent.ly = idleCamFrom.ly + (idleCamTo.ly - idleCamFrom.ly) * t;
+					idleCamCurrent.lz = idleCamFrom.lz + (idleCamTo.lz - idleCamFrom.lz) * t;
+					if (idleTransitionProgress >= 1) {
+						idleShotPhase = 'hold';
+						idleShotTimer = 0;
+					}
+				} else {
+					// Hold phase — check if it's time to pick a new shot
+					if (idleShotTimer >= IDLE_SHOT_DURATION) {
+						idleCamFrom = { ...idleCamTo };
+						idleCamTo = generateIdleShot();
+						idleShotPhase = 'transition';
+						idleTransitionProgress = 0;
+						idleShotTimer = 0;
+					}
+				}
+
+				// Handheld sway — subtle noise-based camera shake
+				const swayX = Math.sin(idleHandheldTime * 0.7) * 0.03 + Math.sin(idleHandheldTime * 1.3) * 0.015;
+				const swayY = Math.sin(idleHandheldTime * 0.5 + 1) * 0.02 + Math.cos(idleHandheldTime * 1.1) * 0.01;
+				const swayZ = Math.cos(idleHandheldTime * 0.6 + 2) * 0.03 + Math.sin(idleHandheldTime * 1.5) * 0.015;
+
+				camera.position.set(
+					idleCamCurrent.px + swayX,
+					idleCamCurrent.py + swayY,
+					idleCamCurrent.pz + swayZ
+				);
+				camera.lookAt(
+					idleCamCurrent.lx + swayX * 0.3,
+					idleCamCurrent.ly + swayY * 0.2,
+					idleCamCurrent.lz + swayZ * 0.3
+				);
+			} else {
+				if (idleCinemaActive) {
+					idleCinemaActive = false;
+					autoRotateAngle = Math.atan2(camera.position.z, camera.position.x);
+				}
 			}
 
 			controls.update();
@@ -1972,7 +2805,6 @@
 		renderer.setSize(container.clientWidth, container.clientHeight);
 		renderer.shadowMap.enabled = true;
 		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-		renderer.shadowMap.autoUpdate = false; // manual shadow updates on time change only
 		renderer.toneMapping = THREE.NoToneMapping; // postFX handles tone mapping
 		container.appendChild(renderer.domElement);
 
@@ -2004,6 +2836,7 @@
 			lastInteraction = performance.now() / 1000;
 			// Sync autoRotateAngle to current camera position so resume is seamless
 			autoRotateAngle = Math.atan2(camera.position.z, camera.position.x);
+			idleCinemaActive = false;
 		};
 		renderer.domElement.addEventListener('pointerdown', resetIdle);
 		renderer.domElement.addEventListener('pointermove', resetIdle);
@@ -2036,10 +2869,14 @@
 		if (prevWorldGroup) { disposeGroup(prevWorldGroup); prevWorldGroup = null; }
 		if (worldGroup) { disposeGroup(worldGroup); worldGroup = null; }
 		if (prevTerrainSystem) { prevTerrainSystem.dispose(); prevTerrainSystem = null; }
+		if (pendingTerrainSystem) { pendingTerrainSystem.dispose(); pendingTerrainSystem = null; }
 		if (prevWaterSystem) { prevWaterSystem.dispose(); prevWaterSystem = null; }
+		if (waterSystem) { waterSystem.dispose(); waterSystem = null; }
+		if (moatSystem) { moatSystem.dispose(); moatSystem = null; }
 		if (cloudSystem) { cloudSystem.dispose(); cloudSystem = null; }
 		if (waterfallSystem) { waterfallSystem.dispose(); waterfallSystem = null; }
 		if (celestialSystem) { celestialSystem.dispose(); celestialSystem = null; }
+		if (nightSkySystem) { nightSkySystem.dispose(); nightSkySystem = null; }
 		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
 		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
 		if (fillLight) { scene.remove(fillLight); fillLight = null; }
@@ -2053,12 +2890,59 @@
 		if (scatter) { scatter.dispose(); scatter = null; }
 		if (creatureSystem) { creatureSystem.dispose(); creatureSystem = null; }
 		if (flythrough) { flythrough.dispose(); flythrough = null; }
+		if (terrainWorker) { terrainWorker.terminate(); terrainWorker = null; }
 		if (renderer) renderer.dispose();
 		window.removeEventListener('resize', handleResize);
 		window.removeEventListener('keydown', onGlobalKeyDown);
 	});
 
-	$effect(() => { grid; settlements; if (scene) buildScene(); });
+	let lastSeason: Season | undefined = undefined;
+	$effect(() => {
+		grid; settlements; season;
+		// Invalidate stale prediction overlay on seed/round/season change
+		const wasShowingPrediction = predictionOverlay?.visible ?? false;
+		if (predictionOverlay) {
+			scene?.remove(predictionOverlay);
+			predictionOverlay = null;
+			predictionAnalysis = null;
+		}
+		if (scene && grid?.length) {
+			lastSeason = season;
+			const canMorph = terrainSystem
+				&& grid.length === lastGridRows
+				&& grid[0].length === lastGridCols
+				&& !transitioning
+				&& !terrainMorphing;
+			if (canMorph) {
+				// Morph handles both grid changes AND season changes (worker uses season)
+				morphTerrainTo(grid);
+			} else {
+				buildScene();
+			}
+		}
+		// Re-fetch prediction overlay if it was visible
+		if (wasShowingPrediction) togglePredictionOverlay();
+	});
+
+	// Sync overlay visibility with props — read prop first to ensure dependency tracking
+	$effect(() => {
+		const vis = showGrid;
+		if (gridOverlay) gridOverlay.visible = vis;
+	});
+	$effect(() => {
+		const vis = showTerrain;
+		if (terrainSystem) terrainSystem.mesh.visible = vis;
+	});
+	$effect(() => {
+		const vis = showPrediction;
+		if (vis && !predictionOverlay) {
+			togglePredictionOverlay();
+		} else if (!vis && predictionOverlay) {
+			predictionOverlay.visible = false;
+		} else if (vis && predictionOverlay) {
+			predictionOverlay.visible = true;
+		}
+	});
 </script>
 
 <div class="relative w-full h-full">
@@ -2148,13 +3032,15 @@
 
 	<!-- FP mode HUD overlay -->
 	{#if fpMode}
-		<!-- Crosshair -->
+		<!-- Crosshair (hidden during flythrough) -->
+		{#if !flythroughActive}
 		<div class="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
 			<div class="w-5 h-5 relative opacity-40">
 				<div class="absolute top-1/2 left-0 w-full h-px bg-white -translate-y-px"></div>
 				<div class="absolute left-1/2 top-0 h-full w-px bg-white -translate-x-px"></div>
 			</div>
 		</div>
+		{/if}
 
 		<!-- Controls hint (bottom) — not during flythrough -->
 		{#if !pointerLocked && !flythroughActive}
@@ -2182,31 +3068,33 @@
 
 		<!-- Flythrough cinematic HUD -->
 		{#if flythroughActive}
+			{@const h = Math.floor(displayTime)}
+			{@const m = Math.floor((displayTime - h) * 60)}
+			{@const timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`}
+			{@const timeLabel = displayTime < 6 ? 'Night' : displayTime < 8 ? 'Dawn' : displayTime < 12 ? 'Morning' : displayTime < 14 ? 'Midday' : displayTime < 17 ? 'Afternoon' : displayTime < 19 ? 'Dusk' : 'Night'}
+			{@const weatherLabel = windSystem?.weather === 'storm' ? 'Storm' : windSystem?.weather === 'rain' ? 'Rain' : windSystem?.weather === 'cloudy' ? 'Cloudy' : 'Clear'}
 			<div class="absolute inset-0 pointer-events-none z-20 flex flex-col items-center"
 				style="animation: hudFadeIn 2s ease-out forwards">
-				<div class="mt-10 text-center flex flex-col items-center">
-				<div class="inline-block px-8 py-4 rounded-lg" style="background: rgba(10, 15, 40, 0.55); backdrop-filter: blur(6px);">
-					<h1 class="text-5xl font-thin tracking-[0.4em] uppercase"
+				<div class="mt-6 text-center flex flex-col items-center">
+				<div class="inline-block px-6 py-2.5 rounded-lg" style="background: rgba(10, 15, 40, 0.50); backdrop-filter: blur(6px);">
+					<h1 class="text-2xl font-thin tracking-[0.35em] uppercase"
 						style="color: rgba(255,255,255,0.85);
-							text-shadow: 0 0 40px rgba(255,255,255,0.4), 0 0 80px rgba(135,206,235,0.25), 0 0 120px rgba(135,206,235,0.1);
-							filter: blur(0.3px)">
+							text-shadow: 0 0 30px rgba(255,255,255,0.3), 0 0 60px rgba(135,206,235,0.2);">
 						ASTAR ISLAND
 					</h1>
-					{#if roundLabel || seedLabel}
-						<p class="mt-3 text-base tracking-[0.25em] uppercase"
-							style="color: rgba(255,255,255,0.55);
-								text-shadow: 0 0 20px rgba(255,255,255,0.3), 0 0 40px rgba(135,206,235,0.15);
-								transition: opacity 0.8s ease">
-							{#if roundLabel}{roundLabel}{/if}
-							{#if roundLabel && seedLabel} &middot; {/if}
-							{#if seedLabel}{seedLabel}{/if}
-						</p>
-					{/if}
+					<div class="mt-1.5 flex items-center justify-center gap-2 text-[10px] font-mono tracking-wider uppercase"
+						style="color: rgba(255,255,255,0.50); text-shadow: 0 0 15px rgba(255,255,255,0.2);">
+						{#if roundLabel}<span>{roundLabel}</span><span class="text-white/25">&middot;</span>{/if}
+						{#if seedLabel}<span>{seedLabel}</span><span class="text-white/25">&middot;</span>{/if}
+						<span>{timeStr} {timeLabel}</span>
+						<span class="text-white/25">&middot;</span>
+						<span>{weatherLabel}</span>
+					</div>
 				</div>
 				</div>
 			</div>
 
-			<!-- Exit hint (click anywhere) -->
+			<!-- Exit hint -->
 			<div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 text-[10px] text-white/30 pointer-events-none">
 				Press ESC to exit
 			</div>

@@ -1,5 +1,5 @@
 use axum::{extract::State, http::StatusCode, Json};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::auth::middleware::AuthTeam;
 use crate::config;
@@ -8,13 +8,13 @@ use crate::simulation::{cell::*, engine, grid::Grid, params::SimParams, terrain:
 
 /// POST /astar-island/simulate — Observe one simulation through a viewport.
 pub async fn simulate(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     AuthTeam(claims): AuthTeam,
     Json(req): Json<SimulateRequest>,
 ) -> Result<Json<SimulateResponse>, (StatusCode, String)> {
     // Validate round is active
     let round_row: Option<(String, String, i64, i64)> = sqlx::query_as(
-        "SELECT id, status, map_width, map_height FROM rounds WHERE id = ?",
+        "SELECT id, status, map_width::BIGINT, map_height::BIGINT FROM rounds WHERE id = $1",
     )
     .bind(&req.round_id)
     .fetch_optional(&pool)
@@ -34,7 +34,7 @@ pub async fn simulate(
 
     // Check budget
     let queries_used: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM query_log WHERE team_id = ? AND round_id = ?",
+        "SELECT COUNT(*)::BIGINT FROM query_log WHERE team_id = $1 AND round_id = $2",
     )
     .bind(&claims.team_id)
     .bind(&round_id)
@@ -58,7 +58,7 @@ pub async fn simulate(
 
     // Load seed data
     let seed_row: Option<(String, i64, String, String)> = sqlx::query_as(
-        "SELECT id, map_seed, initial_grid, settlements FROM seeds WHERE round_id = ? AND seed_index = ?",
+        "SELECT id, map_seed::BIGINT, initial_grid, settlements FROM seeds WHERE round_id = $1 AND seed_index = $2",
     )
     .bind(&round_id)
     .bind(req.seed_index)
@@ -76,7 +76,7 @@ pub async fn simulate(
 
     // Load hidden params
     let params_json: String = sqlx::query_scalar(
-        "SELECT hidden_params FROM rounds WHERE id = ?",
+        "SELECT hidden_params FROM rounds WHERE id = $1",
     )
     .bind(&round_id)
     .fetch_one(&pool)
@@ -120,7 +120,7 @@ pub async fn simulate(
     }
 
     // Log query
-    sqlx::query("INSERT INTO query_log (team_id, round_id, seed_index, viewport_x, viewport_y, viewport_w, viewport_h) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO query_log (team_id, round_id, seed_index, viewport_x, viewport_y, viewport_w, viewport_h) VALUES ($1, $2, $3, $4, $5, $6, $7)")
         .bind(&claims.team_id)
         .bind(&round_id)
         .bind(req.seed_index)

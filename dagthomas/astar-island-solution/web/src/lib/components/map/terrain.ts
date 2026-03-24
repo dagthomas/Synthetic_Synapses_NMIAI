@@ -1,9 +1,11 @@
 /**
- * Epic procedural terrain — dramatic heightmap with zone-blended textures.
- * Mountains rise 1.5–4 units, ocean sinks below water level, zones blend smoothly.
- * Snow caps on peaks, exposed rock on slopes, wet sand at shorelines.
+ * Low-poly procedural terrain — flat-shaded heightmap with seasonal vertex colors.
+ * Subdivs=2 per cell, no normal map, reduced noise for fast rebuilds.
+ * Mountains rise 1.5–4 units, ocean sinks below water level.
  */
 import * as THREE from 'three';
+
+export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
 
 export interface TerrainSystem {
 	mesh: THREE.Mesh;
@@ -16,30 +18,46 @@ export interface TerrainSystem {
 // ═══════════════════════════════════════
 
 export const WATER_LEVEL = -0.12;
-const SNOW_START = 1.6;
-const SNOW_FULL = 2.8;
 
-/** Base heights for non-mountain terrain (mountain height added via overlay) */
+const SNOW_THRESHOLDS: Record<Season, { start: number; full: number }> = {
+	spring: { start: 2.0, full: 3.2 },
+	summer: { start: 2.4, full: 3.5 },
+	autumn: { start: 1.8, full: 2.8 },
+	winter: { start: 0.8, full: 1.6 },
+};
+
 const BASE_HEIGHTS: Record<number, number> = {
 	0:  0.12,   // Sandy
 	1:  0.16,   // Settlement
-	2:  0.04,   // Port (just above water)
+	2:  0.04,   // Port
 	3:  0.16,   // Ruin
 	4:  0.20,   // Forest
-	5:  0.36,   // Mountain base (peaks come from overlay)
-	10: -0.55,  // Ocean (deep)
+	5:  0.36,   // Mountain base
+	10: -0.55,  // Ocean
 	11: 0.14,   // Plains
 };
 
-const BIOME_COLORS: Record<number, [number, number, number]> = {
-	0:  [0.82, 0.74, 0.50],  // warm sand
-	1:  [0.70, 0.60, 0.38],  // worn settlement earth
-	2:  [0.45, 0.55, 0.52],  // port wet stone
-	3:  [0.56, 0.52, 0.44],  // mossy ruin stone
-	4:  [0.20, 0.44, 0.14],  // deep forest floor
-	5:  [0.50, 0.48, 0.44],  // granite
-	10: [0.10, 0.25, 0.42],  // ocean floor
-	11: [0.36, 0.62, 0.18],  // lush plains
+const SEASONAL_BIOME_COLORS: Record<Season, Record<number, [number, number, number]>> = {
+	summer: {
+		0:  [0.82, 0.74, 0.50], 1:  [0.70, 0.60, 0.38], 2:  [0.45, 0.55, 0.52],
+		3:  [0.56, 0.52, 0.44], 4:  [0.20, 0.44, 0.14], 5:  [0.50, 0.48, 0.44],
+		10: [0.10, 0.25, 0.42], 11: [0.36, 0.62, 0.18],
+	},
+	spring: {
+		0:  [0.82, 0.74, 0.50], 1:  [0.68, 0.60, 0.40], 2:  [0.45, 0.55, 0.52],
+		3:  [0.52, 0.52, 0.42], 4:  [0.28, 0.52, 0.18], 5:  [0.50, 0.48, 0.44],
+		10: [0.10, 0.26, 0.44], 11: [0.42, 0.65, 0.22],
+	},
+	autumn: {
+		0:  [0.80, 0.72, 0.48], 1:  [0.68, 0.56, 0.36], 2:  [0.44, 0.52, 0.50],
+		3:  [0.58, 0.50, 0.40], 4:  [0.55, 0.35, 0.12], 5:  [0.50, 0.48, 0.44],
+		10: [0.10, 0.22, 0.38], 11: [0.62, 0.52, 0.20],
+	},
+	winter: {
+		0:  [0.78, 0.74, 0.58], 1:  [0.64, 0.58, 0.46], 2:  [0.48, 0.54, 0.54],
+		3:  [0.54, 0.52, 0.48], 4:  [0.30, 0.28, 0.24], 5:  [0.58, 0.56, 0.54],
+		10: [0.08, 0.20, 0.38], 11: [0.45, 0.40, 0.32],
+	},
 };
 
 const SNOW_COL: [number, number, number] = [0.94, 0.94, 0.97];
@@ -47,20 +65,19 @@ const ROCK_COL: [number, number, number] = [0.46, 0.44, 0.40];
 const WET_SAND_COL: [number, number, number] = [0.58, 0.52, 0.38];
 const DEFAULT_COL: [number, number, number] = [0.65, 0.58, 0.42];
 
-/** FBM noise amplitude per terrain type */
 const NOISE_AMP: Record<number, number> = {
-	0:  0.018,  // Sandy: gentle dunes
-	1:  0.012,  // Settlement: smooth
-	2:  0.010,  // Port: smooth
-	3:  0.030,  // Ruin: rubble
-	4:  0.035,  // Forest: root bumps
-	5:  0.12,   // Mountain: rough rock
-	10: 0.008,  // Ocean: gentle ripples
-	11: 0.020,  // Plains: rolling
+	0: 0.018, 1: 0.012, 2: 0.010, 3: 0.030,
+	4: 0.035, 5: 0.12, 10: 0.008, 11: 0.020,
 };
 
+const SUBDIVS = 2; // low-poly: 2 subdivisions per grid cell
+
+function getBiomeColors(season: Season): Record<number, [number, number, number]> {
+	return SEASONAL_BIOME_COLORS[season];
+}
+
 // ═══════════════════════════════════════
-//  Noise functions
+//  Noise (reduced octaves for speed)
 // ═══════════════════════════════════════
 
 function hash(x: number, y: number): number {
@@ -83,40 +100,30 @@ function fbm(x: number, z: number, octaves: number, lacunarity: number, gain: nu
 	let value = 0, amp = 1, freq = 1, maxAmp = 0;
 	for (let i = 0; i < octaves; i++) {
 		value += smoothNoise(x * freq, z * freq) * amp;
-		maxAmp += amp;
-		amp *= gain;
-		freq *= lacunarity;
+		maxAmp += amp; amp *= gain; freq *= lacunarity;
 	}
 	return value / maxAmp;
 }
 
-/** Ridge noise for sharp mountain peaks */
-function ridgeNoise(x: number, z: number, octaves: number): number {
+function ridgeNoise(x: number, z: number): number {
 	let value = 0, amp = 1, freq = 1, maxAmp = 0;
-	for (let i = 0; i < octaves; i++) {
+	for (let i = 0; i < 2; i++) {
 		let n = smoothNoise(x * freq, z * freq);
-		n = 1.0 - Math.abs(n * 2 - 1);
-		n *= n;
-		value += n * amp;
-		maxAmp += amp;
-		amp *= 0.5;
-		freq *= 2.1;
+		n = 1.0 - Math.abs(n * 2 - 1); n *= n;
+		value += n * amp; maxAmp += amp; amp *= 0.5; freq *= 2.1;
 	}
 	return value / maxAmp;
 }
 
-/** Domain-warped FBM for organic shapes */
-function warpedFbm(x: number, z: number, octaves: number): number {
-	const wx = fbm(x + 5.2, z + 1.3, 3, 2.0, 0.5) * 1.5;
-	const wz = fbm(x + 1.7, z + 9.2, 3, 2.0, 0.5) * 1.5;
-	return fbm(x + wx, z + wz, octaves, 2.0, 0.5);
+/** Simple FBM — no domain warping for speed */
+function simpleFbm(x: number, z: number): number {
+	return fbm(x, z, 2, 2.0, 0.5);
 }
 
 // ═══════════════════════════════════════
-//  Height computation
+//  Height computation (3x3 kernels)
 // ═══════════════════════════════════════
 
-/** Precompute mountain density field at grid resolution */
 function buildMountainField(grid: number[][]): Float32Array {
 	const rows = grid.length, cols = grid[0].length;
 	const field = new Float32Array(rows * cols);
@@ -126,9 +133,7 @@ function buildMountainField(grid: number[][]): Float32Array {
 			for (let dy = -3; dy <= 3; dy++) {
 				for (let dx = -3; dx <= 3; dx++) {
 					const cx = x + dx, cy = y + dy;
-					if (cx >= 0 && cx < cols && cy >= 0 && cy < rows && grid[cy][cx] === 5) {
-						count++;
-					}
+					if (cx >= 0 && cx < cols && cy >= 0 && cy < rows && grid[cy][cx] === 5) count++;
 				}
 			}
 			field[y * cols + x] = count;
@@ -137,7 +142,6 @@ function buildMountainField(grid: number[][]): Float32Array {
 	return field;
 }
 
-/** Sample mountain density with bilinear interpolation */
 function sampleMtnField(field: Float32Array, cols: number, rows: number, gx: number, gz: number): number {
 	const cx = Math.max(0, Math.min(cols - 1.001, gx));
 	const cz = Math.max(0, Math.min(rows - 1.001, gz));
@@ -150,190 +154,159 @@ function sampleMtnField(field: Float32Array, cols: number, rows: number, gx: num
 		+ field[iz1 * cols + ix1] * fx * fz;
 }
 
-/** Gaussian-blended base height (excludes mountain overlay) */
+/** 3x3 Gaussian-blended base height */
 function blendBaseHeight(grid: number[][], gx: number, gz: number): number {
 	const rows = grid.length, cols = grid[0].length;
-	const sigma2 = 1.8; // 2 * sigma^2 where sigma ≈ 0.95
+	const sigma2 = 1.8;
 	let total = 0, weight = 0;
-	for (let dy = -2; dy <= 2; dy++) {
-		for (let dx = -2; dx <= 2; dx++) {
-			const cx = Math.round(gx) + dx;
-			const cy = Math.round(gz) + dy;
+	for (let dy = -1; dy <= 1; dy++) {
+		for (let dx = -1; dx <= 1; dx++) {
+			const cx = Math.round(gx) + dx, cy = Math.round(gz) + dy;
 			if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) continue;
 			const d2 = (gx - cx) * (gx - cx) + (gz - cy) * (gz - cy);
 			const w = Math.exp(-d2 / sigma2);
-			const code = grid[cy][cx];
-			// For mountains, use the base foothill height (peak comes from overlay)
-			total += (BASE_HEIGHTS[code] ?? 0.06) * w;
+			total += (BASE_HEIGHTS[grid[cy][cx]] ?? 0.06) * w;
 			weight += w;
 		}
 	}
 	return weight > 0 ? total / weight : 0.06;
 }
 
-/** Full height at any grid coordinate */
 function computeHeight(
 	grid: number[][], mtnField: Float32Array,
-	cols: number, rows: number,
-	gx: number, gz: number
+	cols: number, rows: number, gx: number, gz: number
 ): number {
-	// Base terrain blend
 	let h = blendBaseHeight(grid, gx, gz);
-
-	// Mountain overlay: additive peaked height
 	const tix = Math.floor(Math.max(0, Math.min(cols - 1, gx + 0.5)));
 	const tiy = Math.floor(Math.max(0, Math.min(rows - 1, gz + 0.5)));
 	const code = grid[tiy]?.[tix] ?? 0;
 
-	// Check nearby mountain cells for peak overlay
 	let mtnPeak = 0;
 	for (let dy = -3; dy <= 3; dy++) {
 		for (let dx = -3; dx <= 3; dx++) {
-			const cx = Math.round(gx) + dx;
-			const cy = Math.round(gz) + dy;
+			const cx = Math.round(gx) + dx, cy = Math.round(gz) + dy;
 			if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) continue;
 			if (grid[cy][cx] !== 5) continue;
 			const dist = Math.sqrt((gx - cx) * (gx - cx) + (gz - cy) * (gz - cy));
 			const radius = 2.8;
 			if (dist >= radius) continue;
 			const t = dist / radius;
-			const profile = (1 - t * t) * (1 - t * t); // quartic falloff
-			mtnPeak = Math.max(mtnPeak, profile);
+			mtnPeak = Math.max(mtnPeak, (1 - t * t) * (1 - t * t));
 		}
 	}
 	if (mtnPeak > 0) {
-		// Scale peak height by nearby mountain density
 		const density = sampleMtnField(mtnField, cols, rows, gx, gz);
 		const peakScale = density >= 12 ? 4.0 : density >= 6 ? 3.2 : density >= 3 ? 2.2 : 1.5;
 		h += mtnPeak * peakScale;
 	}
 
-	// Terrain-type noise
 	const amp = NOISE_AMP[code] ?? 0.015;
-	h += (warpedFbm(gx * 0.8, gz * 0.8, 5) - 0.5) * 2 * amp;
-
-	// Mountain ridge noise for craggy peaks
-	if (mtnPeak > 0.2) {
-		h += ridgeNoise(gx * 0.5, gz * 0.5, 4) * mtnPeak * 0.6;
-	}
-
+	h += (simpleFbm(gx * 0.8, gz * 0.8) - 0.5) * 2 * amp;
+	if (mtnPeak > 0.2) h += ridgeNoise(gx * 0.5, gz * 0.5) * mtnPeak * 0.6;
 	return h;
 }
 
 // ═══════════════════════════════════════
-//  Color computation
+//  Color (3x3 Gaussian, flat per-face)
 // ═══════════════════════════════════════
 
-/** Gaussian-blended biome color */
-function blendColor(grid: number[][], gx: number, gz: number): [number, number, number] {
+function blendColor(grid: number[][], gx: number, gz: number, biomeColors: Record<number, [number, number, number]>): [number, number, number] {
 	const rows = grid.length, cols = grid[0].length;
 	const sigma2 = 1.4;
 	let r = 0, g = 0, b = 0, w = 0;
-	for (let dy = -2; dy <= 2; dy++) {
-		for (let dx = -2; dx <= 2; dx++) {
-			const cx = Math.round(gx) + dx;
-			const cy = Math.round(gz) + dy;
+	for (let dy = -1; dy <= 1; dy++) {
+		for (let dx = -1; dx <= 1; dx++) {
+			const cx = Math.round(gx) + dx, cy = Math.round(gz) + dy;
 			if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) continue;
 			const d2 = (gx - cx) * (gx - cx) + (gz - cy) * (gz - cy);
 			const wt = Math.exp(-d2 / sigma2);
-			const c = BIOME_COLORS[grid[cy][cx]] ?? DEFAULT_COL;
-			r += c[0] * wt;
-			g += c[1] * wt;
-			b += c[2] * wt;
-			w += wt;
+			const c = biomeColors[grid[cy][cx]] ?? DEFAULT_COL;
+			r += c[0] * wt; g += c[1] * wt; b += c[2] * wt; w += wt;
 		}
 	}
 	return w > 0 ? [r / w, g / w, b / w] : [...DEFAULT_COL];
 }
 
 // ═══════════════════════════════════════
-//  Normal map (micro-detail per terrain type)
+//  Exports
 // ═══════════════════════════════════════
 
-function createNormalMap(grid: number[][], cols: number, rows: number): THREE.CanvasTexture {
-	const res = 512;
-	const canvas = document.createElement('canvas');
-	canvas.width = res;
-	canvas.height = res;
-	const ctx = canvas.getContext('2d')!;
-	const imageData = ctx.createImageData(res, res);
-	const data = imageData.data;
+export function computeTerrainMorphData(grid: number[][], season: Season = 'summer'): { heights: Float32Array; colors: Float32Array; vertexCount: number } {
+	const rows = grid.length, cols = grid[0].length;
+	const mtnField = buildMountainField(grid);
+	const biomeColors = getBiomeColors(season);
+	const snow = SNOW_THRESHOLDS[season];
+	const segX = cols * SUBDIVS, segZ = rows * SUBDIVS;
+	const vertexCount = (segX + 1) * (segZ + 1);
+	const heights = new Float32Array(vertexCount);
+	const colors = new Float32Array(vertexCount * 3);
 
-	for (let py = 0; py < res; py++) {
-		for (let px = 0; px < res; px++) {
-			const gx = (px / res) * cols;
-			const gy = (py / res) * rows;
-			const ix = Math.floor(Math.min(cols - 1, gx));
-			const iy = Math.floor(Math.min(rows - 1, gy));
-			const type = grid[iy][ix];
-			const idx = (py * res + px) * 4;
+	for (let iz = 0; iz <= segZ; iz++) {
+		for (let ix = 0; ix <= segX; ix++) {
+			const i = iz * (segX + 1) + ix;
+			const wx = (ix / segX - 0.5) * cols, wz = (iz / segZ - 0.5) * rows;
+			const gx = wx + cols / 2 - 0.5, gz = wz + rows / 2 - 0.5;
+			const h = computeHeight(grid, mtnField, cols, rows, gx, gz);
+			heights[i] = h;
 
-			let nx = 0, ny = 0;
-			switch (type) {
-				case 5: // Mountain: craggy rock
-					nx = Math.sin(px * 0.5 + py * 0.15) * 0.35 + Math.sin(px * 1.6 + py * 0.8) * 0.25
-						+ Math.sin(px * 3.5 + py * 1.9) * 0.15 + Math.sin(px * 7.1) * 0.06;
-					ny = Math.cos(py * 0.45 + px * 0.25) * 0.35 + Math.cos(py * 1.4 + px * 0.6) * 0.25
-						+ Math.cos(py * 3.2 + px * 1.5) * 0.15 + Math.cos(py * 6.3) * 0.06;
-					break;
-				case 4: // Forest: clumpy undergrowth
-					nx = Math.sin(px * 0.35 + py * 0.12) * 0.28 + Math.sin(px * 0.9 + py * 0.7) * 0.14
-						+ Math.sin(px * 2.3 + py * 1.1) * 0.08;
-					ny = Math.cos(py * 0.3 + px * 0.15) * 0.26 + Math.cos(py * 0.85 + px * 0.6) * 0.12
-						+ Math.cos(py * 2.1 + px * 1.4) * 0.08;
-					break;
-				case 11: // Plains: wind-swept grass
-					nx = Math.sin(px * 0.18 + py * 0.06) * 0.12 + Math.sin(px * 0.5) * 0.07
-						+ Math.sin(px * 1.8 + py * 0.4) * 0.04;
-					ny = Math.cos(py * 0.15 + px * 0.05) * 0.12 + Math.cos(py * 0.45) * 0.07
-						+ Math.cos(py * 1.6 + px * 0.3) * 0.04;
-					break;
-				case 10: // Ocean: rolling ripples
-					nx = Math.sin(px * 0.10 + py * 0.03) * 0.12 + Math.sin(px * 0.3 + py * 0.08) * 0.06;
-					ny = Math.cos(py * 0.09 + px * 0.025) * 0.12 + Math.cos(py * 0.25 + px * 0.07) * 0.06;
-					break;
-				case 1: // Settlement: cobblestone
-					nx = Math.sin(px * 1.2) * Math.cos(py * 1.5) * 0.20 + Math.sin(px * 3.5 + py * 2.1) * 0.08;
-					ny = Math.cos(px * 1.4) * Math.sin(py * 1.3) * 0.20 + Math.cos(py * 3.3 + px * 1.8) * 0.08;
-					break;
-				case 3: // Ruin: cracked stone
-					nx = Math.sin(px * 0.6 + py * 1.8) * 0.22 + Math.sin(px * 2.5 + py * 0.5) * 0.12;
-					ny = Math.cos(py * 0.7 + px * 1.6) * 0.22 + Math.cos(py * 2.3 + px * 0.6) * 0.12;
-					break;
-				default: // Sandy: fine grain
-					nx = Math.sin(px * 0.7 + py * 0.4) * 0.07 + Math.sin(px * 2.5 + py * 1.5) * 0.04;
-					ny = Math.cos(py * 0.6 + px * 0.35) * 0.07 + Math.cos(py * 2.2 + px * 1.3) * 0.04;
-					break;
+			let [r, g, b] = blendColor(grid, gx, gz, biomeColors);
+			if (h > snow.start) {
+				const t = Math.min(1, (h - snow.start) / (snow.full - snow.start));
+				r = r * (1 - t) + SNOW_COL[0] * t; g = g * (1 - t) + SNOW_COL[1] * t; b = b * (1 - t) + SNOW_COL[2] * t;
 			}
-
-			data[idx]     = Math.round(128 + Math.max(-1, Math.min(1, nx)) * 127);
-			data[idx + 1] = Math.round(128 + Math.max(-1, Math.min(1, ny)) * 127);
-			data[idx + 2] = 255;
-			data[idx + 3] = 255;
+			if (h > -0.15 && h < 0.12) {
+				const t = 1.0 - Math.max(0, Math.min(1, (h + 0.15) / 0.27));
+				r = r * (1 - t * 0.6) + WET_SAND_COL[0] * t * 0.6;
+				g = g * (1 - t * 0.6) + WET_SAND_COL[1] * t * 0.6;
+				b = b * (1 - t * 0.6) + WET_SAND_COL[2] * t * 0.6;
+			}
+			const cn = (simpleFbm(gx * 2.5, gz * 2.5) - 0.5) * 0.05;
+			colors[i * 3] = Math.max(0, Math.min(1, r + cn));
+			colors[i * 3 + 1] = Math.max(0, Math.min(1, g + cn * 0.7));
+			colors[i * 3 + 2] = Math.max(0, Math.min(1, b + cn * 0.5));
 		}
 	}
-
-	ctx.putImageData(imageData, 0, 0);
-	const tex = new THREE.CanvasTexture(canvas);
-	tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-	return tex;
+	return { heights, colors, vertexCount };
 }
 
-// ═══════════════════════════════════════
-//  Main terrain builder
-// ═══════════════════════════════════════
+export type RoadPath = { points: [number, number][]; width: number };
 
-export function createTerrain(grid: number[][]): TerrainSystem {
-	const rows = grid.length;
-	const cols = grid[0].length;
+function roadDistance(wx: number, wz: number, roads: RoadPath[]): { dist: number; roadIdx: number } {
+	let bestDist = Infinity, bestIdx = -1;
+	for (let ri = 0; ri < roads.length; ri++) {
+		const pts = roads[ri].points;
+		for (let j = 0; j < pts.length - 1; j++) {
+			const [ax, az] = pts[j], [bx, bz] = pts[j + 1];
+			const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
+			if (len2 < 0.0001) continue;
+			const t = Math.max(0, Math.min(1, ((wx - ax) * dx + (wz - az) * dz) / len2));
+			const d = Math.sqrt((wx - ax - dx * t) ** 2 + (wz - az - dz * t) ** 2);
+			if (d < bestDist) { bestDist = d; bestIdx = ri; }
+		}
+	}
+	return { dist: bestDist, roadIdx: bestIdx };
+}
 
-	// Precompute mountain density
+const ROAD_COLS: Record<number, [number, number, number]> = {
+	0: [0.60, 0.50, 0.30], 1: [0.38, 0.34, 0.30], 2: [0.45, 0.38, 0.28],
+	3: [0.40, 0.36, 0.32], 4: [0.35, 0.28, 0.15], 5: [0.42, 0.40, 0.38],
+	10: [0.60, 0.50, 0.30], 11: [0.42, 0.32, 0.18],
+};
+const DEFAULT_ROAD_COL: [number, number, number] = [0.40, 0.32, 0.20];
+
+export interface CreateTerrainOptions {
+	roads?: RoadPath[];
+	season?: Season;
+	skipNormalMap?: boolean; // kept for API compat, ignored (no normal map)
+}
+
+export function createTerrain(grid: number[][], options: CreateTerrainOptions = {}): TerrainSystem {
+	const { roads = [], season = 'summer' } = options;
+	const rows = grid.length, cols = grid[0].length;
+	const biomeColors = getBiomeColors(season);
+	const snow = SNOW_THRESHOLDS[season];
 	const mtnField = buildMountainField(grid);
-
-	// 4 subdivisions per cell (160x160 = 25K verts — smooth enough, much cheaper than 12)
-	const subdivs = 4;
-	const segX = cols * subdivs;
-	const segZ = rows * subdivs;
+	const segX = cols * SUBDIVS, segZ = rows * SUBDIVS;
 
 	const geometry = new THREE.PlaneGeometry(cols, rows, segX, segZ);
 	geometry.rotateX(-Math.PI / 2);
@@ -342,58 +315,72 @@ export function createTerrain(grid: number[][]): TerrainSystem {
 	const vertexCount = positions.count;
 	const colors = new Float32Array(vertexCount * 3);
 
-	// Pass 1: height displacement
+	// Pass 1: heights + road indentation
+	const roadBlend = new Float32Array(vertexCount);
 	for (let i = 0; i < vertexCount; i++) {
-		const wx = positions.getX(i);
-		const wz = positions.getZ(i);
-		const gx = wx + cols / 2 - 0.5;
-		const gz = wz + rows / 2 - 0.5;
-		positions.setY(i, computeHeight(grid, mtnField, cols, rows, gx, gz));
+		const wx = positions.getX(i), wz = positions.getZ(i);
+		const gx = wx + cols / 2 - 0.5, gz = wz + rows / 2 - 0.5;
+		let h = computeHeight(grid, mtnField, cols, rows, gx, gz);
+
+		if (roads.length > 0) {
+			const rd = roadDistance(wx, wz, roads);
+			if (rd.roadIdx >= 0) {
+				const hw = roads[rd.roadIdx].width / 2;
+				if (rd.dist < hw) {
+					const blend = 1 - rd.dist / hw;
+					const smooth = blend * blend * (3 - 2 * blend);
+					roadBlend[i] = smooth;
+					h -= smooth * 0.06;
+				}
+			}
+		}
+		positions.setY(i, h);
 	}
 	positions.needsUpdate = true;
 	geometry.computeVertexNormals();
 
-	// Pass 2: vertex colors (needs normals for slope detection)
+	// Pass 2: vertex colors
 	const normals = geometry.attributes.normal;
 	for (let i = 0; i < vertexCount; i++) {
-		const wx = positions.getX(i);
-		const wz = positions.getZ(i);
-		const h = positions.getY(i);
-		const gx = wx + cols / 2 - 0.5;
-		const gz = wz + rows / 2 - 0.5;
+		const wx = positions.getX(i), wz = positions.getZ(i), h = positions.getY(i);
+		const gx = wx + cols / 2 - 0.5, gz = wz + rows / 2 - 0.5;
 
-		// Blended biome color
-		let [r, g, b] = blendColor(grid, gx, gz);
+		let [r, g, b] = blendColor(grid, gx, gz, biomeColors);
 
-		// Slope-based exposed rock
+		// Slope rock
 		const ny = normals.getY(i);
 		const slope = 1 - Math.abs(ny);
 		if (slope > 0.25) {
 			const t = Math.min(1, (slope - 0.25) / 0.35);
-			r = r * (1 - t) + ROCK_COL[0] * t;
-			g = g * (1 - t) + ROCK_COL[1] * t;
-			b = b * (1 - t) + ROCK_COL[2] * t;
+			r = r * (1 - t) + ROCK_COL[0] * t; g = g * (1 - t) + ROCK_COL[1] * t; b = b * (1 - t) + ROCK_COL[2] * t;
 		}
 
-		// Height-based snow caps
-		if (h > SNOW_START) {
-			const snowT = Math.min(1, (h - SNOW_START) / (SNOW_FULL - SNOW_START));
-			const snowF = snowT * Math.max(0, ny * ny); // less snow on steep
-			r = r * (1 - snowF) + SNOW_COL[0] * snowF;
-			g = g * (1 - snowF) + SNOW_COL[1] * snowF;
-			b = b * (1 - snowF) + SNOW_COL[2] * snowF;
+		// Snow
+		if (h > snow.start) {
+			const t = Math.min(1, (h - snow.start) / (snow.full - snow.start)) * Math.max(0, ny * ny);
+			r = r * (1 - t) + SNOW_COL[0] * t; g = g * (1 - t) + SNOW_COL[1] * t; b = b * (1 - t) + SNOW_COL[2] * t;
 		}
 
-		// Wet sand near waterline
+		// Wet sand
 		if (h > -0.15 && h < 0.12) {
-			const wetT = 1.0 - Math.max(0, Math.min(1, (h + 0.15) / 0.27));
-			r = r * (1 - wetT * 0.6) + WET_SAND_COL[0] * wetT * 0.6;
-			g = g * (1 - wetT * 0.6) + WET_SAND_COL[1] * wetT * 0.6;
-			b = b * (1 - wetT * 0.6) + WET_SAND_COL[2] * wetT * 0.6;
+			const t = (1.0 - Math.max(0, Math.min(1, (h + 0.15) / 0.27))) * 0.6;
+			r = r * (1 - t) + WET_SAND_COL[0] * t; g = g * (1 - t) + WET_SAND_COL[1] * t; b = b * (1 - t) + WET_SAND_COL[2] * t;
 		}
 
-		// Noise-driven color variation for natural look
-		const cn = (warpedFbm(gx * 2.5, gz * 2.5, 3) - 0.5) * 0.07;
+		// Road
+		const rb = roadBlend[i];
+		if (rb > 0.01) {
+			const cellX = Math.floor(Math.max(0, Math.min(cols - 1, gx + 0.5)));
+			const cellZ = Math.floor(Math.max(0, Math.min(rows - 1, gz + 0.5)));
+			const rc = ROAD_COLS[grid[cellZ]?.[cellX] ?? 0] ?? DEFAULT_ROAD_COL;
+			const strength = Math.min(1, rb * 1.5);
+			r = r * (1 - strength) + rc[0] * strength;
+			g = g * (1 - strength) + rc[1] * strength;
+			b = b * (1 - strength) + rc[2] * strength;
+		}
+
+		// Slight noise variation
+		const cn = (simpleFbm(gx * 2.5, gz * 2.5) - 0.5) * 0.05;
 		colors[i * 3]     = Math.max(0, Math.min(1, r + cn));
 		colors[i * 3 + 1] = Math.max(0, Math.min(1, g + cn * 0.7));
 		colors[i * 3 + 2] = Math.max(0, Math.min(1, b + cn * 0.5));
@@ -401,37 +388,55 @@ export function createTerrain(grid: number[][]): TerrainSystem {
 
 	geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-	// Normal map for micro-detail texture
-	const normalMap = createNormalMap(grid, cols, rows);
-
 	const material = new THREE.MeshStandardMaterial({
 		vertexColors: true,
-		roughness: 0.82,
+		roughness: 0.85,
 		metalness: 0.02,
-		normalMap,
-		normalScale: new THREE.Vector2(1.0, 1.0),
-		flatShading: false,
-		envMapIntensity: 0.5,
+		flatShading: true,
+		envMapIntensity: 0.4,
 	});
 
 	const mesh = new THREE.Mesh(geometry, material);
 	mesh.receiveShadow = true;
 	mesh.castShadow = true;
 
-	/** Height lookup — must match vertex computation exactly */
 	function getHeightAt(worldX: number, worldZ: number): number {
-		const gx = worldX + cols / 2 - 0.5;
-		const gz = worldZ + rows / 2 - 0.5;
+		const gx = worldX + cols / 2 - 0.5, gz = worldZ + rows / 2 - 0.5;
 		return computeHeight(grid, mtnField, cols, rows, gx, gz);
 	}
 
 	return {
-		mesh,
-		getHeightAt,
-		dispose() {
-			geometry.dispose();
-			material.dispose();
-			normalMap.dispose();
-		}
+		mesh, getHeightAt,
+		dispose() { geometry.dispose(); material.dispose(); }
 	};
+}
+
+// No-op for API compat — normal map removed
+export function applyNormalMap(_terrain: TerrainSystem, _grid: number[][]): void {}
+
+/** Update getHeightAt on existing TerrainSystem to use new grid data (no mesh rebuild) */
+export function updateTerrainHeightFn(terrain: TerrainSystem, grid: number[][]): void {
+	const rows = grid.length, cols = grid[0].length;
+	const mtnField = buildMountainField(grid);
+	(terrain as any).getHeightAt = (worldX: number, worldZ: number): number => {
+		const gx = worldX + cols / 2 - 0.5, gz = worldZ + rows / 2 - 0.5;
+		return computeHeight(grid, mtnField, cols, rows, gx, gz);
+	};
+}
+
+export function getCurrentSeason(): Season {
+	const month = new Date().getMonth();
+	if (month >= 2 && month <= 4) return 'spring';
+	if (month >= 5 && month <= 7) return 'summer';
+	if (month >= 8 && month <= 10) return 'autumn';
+	return 'winter';
+}
+
+export function getSeasonalTreeTint(season: Season): THREE.Color {
+	switch (season) {
+		case 'spring': return new THREE.Color(0.85, 1.0, 0.75);
+		case 'summer': return new THREE.Color(1.0, 1.0, 1.0);
+		case 'autumn': return new THREE.Color(1.0, 0.6, 0.25);
+		case 'winter': return new THREE.Color(0.65, 0.65, 0.65);
+	}
 }

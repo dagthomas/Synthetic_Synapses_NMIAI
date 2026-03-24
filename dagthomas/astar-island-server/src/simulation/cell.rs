@@ -27,14 +27,14 @@ pub fn to_prediction_class(cell: u8) -> usize {
 /// Human-readable name for a cell type.
 pub fn cell_name(cell: u8) -> &'static str {
     match cell {
-        OCEAN => "Ocean",
-        PLAINS => "Plains",
+        OCEAN => "Void",
+        PLAINS => "Regolith",
         EMPTY => "Empty",
-        SETTLEMENT => "Settlement",
-        PORT => "Port",
-        RUIN => "Ruin",
-        FOREST => "Forest",
-        MOUNTAIN => "Mountain",
+        SETTLEMENT => "Crystal Node",
+        PORT => "Refinery",
+        RUIN => "Depleted Vein",
+        FOREST => "Xenoflora",
+        MOUNTAIN => "Obsidian Ridge",
         _ => "Unknown",
     }
 }
@@ -42,13 +42,13 @@ pub fn cell_name(cell: u8) -> &'static str {
 /// CSS color for terrain visualization.
 pub fn cell_color(cell: u8) -> &'static str {
     match cell {
-        OCEAN => "#1a5276",
-        PLAINS | EMPTY => "#f9e79f",
-        SETTLEMENT => "#e74c3c",
-        PORT => "#8e44ad",
-        RUIN => "#7f8c8d",
-        FOREST => "#27ae60",
-        MOUNTAIN => "#bdc3c7",
+        OCEAN => "#0a0a2e",
+        PLAINS | EMPTY => "#2a1f3d",
+        SETTLEMENT => "#00fff0",
+        PORT => "#ff00ff",
+        RUIN => "#4a4a5a",
+        FOREST => "#39ff14",
+        MOUNTAIN => "#1a1a2e",
         _ => "#ffffff",
     }
 }
@@ -57,11 +57,11 @@ pub fn cell_color(cell: u8) -> &'static str {
 pub fn class_name(cls: usize) -> &'static str {
     match cls {
         0 => "Empty",
-        1 => "Settlement",
-        2 => "Port",
-        3 => "Ruin",
-        4 => "Forest",
-        5 => "Mountain",
+        1 => "Crystal Node",
+        2 => "Refinery",
+        3 => "Depleted Vein",
+        4 => "Xenoflora",
+        5 => "Obsidian Ridge",
         _ => "Unknown",
     }
 }

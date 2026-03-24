@@ -4,6 +4,8 @@
 	import { admin } from '$lib/api';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import GridViewer from '$lib/components/GridViewer.svelte';
+	import { Button } from '$lib/components/ui/button';
+	import * as Table from '$lib/components/ui/table';
 
 	let detail = $state<any>(null);
 	let loading = $state(true);
@@ -11,45 +13,59 @@
 
 	onMount(async () => {
 		try {
-			detail = await admin.roundDetail(page.params.id);
+			detail = await admin.roundDetail(page.params.id!);
 		} catch (e) {
 			console.error(e);
 		}
 		loading = false;
 	});
+
+	function scoreColor(s: number | null): string {
+		if (s == null) return 'text-cyber-muted/40';
+		if (s >= 80) return 'text-score-great';
+		if (s >= 60) return 'text-score-good';
+		if (s >= 40) return 'text-score-ok';
+		if (s >= 20) return 'text-score-low';
+		return 'text-score-bad';
+	}
 </script>
 
 {#if loading}
-	<p class="text-gray-500">Loading...</p>
+	<p class="text-cyber-muted animate-pulse-glow">Loading...</p>
 {:else if detail}
 	<div class="flex items-center gap-3 mb-6">
-		<h1 class="text-2xl font-bold">Round #{detail.round_number}</h1>
+		<div class="w-1 h-6 bg-neon-cyan rounded-full animate-pulse-glow"></div>
+		<h1 class="text-2xl font-bold text-neon-cyan neon-text tracking-wider uppercase">PLANET #{detail.round_number}</h1>
 		<StatusBadge status={detail.status} />
 	</div>
 
-	<!-- Hidden Parameters -->
-	<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
-		<h2 class="text-lg font-semibold mb-3">Hidden Parameters (26)</h2>
+	<!-- Planetary Physics -->
+	<div class="glass glass-glow p-4 mb-6">
+		<h2 class="text-sm font-semibold mb-3 text-neon-gold neon-text-gold tracking-wider uppercase">Planetary Physics (26)</h2>
 		<div class="grid grid-cols-4 gap-2 text-sm">
 			{#each Object.entries(detail.hidden_params) as [key, value]}
-				<div class="flex justify-between bg-gray-800 rounded px-3 py-1.5">
-					<span class="text-gray-400">{key}</span>
-					<span class="font-mono">{typeof value === 'number' ? value.toFixed(3) : value}</span>
+				<div class="flex justify-between bg-cyber-surface/80 border border-cyber-border/30 rounded px-3 py-1.5">
+					<span class="text-cyber-muted text-xs">{key}</span>
+					<span class="font-mono text-neon-cyan text-xs">{typeof value === 'number' ? value.toFixed(3) : value}</span>
 				</div>
 			{/each}
 		</div>
 	</div>
 
 	<!-- Seed tabs + grid viewer -->
-	<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
+	<div class="glass glass-glow p-4 mb-6">
 		<div class="flex gap-2 mb-4">
 			{#each detail.seeds as seed, i}
-				<button
+				<Button
 					onclick={() => (activeSeed = i)}
-					class="px-3 py-1 rounded text-sm {activeSeed === i ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}"
+					variant={activeSeed === i ? 'default' : 'ghost'}
+					size="sm"
+					class={activeSeed === i
+						? 'bg-neon-cyan/15 border border-neon-cyan/40 text-neon-cyan shadow-[0_0_10px_rgba(0,255,240,0.1)]'
+						: 'text-cyber-muted hover:text-neon-cyan hover:bg-cyber-panel border border-transparent'}
 				>
-					Seed {seed.seed_index} ({seed.settlement_count} setts)
-				</button>
+					Scan Zone {seed.seed_index} ({seed.settlement_count} nodes)
+				</Button>
 			{/each}
 		</div>
 
@@ -58,38 +74,38 @@
 		{/if}
 	</div>
 
-	<!-- Team Scores -->
+	<!-- Corporation Rankings -->
 	{#if detail.team_scores.length > 0}
-		<div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-			<h2 class="text-lg font-semibold mb-3">Team Scores</h2>
-			<table class="w-full text-sm">
-				<thead class="bg-gray-800">
-					<tr>
-						<th class="px-3 py-2 text-left">Team</th>
+		<div class="glass glass-glow p-4">
+			<h2 class="text-sm font-semibold mb-3 text-neon-magenta tracking-wider uppercase">Corporation Rankings</h2>
+			<Table.Root>
+				<Table.Header>
+					<Table.Row class="border-b border-cyber-border bg-cyber-surface/50 hover:bg-cyber-surface/50">
+						<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase">Corporation</Table.Head>
 						{#each { length: 5 } as _, i}
-							<th class="px-3 py-2 text-center">Seed {i}</th>
+							<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase text-center">Zone {i}</Table.Head>
 						{/each}
-						<th class="px-3 py-2 text-center">Avg</th>
-						<th class="px-3 py-2 text-center">Queries</th>
-					</tr>
-				</thead>
-				<tbody>
+						<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase text-center">Avg</Table.Head>
+						<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase text-center">Queries</Table.Head>
+					</Table.Row>
+				</Table.Header>
+				<Table.Body>
 					{#each detail.team_scores as ts}
-						<tr class="border-t border-gray-800">
-							<td class="px-3 py-2">{ts.team_name}</td>
+						<Table.Row class="border-b border-cyber-border/50 hover:bg-neon-cyan/5 transition-colors">
+							<Table.Cell class="text-cyber-fg font-medium">{ts.team_name}</Table.Cell>
 							{#each ts.seed_scores as s}
-								<td class="px-3 py-2 text-center font-mono {s != null && s >= 80 ? 'text-green-400' : s != null && s >= 50 ? 'text-yellow-400' : s != null ? 'text-red-400' : 'text-gray-600'}">
+								<Table.Cell class="text-center font-mono {scoreColor(s)}">
 									{s != null ? s.toFixed(1) : '-'}
-								</td>
+								</Table.Cell>
 							{/each}
-							<td class="px-3 py-2 text-center font-bold">
+							<Table.Cell class="text-center font-bold text-neon-gold neon-text-gold">
 								{ts.average_score != null ? ts.average_score.toFixed(1) : '-'}
-							</td>
-							<td class="px-3 py-2 text-center text-gray-400">{ts.queries_used}/50</td>
-						</tr>
+							</Table.Cell>
+							<Table.Cell class="text-center text-cyber-muted">{ts.queries_used}/50</Table.Cell>
+						</Table.Row>
 					{/each}
-				</tbody>
-			</table>
+				</Table.Body>
+			</Table.Root>
 		</div>
 	{/if}
 {/if}

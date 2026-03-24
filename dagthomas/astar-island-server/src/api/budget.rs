@@ -1,5 +1,5 @@
 use axum::{extract::State, http::StatusCode, Json};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::auth::middleware::AuthTeam;
 use crate::config;
@@ -7,7 +7,7 @@ use crate::models::BudgetResponse;
 
 /// GET /astar-island/budget — Check remaining query budget.
 pub async fn budget(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     AuthTeam(claims): AuthTeam,
 ) -> Result<Json<BudgetResponse>, (StatusCode, String)> {
     // Find active round
@@ -20,7 +20,7 @@ pub async fn budget(
     let (round_id, _status) = round.ok_or((StatusCode::NOT_FOUND, "No active round".to_string()))?;
 
     let queries_used: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM query_log WHERE team_id = ? AND round_id = ?",
+        "SELECT COUNT(*)::BIGINT FROM query_log WHERE team_id = $1 AND round_id = $2",
     )
     .bind(&claims.team_id)
     .bind(&round_id)

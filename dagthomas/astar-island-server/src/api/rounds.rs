@@ -1,16 +1,16 @@
 use axum::{extract::{Path, State}, http::StatusCode, Json};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::models::*;
 use crate::simulation::terrain::SettlementInfo;
 
 /// GET /astar-island/rounds — List all rounds.
 pub async fn list_rounds(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
 ) -> Result<Json<Vec<RoundListEntry>>, (StatusCode, String)> {
     let rows: Vec<(String, i64, String, i64, i64, i64, Option<String>, Option<String>, f64, String)> =
         sqlx::query_as(
-            "SELECT id, round_number, status, map_width, map_height, prediction_window_minutes, started_at, closes_at, round_weight, created_at FROM rounds ORDER BY round_number DESC"
+            "SELECT id, round_number::BIGINT, status, map_width::BIGINT, map_height::BIGINT, prediction_window_minutes::BIGINT, started_at, closes_at, round_weight::DOUBLE PRECISION, created_at FROM rounds ORDER BY round_number DESC"
         )
         .fetch_all(&pool)
         .await
@@ -18,7 +18,7 @@ pub async fn list_rounds(
 
     let mut entries = Vec::new();
     for (id, round_number, status, map_width, map_height, pred_window, started_at, closes_at, round_weight, created_at) in rows {
-        let seeds_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM seeds WHERE round_id = ?")
+        let seeds_count: i64 = sqlx::query_scalar("SELECT COUNT(*)::BIGINT FROM seeds WHERE round_id = $1")
             .bind(&id)
             .fetch_one(&pool)
             .await
@@ -44,11 +44,11 @@ pub async fn list_rounds(
 
 /// GET /astar-island/rounds/{round_id} — Round detail with initial states.
 pub async fn get_round(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     Path(round_id): Path<String>,
 ) -> Result<Json<RoundDetail>, (StatusCode, String)> {
     let row: Option<(String, i64, String, i64, i64)> = sqlx::query_as(
-        "SELECT id, round_number, status, map_width, map_height FROM rounds WHERE id = ?"
+        "SELECT id, round_number::BIGINT, status, map_width::BIGINT, map_height::BIGINT FROM rounds WHERE id = $1"
     )
     .bind(&round_id)
     .fetch_optional(&pool)
@@ -59,7 +59,7 @@ pub async fn get_round(
         row.ok_or((StatusCode::NOT_FOUND, "Round not found".to_string()))?;
 
     let seed_rows: Vec<(i64, String, String)> = sqlx::query_as(
-        "SELECT seed_index, initial_grid, settlements FROM seeds WHERE round_id = ? ORDER BY seed_index"
+        "SELECT seed_index::BIGINT, initial_grid, settlements FROM seeds WHERE round_id = $1 ORDER BY seed_index"
     )
     .bind(&round_id)
     .fetch_all(&pool)

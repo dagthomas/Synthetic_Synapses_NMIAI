@@ -9,25 +9,25 @@ const pending = new Map<string, Promise<THREE.Group>>();
 
 // Model catalog — maps logical name → file path + default scale
 export const MODEL_CATALOG = {
-	// Settlements — RTS style
-	hut: { path: '/models/rts/Hut.glb', scale: 0.35 },
-	hut2: { path: '/models/rts/Hut-4MJWbyd6vw.glb', scale: 0.35 },
-	house: { path: '/models/rts/House.glb', scale: 0.30 },
-	house2: { path: '/models/rts/House-oJJIRwv6Bo.glb', scale: 0.28 },
-	townCenter: { path: '/models/rts/Town Center.glb', scale: 0.35 },
-	shack: { path: '/models/rts/Shack.glb', scale: 0.30 },
-	// Settlements — playfield style
-	pfHouse: { path: '/models/playfield/House.glb', scale: 0.22 },
-	pfHouse2: { path: '/models/playfield/House-k6tP5nFUd2.glb', scale: 0.22 },
-	pfHouse3: { path: '/models/playfield/House-nihGGju7DW.glb', scale: 0.22 },
-	pfHouse4: { path: '/models/playfield/House-oJJIRwv6Bo.glb', scale: 0.22 },
-	pfHouse5: { path: '/models/playfield/House-RSwoYSLblu.glb', scale: 0.22 },
-	pfHut: { path: '/models/playfield/Hut.glb', scale: 0.28 },
-	pfFarm: { path: '/models/playfield/Farm.glb', scale: 0.25 },
-	pfSmallFarm: { path: '/models/playfield/Small Farm.glb', scale: 0.28 },
-	pfCrops: { path: '/models/playfield/Crops.glb', scale: 0.30 },
-	pfMarket: { path: '/models/playfield/Village Market.glb', scale: 0.28 },
-	pfFortress: { path: '/models/playfield/Wooden Fortress.glb', scale: 0.22 },
+	// Settlements — RTS style (1.5× scale)
+	hut: { path: '/models/rts/Hut.glb', scale: 0.52 },
+	hut2: { path: '/models/rts/Hut-4MJWbyd6vw.glb', scale: 0.52 },
+	house: { path: '/models/rts/House.glb', scale: 0.45 },
+	house2: { path: '/models/rts/House-oJJIRwv6Bo.glb', scale: 0.42 },
+	townCenter: { path: '/models/rts/Town Center.glb', scale: 0.52 },
+	shack: { path: '/models/rts/Shack.glb', scale: 0.45 },
+	// Settlements — playfield style (1.5× scale)
+	pfHouse: { path: '/models/playfield/House.glb', scale: 0.33 },
+	pfHouse2: { path: '/models/playfield/House-k6tP5nFUd2.glb', scale: 0.33 },
+	pfHouse3: { path: '/models/playfield/House-nihGGju7DW.glb', scale: 0.33 },
+	pfHouse4: { path: '/models/playfield/House-oJJIRwv6Bo.glb', scale: 0.33 },
+	pfHouse5: { path: '/models/playfield/House-RSwoYSLblu.glb', scale: 0.33 },
+	pfHut: { path: '/models/playfield/Hut.glb', scale: 0.42 },
+	pfFarm: { path: '/models/playfield/Farm.glb', scale: 0.38 },
+	pfSmallFarm: { path: '/models/playfield/Small Farm.glb', scale: 0.42 },
+	pfCrops: { path: '/models/playfield/Crops.glb', scale: 0.45 },
+	pfMarket: { path: '/models/playfield/Village Market.glb', scale: 0.42 },
+	pfFortress: { path: '/models/playfield/Wooden Fortress.glb', scale: 0.33 },
 	// Nature — playfield
 	pfMountain: { path: '/models/playfield/Mountain.glb', scale: 0.50 },
 	pfMountain2: { path: '/models/playfield/Mountain-XY4ej3Zg3I.glb', scale: 0.50 },
@@ -41,7 +41,7 @@ export const MODEL_CATALOG = {
 	pfRock3: { path: '/models/playfield/Rock-RtLRqYjfMs.glb', scale: 0.35 },
 	pfRocks: { path: '/models/playfield/Rocks.glb', scale: 0.30 },
 	pfGoldRocks: { path: '/models/playfield/Gold rocks.glb', scale: 0.30 },
-	pfPort: { path: '/models/playfield/Port.glb', scale: 0.22 },
+	pfPort: { path: '/models/playfield/Port.glb', scale: 0.33 },
 	// Nature — RTS
 	pineTrees: { path: '/models/rts/Pine Trees.glb', scale: 0.40 },
 	mountain: { path: '/models/rts/Mountain.glb', scale: 0.70 },
@@ -50,15 +50,15 @@ export const MODEL_CATALOG = {
 	rock: { path: '/models/rts/Rock.glb', scale: 0.45 },
 	rocks: { path: '/models/rts/Rocks.glb', scale: 0.40 },
 	logs: { path: '/models/rts/Logs.glb', scale: 0.30 },
-	// Port/water
-	dock: { path: '/models/rts/Dock.glb', scale: 0.35 },
-	port: { path: '/models/rts/Port.glb', scale: 0.25 },
-	// Fortification
-	fortress: { path: '/models/rts/Fortress.glb', scale: 0.30 },
-	watchTower: { path: '/models/rts/Small Watch Tower.glb', scale: 0.30 },
-	woodenWall: { path: '/models/rts/Wooden Wall.glb', scale: 0.20 },
-	stoneWall: { path: '/models/rts/Stone Wall.glb', scale: 0.20 },
-	farm: { path: '/models/rts/Farm.glb', scale: 0.25 },
+	// Port/water (1.5× scale)
+	dock: { path: '/models/rts/Dock.glb', scale: 0.52 },
+	port: { path: '/models/rts/Port.glb', scale: 0.38 },
+	// Fortification (1.5× scale)
+	fortress: { path: '/models/rts/Fortress.glb', scale: 0.45 },
+	watchTower: { path: '/models/rts/Small Watch Tower.glb', scale: 0.45 },
+	woodenWall: { path: '/models/rts/Wooden Wall.glb', scale: 0.30 },
+	stoneWall: { path: '/models/rts/Stone Wall.glb', scale: 0.30 },
+	farm: { path: '/models/rts/Farm.glb', scale: 0.38 },
 } as const;
 
 export type ModelName = keyof typeof MODEL_CATALOG;
@@ -101,7 +101,18 @@ export async function preloadModels(): Promise<void> {
 	await Promise.allSettled([...paths].map(p => loadModel(p)));
 }
 
-/** Get a clone of a model, positioned and scaled. Synchronous after preload. */
+// Cache bounding box bottom Y per model path (computed once)
+const bottomYCache = new Map<string, number>();
+
+function getModelBottomY(model: THREE.Group, path: string): number {
+	if (bottomYCache.has(path)) return bottomYCache.get(path)!;
+	const box = new THREE.Box3().setFromObject(model);
+	const bottomY = box.min.y;
+	bottomYCache.set(path, bottomY);
+	return bottomY;
+}
+
+/** Get a clone of a model, positioned and scaled. Lifts model so base sits on ground. */
 export function placeModel(
 	name: ModelName,
 	position: THREE.Vector3,
@@ -117,5 +128,10 @@ export function placeModel(
 	clone.scale.set(s, s, s);
 	clone.position.copy(position);
 	clone.rotation.y = rotation;
+
+	// Lift model so its bottom sits on the ground, not clipping through
+	const bottomY = getModelBottomY(original, info.path);
+	clone.position.y -= bottomY * s;
+
 	return clone;
 }

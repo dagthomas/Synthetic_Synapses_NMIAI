@@ -14,7 +14,7 @@ use tower_http::services::{ServeDir, ServeFile};
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    tracing::info!("Starting Astar Island Server...");
+    tracing::info!("Starting Q* Frontier Server...");
 
     let pool = db::setup_pool().await;
     tracing::info!("Database ready");
@@ -45,7 +45,13 @@ async fn main() {
         .route("/rounds/{round_id}/activate", post(admin::routes::activate_round))
         .route("/rounds/{round_id}/score", post(admin::routes::score_round))
         .route("/teams", get(admin::routes::list_teams))
-        .route("/stats", get(admin::routes::stats));
+        .route("/teams/{team_id}", get(admin::routes::team_detail))
+        .route("/stats", get(admin::routes::stats))
+        .route("/stats/rounds", get(admin::routes::stats_rounds))
+        .route("/stats/teams", get(admin::routes::stats_teams))
+        .route("/stats/predictions", get(admin::routes::stats_predictions))
+        .route("/stats/queries", get(admin::routes::stats_queries))
+        .route("/stats/params", get(admin::routes::stats_params));
 
     let app = Router::new()
         .nest("/auth", auth_routes)
@@ -57,6 +63,9 @@ async fn main() {
             ServeDir::new("frontend/build")
                 .fallback(ServeFile::new("frontend/build/index.html")),
         )
+        // Public landing page at /
+        .route_service("/", ServeFile::new("static/index.html"))
+        .nest_service("/static", ServeDir::new("static"))
         .layer(CorsLayer::permissive())
         .with_state(pool);
 

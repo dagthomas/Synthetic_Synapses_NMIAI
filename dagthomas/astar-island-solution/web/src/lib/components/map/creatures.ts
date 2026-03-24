@@ -55,8 +55,8 @@ interface CachedModel {
 const HUMAN_FILES = ['chars/Cube Guy Character.glb', 'chars/Cube Woman Character.glb'];
 const RAIDER_FILES = ['chars/Goblin.glb', 'chars/Zombie.glb', 'chars/Yeti.glb', 'chars/Demon.glb'];
 
-const HUMAN_SCALE: [number, number] = [0.15, 0.20];
-const RAIDER_SCALE: [number, number] = [0.16, 0.22];
+const HUMAN_SCALE: [number, number] = [0.075, 0.10];
+const RAIDER_SCALE: [number, number] = [0.08, 0.11];
 
 // Animals per biome — disabled (only humans and warbands spawn)
 const BIOME_ANIMALS: Record<number, { files: string[]; count: number; scale: [number, number] }> = {};

@@ -25,15 +25,13 @@ interface ScatterDef {
 
 // Terrain code → vegetation/detail definitions
 const SCATTER_DEFS: Record<number, ScatterDef> = {
-	// Forest (4): only trees and bushes — skip small ferns/mushrooms/grass/clover
+	// Forest (4): bushes only — tree GLB models placed by addForest()
 	4: {
 		files: [
-			'Pine.glb', 'Pine-699sFuLCN2.glb', 'Pine-79gmlLnweB.glb', 'Pine-rfnxJv0Rqa.glb', 'Pine-Zt62gceKXZ.glb',
-			'Tree.glb', 'Tree-aVOxaHRPWe.glb', 'Tree-QVOop92WmG.glb', 'Tree-qZtx0AHhcy.glb', 'Tree-t9KbsfYdXz.glb',
 			'Bush.glb', 'Bush with Flowers.glb'
 		],
-		density: 2,
-		scale: [0.08, 0.22],
+		density: 1,
+		scale: [0.06, 0.14],
 		yOffset: 0
 	},
 	// Plains (11): only bushes — skip all flowers/grass/clover/petals

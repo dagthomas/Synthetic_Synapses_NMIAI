@@ -52,18 +52,18 @@ export interface TeamInfo {
 
 // Terrain color mapping
 export const CELL_COLORS: Record<number, string> = {
-	10: '#1a5276', // Ocean
-	11: '#f9e79f', // Plains
-	0: '#f9e79f',  // Empty
-	1: '#e74c3c',  // Settlement
-	2: '#8e44ad',  // Port
-	3: '#7f8c8d',  // Ruin
-	4: '#27ae60',  // Forest
-	5: '#bdc3c7',  // Mountain
+	10: '#0a0a2e', // Void (deep dark blue)
+	11: '#2a1f3d', // Regolith (dark purple)
+	0: '#2a1f3d',  // Empty (Regolith)
+	1: '#00fff0',  // Crystal Node (neon cyan)
+	2: '#ff00ff',  // Refinery (neon magenta)
+	3: '#4a4a5a',  // Depleted Vein (dark gray)
+	4: '#39ff14',  // Xenoflora (neon green)
+	5: '#1a1a2e',  // Obsidian Ridge (very dark)
 };
 
 export const CELL_NAMES: Record<number, string> = {
-	10: 'Ocean', 11: 'Plains', 0: 'Empty',
-	1: 'Settlement', 2: 'Port', 3: 'Ruin',
-	4: 'Forest', 5: 'Mountain'
+	10: 'Void', 11: 'Regolith', 0: 'Empty',
+	1: 'Crystal Node', 2: 'Refinery', 3: 'Depleted Vein',
+	4: 'Xenoflora', 5: 'Obsidian Ridge'
 };

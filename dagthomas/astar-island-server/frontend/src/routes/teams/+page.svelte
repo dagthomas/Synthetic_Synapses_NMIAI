@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { admin } from '$lib/api';
+	import { base } from '$app/paths';
+	import { goto } from '$app/navigation';
+	import * as Table from '$lib/components/ui/table';
+	import { Badge } from '$lib/components/ui/badge';
 
 	let teams = $state<any[]>([]);
 	let loading = $state(true);
@@ -15,33 +19,44 @@
 	});
 </script>
 
-<h1 class="text-2xl font-bold mb-6">Teams</h1>
+<h1 class="text-2xl font-bold mb-6 text-neon-cyan neon-text tracking-wider uppercase">CORPORATIONS</h1>
 
 {#if loading}
-	<p class="text-gray-500">Loading...</p>
+	<p class="text-cyber-muted animate-pulse-glow">Loading...</p>
 {:else}
-	<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-		<table class="w-full text-sm">
-			<thead class="bg-gray-800">
-				<tr>
-					<th class="px-4 py-2 text-left">Name</th>
-					<th class="px-4 py-2 text-left">Admin</th>
-					<th class="px-4 py-2 text-left">Rounds</th>
-					<th class="px-4 py-2 text-left">Queries</th>
-					<th class="px-4 py-2 text-left">Joined</th>
-				</tr>
-			</thead>
-			<tbody>
+	<div class="glass glass-glow overflow-hidden">
+		<Table.Root>
+			<Table.Header>
+				<Table.Row class="border-b border-cyber-border bg-cyber-surface/50 hover:bg-cyber-surface/50">
+					<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase">Corporation</Table.Head>
+					<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase">Admin</Table.Head>
+					<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase">Planets</Table.Head>
+					<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase">Scans</Table.Head>
+					<Table.Head class="text-neon-cyan/70 text-[10px] tracking-widest uppercase">Registered</Table.Head>
+				</Table.Row>
+			</Table.Header>
+			<Table.Body>
 				{#each teams as team}
-					<tr class="border-t border-gray-800 hover:bg-gray-800/50">
-						<td class="px-4 py-2 font-medium">{team.name}</td>
-						<td class="px-4 py-2">{team.is_admin ? 'Yes' : 'No'}</td>
-						<td class="px-4 py-2">{team.rounds_participated}</td>
-						<td class="px-4 py-2">{team.total_queries}</td>
-						<td class="px-4 py-2 text-gray-400">{team.created_at?.slice(0, 10)}</td>
-					</tr>
+					<Table.Row
+						class="border-b border-cyber-border/50 hover:bg-neon-cyan/5 transition-colors cursor-pointer"
+						onclick={() => goto(`${base}/teams/${team.id}`)}
+					>
+						<Table.Cell class="font-medium text-cyber-fg hover:text-neon-cyan transition-colors">{team.name}</Table.Cell>
+						<Table.Cell>
+							{#if team.is_admin}
+								<Badge variant="outline" class="text-[10px] tracking-wider uppercase bg-neon-magenta/15 text-neon-magenta border-neon-magenta/30">
+									Admin
+								</Badge>
+							{:else}
+								<span class="text-cyber-muted text-xs">--</span>
+							{/if}
+						</Table.Cell>
+						<Table.Cell class="text-neon-gold">{team.rounds_participated}</Table.Cell>
+						<Table.Cell class="text-cyber-fg">{team.total_queries}</Table.Cell>
+						<Table.Cell class="text-cyber-muted">{team.created_at?.slice(0, 10)}</Table.Cell>
+					</Table.Row>
 				{/each}
-			</tbody>
-		</table>
+			</Table.Body>
+		</Table.Root>
 	</div>
 {/if}
