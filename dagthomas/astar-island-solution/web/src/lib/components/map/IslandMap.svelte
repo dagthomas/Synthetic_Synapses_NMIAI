@@ -314,7 +314,24 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		const _wp = new THREE.Vector3();
 		group.traverse((obj) => {
 			if (obj === group) return;
-			if (!(obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh || obj instanceof THREE.Points)) return;
+			if (obj instanceof THREE.Group && obj.children.length > 0) return;
+
+			// Only sink InstancedMesh (trees, grass, flowers) and Points (particles)
+			// Everything else (GLB models: houses, ports, people) gets faded to avoid stretching
+			const canSink = obj instanceof THREE.InstancedMesh || obj instanceof THREE.Points;
+			if (!canSink) {
+				const mat = (obj as any).material;
+				if (mat && 'opacity' in mat) {
+					const hash = Math.abs(Math.sin(obj.id * 12.9898) * 43758.5453) % 1;
+					const delay = hash * 0.5;
+					const localP = Math.max(0, Math.min(1, (progress - delay) / 0.5));
+					const eased = sinking ? localP * localP : 1 - (1 - localP) * (1 - localP);
+					mat.transparent = true;
+					mat.opacity = sinking ? 1 - eased : eased;
+					mat.needsUpdate = true;
+				}
+				return;
+			}
 
 			// Store original Y on first call
 			if (obj.userData._origY === undefined) {
@@ -347,10 +364,25 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			// Higher objects sink deeper (proportional)
 			const depth = SINK_DEPTH + Math.max(0, height) * 0.5;
 
+			// Estimate mesh top height (bounding box cached per object)
+			if (obj.userData._meshHeight === undefined) {
+				const box = new THREE.Box3().setFromObject(obj);
+				obj.userData._meshHeight = Math.max(0.1, box.max.y - box.min.y);
+			}
+			const meshHeight = obj.userData._meshHeight as number;
+
 			if (sinking) {
-				obj.position.y = origY - eased * depth;
+				const newY = origY - eased * depth;
+				obj.position.y = newY;
+				// Hide once the TOP of the mesh is below ground
+				const groundY = terrainSystem ? terrainSystem.getHeightAt(_wp.x, _wp.z) : 0;
+				obj.visible = (newY + meshHeight) > groundY;
 			} else {
-				obj.position.y = origY - depth + eased * depth;
+				const newY = origY - depth + eased * depth;
+				obj.position.y = newY;
+				// Show once the top starts emerging above ground
+				const groundY = terrainSystem ? terrainSystem.getHeightAt(_wp.x, _wp.z) : 0;
+				obj.visible = (newY + meshHeight) > groundY;
 			}
 		});
 	}
@@ -2887,11 +2919,19 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 
 			if (sceneryFadeAlpha >= 1.0) {
 				sceneryFadePhase = null;
-				// Snap to exact original positions
+				// Snap to exact original positions and ensure all visible + opaque
 				sceneryGroup.traverse((obj) => {
+					obj.visible = true;
 					if (obj.userData._origY !== undefined) {
 						obj.position.y = obj.userData._origY;
 						delete obj.userData._origY;
+						delete obj.userData._meshHeight;
+					}
+					const mat = (obj as any).material;
+					if (mat && 'opacity' in mat) {
+						mat.opacity = mat._baseOpacity ?? 1;
+						mat.transparent = mat.opacity < 0.999;
+						mat.needsUpdate = true;
 					}
 				});
 				if (sunLight) sunLight.shadow.needsUpdate = true;
@@ -3076,40 +3116,84 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 				const fadeOut = Math.min(1, (cue.end - audioTime) / 0.5);
 				subtitleFade = Math.min(fadeIn, fadeOut);
 
-				// Collect ALL karaoke words that overlap this SRT cue's time window
-				const allWords: KaraokeWord[] = [];
+				// Use SRT sentence text as the source of truth for words displayed.
+				// Match each SRT word to karaoke timing for highlighting.
+				const srtWords = cue.text.split(/\s+/).filter(w => w.length > 0);
+
+				// Collect all karaoke words in this time window for timing lookup
+				const kWords: KaraokeWord[] = [];
 				for (const kLine of karaokeLines) {
-					// Karaoke line overlaps SRT cue if their time ranges intersect
 					if (kLine.end > cue.start && kLine.start < cue.end) {
 						for (const w of kLine.words) {
-							if (w.end > cue.start && w.start < cue.end) {
-								allWords.push(w);
+							if (w.end > cue.start - 1 && w.start < cue.end + 1) {
+								kWords.push(w);
 							}
 						}
 					}
 				}
-				if (allWords.length > 0) {
-					// Build HTML with karaoke word highlighting — smooth fade per word
+
+				if (srtWords.length > 0) {
+					// Split SRT text into two lines at mid-sentence capital (skip proper nouns)
+					const noBreakWords = new Set(['Astar', 'I']);
+					let splitIdx = -1;
+					for (let si = 1; si < srtWords.length; si++) {
+						const w = srtWords[si].replace(/[^a-zA-Z]/g, '');
+						const ch = w[0];
+						if (ch && ch === ch.toUpperCase() && ch !== ch.toLowerCase() && !noBreakWords.has(w)) {
+							splitIdx = si;
+							break;
+						}
+					}
+					// Also split after comma at end of previous word
+					if (splitIdx < 0) {
+						for (let si = Math.floor(srtWords.length / 3); si < srtWords.length - 1; si++) {
+							if (srtWords[si].endsWith(',')) { splitIdx = si + 1; break; }
+						}
+					}
+
+					// Match SRT words to karaoke timing by sequential alignment
+					let kIdx = 0;
 					let html = '';
-					for (const w of allWords) {
-						const isPast = audioTime >= w.end;
-						const isActive = audioTime >= w.start && audioTime < w.end;
-						if (isActive) {
-							// Fade progress within this word: 0→1
-							const wordDur = w.end - w.start;
-							const progress = wordDur > 0 ? Math.min(1, (audioTime - w.start) / wordDur) : 1;
-							// Interpolate from dim to gold
-							const r = Math.round(255 * (0.35 + progress * 0.65));
-							const g = Math.round(255 * (0.35 + progress * 0.50));
-							const b = Math.round(255 * (0.35 - progress * 0.35));
-							const glow = progress * 0.7;
-							html += `<span style="color:rgb(${r},${g},${b});text-shadow:0 0 ${8 + glow * 12}px rgba(255,215,0,${glow})">${w.word} </span>`;
-						} else if (isPast) {
-							// Sung words: bright white
-							html += `<span style="color:rgba(255,255,255,0.95)">${w.word} </span>`;
+					for (let si = 0; si < srtWords.length; si++) {
+						// Line break at split point
+						if (si === splitIdx) html += '<br>';
+
+						const sWord = srtWords[si];
+						// Find best karaoke match: next kWord that loosely matches
+						let matched: KaraokeWord | null = null;
+						for (let ki = kIdx; ki < Math.min(kIdx + 3, kWords.length); ki++) {
+							const kw = kWords[ki].word.toLowerCase().replace(/[^a-z]/g, '');
+							const sw = sWord.toLowerCase().replace(/[^a-z]/g, '');
+							if (kw === sw || kw.startsWith(sw.substring(0, 3)) || sw.startsWith(kw.substring(0, 3))) {
+								matched = kWords[ki];
+								kIdx = ki + 1;
+								break;
+							}
+						}
+						// Fallback: just take next karaoke word in sequence
+						if (!matched && kIdx < kWords.length) {
+							matched = kWords[kIdx];
+							kIdx++;
+						}
+
+						if (matched) {
+							const isPast = audioTime >= matched.end;
+							const isActive = audioTime >= matched.start && audioTime < matched.end;
+							if (isActive) {
+								const wordDur = matched.end - matched.start;
+								const progress = wordDur > 0 ? Math.min(1, (audioTime - matched.start) / wordDur) : 1;
+								const r = Math.round(255 * (0.35 + progress * 0.65));
+								const g = Math.round(255 * (0.35 + progress * 0.50));
+								const b = Math.round(255 * (0.35 - progress * 0.35));
+								const glow = progress * 0.7;
+								html += `<span style="color:rgb(${r},${g},${b});text-shadow:0 0 ${8 + glow * 12}px rgba(255,215,0,${glow})">${sWord} </span>`;
+							} else if (isPast) {
+								html += `<span style="color:rgba(255,255,255,0.95)">${sWord} </span>`;
+							} else {
+								html += `<span style="color:rgba(255,255,255,0.35)">${sWord} </span>`;
+							}
 						} else {
-							// Upcoming words: dim
-							html += `<span style="color:rgba(255,255,255,0.35)">${w.word} </span>`;
+							html += `<span style="color:rgba(255,255,255,0.35)">${sWord} </span>`;
 						}
 					}
 					subtitleHtml = html;
@@ -3492,7 +3576,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 
 		<!-- Karaoke subtitles — synced to audio, word highlighting -->
 		{#if subtitleVisible && (subtitleHtml || subtitleText)}
-			<div class="absolute bottom-16 left-1/2 -translate-x-1/2 z-20 pointer-events-none text-center max-w-[75%]"
+			<div class="absolute bottom-16 left-1/2 -translate-x-1/2 z-20 pointer-events-none text-center max-w-[90%]"
 				style="opacity: {subtitleFade}; transition: opacity 0.15s ease-out;">
 				<div class="inline-block px-8 py-3.5 rounded-lg"
 					style="background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(10px);">
