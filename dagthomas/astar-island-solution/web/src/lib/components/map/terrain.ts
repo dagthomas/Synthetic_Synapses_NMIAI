@@ -440,6 +440,39 @@ export function createTerrain(grid: number[][], options: CreateTerrainOptions = 
 // No-op for API compat — normal map removed
 export function applyNormalMap(_terrain: TerrainSystem, _grid: number[][]): void {}
 
+/** Re-bake road colors onto an existing terrain mesh (called after morph) */
+export function bakeRoadsOntoTerrain(mesh: THREE.Mesh, grid: number[][], roads: RoadPath[]): void {
+	if (roads.length === 0) return;
+	const positions = mesh.geometry.attributes.position;
+	const colAttr = mesh.geometry.attributes.color as THREE.BufferAttribute;
+	if (!colAttr) return;
+	const colors = colAttr.array as Float32Array;
+	const rows = grid.length, cols = grid[0].length;
+
+	for (let i = 0; i < positions.count; i++) {
+		const wx = positions.getX(i), wz = positions.getZ(i);
+		const rd = roadDistance(wx, wz, roads);
+		if (rd.roadIdx < 0) continue;
+		const hw = roads[rd.roadIdx].width / 2;
+		if (rd.dist >= hw) continue;
+
+		const blend = 1 - rd.dist / hw;
+		const smooth = blend * blend * (3 - 2 * blend);
+		const strength = Math.min(1, smooth * 1.5);
+
+		const gx = wx + cols / 2 - 0.5, gz = wz + rows / 2 - 0.5;
+		const cellX = Math.floor(Math.max(0, Math.min(cols - 1, gx + 0.5)));
+		const cellZ = Math.floor(Math.max(0, Math.min(rows - 1, gz + 0.5)));
+		const rc = ROAD_COLS[grid[cellZ]?.[cellX] ?? 0] ?? DEFAULT_ROAD_COL;
+
+		const i3 = i * 3;
+		colors[i3]     = colors[i3]     * (1 - strength) + rc[0] * strength;
+		colors[i3 + 1] = colors[i3 + 1] * (1 - strength) + rc[1] * strength;
+		colors[i3 + 2] = colors[i3 + 2] * (1 - strength) + rc[2] * strength;
+	}
+	colAttr.needsUpdate = true;
+}
+
 /** Update getHeightAt on existing TerrainSystem to use new grid data (no mesh rebuild) */
 export function updateTerrainHeightFn(terrain: TerrainSystem, grid: number[][]): void {
 	const rows = grid.length, cols = grid[0].length;

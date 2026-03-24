@@ -14,7 +14,7 @@
 	import { createSheepSystem, type SheepSystem } from './sheep';
 	import { preloadModels, placeModel } from './models';
 	import { createWeatherSystem, type WeatherSystem } from './weather';
-	import { createTerrain, computeTerrainMorphData, applyNormalMap, updateTerrainHeightFn, getCurrentSeason, getSeasonalTreeTint, WATER_LEVEL, type TerrainSystem, type Season } from './terrain';
+	import { createTerrain, computeTerrainMorphData, applyNormalMap, updateTerrainHeightFn, bakeRoadsOntoTerrain, getCurrentSeason, getSeasonalTreeTint, WATER_LEVEL, type TerrainSystem, type Season } from './terrain';
 	import { createFPController, type FPController } from './fpcontrols';
 	import { createPostFX, type PostFXPipeline } from './postfx';
 	import { createAtmosphere, type AtmosphereSystem } from './atmosphere';
@@ -23,6 +23,7 @@
 	import { createScatter, type ScatterSystem } from './scatter';
 	import { createCreatures, type CreatureSystem } from './creatures';
 	import { createWater, createMoatAndWaterfalls, type WaterSystem, type MoatSystem } from './water';
+	import { createButterflySystem, type ButterflySystem } from './butterflies';
 	import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
 	import { createWind, applyWindSway, type WindSystem } from './wind';
 	import { createNightSky, type NightSkySystem } from './nightsky';
@@ -43,6 +44,7 @@
 		seedIndex = undefined,
 		onCaptureFn = undefined,
 		onFlythroughChange = undefined,
+		onSongEnd = undefined,
 		season = getCurrentSeason()
 	}: {
 		grid: number[][];
@@ -60,6 +62,7 @@
 		seedIndex?: number;
 		onCaptureFn?: (fn: () => string) => void;
 		onFlythroughChange?: (active: boolean) => void;
+		onSongEnd?: () => void;
 		season?: Season;
 	} = $props();
 
@@ -83,6 +86,7 @@
 	let celestialSystem: CelestialSystem | null = null;
 	let wildlifeSystem: WildlifeSystem | null = null;
 	let sheepSystem: SheepSystem | null = null;
+	let butterflySystem: ButterflySystem | null = null;
 	let weatherSystem: WeatherSystem | null = null;
 	let fillLight: THREE.DirectionalLight | null = null;
 	let lightProbe: THREE.LightProbe | null = null;
@@ -179,6 +183,10 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	let fpsLastTime = 0;
 	let fpsDisplay = $state('');
 	let drawCallsDisplay = $state('');
+	let hudTimeStr = $state('12:00');
+	let hudTimeLabel = $state('Midday');
+	let hudWeatherLabel = $state('Clear');
+	let hudSeason = $state(season);
 	let displayTime = 12;
 
 	// First-person mode state
@@ -195,6 +203,12 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	let flythrough: FlythroughSystem | null = null;
 	let flythroughActive = $state(false);
 	let flythroughLoading = $state(false);
+	let cameraMode = $state(false);
+	let cameraFov = $state(60);
+	let flythroughIntro = $state(false); // pre-flight camera showcase
+	let flythroughFadeOut = $state(false); // end fade to black
+	let gridFadeTarget = 0; // 0=hidden, 1=visible
+	let gridFadeCurrent = 0;
 	let flythroughLoadProgress = $state(0);
 	let scatter: ScatterSystem | null = null;
 	let creatureSystem: CreatureSystem | null = null;
@@ -212,6 +226,50 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	let predictionLoading = false;
 	let fpAudio: HTMLAudioElement | null = null;
 	let pointerLocked = $state(false);
+
+	// --- Karaoke subtitle system ---
+	interface SubtitleCue { start: number; end: number; text: string }
+	interface KaraokeWord { word: string; start: number; end: number }
+	interface KaraokeLine { start: number; end: number; text: string; words: KaraokeWord[] }
+	let subtitleCues: SubtitleCue[] = [];
+	let karaokeLines: KaraokeLine[] = [];
+	let subtitleText = $state('');
+	let subtitleHtml = $state('');
+	let subtitleVisible = $state(false);
+	let subtitleFade = $state(0);
+
+	function parseSRT(srt: string): SubtitleCue[] {
+		const cues: SubtitleCue[] = [];
+		const normalized = srt.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+		const blocks = normalized.trim().split(/\n\n+/);
+		for (const block of blocks) {
+			const lines = block.split('\n');
+			if (lines.length < 2) continue;
+			const timeMatch = lines.find(l => l.includes('-->'));
+			if (!timeMatch) continue;
+			const [startStr, endStr] = timeMatch.split('-->').map(s => s.trim());
+			const parseTime = (t: string) => {
+				const [h, m, rest] = t.split(':');
+				const [s, ms] = rest.split(',');
+				return +h * 3600 + +m * 60 + +s + (+ms || 0) / 1000;
+			};
+			const textLines = lines.slice(lines.indexOf(timeMatch) + 1).join('\n').trim();
+			if (textLines) {
+				cues.push({ start: parseTime(startStr), end: parseTime(endStr), text: textLines });
+			}
+		}
+		return cues;
+	}
+
+	// Load sentence subtitles + karaoke word timing
+	if (typeof window !== 'undefined') {
+		fetch('/song_sentence.srt').then(r => r.text()).then(srt => {
+			subtitleCues = parseSRT(srt);
+		}).catch(() => {});
+		fetch('/song_karaoke.json').then(r => r.json()).then((data: KaraokeLine[]) => {
+			karaokeLines = data;
+		}).catch(() => {});
+	}
 	let lastCamX: number | null = null;
 	let lastCamZ: number | null = null;
 	let rippleCooldown = 0;
@@ -237,9 +295,9 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	let lastGridCols = 0;
 	const TERRAIN_MORPH_DURATION = 0.8;
 
-	// --- Scenery sequential fade state (fade out old, then fade in new) ---
+	// --- Scenery sink/rise transition (staggered pull into ground / emerge from ground) ---
 	let sceneryGroup: THREE.Group | null = null;
-	let sceneryFadePhase: 'fade-out' | 'fade-in' | null = null;
+	let sceneryFadePhase: 'sink' | 'rise' | null = null;
 	let sceneryFadeAlpha = 0;
 	let oldSceneryFadeGroup: THREE.Group | null = null;
 	let oldSceneryFadeCreatures: typeof creatureSystem = null;
@@ -247,8 +305,55 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	let oldSceneryFadeWeather: typeof weatherSystem = null;
 	let pendingGrid: number[][] | null = null;
 	let pendingSettlements: typeof settlements | null = null;
-	const SCENERY_FADE_OUT_DURATION = 0.6;
-	const SCENERY_FADE_IN_DURATION = 0.8;
+	const SCENERY_SINK_DURATION = 2.0;
+	const SCENERY_RISE_DURATION = 2.2;
+	const SINK_DEPTH = 3.0;
+
+	/** Stagger each child: high objects move faster, stagger by position hash */
+	function sinkRiseGroup(group: THREE.Group, progress: number, sinking: boolean) {
+		const _wp = new THREE.Vector3();
+		group.traverse((obj) => {
+			if (obj === group) return;
+			if (!(obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh || obj instanceof THREE.Points)) return;
+
+			// Store original Y on first call
+			if (obj.userData._origY === undefined) {
+				obj.userData._origY = obj.position.y;
+			}
+			const origY = obj.userData._origY as number;
+
+			// Get world position for stagger + height
+			obj.getWorldPosition(_wp);
+			const height = origY; // higher objects = faster
+			const dist = Math.sqrt(_wp.x * _wp.x + _wp.z * _wp.z);
+
+			// Stagger: hash position for pseudo-random delay (0.0-0.7)
+			// Wide spread so objects sink/rise at visibly different times
+			const hash = Math.abs(Math.sin(_wp.x * 12.9898 + _wp.z * 78.233) * 43758.5453) % 1;
+			const stagger = hash * 0.7;
+
+			// Higher objects move sooner (less delay)
+			const heightBonus = Math.min(0.15, Math.max(0, height) * 0.04);
+			const delay = Math.max(0, stagger - heightBonus);
+			// Each object takes 30% of the total duration — the rest is stagger
+			const windowSize = 0.35;
+			const localT = Math.max(0, Math.min(1, (progress - delay) / windowSize));
+
+			// Exponential ease
+			const eased = sinking
+				? localT * localT * localT  // accelerate into ground
+				: 1 - Math.pow(1 - localT, 3); // decelerate emerging
+
+			// Higher objects sink deeper (proportional)
+			const depth = SINK_DEPTH + Math.max(0, height) * 0.5;
+
+			if (sinking) {
+				obj.position.y = origY - eased * depth;
+			} else {
+				obj.position.y = origY - depth + eased * depth;
+			}
+		});
+	}
 
 	// --- Sky transition state ---
 	let skyFrozen = false;
@@ -372,7 +477,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		}
 
 		// Camera: wide FOV, close near plane for immersion
-		camera.fov = 115;
+		camera.fov = 130;
 		camera.near = 0.01;
 		camera.far = 300;
 		camera.rotation.order = 'YXZ';
@@ -428,13 +533,18 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		// Boost ambient for ground-level (shadows are darker at eye level)
 		if (ambientLight) ambientLight.intensity *= 1.3;
 
-		// Play ambient music
+		// Play ambient music (no loop — song plays once for cinematic)
 		if (!fpAudio) {
 			fpAudio = new Audio('/song.mp3');
-			fpAudio.loop = true;
+			fpAudio.loop = false;
 			fpAudio.volume = 0.4;
+			fpAudio.addEventListener('ended', () => {
+				// Song finished → fade to black
+				flythroughFadeOut = true;
+				onSongEnd?.();
+			});
 		}
-		fpAudio.play().catch(() => {/* autoplay blocked, user needs interaction first */});
+		// Don't auto-play — flythrough intro will start music after camera showcase
 
 		// Disable orbit controls
 		if (controls) controls.enabled = false;
@@ -553,6 +663,28 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		}
 	}
 
+	function handleCameraModeToggle() {
+		if (cameraMode) {
+			// Exit camera mode
+			cameraMode = false;
+			if (fpController) fpController.setFreefly(false);
+			exitFPMode();
+			cameraFov = 60;
+		} else {
+			// Enter camera mode — free-fly with nice FOV
+			if (flythroughActive) stopFlythrough();
+			cameraMode = true;
+			cameraFov = 90;
+			enterFPMode();
+			if (fpController) fpController.setFreefly(true);
+			// Override FOV for camera mode (less fisheye than FP 115)
+			if (camera) {
+				camera.fov = cameraFov;
+				camera.updateProjectionMatrix();
+			}
+		}
+	}
+
 	function handleFlythroughToggle() {
 		if (flythroughActive) {
 			stopFlythrough();
@@ -567,7 +699,8 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			else if (fpMode) exitFPMode();
 		}
 		if (e.code === 'KeyG') {
-			if (gridOverlay) gridOverlay.visible = !gridOverlay.visible;
+			gridFadeTarget = gridFadeTarget > 0.5 ? 0 : 1;
+			if (gridOverlay && gridFadeTarget > 0) gridOverlay.visible = true;
 		}
 		if (e.code === 'KeyP') {
 			togglePredictionOverlay();
@@ -754,10 +887,63 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		await nextFrame();
 		flythroughLoadProgress = 0.9;
 
-		// Step 4: Start flythrough — now activate postFX and sky background
+		// Step 4: Intro camera showcase — pan to notable spots before takeoff
+		flythroughIntro = true;
+		flythroughFadeOut = false;
+		{
+			const rows = grid.length, cols = grid[0].length;
+			const ox = -cols / 2, oz = -rows / 2;
+			const clusters = findClusters(grid);
+			// Find 2-3 interesting spots
+			const spots: THREE.Vector3[] = [];
+			for (const c of clusters) {
+				if (c.terrainType === TerrainCode.SETTLEMENT || c.terrainType === TerrainCode.MOUNTAIN) {
+					spots.push(new THREE.Vector3(c.centerX + ox + 0.5, 0, c.centerY + oz + 0.5));
+				}
+			}
+			// Pick up to 3
+			const showSpots = spots.slice(0, 3);
+			if (showSpots.length === 0) showSpots.push(new THREE.Vector3(0, 0, 0));
+
+			// Orbit-style intro: camera high, panning between spots
+			camera.position.set(15, 18, 15);
+			camera.lookAt(0, 0, 0);
+
+			for (let si = 0; si < showSpots.length; si++) {
+				const spot = showSpots[si];
+				const targetPos = new THREE.Vector3(
+					spot.x + 8, 12, spot.z + 8
+				);
+				const startTime = performance.now();
+				const panDuration = 2500; // 2.5s per spot
+
+				await new Promise<void>(resolve => {
+					function panStep() {
+						const elapsed = performance.now() - startTime;
+						const t = Math.min(1, elapsed / panDuration);
+						const eased = t * t * (3 - 2 * t);
+						camera.position.lerp(targetPos, eased * 0.05);
+						camera.lookAt(spot.x, 0, spot.z);
+						if (t < 1) {
+							requestAnimationFrame(panStep);
+						} else {
+							resolve();
+						}
+					}
+					panStep();
+				});
+			}
+		}
+		flythroughIntro = false;
+
+		// Step 5: Start music + flythrough
+		if (fpAudio) {
+			fpAudio.currentTime = 0;
+			fpAudio.play().catch(() => {});
+		}
 		if (flythrough) {
 			flythrough.start(camera);
-			scene.background = null; // Sky shader takes over
+			scene.background = null;
 			flythroughActive = true;
 			if (postFX) postFX.setMode('flythrough');
 			// Force immediate shadow update for flythrough
@@ -1346,15 +1532,14 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			if (sceneryGroup) sceneryGroup.position.y = 0;
 
 			if (oldSceneryGroup && sceneryGroup) {
-				// Hide new scenery until fade-out completes
-				setGroupOpacity(sceneryGroup, 0);
+				// Hide new scenery until sink completes — start below ground
 				sceneryGroup.visible = false;
-				// Start fade-out of old scenery
+				// Start sinking old scenery into ground
 				oldSceneryFadeGroup = oldSceneryGroup;
 				oldSceneryFadeCreatures = oldCreatures;
 				oldSceneryFadeScatter = oldScatter;
 				oldSceneryFadeWeather = oldWeather;
-				sceneryFadePhase = 'fade-out';
+				sceneryFadePhase = 'sink';
 				sceneryFadeAlpha = 0;
 			} else {
 				// No old scenery — just show new immediately
@@ -1737,6 +1922,12 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 				if (gen !== buildGeneration) { s.dispose(); return; }
 				scatter = s;
 				sceneryGrp.add(s.group);
+				// Butterflies around flowers (new positions each seed)
+				if (butterflySystem) { butterflySystem.dispose(); butterflySystem = null; }
+				if (s.flowerPositions.length > 0) {
+					butterflySystem = createButterflySystem(s.flowerPositions);
+					sceneryGrp.add(butterflySystem.group);
+				}
 			}).catch(() => {});
 		}
 
@@ -1773,7 +1964,8 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		// === Sheep flocks — persist across builds ===
 		if (!sheepSystem && terrainSystem) {
 			try {
-				sheepSystem = await createSheepSystem(terrainSystem.getHeightAt);
+				// Wrap heightFn so sheep always use current terrain (survives seed changes)
+				sheepSystem = await createSheepSystem((x, z) => terrainSystem ? terrainSystem.getHeightAt(x, z) : 0.1);
 				_realSceneAdd(sheepSystem.group);
 			} catch { /* model load failure — skip */ }
 		}
@@ -2435,7 +2627,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		} else {
 			// Normal: lerp toward target
 			const timeDiff = timeOfDay - displayTime;
-			const timeLerpSpeed = flythroughActive ? 0.4 : 5;
+			const timeLerpSpeed = flythroughActive ? 0.15 : 5;
 			if (Math.abs(timeDiff) > 0.005) {
 				displayTime += timeDiff * Math.min(1, dt * timeLerpSpeed);
 			} else {
@@ -2525,6 +2717,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		if (moatSystem) moatSystem.update(dt, cachedDN?.sunPosition);
 		if (wildlifeSystem) wildlifeSystem.update(dt, displayTime);
 		if (sheepSystem) sheepSystem.update(dt, displayTime);
+		if (butterflySystem) butterflySystem.update(dt);
 		if (creatureSystem) creatureSystem.update(dt, displayTime, camera);
 
 		// Cross-fade transition: morph terrain + fade objects
@@ -2639,6 +2832,15 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 				terrainMorphStartColors = null;
 				terrainMorphTargetColors = null;
 
+				// Re-bake roads onto morphed terrain (worker may not match exactly)
+				if (terrainSystem && pendingGrid) {
+					const _rows = pendingGrid.length, _cols = pendingGrid[0].length;
+					const _ox = -_cols / 2, _oz = -_rows / 2;
+					const _mc = findClusters(pendingGrid).filter(c => c.terrainType === TerrainCode.SETTLEMENT);
+					const _mr = computeRoadPaths(_mc, _ox, _oz);
+					if (_mr.length > 0) bakeRoadsOntoTerrain(terrainSystem.mesh, pendingGrid, _mr);
+				}
+
 				// Keep existing terrain mesh — just update getHeightAt for new grid
 				pendingMorphGrid = null;
 				if (terrainSystem && pendingGrid) {
@@ -2654,14 +2856,13 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		}
 
 		// Scenery sequential fade: old fades out, then new fades in
-		if (sceneryFadePhase === 'fade-out' && oldSceneryFadeGroup) {
-			sceneryFadeAlpha = Math.min(1.0, sceneryFadeAlpha + dt / SCENERY_FADE_OUT_DURATION);
-			const t = sceneryFadeAlpha;
-			const eased = t * t * (3 - 2 * t); // smoothstep
-			setGroupOpacity(oldSceneryFadeGroup, 1.0 - eased);
+		// Scenery sink into ground (old models pulled down staggered)
+		if (sceneryFadePhase === 'sink' && oldSceneryFadeGroup) {
+			sceneryFadeAlpha = Math.min(1.0, sceneryFadeAlpha + dt / SCENERY_SINK_DURATION);
+			sinkRiseGroup(oldSceneryFadeGroup, sceneryFadeAlpha, true);
 
 			if (sceneryFadeAlpha >= 1.0) {
-				// Old fully faded — dispose and start fade-in
+				// Old fully sunk — dispose and start rising new
 				if (worldGroup) {
 					worldGroup.remove(oldSceneryFadeGroup);
 					disposeGroup(oldSceneryFadeGroup);
@@ -2670,29 +2871,32 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 				if (oldSceneryFadeCreatures) { oldSceneryFadeCreatures.dispose(); oldSceneryFadeCreatures = null; }
 				if (oldSceneryFadeScatter) { oldSceneryFadeScatter.dispose(); oldSceneryFadeScatter = null; }
 				if (oldSceneryFadeWeather) { oldSceneryFadeWeather.dispose(); oldSceneryFadeWeather = null; }
-				// Begin fade-in of new scenery
+				// Begin rising new scenery from underground
 				if (sceneryGroup) {
 					sceneryGroup.visible = true;
-					setGroupOpacity(sceneryGroup, 0);
+					sinkRiseGroup(sceneryGroup, 0, false); // start fully below
 				}
-				sceneryFadePhase = 'fade-in';
+				sceneryFadePhase = 'rise';
 				sceneryFadeAlpha = 0;
 			}
 		}
-		if (sceneryFadePhase === 'fade-in' && sceneryGroup) {
-			sceneryFadeAlpha = Math.min(1.0, sceneryFadeAlpha + dt / SCENERY_FADE_IN_DURATION);
-			const t = sceneryFadeAlpha;
-			const eased = t * t * (3 - 2 * t); // smoothstep
-			setGroupOpacity(sceneryGroup, eased);
+		// Scenery rise from ground (new models emerge staggered)
+		if (sceneryFadePhase === 'rise' && sceneryGroup) {
+			sceneryFadeAlpha = Math.min(1.0, sceneryFadeAlpha + dt / SCENERY_RISE_DURATION);
+			sinkRiseGroup(sceneryGroup, sceneryFadeAlpha, false);
 
 			if (sceneryFadeAlpha >= 1.0) {
 				sceneryFadePhase = null;
-				setGroupOpacity(sceneryGroup, 1.0);
-				// Force shadow update after new scenery is in place
+				// Snap to exact original positions
+				sceneryGroup.traverse((obj) => {
+					if (obj.userData._origY !== undefined) {
+						obj.position.y = obj.userData._origY;
+						delete obj.userData._origY;
+					}
+				});
 				if (sunLight) sunLight.shadow.needsUpdate = true;
 				lastShadowUpdate = performance.now();
 				lightProbeNeedsUpdate = true;
-				// Start smooth sky transition now that scene is ready
 				if (skyFrozen) {
 					skyFrozen = false;
 					skyTransitionActive = true;
@@ -2846,6 +3050,82 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			renderer.render(scene, camera);
 		}
 
+		// Grid overlay fade
+		if (gridOverlay && Math.abs(gridFadeCurrent - gridFadeTarget) > 0.01) {
+			gridFadeCurrent += (gridFadeTarget - gridFadeCurrent) * Math.min(1, dt * 1.0);
+			if (gridFadeCurrent < 0.01) {
+				gridFadeCurrent = 0;
+				gridOverlay.visible = false;
+			}
+			gridOverlay.traverse((obj: any) => {
+				if (obj.material && 'opacity' in obj.material) {
+					obj.material.transparent = true;
+					obj.material.opacity = gridFadeCurrent;
+					obj.material.needsUpdate = true;
+				}
+			});
+		}
+
+		// Karaoke subtitles synced to audio — every frame
+		if (fpAudio && subtitleCues.length > 0 && fpMode) {
+			const audioTime = fpAudio.currentTime;
+			const cue = subtitleCues.find(c => audioTime >= c.start && audioTime < c.end);
+			if (cue) {
+				subtitleVisible = true;
+				const fadeIn = Math.min(1, (audioTime - cue.start) / 0.4);
+				const fadeOut = Math.min(1, (cue.end - audioTime) / 0.5);
+				subtitleFade = Math.min(fadeIn, fadeOut);
+
+				// Collect ALL karaoke words that overlap this SRT cue's time window
+				const allWords: KaraokeWord[] = [];
+				for (const kLine of karaokeLines) {
+					// Karaoke line overlaps SRT cue if their time ranges intersect
+					if (kLine.end > cue.start && kLine.start < cue.end) {
+						for (const w of kLine.words) {
+							if (w.end > cue.start && w.start < cue.end) {
+								allWords.push(w);
+							}
+						}
+					}
+				}
+				if (allWords.length > 0) {
+					// Build HTML with karaoke word highlighting — smooth fade per word
+					let html = '';
+					for (const w of allWords) {
+						const isPast = audioTime >= w.end;
+						const isActive = audioTime >= w.start && audioTime < w.end;
+						if (isActive) {
+							// Fade progress within this word: 0→1
+							const wordDur = w.end - w.start;
+							const progress = wordDur > 0 ? Math.min(1, (audioTime - w.start) / wordDur) : 1;
+							// Interpolate from dim to gold
+							const r = Math.round(255 * (0.35 + progress * 0.65));
+							const g = Math.round(255 * (0.35 + progress * 0.50));
+							const b = Math.round(255 * (0.35 - progress * 0.35));
+							const glow = progress * 0.7;
+							html += `<span style="color:rgb(${r},${g},${b});text-shadow:0 0 ${8 + glow * 12}px rgba(255,215,0,${glow})">${w.word} </span>`;
+						} else if (isPast) {
+							// Sung words: bright white
+							html += `<span style="color:rgba(255,255,255,0.95)">${w.word} </span>`;
+						} else {
+							// Upcoming words: dim
+							html += `<span style="color:rgba(255,255,255,0.35)">${w.word} </span>`;
+						}
+					}
+					subtitleHtml = html;
+					subtitleText = '';
+				} else {
+					subtitleText = cue.text;
+					subtitleHtml = '';
+				}
+			} else {
+				if (subtitleVisible) {
+					subtitleFade *= 0.92;
+					if (subtitleFade < 0.02) subtitleVisible = false;
+				}
+			}
+		}
+
 		// FPS + draw call counter (updated every 30 frames)
 		fpsFrameCount++;
 		if (fpsFrameCount >= 30) {
@@ -2856,6 +3136,14 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			}
 			fpsFrameCount = 0;
 			fpsLastTime = now;
+
+			// Update HUD info (every 30 frames = ~0.5s)
+			const _h = Math.floor(displayTime);
+			const _m = Math.floor((displayTime - _h) * 60);
+			hudTimeStr = `${_h.toString().padStart(2, '0')}:${_m.toString().padStart(2, '0')}`;
+			hudTimeLabel = displayTime < 6 ? 'Night' : displayTime < 8 ? 'Dawn' : displayTime < 12 ? 'Morning' : displayTime < 14 ? 'Midday' : displayTime < 17 ? 'Afternoon' : displayTime < 19 ? 'Dusk' : 'Night';
+			hudWeatherLabel = windSystem?.weather === 'storm' ? 'Storm' : windSystem?.weather === 'rain' ? 'Rain' : windSystem?.weather === 'cloudy' ? 'Cloudy' : 'Clear';
+			hudSeason = season;
 		}
 	}
 
@@ -2946,6 +3234,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		if (nightSkySystem) { nightSkySystem.dispose(); nightSkySystem = null; }
 		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
 		if (sheepSystem) { sheepSystem.dispose(); sheepSystem = null; }
+		if (butterflySystem) { butterflySystem.dispose(); butterflySystem = null; }
 		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
 		if (fillLight) { scene.remove(fillLight); fillLight = null; }
 		if (lightProbe) { scene.remove(lightProbe); lightProbe = null; }
@@ -2982,7 +3271,6 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 				&& !transitioning
 				&& !terrainMorphing;
 			if (canMorph) {
-				// Morph handles both grid changes AND season changes (worker uses season)
 				morphTerrainTo(grid);
 			} else {
 				buildScene();
@@ -2995,11 +3283,19 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	// Sync overlay visibility with props — read prop first to ensure dependency tracking
 	$effect(() => {
 		const vis = showGrid;
-		if (gridOverlay) gridOverlay.visible = vis;
+		gridFadeTarget = vis ? 1 : 0;
+		if (gridOverlay && vis) gridOverlay.visible = true;
 	});
 	$effect(() => {
 		const vis = showTerrain;
 		if (terrainSystem) terrainSystem.mesh.visible = vis;
+	});
+	$effect(() => {
+		const fov = cameraFov;
+		if (camera && (fpMode || cameraMode)) {
+			camera.fov = fov;
+			camera.updateProjectionMatrix();
+		}
 	});
 	$effect(() => {
 		const vis = showPrediction;
@@ -3057,26 +3353,47 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 
 	<!-- FP mode buttons (hidden during flythrough) -->
 	{#if !flythroughActive}
-		<div class="absolute top-3 right-3 z-10 flex gap-2">
-			<button
-				class="px-3 py-1.5 text-[11px] font-medium rounded border transition-colors backdrop-blur-sm
-					border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-gold/40 hover:text-cyber-fg"
-				onclick={handleFlythroughToggle}
-				title="Epic FPV flythrough"
-			>
-				Flythrough
-			</button>
-			<button
-				class="px-3 py-1.5 text-[11px] font-medium rounded border transition-colors backdrop-blur-sm
-					{fpMode
-						? 'border-neon-cyan text-neon-cyan bg-cyber-surface/80 hover:bg-neon-cyan/20'
-						: 'border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-cyan/40 hover:text-cyber-fg'
-					}"
-				onclick={handleFPToggle}
-				title={fpMode ? 'Exit first-person' : 'Enter first-person mode'}
-			>
-				{fpMode ? 'Exit FP' : 'First Person'}
-			</button>
+		<div class="absolute top-3 right-3 z-10 flex flex-col items-end gap-2">
+			<div class="flex gap-2">
+				<button
+					class="px-3 py-1.5 text-[11px] font-medium rounded border transition-colors backdrop-blur-sm
+						border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-gold/40 hover:text-cyber-fg"
+					onclick={handleFlythroughToggle}
+					title="Epic FPV flythrough"
+				>
+					Flythrough
+				</button>
+				<button
+					class="px-3 py-1.5 text-[11px] font-medium rounded border transition-colors backdrop-blur-sm
+						{fpMode && !cameraMode
+							? 'border-neon-cyan text-neon-cyan bg-cyber-surface/80 hover:bg-neon-cyan/20'
+							: 'border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-cyan/40 hover:text-cyber-fg'
+						}"
+					onclick={handleFPToggle}
+					title={fpMode ? 'Exit first-person' : 'Enter first-person mode'}
+				>
+					{fpMode && !cameraMode ? 'Exit FP' : 'First Person'}
+				</button>
+				<button
+					class="px-3 py-1.5 text-[11px] font-medium rounded border transition-colors backdrop-blur-sm
+						{cameraMode
+							? 'border-neon-gold text-neon-gold bg-cyber-surface/80 hover:bg-neon-gold/20'
+							: 'border-cyber-border text-cyber-muted bg-cyber-surface/60 hover:border-neon-gold/40 hover:text-cyber-fg'
+						}"
+					onclick={handleCameraModeToggle}
+					title={cameraMode ? 'Exit camera mode' : 'Free-fly camera for photo captures'}
+				>
+					{cameraMode ? 'Exit Camera' : 'Camera'}
+				</button>
+			</div>
+			{#if fpMode || cameraMode}
+				<div class="flex items-center gap-2 px-2 py-1 rounded backdrop-blur-sm bg-cyber-surface/60 border border-cyber-border">
+					<span class="text-[10px] text-cyber-muted">FOV</span>
+					<input type="range" min="30" max="150" step="1" bind:value={cameraFov}
+						class="w-24 h-1 accent-neon-cyan" />
+					<span class="text-[10px] text-cyber-fg w-6 text-right">{cameraFov}</span>
+				</div>
+			{/if}
 		</div>
 	{/if}
 
@@ -3127,24 +3444,27 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			</div>
 		{/if}
 
-		<!-- FP mode indicator (walking only) -->
+		<!-- FP/Camera mode indicator -->
 		{#if !flythroughActive}
 			<div class="absolute bottom-3 left-3 z-10 text-[10px] text-cyber-muted/60 pointer-events-none">
-				FP MODE &middot; WASD + Mouse &middot; Shift = Sprint
+				{#if cameraMode}
+					CAMERA MODE &middot; WASD + Mouse &middot; Space = Up &middot; Q = Down &middot; Shift = Fast
+				{:else}
+					FP MODE &middot; WASD + Mouse &middot; Shift = Sprint
+				{/if}
 			</div>
 		{/if}
 
 		<!-- Flythrough cinematic HUD -->
 		{#if flythroughActive}
-			{@const h = Math.floor(displayTime)}
-			{@const m = Math.floor((displayTime - h) * 60)}
-			{@const timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`}
-			{@const timeLabel = displayTime < 6 ? 'Night' : displayTime < 8 ? 'Dawn' : displayTime < 12 ? 'Morning' : displayTime < 14 ? 'Midday' : displayTime < 17 ? 'Afternoon' : displayTime < 19 ? 'Dusk' : 'Night'}
-			{@const weatherLabel = windSystem?.weather === 'storm' ? 'Storm' : windSystem?.weather === 'rain' ? 'Rain' : windSystem?.weather === 'cloudy' ? 'Cloudy' : 'Clear'}
 			<div class="absolute inset-0 pointer-events-none z-20 flex flex-col items-center"
 				style="animation: hudFadeIn 2s ease-out forwards">
 				<div class="mt-6 text-center flex flex-col items-center">
 				<div class="inline-block px-6 py-2.5 rounded-lg" style="background: rgba(10, 15, 40, 0.50); backdrop-filter: blur(6px);">
+					<div class="text-[10px] tracking-[0.6em] uppercase mb-1"
+						style="color: rgba(255,255,255,0.25); font-family: serif;">
+						&#5765;&#5768;&#5791;&#5800;&#5809; &middot; &#5765;&#5765;&#5768;&#5791;&#5800;&#5809;
+					</div>
 					<h1 class="text-2xl font-thin tracking-[0.35em] uppercase"
 						style="color: rgba(255,255,255,0.85);
 							text-shadow: 0 0 30px rgba(255,255,255,0.3), 0 0 60px rgba(135,206,235,0.2);">
@@ -3154,9 +3474,11 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 						style="color: rgba(255,255,255,0.50); text-shadow: 0 0 15px rgba(255,255,255,0.2);">
 						{#if roundLabel}<span>{roundLabel}</span><span class="text-white/25">&middot;</span>{/if}
 						{#if seedLabel}<span>{seedLabel}</span><span class="text-white/25">&middot;</span>{/if}
-						<span>{timeStr} {timeLabel}</span>
+						<span>{hudTimeStr} {hudTimeLabel}</span>
 						<span class="text-white/25">&middot;</span>
-						<span>{weatherLabel}</span>
+						<span>{hudSeason}</span>
+						<span class="text-white/25">&middot;</span>
+						<span>{hudWeatherLabel}</span>
 					</div>
 				</div>
 				</div>
@@ -3167,12 +3489,59 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 				Press ESC to exit
 			</div>
 		{/if}
+
+		<!-- Karaoke subtitles — synced to audio, word highlighting -->
+		{#if subtitleVisible && (subtitleHtml || subtitleText)}
+			<div class="absolute bottom-16 left-1/2 -translate-x-1/2 z-20 pointer-events-none text-center max-w-[75%]"
+				style="opacity: {subtitleFade}; transition: opacity 0.15s ease-out;">
+				<div class="inline-block px-8 py-3.5 rounded-lg"
+					style="background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(10px);">
+					<p class="text-lg font-medium tracking-wide leading-relaxed"
+						style="text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
+						{#if subtitleHtml}
+							{@html subtitleHtml}
+						{:else}
+							<span style="color: rgba(255,255,255,0.9)">{subtitleText}</span>
+						{/if}
+					</p>
+				</div>
+			</div>
+		{/if}
+	{/if}
+
+	<!-- Fade to black + THANK YOU when song ends -->
+	{#if flythroughFadeOut}
+		<div class="absolute inset-0 z-50 flex items-center justify-center flythrough-fade-out">
+			<div class="text-center flythrough-thankyou">
+				<h1 class="text-5xl font-thin tracking-[0.5em] uppercase"
+					style="color: rgba(255,255,255,0.85); text-shadow: 0 0 40px rgba(255,255,255,0.3);">
+					THANK YOU
+				</h1>
+				<p class="mt-4 text-lg font-light tracking-widest" style="color: rgba(255,255,255,0.4);">&#9825;</p>
+			</div>
+		</div>
 	{/if}
 </div>
 
 <style>
 	@keyframes hudFadeIn {
 		from { opacity: 0; transform: translateY(-10px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+	.flythrough-fade-out {
+		background: black;
+		animation: fadeToBlack 3s ease-in forwards;
+	}
+	.flythrough-thankyou {
+		opacity: 0;
+		animation: fadeInThankYou 2s ease-out 2s forwards;
+	}
+	@keyframes fadeToBlack {
+		from { background: rgba(0,0,0,0); }
+		to { background: rgba(0,0,0,1); }
+	}
+	@keyframes fadeInThankYou {
+		from { opacity: 0; transform: translateY(10px); }
 		to { opacity: 1; transform: translateY(0); }
 	}
 </style>

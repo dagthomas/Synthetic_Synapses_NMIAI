@@ -1,0 +1,1590 @@
+[
+  {
+    "start": 14.3,
+    "end": 22.2,
+    "text": "We sailed beyond the edge of maps Where runes are carved in stone",
+    "words": [
+      {
+        "word": "We",
+        "start": 14.3,
+        "end": 15.54
+      },
+      {
+        "word": "sailed",
+        "start": 15.54,
+        "end": 16.18
+      },
+      {
+        "word": "beyond",
+        "start": 16.18,
+        "end": 16.86
+      },
+      {
+        "word": "the",
+        "start": 16.86,
+        "end": 17.38
+      },
+      {
+        "word": "edge",
+        "start": 17.38,
+        "end": 18.0
+      },
+      {
+        "word": "of",
+        "start": 18.0,
+        "end": 18.44
+      },
+      {
+        "word": "maps",
+        "start": 18.44,
+        "end": 18.84
+      },
+      {
+        "word": "Where",
+        "start": 18.84,
+        "end": 19.52
+      },
+      {
+        "word": "runes",
+        "start": 19.52,
+        "end": 20.1
+      },
+      {
+        "word": "are",
+        "start": 20.1,
+        "end": 20.32
+      },
+      {
+        "word": "carved",
+        "start": 20.32,
+        "end": 20.96
+      },
+      {
+        "word": "in",
+        "start": 20.96,
+        "end": 21.38
+      },
+      {
+        "word": "stone",
+        "start": 21.38,
+        "end": 22.2
+      }
+    ]
+  },
+  {
+    "start": 22.2,
+    "end": 29.96,
+    "text": "Fifty glimpses through the mist To find what seats have sown",
+    "words": [
+      {
+        "word": "Fifty",
+        "start": 22.2,
+        "end": 24.2
+      },
+      {
+        "word": "glimpses",
+        "start": 24.2,
+        "end": 25.04
+      },
+      {
+        "word": "through",
+        "start": 25.04,
+        "end": 25.54
+      },
+      {
+        "word": "the",
+        "start": 25.54,
+        "end": 25.94
+      },
+      {
+        "word": "mist",
+        "start": 25.94,
+        "end": 26.56
+      },
+      {
+        "word": "To",
+        "start": 26.56,
+        "end": 26.92
+      },
+      {
+        "word": "find",
+        "start": 26.92,
+        "end": 27.28
+      },
+      {
+        "word": "what",
+        "start": 27.28,
+        "end": 27.88
+      },
+      {
+        "word": "seats",
+        "start": 27.88,
+        "end": 28.52
+      },
+      {
+        "word": "have",
+        "start": 28.52,
+        "end": 29.0
+      },
+      {
+        "word": "sown",
+        "start": 29.0,
+        "end": 29.96
+      }
+    ]
+  },
+  {
+    "start": 29.96,
+    "end": 37.1,
+    "text": "The settlements rise, the settlements fall The mountain never bends",
+    "words": [
+      {
+        "word": "The",
+        "start": 29.96,
+        "end": 30.86
+      },
+      {
+        "word": "settlements",
+        "start": 30.86,
+        "end": 31.56
+      },
+      {
+        "word": "rise,",
+        "start": 31.56,
+        "end": 32.26
+      },
+      {
+        "word": "the",
+        "start": 32.42,
+        "end": 32.66
+      },
+      {
+        "word": "settlements",
+        "start": 32.66,
+        "end": 33.38
+      },
+      {
+        "word": "fall",
+        "start": 33.38,
+        "end": 34.08
+      },
+      {
+        "word": "The",
+        "start": 34.08,
+        "end": 34.52
+      },
+      {
+        "word": "mountain",
+        "start": 34.52,
+        "end": 35.22
+      },
+      {
+        "word": "never",
+        "start": 35.22,
+        "end": 36.12
+      },
+      {
+        "word": "bends",
+        "start": 36.12,
+        "end": 37.1
+      }
+    ]
+  },
+  {
+    "start": 37.1,
+    "end": 45.18,
+    "text": "And every shore where long ships call Aport the coastline lands",
+    "words": [
+      {
+        "word": "And",
+        "start": 37.1,
+        "end": 38.4
+      },
+      {
+        "word": "every",
+        "start": 38.4,
+        "end": 39.02
+      },
+      {
+        "word": "shore",
+        "start": 39.02,
+        "end": 39.7
+      },
+      {
+        "word": "where",
+        "start": 39.7,
+        "end": 40.3
+      },
+      {
+        "word": "long",
+        "start": 40.3,
+        "end": 40.58
+      },
+      {
+        "word": "ships",
+        "start": 40.58,
+        "end": 41.22
+      },
+      {
+        "word": "call",
+        "start": 41.22,
+        "end": 41.82
+      },
+      {
+        "word": "Aport",
+        "start": 41.82,
+        "end": 42.86
+      },
+      {
+        "word": "the",
+        "start": 42.86,
+        "end": 43.32
+      },
+      {
+        "word": "coastline",
+        "start": 43.32,
+        "end": 44.18
+      },
+      {
+        "word": "lands",
+        "start": 44.18,
+        "end": 45.18
+      }
+    ]
+  },
+  {
+    "start": 45.18,
+    "end": 52.14,
+    "text": "Across the Astar Sea we read The futures written blind",
+    "words": [
+      {
+        "word": "Across",
+        "start": 45.18,
+        "end": 46.3
+      },
+      {
+        "word": "the",
+        "start": 46.3,
+        "end": 47.1
+      },
+      {
+        "word": "Astar",
+        "start": 47.1,
+        "end": 47.86
+      },
+      {
+        "word": "Sea",
+        "start": 47.86,
+        "end": 48.3
+      },
+      {
+        "word": "we",
+        "start": 48.3,
+        "end": 48.84
+      },
+      {
+        "word": "read",
+        "start": 48.84,
+        "end": 49.34
+      },
+      {
+        "word": "The",
+        "start": 49.34,
+        "end": 49.76
+      },
+      {
+        "word": "futures",
+        "start": 49.76,
+        "end": 50.66
+      },
+      {
+        "word": "written",
+        "start": 50.66,
+        "end": 51.26
+      },
+      {
+        "word": "blind",
+        "start": 51.26,
+        "end": 52.14
+      }
+    ]
+  },
+  {
+    "start": 52.2,
+    "end": 59.82,
+    "text": "A thousand thousand fates we weave From fragments left behind",
+    "words": [
+      {
+        "word": "A",
+        "start": 52.2,
+        "end": 53.46
+      },
+      {
+        "word": "thousand",
+        "start": 53.46,
+        "end": 54.46
+      },
+      {
+        "word": "thousand",
+        "start": 54.46,
+        "end": 55.04
+      },
+      {
+        "word": "fates",
+        "start": 55.04,
+        "end": 56.2
+      },
+      {
+        "word": "we",
+        "start": 56.2,
+        "end": 56.42
+      },
+      {
+        "word": "weave",
+        "start": 56.42,
+        "end": 57.0
+      },
+      {
+        "word": "From",
+        "start": 57.0,
+        "end": 57.46
+      },
+      {
+        "word": "fragments",
+        "start": 57.46,
+        "end": 58.32
+      },
+      {
+        "word": "left",
+        "start": 58.32,
+        "end": 58.84
+      },
+      {
+        "word": "behind",
+        "start": 58.84,
+        "end": 59.82
+      }
+    ]
+  },
+  {
+    "start": 75.04,
+    "end": 82.18,
+    "text": "The daemon watches through the night No sleep, no rest, no fear",
+    "words": [
+      {
+        "word": "The",
+        "start": 75.04,
+        "end": 76.2
+      },
+      {
+        "word": "daemon",
+        "start": 76.2,
+        "end": 77.36
+      },
+      {
+        "word": "watches",
+        "start": 77.36,
+        "end": 78.24
+      },
+      {
+        "word": "through",
+        "start": 78.24,
+        "end": 78.82
+      },
+      {
+        "word": "the",
+        "start": 78.82,
+        "end": 79.22
+      },
+      {
+        "word": "night",
+        "start": 79.22,
+        "end": 79.8
+      },
+      {
+        "word": "No",
+        "start": 79.8,
+        "end": 80.16
+      },
+      {
+        "word": "sleep,",
+        "start": 80.16,
+        "end": 80.74
+      },
+      {
+        "word": "no",
+        "start": 80.86,
+        "end": 81.2
+      },
+      {
+        "word": "rest,",
+        "start": 81.2,
+        "end": 81.76
+      },
+      {
+        "word": "no",
+        "start": 82.0,
+        "end": 82.14
+      },
+      {
+        "word": "fear",
+        "start": 82.14,
+        "end": 82.18
+      }
+    ]
+  },
+  {
+    "start": 82.2,
+    "end": 87.4,
+    "text": "No fear Three wise ones search by different light",
+    "words": [
+      {
+        "word": "No",
+        "start": 82.2,
+        "end": 82.2
+      },
+      {
+        "word": "fear",
+        "start": 82.2,
+        "end": 83.1
+      },
+      {
+        "word": "Three",
+        "start": 83.1,
+        "end": 84.0
+      },
+      {
+        "word": "wise",
+        "start": 84.0,
+        "end": 84.66
+      },
+      {
+        "word": "ones",
+        "start": 84.66,
+        "end": 85.0
+      },
+      {
+        "word": "search",
+        "start": 85.0,
+        "end": 85.66
+      },
+      {
+        "word": "by",
+        "start": 85.66,
+        "end": 86.04
+      },
+      {
+        "word": "different",
+        "start": 86.04,
+        "end": 86.62
+      },
+      {
+        "word": "light",
+        "start": 86.62,
+        "end": 87.4
+      }
+    ]
+  },
+  {
+    "start": 87.4,
+    "end": 95.08,
+    "text": "While thunder draws them near One counts a million grains of sand",
+    "words": [
+      {
+        "word": "While",
+        "start": 87.4,
+        "end": 87.92
+      },
+      {
+        "word": "thunder",
+        "start": 87.92,
+        "end": 88.46
+      },
+      {
+        "word": "draws",
+        "start": 88.46,
+        "end": 89.34
+      },
+      {
+        "word": "them",
+        "start": 89.34,
+        "end": 89.84
+      },
+      {
+        "word": "near",
+        "start": 89.84,
+        "end": 90.7
+      },
+      {
+        "word": "One",
+        "start": 90.7,
+        "end": 91.66
+      },
+      {
+        "word": "counts",
+        "start": 91.66,
+        "end": 92.4
+      },
+      {
+        "word": "a",
+        "start": 92.4,
+        "end": 92.62
+      },
+      {
+        "word": "million",
+        "start": 92.62,
+        "end": 93.08
+      },
+      {
+        "word": "grains",
+        "start": 93.08,
+        "end": 94.04
+      },
+      {
+        "word": "of",
+        "start": 94.04,
+        "end": 94.56
+      },
+      {
+        "word": "sand",
+        "start": 94.56,
+        "end": 95.08
+      }
+    ]
+  },
+  {
+    "start": 95.08,
+    "end": 102.2,
+    "text": "One dreams of shapes unseen One tears the old world down by hand",
+    "words": [
+      {
+        "word": "One",
+        "start": 95.08,
+        "end": 95.48
+      },
+      {
+        "word": "dreams",
+        "start": 95.48,
+        "end": 96.14
+      },
+      {
+        "word": "of",
+        "start": 96.14,
+        "end": 96.5
+      },
+      {
+        "word": "shapes",
+        "start": 96.5,
+        "end": 96.92
+      },
+      {
+        "word": "unseen",
+        "start": 96.92,
+        "end": 97.56
+      },
+      {
+        "word": "One",
+        "start": 97.56,
+        "end": 99.34
+      },
+      {
+        "word": "tears",
+        "start": 99.34,
+        "end": 99.9
+      },
+      {
+        "word": "the",
+        "start": 99.9,
+        "end": 100.5
+      },
+      {
+        "word": "old",
+        "start": 100.5,
+        "end": 100.8
+      },
+      {
+        "word": "world",
+        "start": 100.8,
+        "end": 101.4
+      },
+      {
+        "word": "down",
+        "start": 101.4,
+        "end": 101.78
+      },
+      {
+        "word": "by",
+        "start": 101.78,
+        "end": 102.12
+      },
+      {
+        "word": "hand",
+        "start": 102.12,
+        "end": 102.67
+      }
+    ]
+  },
+  {
+    "start": 102.74,
+    "end": 105.38,
+    "text": "And builds what lies between",
+    "words": [
+      {
+        "word": "And",
+        "start": 102.74,
+        "end": 103.14
+      },
+      {
+        "word": "builds",
+        "start": 103.14,
+        "end": 103.62
+      },
+      {
+        "word": "what",
+        "start": 103.62,
+        "end": 104.1
+      },
+      {
+        "word": "lies",
+        "start": 104.1,
+        "end": 104.62
+      },
+      {
+        "word": "between",
+        "start": 104.62,
+        "end": 105.38
+      }
+    ]
+  },
+  {
+    "start": 106.2,
+    "end": 112.18,
+    "text": "Across the Astar Sea we read The futures written blind",
+    "words": [
+      {
+        "word": "Across",
+        "start": 106.2,
+        "end": 107.1
+      },
+      {
+        "word": "the",
+        "start": 107.1,
+        "end": 108.04
+      },
+      {
+        "word": "Astar",
+        "start": 108.04,
+        "end": 108.74
+      },
+      {
+        "word": "Sea",
+        "start": 108.74,
+        "end": 109.28
+      },
+      {
+        "word": "we",
+        "start": 109.28,
+        "end": 109.78
+      },
+      {
+        "word": "read",
+        "start": 109.78,
+        "end": 110.28
+      },
+      {
+        "word": "The",
+        "start": 110.28,
+        "end": 110.72
+      },
+      {
+        "word": "futures",
+        "start": 110.72,
+        "end": 111.58
+      },
+      {
+        "word": "written",
+        "start": 111.58,
+        "end": 112.14
+      },
+      {
+        "word": "blind",
+        "start": 112.14,
+        "end": 112.18
+      }
+    ]
+  },
+  {
+    "start": 112.2,
+    "end": 120.7,
+    "text": "A thousand thousand fates we weave From fragments left behind",
+    "words": [
+      {
+        "word": "A",
+        "start": 112.2,
+        "end": 114.16
+      },
+      {
+        "word": "thousand",
+        "start": 114.16,
+        "end": 115.28
+      },
+      {
+        "word": "thousand",
+        "start": 115.28,
+        "end": 115.98
+      },
+      {
+        "word": "fates",
+        "start": 115.98,
+        "end": 117.1
+      },
+      {
+        "word": "we",
+        "start": 117.1,
+        "end": 117.44
+      },
+      {
+        "word": "weave",
+        "start": 117.44,
+        "end": 117.68
+      },
+      {
+        "word": "From",
+        "start": 117.68,
+        "end": 118.38
+      },
+      {
+        "word": "fragments",
+        "start": 118.38,
+        "end": 119.28
+      },
+      {
+        "word": "left",
+        "start": 119.28,
+        "end": 119.78
+      },
+      {
+        "word": "behind",
+        "start": 119.78,
+        "end": 120.7
+      }
+    ]
+  },
+  {
+    "start": 120.7,
+    "end": 128.36,
+    "text": "Across the Astar Sea we read The futures written blind",
+    "words": [
+      {
+        "word": "Across",
+        "start": 120.7,
+        "end": 122.28
+      },
+      {
+        "word": "the",
+        "start": 122.28,
+        "end": 123.28
+      },
+      {
+        "word": "Astar",
+        "start": 123.28,
+        "end": 123.94
+      },
+      {
+        "word": "Sea",
+        "start": 123.94,
+        "end": 124.56
+      },
+      {
+        "word": "we",
+        "start": 124.56,
+        "end": 125.06
+      },
+      {
+        "word": "read",
+        "start": 125.06,
+        "end": 125.52
+      },
+      {
+        "word": "The",
+        "start": 125.52,
+        "end": 125.94
+      },
+      {
+        "word": "futures",
+        "start": 125.94,
+        "end": 126.78
+      },
+      {
+        "word": "written",
+        "start": 126.78,
+        "end": 127.44
+      },
+      {
+        "word": "blind",
+        "start": 127.44,
+        "end": 128.36
+      }
+    ]
+  },
+  {
+    "start": 129.2,
+    "end": 135.96,
+    "text": "A thousand thousand fates we weave From fragments left behind",
+    "words": [
+      {
+        "word": "A",
+        "start": 129.12,
+        "end": 129.82
+      },
+      {
+        "word": "thousand",
+        "start": 129.82,
+        "end": 130.66
+      },
+      {
+        "word": "thousand",
+        "start": 130.66,
+        "end": 131.22
+      },
+      {
+        "word": "fates",
+        "start": 131.22,
+        "end": 132.3
+      },
+      {
+        "word": "we",
+        "start": 132.3,
+        "end": 132.7
+      },
+      {
+        "word": "weave",
+        "start": 132.7,
+        "end": 132.9
+      },
+      {
+        "word": "From",
+        "start": 132.9,
+        "end": 133.68
+      },
+      {
+        "word": "fragments",
+        "start": 133.68,
+        "end": 134.48
+      },
+      {
+        "word": "left",
+        "start": 134.48,
+        "end": 135.0
+      },
+      {
+        "word": "behind",
+        "start": 135.0,
+        "end": 135.96
+      }
+    ]
+  },
+  {
+    "start": 135.96,
+    "end": 148.94,
+    "text": "Lambda shifts fourteenfold From whisper on to roar",
+    "words": [
+      {
+        "word": "Lambda",
+        "start": 135.96,
+        "end": 138.48
+      },
+      {
+        "word": "shifts",
+        "start": 138.48,
+        "end": 139.72
+      },
+      {
+        "word": "fourteenfold",
+        "start": 139.72,
+        "end": 142.18
+      },
+      {
+        "word": "From",
+        "start": 142.18,
+        "end": 144.98
+      },
+      {
+        "word": "whisper",
+        "start": 144.98,
+        "end": 146.22
+      },
+      {
+        "word": "on",
+        "start": 146.22,
+        "end": 147.54
+      },
+      {
+        "word": "to",
+        "start": 147.54,
+        "end": 148.04
+      },
+      {
+        "word": "roar",
+        "start": 148.04,
+        "end": 148.94
+      }
+    ]
+  },
+  {
+    "start": 151.96,
+    "end": 164.16,
+    "text": "What blooms today in fire and gold Tomorrow is no more",
+    "words": [
+      {
+        "word": "What",
+        "start": 151.96,
+        "end": 152.78
+      },
+      {
+        "word": "blooms",
+        "start": 152.78,
+        "end": 153.52
+      },
+      {
+        "word": "today",
+        "start": 153.52,
+        "end": 154.38
+      },
+      {
+        "word": "in",
+        "start": 154.38,
+        "end": 155.78
+      },
+      {
+        "word": "fire",
+        "start": 155.78,
+        "end": 156.56
+      },
+      {
+        "word": "and",
+        "start": 156.56,
+        "end": 157.94
+      },
+      {
+        "word": "gold",
+        "start": 157.94,
+        "end": 158.52
+      },
+      {
+        "word": "Tomorrow",
+        "start": 158.52,
+        "end": 160.66
+      },
+      {
+        "word": "is",
+        "start": 160.66,
+        "end": 162.74
+      },
+      {
+        "word": "no",
+        "start": 162.74,
+        "end": 163.46
+      },
+      {
+        "word": "more",
+        "start": 163.46,
+        "end": 164.16
+      }
+    ]
+  },
+  {
+    "start": 166.6,
+    "end": 174.58,
+    "text": "We cannot see beyond the veil The expansion yet to come",
+    "words": [
+      {
+        "word": "We",
+        "start": 166.6,
+        "end": 167.9
+      },
+      {
+        "word": "cannot",
+        "start": 167.9,
+        "end": 168.48
+      },
+      {
+        "word": "see",
+        "start": 168.48,
+        "end": 169.24
+      },
+      {
+        "word": "beyond",
+        "start": 169.24,
+        "end": 170.26
+      },
+      {
+        "word": "the",
+        "start": 170.26,
+        "end": 170.72
+      },
+      {
+        "word": "veil",
+        "start": 170.72,
+        "end": 171.24
+      },
+      {
+        "word": "The",
+        "start": 171.24,
+        "end": 171.54
+      },
+      {
+        "word": "expansion",
+        "start": 171.54,
+        "end": 172.2
+      },
+      {
+        "word": "yet",
+        "start": 172.2,
+        "end": 173.16
+      },
+      {
+        "word": "to",
+        "start": 173.16,
+        "end": 173.54
+      },
+      {
+        "word": "come",
+        "start": 173.54,
+        "end": 174.58
+      }
+    ]
+  },
+  {
+    "start": 174.58,
+    "end": 181.72,
+    "text": "But still we set our tattered sail And calculate the sum",
+    "words": [
+      {
+        "word": "But",
+        "start": 174.58,
+        "end": 175.52
+      },
+      {
+        "word": "still",
+        "start": 175.52,
+        "end": 176.02
+      },
+      {
+        "word": "we",
+        "start": 176.02,
+        "end": 176.4
+      },
+      {
+        "word": "set",
+        "start": 176.4,
+        "end": 176.88
+      },
+      {
+        "word": "our",
+        "start": 176.88,
+        "end": 177.44
+      },
+      {
+        "word": "tattered",
+        "start": 177.44,
+        "end": 178.14
+      },
+      {
+        "word": "sail",
+        "start": 178.14,
+        "end": 178.8
+      },
+      {
+        "word": "And",
+        "start": 178.8,
+        "end": 179.22
+      },
+      {
+        "word": "calculate",
+        "start": 179.22,
+        "end": 180.18
+      },
+      {
+        "word": "the",
+        "start": 180.18,
+        "end": 181.16
+      },
+      {
+        "word": "sum",
+        "start": 181.16,
+        "end": 181.72
+      }
+    ]
+  },
+  {
+    "start": 181.72,
+    "end": 189.26,
+    "text": "The forest holds through every star A ninety-seven stand",
+    "words": [
+      {
+        "word": "The",
+        "start": 181.72,
+        "end": 182.98
+      },
+      {
+        "word": "forest",
+        "start": 182.98,
+        "end": 183.96
+      },
+      {
+        "word": "holds",
+        "start": 183.96,
+        "end": 184.6
+      },
+      {
+        "word": "through",
+        "start": 184.6,
+        "end": 185.02
+      },
+      {
+        "word": "every",
+        "start": 185.02,
+        "end": 185.7
+      },
+      {
+        "word": "star",
+        "start": 185.7,
+        "end": 186.46
+      },
+      {
+        "word": "A",
+        "start": 186.46,
+        "end": 187.06
+      },
+      {
+        "word": "ninety",
+        "start": 187.06,
+        "end": 187.58
+      },
+      {
+        "word": "-seven",
+        "start": 187.58,
+        "end": 188.52
+      },
+      {
+        "word": "stand",
+        "start": 188.52,
+        "end": 189.26
+      }
+    ]
+  },
+  {
+    "start": 189.96,
+    "end": 195.94,
+    "text": "The ruins marred where life was warm Then crumbled in dust",
+    "words": [
+      {
+        "word": "The",
+        "start": 189.96,
+        "end": 190.68
+      },
+      {
+        "word": "ruins",
+        "start": 190.68,
+        "end": 191.46
+      },
+      {
+        "word": "marred",
+        "start": 191.46,
+        "end": 192.36
+      },
+      {
+        "word": "where",
+        "start": 192.36,
+        "end": 192.68
+      },
+      {
+        "word": "life",
+        "start": 192.68,
+        "end": 193.18
+      },
+      {
+        "word": "was",
+        "start": 193.18,
+        "end": 193.62
+      },
+      {
+        "word": "warm",
+        "start": 193.62,
+        "end": 194.22
+      },
+      {
+        "word": "Then",
+        "start": 194.22,
+        "end": 194.58
+      },
+      {
+        "word": "crumbled",
+        "start": 194.58,
+        "end": 195.52
+      },
+      {
+        "word": "in",
+        "start": 195.52,
+        "end": 195.94
+      },
+      {
+        "word": "dust",
+        "start": 195.94,
+        "end": 195.94
+      }
+    ]
+  },
+  {
+    "start": 195.96,
+    "end": 197.0,
+    "text": "Welcome to sand",
+    "words": [
+      {
+        "word": "Welcome",
+        "start": 195.96,
+        "end": 196.52
+      },
+      {
+        "word": "to",
+        "start": 196.52,
+        "end": 196.52
+      },
+      {
+        "word": "sand",
+        "start": 196.52,
+        "end": 197.0
+      }
+    ]
+  },
+  {
+    "start": 197.96,
+    "end": 204.5,
+    "text": "Not what we know but what we doubt Is weighted in the score",
+    "words": [
+      {
+        "word": "Not",
+        "start": 197.64,
+        "end": 198.2
+      },
+      {
+        "word": "what",
+        "start": 198.2,
+        "end": 198.8
+      },
+      {
+        "word": "we",
+        "start": 198.8,
+        "end": 199.2
+      },
+      {
+        "word": "know",
+        "start": 199.2,
+        "end": 199.56
+      },
+      {
+        "word": "but",
+        "start": 199.56,
+        "end": 200.18
+      },
+      {
+        "word": "what",
+        "start": 200.18,
+        "end": 200.6
+      },
+      {
+        "word": "we",
+        "start": 200.6,
+        "end": 201.2
+      },
+      {
+        "word": "doubt",
+        "start": 201.2,
+        "end": 201.72
+      },
+      {
+        "word": "Is",
+        "start": 201.72,
+        "end": 202.22
+      },
+      {
+        "word": "weighted",
+        "start": 202.22,
+        "end": 202.92
+      },
+      {
+        "word": "in",
+        "start": 202.92,
+        "end": 203.6
+      },
+      {
+        "word": "the",
+        "start": 203.6,
+        "end": 203.98
+      },
+      {
+        "word": "score",
+        "start": 203.98,
+        "end": 204.5
+      }
+    ]
+  },
+  {
+    "start": 205.96,
+    "end": 212.28,
+    "text": "The entropy will find us out If we pretend to know more",
+    "words": [
+      {
+        "word": "The",
+        "start": 205.46,
+        "end": 206.02
+      },
+      {
+        "word": "entropy",
+        "start": 206.02,
+        "end": 206.82
+      },
+      {
+        "word": "will",
+        "start": 206.82,
+        "end": 207.8
+      },
+      {
+        "word": "find",
+        "start": 207.8,
+        "end": 208.32
+      },
+      {
+        "word": "us",
+        "start": 208.32,
+        "end": 208.92
+      },
+      {
+        "word": "out",
+        "start": 208.92,
+        "end": 209.32
+      },
+      {
+        "word": "If",
+        "start": 209.32,
+        "end": 209.74
+      },
+      {
+        "word": "we",
+        "start": 209.74,
+        "end": 209.96
+      },
+      {
+        "word": "pretend",
+        "start": 209.96,
+        "end": 210.42
+      },
+      {
+        "word": "to",
+        "start": 210.42,
+        "end": 211.1
+      },
+      {
+        "word": "know",
+        "start": 211.1,
+        "end": 211.46
+      },
+      {
+        "word": "more",
+        "start": 211.46,
+        "end": 212.28
+      }
+    ]
+  },
+  {
+    "start": 212.96,
+    "end": 216.98,
+    "text": "So raise the horn To synthetic minds",
+    "words": [
+      {
+        "word": "So",
+        "start": 212.96,
+        "end": 213.54
+      },
+      {
+        "word": "raise",
+        "start": 213.54,
+        "end": 214.22
+      },
+      {
+        "word": "the",
+        "start": 214.22,
+        "end": 214.54
+      },
+      {
+        "word": "horn",
+        "start": 214.54,
+        "end": 214.98
+      },
+      {
+        "word": "To",
+        "start": 214.98,
+        "end": 215.38
+      },
+      {
+        "word": "synthetic",
+        "start": 215.38,
+        "end": 215.86
+      },
+      {
+        "word": "minds",
+        "start": 215.86,
+        "end": 216.98
+      }
+    ]
+  },
+  {
+    "start": 216.98,
+    "end": 219.98,
+    "text": "That question through the dawn",
+    "words": [
+      {
+        "word": "That",
+        "start": 216.98,
+        "end": 217.36
+      },
+      {
+        "word": "question",
+        "start": 217.36,
+        "end": 218.02
+      },
+      {
+        "word": "through",
+        "start": 218.02,
+        "end": 218.76
+      },
+      {
+        "word": "the",
+        "start": 218.76,
+        "end": 219.2
+      },
+      {
+        "word": "dawn",
+        "start": 219.2,
+        "end": 219.98
+      }
+    ]
+  },
+  {
+    "start": 219.98,
+    "end": 224.7,
+    "text": "For every answer that science finds",
+    "words": [
+      {
+        "word": "For",
+        "start": 219.98,
+        "end": 221.2
+      },
+      {
+        "word": "every",
+        "start": 221.2,
+        "end": 221.84
+      },
+      {
+        "word": "answer",
+        "start": 221.84,
+        "end": 222.76
+      },
+      {
+        "word": "that",
+        "start": 222.76,
+        "end": 223.1
+      },
+      {
+        "word": "science",
+        "start": 223.1,
+        "end": 223.64
+      },
+      {
+        "word": "finds",
+        "start": 223.64,
+        "end": 224.7
+      }
+    ]
+  },
+  {
+    "start": 224.7,
+    "end": 227.52,
+    "text": "A deeper question is born",
+    "words": [
+      {
+        "word": "A",
+        "start": 224.7,
+        "end": 225.08
+      },
+      {
+        "word": "deeper",
+        "start": 225.08,
+        "end": 225.5
+      },
+      {
+        "word": "question",
+        "start": 225.5,
+        "end": 226.74
+      },
+      {
+        "word": "is",
+        "start": 226.74,
+        "end": 227.16
+      },
+      {
+        "word": "born",
+        "start": 227.16,
+        "end": 227.52
+      }
+    ]
+  },
+  {
+    "start": 257.92,
+    "end": 274.86,
+    "text": "We will soon speak about food, chocolate,\u00e0i",
+    "words": [
+      {
+        "word": "We",
+        "start": 257.92,
+        "end": 259.32
+      },
+      {
+        "word": "will",
+        "start": 259.32,
+        "end": 260.72
+      },
+      {
+        "word": "soon",
+        "start": 260.72,
+        "end": 261.14
+      },
+      {
+        "word": "speak",
+        "start": 261.14,
+        "end": 274.86
+      },
+      {
+        "word": "about",
+        "start": 274.86,
+        "end": 274.86
+      },
+      {
+        "word": "food,",
+        "start": 274.86,
+        "end": 274.86
+      },
+      {
+        "word": "chocolate",
+        "start": 274.86,
+        "end": 274.86
+      },
+      {
+        "word": ",\u00e0i",
+        "start": 274.86,
+        "end": 274.86
+      }
+    ]
+  }
+]

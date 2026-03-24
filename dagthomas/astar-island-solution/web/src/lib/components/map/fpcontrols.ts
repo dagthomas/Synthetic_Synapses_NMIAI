@@ -97,6 +97,27 @@ export function createFPController(
 			const speed = keys.sprint ? SPRINT_SPEED : MOVE_SPEED;
 			const distance = speed * dt;
 
+			if (freefly) {
+				// Camera mode: fly in look direction, no gravity
+				camera.getWorldDirection(_forward);
+				_right.crossVectors(_forward, camera.up).normalize();
+
+				_direction.set(0, 0, 0);
+				if (keys.forward) _direction.add(_forward);
+				if (keys.backward) _direction.sub(_forward);
+				if (keys.right) _direction.add(_right);
+				if (keys.left) _direction.sub(_right);
+				if (keys.up) _direction.y += 1;
+				if (keys.down) _direction.y -= 1;
+
+				if (_direction.lengthSq() > 0.001) {
+					_direction.normalize();
+					camera.position.addScaledVector(_direction, distance);
+				}
+				return;
+			}
+
+			// Walking mode: ground-following
 			camera.getWorldDirection(_forward);
 			_forward.y = 0;
 			_forward.normalize();
@@ -158,6 +179,10 @@ export function createFPController(
 
 		setOnExit(fn: () => void) {
 			onExitFn = fn;
+		},
+
+		setFreefly(enabled: boolean) {
+			freefly = enabled;
 		},
 
 		dispose() {

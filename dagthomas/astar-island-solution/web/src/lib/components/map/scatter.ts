@@ -10,6 +10,7 @@ import { applyWindSway, type WindSystem } from './wind';
 
 export interface ScatterSystem {
 	group: THREE.Group;
+	flowerPositions: { x: number; y: number; z: number }[];
 	updateCulling(camera: THREE.PerspectiveCamera): void;
 	dispose(): void;
 }
@@ -325,12 +326,14 @@ export async function createScatter(
 		flowerInstMeshes.push(inst);
 	}
 
+	const flowerPositions: { x: number; y: number; z: number }[] = [];
 	for (let i = 0; i < FLOWER_COUNT && grassCells.length > 0; i++) {
 		const cell = grassCells[Math.floor(rng() * grassCells.length)];
 		const px = cell.x + (rng() - 0.5) * 0.9;
 		const pz = cell.z + (rng() - 0.5) * 0.9;
 		const py = heightFn(px, pz);
 		if (py < -0.05) continue;
+		flowerPositions.push({ x: px, y: py, z: pz });
 
 		const variant = Math.floor(rng() * FLOWER_VARIANTS);
 		const scale = 0.7 + rng() * 0.6;
@@ -472,6 +475,7 @@ export async function createScatter(
 
 	return {
 		group,
+		flowerPositions,
 
 		updateCulling(camera: THREE.PerspectiveCamera) {
 			cullFrame++;

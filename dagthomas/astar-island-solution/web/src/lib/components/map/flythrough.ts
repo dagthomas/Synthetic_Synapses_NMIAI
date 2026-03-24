@@ -1,15 +1,9 @@
 /**
- * Glider-like FPV flythrough with wide sweeping arcs.
- *
- * Each start() generates a fresh random flight path by shuffling terrain
- * features and randomizing approach angles, distances, and altitudes.
- * No two flights are the same.
- *
- * Big banking rolls, soaring altitude, slow graceful turns.
+ * Cinematic flythrough — roams around the map perimeter looking inward,
+ * with occasional glances toward sun/moon/aurora (5% of the time).
+ * Smooth wide arcs, never reaches the grid edge, always keeps terrain in view.
  */
 import * as THREE from 'three';
-import { findClusters, type Cluster } from './clusters';
-import { TerrainCode } from '$lib/types';
 
 export interface FlythroughSystem {
 	active: boolean;
@@ -20,187 +14,85 @@ export interface FlythroughSystem {
 	dispose(): void;
 }
 
-/** Fisher-Yates shuffle (in-place) */
-function shuffle<T>(arr: T[]): T[] {
-	for (let i = arr.length - 1; i > 0; i--) {
-		const j = Math.floor(Math.random() * (i + 1));
-		[arr[i], arr[j]] = [arr[j], arr[i]];
-	}
-	return arr;
+const FLIGHT_SPEED = 1.8;
+const MIN_CLEARANCE = 1.8;
+const MAX_ROLL = 0.16;
+const LOOK_AHEAD = 10;
+const LOOK_DOWN = 4.0;
+const SPLINE_TENSION = 0.45;
+
+function seededRng(seed: number) {
+	let s = seed;
+	return () => {
+		s = (s * 1664525 + 1013904223) & 0x7fffffff;
+		return s / 0x7fffffff;
+	};
 }
 
-/** Ensure minimum distance between consecutive waypoints */
-function enforceMinDist(pts: THREE.Vector3[], minDist: number): THREE.Vector3[] {
-	if (pts.length < 2) return pts;
-	const out = [pts[0]];
-	for (let i = 1; i < pts.length; i++) {
-		if (pts[i].distanceTo(out[out.length - 1]) >= minDist) {
-			out.push(pts[i]);
-		}
-	}
-	return out;
-}
-
-function buildRandomFlightPath(
+function buildPath(
 	grid: number[][],
 	heightFn: (x: number, z: number) => number,
-	cachedClusters?: Cluster[]
+	startPos?: THREE.Vector3,
+	startDir?: THREE.Vector3
 ): THREE.Vector3[] {
 	const rows = grid.length;
 	const cols = grid[0].length;
-	const ox = -cols / 2;
-	const oz = -rows / 2;
 	const halfW = cols / 2, halfH = rows / 2;
+	const rng = seededRng(Date.now() & 0xffff);
 
-	const clusters = cachedClusters ?? findClusters(grid);
+	// Orbit radius: roam around the mid-ring of the map (40-70% from center)
+	const innerR = Math.min(halfW, halfH) * 0.35;
+	const outerR = Math.min(halfW, halfH) * 0.65;
+
 	const pts: THREE.Vector3[] = [];
+	const orbitDir = rng() > 0.5 ? 1 : -1;
+	const baseAngle = rng() * Math.PI * 2;
+	const baseAlt = 5 + rng() * 2;
 
-	// Collect all interesting features (stay within play area)
-	const features: { pos: THREE.Vector3; groundH: number; type: string }[] = [];
-
-	for (const c of clusters) {
-		const pos = new THREE.Vector3(c.centerX + ox + 0.5, 0, c.centerY + oz + 0.5);
-		const groundH = heightFn(pos.x, pos.z);
-		let type = 'other';
-		if (c.terrainType === TerrainCode.MOUNTAIN) type = 'mountain';
-		else if (c.terrainType === TerrainCode.SETTLEMENT) type = 'settlement';
-		else if (c.terrainType === TerrainCode.FOREST) type = 'forest';
-		else if (c.terrainType === TerrainCode.RUIN) type = 'ruin';
-		else if (c.terrainType === TerrainCode.PORT) type = 'port';
-		else continue;
-		features.push({ pos, groundH, type });
+	// Bridge from current position
+	if (startPos && startDir) {
+		pts.push(startPos.clone());
+		const bridge = startPos.clone().addScaledVector(startDir, 5);
+		bridge.y = Math.max(bridge.y, heightFn(bridge.x, bridge.z) + MIN_CLEARANCE);
+		pts.push(bridge);
 	}
 
-	// Shuffle and pick 8-12 features for this flight
-	shuffle(features);
-	const count = Math.min(features.length, 8 + Math.floor(Math.random() * 5));
-	const selected = features.slice(0, count);
+	// ~16 points around a wobbly orbit — mostly mid-ring, occasionally dipping inward
+	const numPoints = 14 + Math.floor(rng() * 4);
 
-	const rAngle = () => Math.random() * Math.PI * 2;
-	const rRange = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
+	for (let i = 0; i < numPoints; i++) {
+		const t = i / numPoints;
+		const angle = baseAngle + t * Math.PI * 2 * orbitDir;
 
-	// Keep camera well within the map — 70% of play area
-	const innerW = halfW * 0.7, innerH = halfH * 0.7;
-	function clampToPlay(v: THREE.Vector3) {
-		v.x = Math.max(-innerW, Math.min(innerW, v.x));
-		v.z = Math.max(-innerH, Math.min(innerH, v.z));
-		return v;
+		// Radius wobbles between inner and outer ring
+		const wobble = Math.sin(angle * 3 + rng() * 2) * 0.5 + 0.5; // 0-1
+		const r = innerR + wobble * (outerR - innerR);
+
+		// Occasional inward dip (every ~4th point, 25% chance)
+		const dipInward = rng() < 0.15;
+		const actualR = dipInward ? r * 0.4 : r;
+
+		let x = Math.cos(angle) * actualR;
+		let z = Math.sin(angle) * actualR;
+
+		// Clamp to grid
+		x = Math.max(-halfW * 0.8, Math.min(halfW * 0.8, x));
+		z = Math.max(-halfH * 0.8, Math.min(halfH * 0.8, z));
+
+		const groundH = heightFn(
+			Math.max(-halfW + 0.5, Math.min(halfW - 0.5, x)),
+			Math.max(-halfH + 0.5, Math.min(halfH - 0.5, z))
+		);
+
+		// Altitude: gentle wave, higher on outer ring
+		const altWave = Math.sin(t * Math.PI * 3) * 1.5;
+		const distFactor = actualR / outerR; // higher when further out
+		const y = Math.max(groundH + MIN_CLEARANCE, baseAlt + altWave + distFactor * 2);
+
+		pts.push(new THREE.Vector3(x, y, z));
 	}
 
-	const orb = (c: THREE.Vector3, a: number, r: number, alt: number) =>
-		clampToPlay(new THREE.Vector3(c.x + Math.cos(a) * r, alt, c.z + Math.sin(a) * r));
-
-	// Swoop: gentle climb → dive → pull-up (3 points, bird-like)
-	function swoop(target: THREE.Vector3, groundH: number) {
-		const approachAngle = rAngle();
-		const exitAngle = approachAngle + rRange(1.5, 2.8);
-		const approachR = rRange(4, 8);
-		const exitR = rRange(4, 8);
-		const peakAlt = rRange(5, 9);
-		const nadirAlt = rRange(1.5, 3.0);
-
-		pts.push(orb(target, approachAngle, approachR, groundH + peakAlt));
-		pts.push(orb(target, (approachAngle + exitAngle) / 2, approachR * 0.35, groundH + nadirAlt));
-		pts.push(orb(target, exitAngle, exitR, groundH + peakAlt * 0.8));
-	}
-
-	// Skim: 4 points weaving over the feature
-	function skim(target: THREE.Vector3, groundH: number) {
-		const angle = rAngle();
-		const dx = Math.cos(angle);
-		const dz = Math.sin(angle);
-		const spread = rRange(4, 7);
-
-		pts.push(clampToPlay(new THREE.Vector3(target.x - dx * spread, groundH + rRange(4, 6), target.z - dz * spread)));
-		pts.push(clampToPlay(new THREE.Vector3(target.x - dx * 1.5, groundH + rRange(2, 3.5), target.z - dz * 1.5)));
-		pts.push(clampToPlay(new THREE.Vector3(target.x + dx * 1.5, groundH + rRange(2, 3.5), target.z + dz * 1.5)));
-		pts.push(clampToPlay(new THREE.Vector3(target.x + dx * spread, groundH + rRange(4, 6.5), target.z + dz * spread)));
-	}
-
-	// Low pass: bird swooping over ground
-	function buzz(target: THREE.Vector3, groundH: number) {
-		const angle = rAngle();
-		const dx = Math.cos(angle);
-		const dz = Math.sin(angle);
-		const spread = rRange(5, 9);
-
-		pts.push(clampToPlay(new THREE.Vector3(target.x - dx * spread, groundH + rRange(4, 6), target.z - dz * spread)));
-		pts.push(clampToPlay(new THREE.Vector3(target.x - dx * 3, groundH + rRange(1.5, 2.5), target.z - dz * 3)));
-		pts.push(clampToPlay(new THREE.Vector3(target.x, groundH + rRange(1.2, 2.0), target.z)));
-		pts.push(clampToPlay(new THREE.Vector3(target.x + dx * 3, groundH + rRange(1.5, 2.5), target.z + dz * 3)));
-		pts.push(clampToPlay(new THREE.Vector3(target.x + dx * spread, groundH + rRange(4, 6), target.z + dz * spread)));
-	}
-
-	// Entry from inside the map (not edges)
-	const entryAngle = rAngle();
-	pts.push(clampToPlay(new THREE.Vector3(
-		Math.cos(entryAngle) * halfW * 0.5,
-		rRange(5, 8),
-		Math.sin(entryAngle) * halfH * 0.5
-	)));
-
-	// Visit each selected feature with a random flight pattern
-	for (const feat of selected) {
-		// Smooth transition between features
-		const lastPt = pts[pts.length - 1];
-		const mid = new THREE.Vector3().lerpVectors(lastPt, feat.pos, 0.5);
-		const wasHigh = lastPt.y > feat.groundH + 3;
-		mid.y = wasHigh ? feat.groundH + rRange(2, 3.5) : feat.groundH + rRange(4, 7);
-		// Gentle sideways offset for smooth curves
-		mid.x += rRange(-3, 3);
-		mid.z += rRange(-3, 3);
-		clampToPlay(mid);
-		pts.push(mid);
-
-		// Alternate: if currently high → go low, if low → go higher
-		const currentAlt = pts[pts.length - 1].y;
-		const isHigh = currentAlt > feat.groundH + 1.5;
-		const pattern = Math.random();
-
-		if (isHigh || pattern < 0.3) {
-			if (pattern < 0.5) {
-				buzz(feat.pos, feat.groundH);
-			} else {
-				skim(feat.pos, feat.groundH);
-			}
-		} else {
-			swoop(feat.pos, feat.groundH);
-		}
-	}
-
-	// Closing: arc back toward center
-	const closingAngle = entryAngle + rRange(0.5, 1.5);
-	pts.push(clampToPlay(new THREE.Vector3(
-		Math.cos(closingAngle) * halfW * 0.35,
-		rRange(5, 8),
-		Math.sin(closingAngle) * halfH * 0.35
-	)));
-
-	// Enforce minimum clearance above terrain at each waypoint
-	const MIN_PATH_CLEARANCE = 1.5;
-	for (const pt of pts) {
-		const h = heightFn(pt.x, pt.z);
-		if (pt.y < h + MIN_PATH_CLEARANCE) {
-			pt.y = h + MIN_PATH_CLEARANCE;
-		}
-	}
-
-	// Enforce minimum distance between consecutive waypoints (wide arcs need spacing)
-	const filtered = enforceMinDist(pts, 3);
-
-	// Fallback if not enough points
-	if (filtered.length < 8) {
-		const fallback: THREE.Vector3[] = [];
-		const r = Math.min(halfW, halfH) * 0.5;
-		for (let i = 0; i < 12; i++) {
-			const a = (i / 12) * Math.PI * 2 + Math.random() * 0.3;
-			const alt = 3 + Math.sin(a * 3) * 4;
-			fallback.push(new THREE.Vector3(Math.cos(a) * r, alt, Math.sin(a) * r));
-		}
-		return fallback;
-	}
-
-	return filtered;
+	return pts;
 }
 
 export function createFlythrough(
@@ -209,10 +101,9 @@ export function createFlythrough(
 ): FlythroughSystem {
 	let _grid = initialGrid;
 	let _heightFn = initialHeightFn;
-	let _cachedClusters = findClusters(initialGrid);
-	let pathPoints = buildRandomFlightPath(_grid, _heightFn, _cachedClusters);
-	let curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.15);
-	let loopDuration = curve.getLength() / 1.6; // bird cruising speed
+	let pathPoints = buildPath(_grid, _heightFn);
+	let curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', SPLINE_TENSION);
+	let loopDuration = curve.getLength() / FLIGHT_SPEED;
 
 	let t = 0;
 	let active = false;
@@ -227,6 +118,20 @@ export function createFlythrough(
 	let smoothRoll = 0;
 	let smoothPitch = 0;
 
+	// Sky glance state: occasionally look up toward sun/moon/aurora
+	let skyGlanceActive = false;
+	let skyGlanceTimer = 8 + Math.random() * 15; // first glance after 8-23s
+	let skyGlanceProgress = 0;
+	const SKY_GLANCE_DURATION = 3.0; // seconds looking up
+	const SKY_GLANCE_CHANCE = 0.05; // 5% check each cycle
+
+	function regeneratePath(fromPos?: THREE.Vector3, fromDir?: THREE.Vector3) {
+		pathPoints = buildPath(_grid, _heightFn, fromPos, fromDir);
+		curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', SPLINE_TENSION);
+		loopDuration = curve.getLength() / FLIGHT_SPEED;
+		t = 0;
+	}
+
 	return {
 		get active() { return active; },
 		set active(v: boolean) { active = v; },
@@ -236,70 +141,82 @@ export function createFlythrough(
 
 			t += dt / loopDuration;
 			if (t > 1) {
-				// Generate a new random path for the next loop
-				t -= 1;
-				pathPoints = buildRandomFlightPath(_grid, _heightFn, _cachedClusters);
-				curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.15);
-				loopDuration = curve.getLength() / 1.6;
-				smoothRoll = 0;
-				smoothPitch = 0;
-				_prevTangent.set(0, 0, -1);
+				const pos = curve.getPointAt(0.999);
+				const dir = _smoothLook.clone().normalize();
+				regeneratePath(pos, dir);
+				smoothRoll *= 0.3;
 			}
 
-			// Position on spline
 			const pos = curve.getPointAt(t);
 
-			// Subtle breathing — bird-like bob
-			const breathPhase = t * Math.PI * 12;
-			pos.y += Math.sin(breathPhase) * 0.03;
+			// Subtle breathing
+			pos.y += Math.sin(t * Math.PI * 10) * 0.015;
 
-			// Light wind sway
+			// Terrain clearance
 			curve.getTangentAt(t, _tangent);
-			_right.crossVectors(_tangent, _up).normalize();
-			pos.addScaledVector(_right, Math.sin(breathPhase * 0.4) * 0.015);
-
-			// Terrain collision avoidance
 			const groundH = _heightFn(pos.x, pos.z);
-			const MIN_CLEARANCE = 1.2;
 			if (pos.y < groundH + MIN_CLEARANCE) {
-				pos.y = groundH + MIN_CLEARANCE;
+				pos.y += (groundH + MIN_CLEARANCE - pos.y + 0.5) * dt * 4;
 			}
 
 			camera.position.copy(pos);
 
-			// Smooth the tangent direction — responsive but not snappy
+			// Smooth look direction
 			if (_smoothLook.lengthSq() < 0.001) {
 				_smoothLook.copy(_tangent);
 			} else {
-				_smoothLook.lerp(_tangent, Math.min(1, dt * 3.5));
+				_smoothLook.lerp(_tangent, Math.min(1, dt * 1.8));
 			}
 			_smoothLook.normalize();
 
-			// Look ahead — bird looking down at terrain features
-			const lookTarget = pos.clone().addScaledVector(_smoothLook, 6);
-			lookTarget.y -= 2.0; // stronger downward tilt to keep ground in view
+			// Default: look ahead and inward (toward map center + down)
+			const lookTarget = pos.clone().addScaledVector(_smoothLook, LOOK_AHEAD);
 
-			// Gentle pitch — follow terrain slope
+			// Bias look target toward center of map (looking inward)
+			const inwardBias = 0.3;
+			lookTarget.x -= lookTarget.x * inwardBias;
+			lookTarget.z -= lookTarget.z * inwardBias;
+			lookTarget.y -= LOOK_DOWN;
+
+			// Sky glance: occasionally tilt up toward sky
+			skyGlanceTimer -= dt;
+			if (!skyGlanceActive && skyGlanceTimer <= 0) {
+				if (Math.random() < SKY_GLANCE_CHANCE) {
+					skyGlanceActive = true;
+					skyGlanceProgress = 0;
+				}
+				skyGlanceTimer = 5 + Math.random() * 20;
+			}
+
+			if (skyGlanceActive) {
+				skyGlanceProgress += dt / SKY_GLANCE_DURATION;
+				if (skyGlanceProgress >= 1) {
+					skyGlanceActive = false;
+				} else {
+					// Smooth ease: up then back down
+					const glanceT = Math.sin(skyGlanceProgress * Math.PI); // 0→1→0
+					// Tilt look target upward (toward sky/sun/moon)
+					lookTarget.y += glanceT * 15; // strong upward lift
+					// Slight outward look for drama
+					lookTarget.x += lookTarget.x * glanceT * 0.3;
+					lookTarget.z += lookTarget.z * glanceT * 0.3;
+				}
+			}
+
+			// Pitch
 			const pitch = _tangent.y;
-			const targetPitchOffset = pitch < -0.1 ? pitch * 0.5 : pitch * 0.15;
-			smoothPitch += (targetPitchOffset - smoothPitch) * Math.min(1, dt * 1.5);
+			smoothPitch += (pitch * 0.2 - smoothPitch) * Math.min(1, dt * 1.0);
 			lookTarget.y += smoothPitch;
 
-			// Force world-up — prevents flip
 			camera.up.set(0, 1, 0);
 			camera.lookAt(lookTarget);
 
-			// Moderate banking — smooth bird turns, never sharp
+			// Gentle banking
 			curve.getTangentAt(t, _tangent);
 			const crossTurn = _prevTangent.x * _tangent.z - _prevTangent.z * _tangent.x;
+			const clampedRoll = Math.max(-MAX_ROLL, Math.min(MAX_ROLL, -crossTurn * 3.0));
+			smoothRoll += (clampedRoll - smoothRoll) * Math.min(1, dt * 0.7);
 
-			const swoopFactor = 1 + Math.abs(pitch) * 1.5;
-			const targetRoll = -crossTurn * 3.5 * swoopFactor;
-			const maxRoll = 0.22; // ~12 degrees — graceful bird banking
-			const clampedRoll = Math.max(-maxRoll, Math.min(maxRoll, targetRoll));
-			smoothRoll += (clampedRoll - smoothRoll) * Math.min(1, dt * 0.8);
-
-			// Apply roll as quaternion rotation around camera's forward vector
 			camera.getWorldDirection(_fwd);
 			_rollQuat.setFromAxisAngle(_fwd, smoothRoll);
 			camera.quaternion.premultiply(_rollQuat);
@@ -308,57 +225,29 @@ export function createFlythrough(
 		},
 
 		start(camera: THREE.PerspectiveCamera) {
-			// Generate fresh random path each time
-			pathPoints = buildRandomFlightPath(_grid, _heightFn, _cachedClusters);
-			curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.15);
-			loopDuration = curve.getLength() / 1.6;
-
+			regeneratePath();
 			active = true;
-			t = 0;
 			smoothRoll = 0;
 			smoothPitch = 0;
+			skyGlanceActive = false;
+			skyGlanceTimer = 8 + Math.random() * 15;
 			camera.up.set(0, 1, 0);
 			camera.position.copy(pathPoints[0]);
-			// Initialize smoothLook as forward tangent direction
 			curve.getTangentAt(0, _smoothLook);
 			_prevTangent.copy(_smoothLook);
-			const initLook = pathPoints[0].clone().addScaledVector(_smoothLook, 5);
-			camera.lookAt(initLook);
+			camera.lookAt(pathPoints[0].clone().addScaledVector(_smoothLook, 5));
 		},
 
 		transitionToNewPath(newGrid: number[][], newHeightFn: (x: number, z: number) => number) {
-			// Capture current camera position and heading from the active spline
 			const currentPos = curve.getPointAt(Math.min(t, 0.999));
 			const currentDir = _smoothLook.clone().normalize();
-
-			// Update grid/heightFn/clusters for future path generation
 			_grid = newGrid;
 			_heightFn = newHeightFn;
-			_cachedClusters = findClusters(newGrid);
-
-			// Generate new path from new terrain
-			pathPoints = buildRandomFlightPath(newGrid, newHeightFn, _cachedClusters);
-
-			// Bridge: prepend current position + a point along current heading
-			// so the spline smoothly exits the current trajectory
-			const bridgePoint = currentPos.clone().addScaledVector(currentDir, 5);
-			bridgePoint.y = newHeightFn(bridgePoint.x, bridgePoint.z) + 2.0;
-			pathPoints.unshift(currentPos.clone(), bridgePoint);
-
-			// Rebuild spline with bridge segment
-			curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.15);
-			loopDuration = curve.getLength() / 1.6;
-			t = 0;
-			// Preserve smooth look/roll to avoid sudden snap
+			regeneratePath(currentPos, currentDir);
 			_prevTangent.copy(currentDir);
 		},
 
-		stop() {
-			active = false;
-		},
-
-		dispose() {
-			active = false;
-		}
+		stop() { active = false; },
+		dispose() { active = false; }
 	};
 }

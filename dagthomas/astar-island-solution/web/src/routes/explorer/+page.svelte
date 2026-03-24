@@ -50,11 +50,16 @@
 	let grid = $derived(currentDetail?.initial_states?.[selectedSeed]?.grid ?? null);
 	let settlements = $derived(currentDetail?.initial_states?.[selectedSeed]?.settlements ?? []);
 
-	// Flythrough round cycling
+	// Flythrough round cycling — cinematic: rounds 6→23, 15s each to fill 4:30 song
 	let flythroughActive = $state(false);
+	let flythroughEnded = $state(false);
 	let roundCycleInterval: ReturnType<typeof setInterval> | undefined;
 	const ROUND_CYCLE_TIMES = [6, 10, 14, 18, 22];
 	const ROUND_CYCLE_SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter', 'summer'];
+	const SONG_DURATION = 270; // 4:30
+	const ROUND_START = 6;
+	const ROUND_END = 23;
+	const CYCLE_INTERVAL = 15000; // 270s / 18 rounds = 15s
 
 	let preloadedRound: Map<string, RoundDetail> = new Map();
 
@@ -72,6 +77,7 @@
 
 	function onFlythroughChange(active: boolean) {
 		flythroughActive = active;
+		flythroughEnded = false;
 		if (active) {
 			// Ensure we're not on a skipped seed
 			if (FLYTHROUGH_SKIP_SEEDS.has(selectedSeed)) {
@@ -79,28 +85,33 @@
 				selectedSeed = nextFlythroughSeed(selectedSeed, seedCount);
 			}
 
-			const sorted = [...rounds].sort((a, b) => a.round_number - b.round_number);
-			// Always start from the lowest round
+			// Filter rounds 6-23, sorted by round_number
+			const cinemaRounds = [...rounds]
+				.filter(r => r.round_number >= ROUND_START && r.round_number <= ROUND_END)
+				.sort((a, b) => a.round_number - b.round_number);
+
+			if (cinemaRounds.length === 0) return;
+
+			// Start on round 6
 			let roundIdx = 0;
-			if (sorted.length > 0 && sorted[0].id !== selectedRoundId) {
-				const firstId = sorted[0].id;
-				const preloaded = preloadedRound.get(firstId);
-				if (preloaded) {
-					currentDetail = preloaded;
+			const firstId = cinemaRounds[0].id;
+			const preloaded = preloadedRound.get(firstId);
+			if (preloaded) {
+				currentDetail = preloaded;
+				selectedRoundId = firstId;
+				preloadedRound.delete(firstId);
+			} else {
+				fetchAPI<RoundDetail>(`/api/rounds/${firstId}`).then(d => {
+					currentDetail = d;
 					selectedRoundId = firstId;
-					preloadedRound.delete(firstId);
-				} else {
-					fetchAPI<RoundDetail>(`/api/rounds/${firstId}`).then(d => {
-						currentDetail = d;
-						selectedRoundId = firstId;
-					}).catch(() => {});
-				}
+				}).catch(() => {});
 			}
 
-			// Preload next round immediately
+			// Preload next round
 			const preloadNext = (idx: number) => {
-				const nextIdx = (idx + 1) % sorted.length;
-				const nextId = sorted[nextIdx].id;
+				const nextIdx = idx + 1;
+				if (nextIdx >= cinemaRounds.length) return;
+				const nextId = cinemaRounds[nextIdx].id;
 				if (!preloadedRound.has(nextId)) {
 					fetchAPI<RoundDetail>(`/api/rounds/${nextId}`).then(d => {
 						preloadedRound.set(nextId, d);
@@ -109,30 +120,41 @@
 			};
 			preloadNext(roundIdx);
 
-			roundCycleInterval = setInterval(async () => {
-				roundIdx = (roundIdx + 1) % sorted.length;
-				const nextId = sorted[roundIdx].id;
-				// Use preloaded data if available — instant switch
-				const preloaded = preloadedRound.get(nextId);
-				if (preloaded) {
-					currentDetail = preloaded;
-					selectedRoundId = nextId;
-					preloadedRound.delete(nextId);
-				} else {
-					await selectRound(nextId);
-				}
-				// Cycle seed, skipping banned ones
-				const seedCount = currentDetail?.initial_states?.length ?? 5;
-				selectedSeed = nextFlythroughSeed(selectedSeed, seedCount);
-				timeOfDay = ROUND_CYCLE_TIMES[roundIdx % ROUND_CYCLE_TIMES.length];
-				season = ROUND_CYCLE_SEASONS[roundIdx % ROUND_CYCLE_SEASONS.length];
-				// Preload the one after this
-				preloadNext(roundIdx);
-			}, 12000);
+			// Start cycling after intro (~8s for camera showcase)
+			setTimeout(() => {
+				roundCycleInterval = setInterval(async () => {
+					roundIdx++;
+					if (roundIdx >= cinemaRounds.length) {
+						// Reached round 23 — stop cycling, let song finish naturally
+						if (roundCycleInterval) { clearInterval(roundCycleInterval); roundCycleInterval = undefined; }
+						return;
+					}
+					const nextId = cinemaRounds[roundIdx].id;
+					const preloaded = preloadedRound.get(nextId);
+					if (preloaded) {
+						currentDetail = preloaded;
+						selectedRoundId = nextId;
+						preloadedRound.delete(nextId);
+					} else {
+						await selectRound(nextId);
+					}
+					// Cycle seed, skipping banned ones
+					const seedCount = currentDetail?.initial_states?.length ?? 5;
+					selectedSeed = nextFlythroughSeed(selectedSeed, seedCount);
+					timeOfDay = ROUND_CYCLE_TIMES[roundIdx % ROUND_CYCLE_TIMES.length];
+					season = ROUND_CYCLE_SEASONS[roundIdx % ROUND_CYCLE_SEASONS.length];
+					preloadNext(roundIdx);
+				}, CYCLE_INTERVAL);
+			}, 8000); // wait for intro pan
 		} else {
 			if (roundCycleInterval) { clearInterval(roundCycleInterval); roundCycleInterval = undefined; }
 			preloadedRound.clear();
 		}
+	}
+
+	function onSongEnd() {
+		flythroughEnded = true;
+		if (roundCycleInterval) { clearInterval(roundCycleInterval); roundCycleInterval = undefined; }
 	}
 
 	let seedLabel = $derived(`Seed ${selectedSeed}`);
@@ -295,6 +317,7 @@
 				freezeCamera={generatingAll}
 				onCaptureFn={(fn) => (captureFn = fn)}
 				{onFlythroughChange}
+				{onSongEnd}
 				{season}
 			/>
 		{:else}
