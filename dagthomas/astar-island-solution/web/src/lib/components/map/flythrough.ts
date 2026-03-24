@@ -84,10 +84,11 @@ function buildPath(
 			Math.max(-halfH + 0.5, Math.min(halfH - 0.5, z))
 		);
 
-		// Altitude: gentle wave, higher on outer ring
-		const altWave = Math.sin(t * Math.PI * 3) * 1.5;
-		const distFactor = actualR / outerR; // higher when further out
-		const y = Math.max(groundH + MIN_CLEARANCE, baseAlt + altWave + distFactor * 2);
+		// Altitude: dramatic variation — high swoops + low passes
+		const altWave = Math.sin(t * Math.PI * 3) * 3.0; // bigger swings
+		const distFactor = actualR / outerR;
+		const lowPass = dipInward ? -2.5 : 0; // dip low when cutting through center
+		const y = Math.max(groundH + MIN_CLEARANCE, baseAlt + altWave + distFactor * 3 + lowPass);
 
 		pts.push(new THREE.Vector3(x, y, z));
 	}
@@ -169,14 +170,19 @@ export function createFlythrough(
 			}
 			_smoothLook.normalize();
 
-			// Default: look ahead and inward (toward map center + down)
+			// Dynamic look angle: high = look down more, low = look ahead
+			const groundH2 = _heightFn(pos.x, pos.z);
+			const heightAboveGround = pos.y - groundH2;
+			// Map height 2-12 to lookDown 2-6 (less aggressive at high altitude)
+			const dynamicLookDown = 2.0 + Math.min(4.0, Math.max(0, heightAboveGround - 2) * 0.5);
+
 			const lookTarget = pos.clone().addScaledVector(_smoothLook, LOOK_AHEAD);
 
 			// Bias look target toward center of map (looking inward)
 			const inwardBias = 0.3;
 			lookTarget.x -= lookTarget.x * inwardBias;
 			lookTarget.z -= lookTarget.z * inwardBias;
-			lookTarget.y -= LOOK_DOWN;
+			lookTarget.y -= dynamicLookDown;
 
 			// Sky glance: occasionally tilt up toward sky
 			skyGlanceTimer -= dt;

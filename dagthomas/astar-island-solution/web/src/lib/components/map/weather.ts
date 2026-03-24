@@ -135,7 +135,7 @@ export function createWeatherSystem(
 				transparent: true,
 				opacity: 0.18,
 				depthWrite: false,
-				fog: true
+				fog: false
 			});
 			const sprite = new THREE.Sprite(mat);
 			const scale = 2 + Math.random() * 2;
@@ -201,14 +201,14 @@ export function createWeatherSystem(
 					mat.color.setHex(0xeeeeff);
 					mat.size = 0.08 + stormIntensity * 0.04;
 					mat.opacity = 0.4 + stormIntensity * 0.3;
-					const speedMult = 0.3 + stormIntensity * 0.3; // much slower fall
+					const speedMult = 0.1 + stormIntensity * 0.15; // gentle snowfall
 					const spreadMult = 1 + stormIntensity * 1.5;
 
 					const pos = zone.points.geometry.attributes.position as THREE.BufferAttribute;
 					const arr = pos.array as Float32Array;
 					for (let i = 0; i < pos.count; i++) {
-						// Snow drifts sideways
-						arr[i * 3] += Math.sin(arr[i * 3 + 1] * 2 + i) * dt * 0.3;
+						// Snow drifts sideways gently
+						arr[i * 3] += Math.sin(arr[i * 3 + 1] * 2 + i) * dt * 0.1;
 						arr[i * 3 + 1] -= zone.velocities[i] * dt * speedMult;
 						if (arr[i * 3 + 1] < 0.1) {
 							arr[i * 3] = zone.center.x + (Math.random() - 0.5) * zone.radius * 2 * spreadMult;

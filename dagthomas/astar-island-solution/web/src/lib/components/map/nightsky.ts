@@ -204,6 +204,79 @@ function createAurora(): { mesh: THREE.Mesh; material: THREE.ShaderMaterial } {
 //  Combined system
 // ═══════════════════════════════════════
 
+// ═══════════════════════════════════════
+//  Aurora ground caustics — subtle colored light on terrain
+// ═══════════════════════════════════════
+
+function createAuroraCaustics(): { mesh: THREE.Mesh; material: THREE.ShaderMaterial } {
+	const geo = new THREE.PlaneGeometry(40, 40, 1, 1);
+	geo.rotateX(-Math.PI / 2);
+
+	const material = new THREE.ShaderMaterial({
+		transparent: true,
+		depthWrite: false,
+		blending: THREE.AdditiveBlending,
+		uniforms: {
+			uTime: { value: 0 },
+			uOpacity: { value: 0 },
+		},
+		vertexShader: `
+			varying vec2 vUv;
+			void main() {
+				vUv = uv;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			}
+		`,
+		fragmentShader: `
+			uniform float uTime;
+			uniform float uOpacity;
+			varying vec2 vUv;
+
+			// Simple noise
+			float hash(vec2 p) {
+				return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+			}
+			float noise(vec2 p) {
+				vec2 i = floor(p);
+				vec2 f = fract(p);
+				f = f * f * (3.0 - 2.0 * f);
+				return mix(
+					mix(hash(i), hash(i + vec2(1, 0)), f.x),
+					mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x),
+					f.y
+				);
+			}
+
+			void main() {
+				// Two noise layers at different speeds/scales
+				float n1 = noise(vUv * 8.0 + vec2(uTime * 0.08, uTime * 0.03));
+				float n2 = noise(vUv * 12.0 - vec2(uTime * 0.05, uTime * 0.07));
+				float caustic = n1 * n2;
+
+				// Aurora colors: green → teal → purple based on position
+				vec3 green = vec3(0.1, 0.8, 0.3);
+				vec3 teal = vec3(0.1, 0.5, 0.7);
+				vec3 purple = vec3(0.4, 0.1, 0.6);
+				float t = vUv.x + noise(vUv * 3.0 + uTime * 0.02) * 0.3;
+				vec3 col = mix(green, teal, smoothstep(0.3, 0.5, t));
+				col = mix(col, purple, smoothstep(0.6, 0.8, t));
+
+				// Soft edge fade
+				float edge = smoothstep(0.0, 0.15, vUv.x) * smoothstep(1.0, 0.85, vUv.x)
+				           * smoothstep(0.0, 0.15, vUv.y) * smoothstep(1.0, 0.85, vUv.y);
+
+				gl_FragColor = vec4(col * caustic, caustic * edge * uOpacity * 0.06);
+			}
+		`,
+	});
+
+	const mesh = new THREE.Mesh(geo, material);
+	mesh.position.y = 0.08; // just above terrain
+	mesh.renderOrder = 4;
+
+	return { mesh, material };
+}
+
 export function createNightSky(): NightSkySystem {
 	const group = new THREE.Group();
 	let elapsed = 0;
@@ -213,6 +286,9 @@ export function createNightSky(): NightSkySystem {
 
 	const aurora = createAurora();
 	group.add(aurora.mesh);
+
+	const caustics = createAuroraCaustics();
+	group.add(caustics.mesh);
 
 	return {
 		group,
@@ -233,6 +309,11 @@ export function createNightSky(): NightSkySystem {
 			aurora.material.uniforms.uOpacity.value = auroraOpacity;
 			aurora.mesh.visible = auroraOpacity > 0.01;
 
+			// Aurora ground caustics — match aurora visibility
+			caustics.material.uniforms.uTime.value = elapsed;
+			caustics.material.uniforms.uOpacity.value = auroraOpacity;
+			caustics.mesh.visible = auroraOpacity > 0.01;
+
 			// Slowly rotate aurora for variety
 			aurora.mesh.rotation.y = Math.sin(elapsed * 0.02) * 0.15;
 		},
@@ -242,6 +323,8 @@ export function createNightSky(): NightSkySystem {
 			stars.material.dispose();
 			aurora.mesh.geometry.dispose();
 			aurora.material.dispose();
+			caustics.mesh.geometry.dispose();
+			caustics.material.dispose();
 		},
 	};
 }

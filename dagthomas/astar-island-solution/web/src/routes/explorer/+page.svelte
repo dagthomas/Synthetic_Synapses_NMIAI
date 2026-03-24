@@ -53,6 +53,7 @@
 	// Flythrough round cycling — cinematic: rounds 6→23, 15s each to fill 4:30 song
 	let flythroughActive = $state(false);
 	let flythroughEnded = $state(false);
+	let panelHidden = $state(false);
 	let roundCycleInterval: ReturnType<typeof setInterval> | undefined;
 	const ROUND_CYCLE_TIMES = [6, 10, 14, 18, 22];
 	const ROUND_CYCLE_SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter', 'summer'];
@@ -268,6 +269,12 @@
 		}
 	}
 
+	function onKeyDown(e: KeyboardEvent) {
+		if (e.code === 'KeyH' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+			panelHidden = !panelHidden;
+		}
+	}
+
 	onMount(() => {
 		clockInterval = setInterval(() => {
 			if (autoTime) {
@@ -275,11 +282,13 @@
 			}
 		}, 30000);
 		loadGallery();
+		if (typeof window !== 'undefined') window.addEventListener('keydown', onKeyDown);
 	});
 
 	onDestroy(() => {
 		if (clockInterval) clearInterval(clockInterval);
 		if (roundCycleInterval) clearInterval(roundCycleInterval);
+		if (typeof window !== 'undefined') window.removeEventListener('keydown', onKeyDown);
 	});
 
 	// Terrain breakdown
@@ -328,7 +337,8 @@
 	</div>
 
 	<!-- Controls panel -->
-	<div class="w-64 space-y-3 overflow-y-auto shrink-0">
+	{#if !panelHidden}
+	<div class="w-64 space-y-3 overflow-y-auto shrink-0 relative">
 		<GlassPanel>
 			<h2 class="text-xs text-neon-cyan uppercase tracking-wider mb-3">Controls</h2>
 
@@ -606,6 +616,18 @@
 			</GlassPanel>
 		{/if}
 	</div>
+	{/if}
+
+	<!-- Panel toggle button -->
+	<button
+		class="absolute top-2 right-2 z-20 w-7 h-7 flex items-center justify-center rounded
+			border border-cyber-border bg-cyber-surface/80 text-cyber-muted hover:text-cyber-fg
+			hover:border-neon-cyan/40 transition-colors text-[11px] backdrop-blur-sm"
+		onclick={() => panelHidden = !panelHidden}
+		title={panelHidden ? 'Show panel (H)' : 'Hide panel (H)'}
+	>
+		{panelHidden ? '\u25C0' : '\u25B6'}
+	</button>
 </div>
 
 <!-- Image modal -->

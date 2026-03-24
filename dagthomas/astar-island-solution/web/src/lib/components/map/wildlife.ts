@@ -73,7 +73,8 @@ function createWingGeometry(side: number): THREE.BufferGeometry {
 }
 
 export function createWildlifeSystem(
-	scene: THREE.Scene
+	scene: THREE.Scene,
+	heightFn?: (x: number, z: number) => number
 ): WildlifeSystem {
 	const rng = mulberry32(7777);
 	const group = new THREE.Group();
@@ -181,6 +182,27 @@ export function createWildlifeSystem(
 			}
 			if (b.py < MIN_HEIGHT) b.vy += TURN_FACTOR;
 			if (b.py > MAX_HEIGHT) b.vy -= TURN_FACTOR;
+
+			// Terrain avoidance — push up and steer away from mountains
+			if (heightFn) {
+				const groundH = heightFn(b.px, b.pz);
+				const clearance = b.py - groundH;
+				const MIN_CLEARANCE = 1.5;
+				if (clearance < MIN_CLEARANCE) {
+					// Strong upward push proportional to how close we are
+					const urgency = 1 - clearance / MIN_CLEARANCE;
+					b.vy += urgency * TURN_FACTOR * 4;
+					// Also check ahead and steer away
+					const aheadX = b.px + b.vx * 0.5;
+					const aheadZ = b.pz + b.vz * 0.5;
+					const aheadH = heightFn(aheadX, aheadZ);
+					if (aheadH > groundH) {
+						// Terrain rising ahead — steer away from it
+						b.vx -= (aheadX - b.px) * TURN_FACTOR * 2;
+						b.vz -= (aheadZ - b.pz) * TURN_FACTOR * 2;
+					}
+				}
+			}
 
 			// Speed clamp
 			const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy + b.vz * b.vz);

@@ -183,9 +183,36 @@ export function createCelestials(scene: THREE.Scene): CelestialSystem {
 	// Moon light — soft bluish point light
 	const moonLight = new THREE.PointLight(0x6688cc, 0, 200);
 
+	// Moon anamorphic streak — horizontal 35mm cinema look
+	const streakCanvas = document.createElement('canvas');
+	streakCanvas.width = 512;
+	streakCanvas.height = 16;
+	const sCtx = streakCanvas.getContext('2d')!;
+	const sGrad = sCtx.createLinearGradient(0, 8, 512, 8);
+	sGrad.addColorStop(0, 'rgba(255,255,255,0)');
+	sGrad.addColorStop(0.2, 'rgba(200,220,255,0.08)');
+	sGrad.addColorStop(0.5, 'rgba(200,220,255,0.25)');
+	sGrad.addColorStop(0.8, 'rgba(200,220,255,0.08)');
+	sGrad.addColorStop(1, 'rgba(255,255,255,0)');
+	sCtx.fillStyle = sGrad;
+	sCtx.fillRect(0, 0, 512, 16);
+	const streakTex = new THREE.CanvasTexture(streakCanvas);
+	const moonStreakMat = new THREE.SpriteMaterial({
+		map: streakTex,
+		transparent: true,
+		blending: THREE.AdditiveBlending,
+		depthWrite: false,
+		fog: false,
+		color: new THREE.Color(0.6, 0.7, 1.0),
+	});
+	const moonStreak = new THREE.Sprite(moonStreakMat);
+	moonStreak.scale.set(50, 1.2, 1);
+	moonStreak.renderOrder = 88;
+
 	const moonGroup = new THREE.Group();
 	moonGroup.add(moonSprite);
 	moonGroup.add(moonGlow);
+	moonGroup.add(moonStreak);
 	moonGroup.add(moonLight);
 	scene.add(moonGroup);
 
@@ -209,6 +236,7 @@ export function createCelestials(scene: THREE.Scene): CelestialSystem {
 			const moonOpacity = Math.min(1, nightFade * 1.5) * Math.max(0.2, phaseBrightness);
 			moonMat.opacity = moonOpacity;
 			moonGlowMat.opacity = moonOpacity * 0.8;
+			moonStreakMat.opacity = moonOpacity * 0.5;
 			moonLight.intensity = moonOpacity * 1.2;
 		},
 
