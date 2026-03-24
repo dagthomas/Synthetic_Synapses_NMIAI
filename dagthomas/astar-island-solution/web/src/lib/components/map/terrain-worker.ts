@@ -171,9 +171,34 @@ function blendColor(grid: number[][], gx: number, gz: number): [number, number, 
 	return w > 0 ? [r / w, g / w, b / w] : [...DEFAULT_COL];
 }
 
+type RoadPath = { points: [number, number][]; width: number };
+
+const ROAD_COLS: Record<number, [number, number, number]> = {
+	0: [0.60, 0.50, 0.30], 1: [0.38, 0.34, 0.30], 2: [0.45, 0.38, 0.28],
+	3: [0.40, 0.36, 0.32], 4: [0.35, 0.28, 0.15], 5: [0.42, 0.40, 0.38],
+	10: [0.60, 0.50, 0.30], 11: [0.42, 0.32, 0.18],
+};
+const DEFAULT_ROAD_COL: [number, number, number] = [0.40, 0.32, 0.20];
+
+function roadDistance(wx: number, wz: number, roads: RoadPath[]): { dist: number; roadIdx: number } {
+	let bestDist = Infinity, bestIdx = -1;
+	for (let ri = 0; ri < roads.length; ri++) {
+		const pts = roads[ri].points;
+		for (let j = 0; j < pts.length - 1; j++) {
+			const [ax, az] = pts[j], [bx, bz] = pts[j + 1];
+			const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
+			if (len2 < 0.0001) continue;
+			const t = Math.max(0, Math.min(1, ((wx - ax) * dx + (wz - az) * dz) / len2));
+			const d = Math.sqrt((wx - ax - dx * t) ** 2 + (wz - az - dz * t) ** 2);
+			if (d < bestDist) { bestDist = d; bestIdx = ri; }
+		}
+	}
+	return { dist: bestDist, roadIdx: bestIdx };
+}
+
 // --- Worker message handler ---
-self.onmessage = (e: MessageEvent<{ grid: number[][] }>) => {
-	const { grid } = e.data;
+self.onmessage = (e: MessageEvent<{ grid: number[][]; season?: string; roads?: RoadPath[] }>) => {
+	const { grid, roads = [] } = e.data;
 	const rows = grid.length;
 	const cols = grid[0].length;
 	const mtnField = buildMountainField(grid);
@@ -183,6 +208,7 @@ self.onmessage = (e: MessageEvent<{ grid: number[][] }>) => {
 	const vertexCount = (segX + 1) * (segZ + 1);
 	const heights = new Float32Array(vertexCount);
 	const colors = new Float32Array(vertexCount * 3);
+	const roadBlendArr = roads.length > 0 ? new Float32Array(vertexCount) : null;
 
 	for (let iz = 0; iz <= segZ; iz++) {
 		for (let ix = 0; ix <= segX; ix++) {
@@ -191,7 +217,20 @@ self.onmessage = (e: MessageEvent<{ grid: number[][] }>) => {
 			const wz = (iz / segZ - 0.5) * rows;
 			const gx = wx + cols / 2 - 0.5;
 			const gz = wz + rows / 2 - 0.5;
-			const h = computeHeight(grid, mtnField, cols, rows, gx, gz);
+			let h = computeHeight(grid, mtnField, cols, rows, gx, gz);
+
+			if (roadBlendArr && roads.length > 0) {
+				const rd = roadDistance(wx, wz, roads);
+				if (rd.roadIdx >= 0) {
+					const hw = roads[rd.roadIdx].width / 2;
+					if (rd.dist < hw) {
+						const blend = 1 - rd.dist / hw;
+						const smooth = blend * blend * (3 - 2 * blend);
+						roadBlendArr[i] = smooth;
+						h -= smooth * 0.06;
+					}
+				}
+			}
 			heights[i] = h;
 
 			let [r, g, b] = blendColor(grid, gx, gz);
@@ -206,6 +245,18 @@ self.onmessage = (e: MessageEvent<{ grid: number[][] }>) => {
 				r = r * (1 - wetT * 0.6) + WET_SAND_COL[0] * wetT * 0.6;
 				g = g * (1 - wetT * 0.6) + WET_SAND_COL[1] * wetT * 0.6;
 				b = b * (1 - wetT * 0.6) + WET_SAND_COL[2] * wetT * 0.6;
+			}
+			if (roadBlendArr) {
+				const rb = roadBlendArr[i];
+				if (rb > 0.01) {
+					const cellX = Math.floor(Math.max(0, Math.min(cols - 1, gx + 0.5)));
+					const cellZ = Math.floor(Math.max(0, Math.min(rows - 1, gz + 0.5)));
+					const rc = ROAD_COLS[grid[cellZ]?.[cellX] ?? 0] ?? DEFAULT_ROAD_COL;
+					const strength = Math.min(1, rb * 1.5);
+					r = r * (1 - strength) + rc[0] * strength;
+					g = g * (1 - strength) + rc[1] * strength;
+					b = b * (1 - strength) + rc[2] * strength;
+				}
 			}
 			const cn = (warpedFbm(gx * 2.5, gz * 2.5, 3) - 0.5) * 0.07;
 			colors[i * 3]     = Math.max(0, Math.min(1, r + cn));

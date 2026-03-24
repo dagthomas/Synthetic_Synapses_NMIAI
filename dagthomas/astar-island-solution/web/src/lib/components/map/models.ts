@@ -133,5 +133,13 @@ export function placeModel(
 	const bottomY = getModelBottomY(original, info.path);
 	clone.position.y -= bottomY * s;
 
+	// Ensure shadows are enabled on cloned meshes
+	clone.traverse((child) => {
+		if (child instanceof THREE.Mesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+
 	return clone;
 }

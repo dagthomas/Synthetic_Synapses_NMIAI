@@ -12,6 +12,7 @@ export interface FPController {
 	unlock(): void;
 	setHeightFn(fn: (x: number, z: number) => number): void;
 	setOnExit(fn: () => void): void;
+	setFreefly(enabled: boolean): void;
 	dispose(): void;
 	isLocked(): boolean;
 }
@@ -34,13 +35,16 @@ export function createFPController(
 		backward: false,
 		left: false,
 		right: false,
-		sprint: false
+		sprint: false,
+		up: false,
+		down: false
 	};
 
 	let heightFn: ((x: number, z: number) => number) | null = null;
 	let onExitFn: (() => void) | null = null;
 	let bobPhase = 0;
 	let isMoving = false;
+	let freefly = false;
 
 	// Reusable vectors to avoid GC
 	const _direction = new THREE.Vector3();
@@ -61,8 +65,10 @@ export function createFPController(
 			case 'KeyA': case 'ArrowLeft': keys.left = true; break;
 			case 'KeyD': case 'ArrowRight': keys.right = true; break;
 			case 'ShiftLeft': case 'ShiftRight': keys.sprint = true; break;
+			case 'Space': keys.up = true; break;
+			case 'KeyQ': case 'ControlLeft': case 'ControlRight': keys.down = true; break;
 		}
-		if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
+		if (['KeyW','KeyA','KeyS','KeyD','KeyQ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
 			e.preventDefault();
 		}
 	}
@@ -74,6 +80,8 @@ export function createFPController(
 			case 'KeyA': case 'ArrowLeft': keys.left = false; break;
 			case 'KeyD': case 'ArrowRight': keys.right = false; break;
 			case 'ShiftLeft': case 'ShiftRight': keys.sprint = false; break;
+			case 'Space': keys.up = false; break;
+			case 'KeyQ': case 'ControlLeft': case 'ControlRight': keys.down = false; break;
 		}
 	}
 

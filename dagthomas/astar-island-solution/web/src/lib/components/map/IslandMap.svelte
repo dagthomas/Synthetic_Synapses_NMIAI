@@ -7,10 +7,11 @@
 	import { TerrainCode } from '$lib/types';
 	import { mulberry32, cellSeed } from './prng';
 	import { computeDayNight } from './daynight';
-	import { createCloudSystem, type CloudSystem } from './clouds';
+	import { createCloudSystem, type CloudSystem, type MountainPeak } from './clouds';
 	import { findWaterfallSources, createWaterfallSystem, type WaterfallSystem } from './waterfalls';
 	import { createCelestials, type CelestialSystem } from './celestials';
 	import { createWildlifeSystem, type WildlifeSystem } from './wildlife';
+	import { createSheepSystem, type SheepSystem } from './sheep';
 	import { preloadModels, placeModel } from './models';
 	import { createWeatherSystem, type WeatherSystem } from './weather';
 	import { createTerrain, computeTerrainMorphData, applyNormalMap, updateTerrainHeightFn, getCurrentSeason, getSeasonalTreeTint, WATER_LEVEL, type TerrainSystem, type Season } from './terrain';
@@ -81,6 +82,7 @@
 	let waterfallSystem: WaterfallSystem | null = null;
 	let celestialSystem: CelestialSystem | null = null;
 	let wildlifeSystem: WildlifeSystem | null = null;
+	let sheepSystem: SheepSystem | null = null;
 	let weatherSystem: WeatherSystem | null = null;
 	let fillLight: THREE.DirectionalLight | null = null;
 	let lightProbe: THREE.LightProbe | null = null;
@@ -218,7 +220,6 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	let worldGroup: THREE.Group | null = null;
 	let prevWorldGroup: THREE.Group | null = null;
 	let prevTerrainSystem: TerrainSystem | null = null;
-	let prevWaterSystem: WaterSystem | null = null;
 	let transitionAlpha = 1.0;
 	let transitioning = false;
 	const TRANSITION_DURATION = 2.0;
@@ -236,15 +237,18 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	let lastGridCols = 0;
 	const TERRAIN_MORPH_DURATION = 0.8;
 
-	// --- Scenery sink/rise state ---
+	// --- Scenery sequential fade state (fade out old, then fade in new) ---
 	let sceneryGroup: THREE.Group | null = null;
-	let sceneryPhase: 'sinking' | 'rising' | null = null;
-	let sceneryAlpha = 0;
+	let sceneryFadePhase: 'fade-out' | 'fade-in' | null = null;
+	let sceneryFadeAlpha = 0;
+	let oldSceneryFadeGroup: THREE.Group | null = null;
+	let oldSceneryFadeCreatures: typeof creatureSystem = null;
+	let oldSceneryFadeScatter: typeof scatter = null;
+	let oldSceneryFadeWeather: typeof weatherSystem = null;
 	let pendingGrid: number[][] | null = null;
 	let pendingSettlements: typeof settlements | null = null;
-	const SCENERY_SINK_DURATION = 0.8; // match TERRAIN_MORPH_DURATION to avoid force-snap
-	const SCENERY_RISE_DURATION = 0.6;
-	const SCENERY_SINK_DEPTH = 4.0;
+	const SCENERY_FADE_OUT_DURATION = 0.6;
+	const SCENERY_FADE_IN_DURATION = 0.8;
 
 	// --- Sky transition state ---
 	let skyFrozen = false;
@@ -253,7 +257,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 	let skyTransitionAlpha = 0;
 	let skyTransitionFrom = 0;
 	let skyTransitionTo = 0;
-	const SKY_TRANSITION_DURATION = 2.5;
+	const SKY_TRANSITION_DURATION = 4.0;
 
 	// --- Terrain colors matching reference image ---
 	// Reference: sandy tan base, green grass patches, blue water, gray stone
@@ -312,20 +316,26 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		if (!group) return;
 		const fullyOpaque = alpha >= 0.999;
 		group.traverse((obj) => {
-			if (!(obj instanceof THREE.Mesh) && !(obj instanceof THREE.InstancedMesh)) return;
-			const mat = obj.material;
+			const mat = (obj as any).material;
 			if (!mat) return;
+			// Handle Mesh, InstancedMesh, Points, Sprite, Line, etc.
 			const mats = Array.isArray(mat) ? mat : [mat];
 			for (const m of mats) {
-				if (m.isMeshStandardMaterial || m.isMeshBasicMaterial) {
-					m.transparent = !fullyOpaque;
-					m.depthWrite = fullyOpaque;
-					m.opacity = alpha;
-					m.needsUpdate = true;
-				} else if (m.isShaderMaterial && m.uniforms?.uOpacity) {
-					// Scale the shader's base opacity by alpha (water base opacity is 0.72)
+				if (m.isShaderMaterial && m.uniforms?.uOpacity) {
 					m.uniforms.uOpacity.value = 0.72 * alpha;
-					m.transparent = true; // water is always transparent
+					m.transparent = true;
+				} else if ('opacity' in m) {
+					if (m.isPointsMaterial || m.isSpriteMaterial) {
+						// Store base opacity on first encounter, then scale by alpha
+						if (m._baseOpacity === undefined) m._baseOpacity = m.opacity;
+						m.opacity = m._baseOpacity * alpha;
+						m.transparent = true;
+					} else {
+						m.transparent = !fullyOpaque;
+						m.depthWrite = fullyOpaque;
+						m.opacity = alpha;
+					}
+					m.needsUpdate = true;
 				}
 			}
 		});
@@ -394,17 +404,24 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			atmosphere = createAtmosphere(scene, grid, terrainSystem.getHeightAt);
 		}
 
-		// Higher quality shadows for ground-level
+		// Shadows for ground-level — dispose old map so new resolution takes effect
 		if (sunLight) {
-			const shadowRes = flythroughActive ? 1024 : 4096;
+			if (sunLight.shadow.map) {
+				sunLight.shadow.map.dispose();
+				sunLight.shadow.map = null as any;
+			}
+			const shadowRes = flythroughActive ? 2048 : 2048;
 			sunLight.shadow.mapSize.width = shadowRes;
 			sunLight.shadow.mapSize.height = shadowRes;
 			sunLight.shadow.camera.near = 0.5;
-			sunLight.shadow.camera.far = 60;
-			sunLight.shadow.camera.left = -20;
-			sunLight.shadow.camera.right = 20;
-			sunLight.shadow.camera.top = 20;
-			sunLight.shadow.camera.bottom = -20;
+			sunLight.shadow.camera.far = 80;
+			// Flythrough sees more terrain from above — wider frustum
+			const extent = flythroughActive ? 30 : 20;
+			sunLight.shadow.camera.left = -extent;
+			sunLight.shadow.camera.right = extent;
+			sunLight.shadow.camera.top = extent;
+			sunLight.shadow.camera.bottom = -extent;
+			sunLight.shadow.camera.updateProjectionMatrix();
 			sunLight.shadow.needsUpdate = true;
 		}
 
@@ -743,6 +760,8 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			scene.background = null; // Sky shader takes over
 			flythroughActive = true;
 			if (postFX) postFX.setMode('flythrough');
+			// Force immediate shadow update for flythrough
+			if (sunLight) { sunLight.shadow.needsUpdate = true; lastShadowUpdate = 0; }
 			onFlythroughChange?.(true);
 		}
 
@@ -1298,10 +1317,20 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 
 	function rebuildSceneryForNewGrid() {
 		if (!pendingGrid || !terrainSystem || !worldGroup) {
-			sceneryPhase = null;
+			sceneryFadePhase = null;
 			return;
 		}
-		// Save old scenery — keep it visible while new one builds
+		// Clean up any in-progress scenery fade
+		if (oldSceneryFadeGroup && worldGroup) {
+			worldGroup.remove(oldSceneryFadeGroup);
+			disposeGroup(oldSceneryFadeGroup);
+			oldSceneryFadeGroup = null;
+		}
+		if (oldSceneryFadeCreatures) { oldSceneryFadeCreatures.dispose(); oldSceneryFadeCreatures = null; }
+		if (oldSceneryFadeScatter) { oldSceneryFadeScatter.dispose(); oldSceneryFadeScatter = null; }
+		if (oldSceneryFadeWeather) { oldSceneryFadeWeather.dispose(); oldSceneryFadeWeather = null; }
+
+		// Save old scenery for fade-out
 		const oldSceneryGroup = sceneryGroup;
 		const oldCreatures = creatureSystem;
 		const oldScatter = scatter;
@@ -1312,32 +1341,32 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		weatherSystem = null;
 		activeWaterfalls = [];
 
-		// Move water/moat to worldGroup so they stay visible during rebuild
-		if (oldSceneryGroup) {
-			if (waterSystem?.mesh?.parent === oldSceneryGroup) {
-				oldSceneryGroup.remove(waterSystem.mesh);
-				worldGroup.add(waterSystem.mesh);
-			}
-			if (moatSystem?.group?.parent === oldSceneryGroup) {
-				oldSceneryGroup.remove(moatSystem.group);
-				worldGroup.add(moatSystem.group);
-			}
-		}
-
-		// Build new scenery in background — old stays visible
+		// Build new scenery in background while old fades out
 		buildScene(terrainSystem).then(() => {
 			if (sceneryGroup) sceneryGroup.position.y = 0;
 
-			// NOW remove old scenery (new one is ready — no blink)
-			if (oldSceneryGroup && worldGroup) {
-				worldGroup.remove(oldSceneryGroup);
-				setTimeout(() => disposeGroup(oldSceneryGroup), 50);
+			if (oldSceneryGroup && sceneryGroup) {
+				// Hide new scenery until fade-out completes
+				setGroupOpacity(sceneryGroup, 0);
+				sceneryGroup.visible = false;
+				// Start fade-out of old scenery
+				oldSceneryFadeGroup = oldSceneryGroup;
+				oldSceneryFadeCreatures = oldCreatures;
+				oldSceneryFadeScatter = oldScatter;
+				oldSceneryFadeWeather = oldWeather;
+				sceneryFadePhase = 'fade-out';
+				sceneryFadeAlpha = 0;
+			} else {
+				// No old scenery — just show new immediately
+				if (oldSceneryGroup && worldGroup) {
+					worldGroup.remove(oldSceneryGroup);
+					setTimeout(() => disposeGroup(oldSceneryGroup), 50);
+				}
+				if (oldCreatures) oldCreatures.dispose();
+				if (oldScatter) oldScatter.dispose();
+				if (oldWeather) oldWeather.dispose();
 			}
-			if (oldCreatures) oldCreatures.dispose();
-			if (oldScatter) oldScatter.dispose();
-			if (oldWeather) oldWeather.dispose();
 
-			sceneryPhase = null;
 			pendingGrid = null;
 			pendingSettlements = null;
 			if (sunLight) sunLight.shadow.needsUpdate = true;
@@ -1366,6 +1395,13 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		pendingGrid = newGrid;
 		pendingSettlements = settlements;
 
+		// Compute road paths for the new grid so they're baked into morph targets
+		const rows = newGrid.length, cols = newGrid[0].length;
+		const offsetX = -cols / 2, offsetZ = -rows / 2;
+		const morphClusters = findClusters(newGrid);
+		const morphSettlements = morphClusters.filter(c => c.terrainType === TerrainCode.SETTLEMENT);
+		const morphRoads = computeRoadPaths(morphSettlements, offsetX, offsetZ);
+
 		// Compute morph targets in Web Worker (off main thread — zero stutter)
 		const worker = getTerrainWorker();
 		worker.onmessage = (e: MessageEvent<{ heights: Float32Array; colors: Float32Array }>) => {
@@ -1376,7 +1412,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			pendingMorphGrid = newGrid;
 		};
 		worker.onerror = () => {
-			const morphData = computeTerrainMorphData(newGrid, season);
+			const morphData = computeTerrainMorphData(newGrid, season, morphRoads);
 			terrainMorphTargetHeights = morphData.heights;
 			terrainMorphTargetColors = morphData.colors;
 			terrainMorphing = true;
@@ -1384,7 +1420,8 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			pendingMorphGrid = newGrid;
 		};
 		const plainGrid = newGrid.map(row => Array.from(row));
-		worker.postMessage({ grid: plainGrid, season });
+		const plainRoads = morphRoads.map(r => ({ points: r.points, width: r.width }));
+		worker.postMessage({ grid: plainGrid, season, roads: plainRoads });
 	}
 
 	async function buildScene(reuseTerrainSystem?: TerrainSystem) {
@@ -1417,6 +1454,9 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			if (nightSkySystem) keep.add(nightSkySystem.group);
 			if (cloudSystem) for (const s of cloudSystem.sprites) keep.add(s);
 			if (wildlifeSystem) keep.add(wildlifeSystem.group);
+			if (sheepSystem?.group) keep.add(sheepSystem.group);
+			if (waterSystem?.mesh) keep.add(waterSystem.mesh);
+			if (moatSystem?.group) keep.add(moatSystem.group);
 			if (fpSky) keep.add(fpSky);
 			if (predictionOverlay) keep.add(predictionOverlay);
 			if (gridOverlay) keep.add(gridOverlay);
@@ -1436,8 +1476,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 				scene.remove(prevWorldGroup);
 			}
 			if (prevTerrainSystem) { prevTerrainSystem.dispose(); prevTerrainSystem = null; }
-			if (prevWaterSystem) { prevWaterSystem.dispose(); prevWaterSystem = null; }
-			terrainMorphOldHeights = null;
+				terrainMorphOldHeights = null;
 			terrainMorphNewHeights = null;
 			terrainMorphOldNormals = null;
 			terrainMorphNewNormals = null;
@@ -1445,12 +1484,9 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			// Move current world to prev for cross-fade
 			prevWorldGroup = worldGroup;
 			prevTerrainSystem = terrainSystem;
-			prevWaterSystem = waterSystem;
 			// Null out so new build gets fresh systems
 			terrainSystem = null;
-			waterSystem = null;
 			weatherSystem = null;
-			moatSystem = null;
 			creatureSystem = null;
 			scatter = null;
 			blockyTerrainGroup = null;
@@ -1486,6 +1522,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			sunLight.shadow.camera.top = 30;
 			sunLight.shadow.camera.bottom = -30;
 			_realSceneAdd(sunLight);
+			_realSceneAdd(sunLight.target);
 
 			ambientLight = new THREE.AmbientLight(0x909088, 0.3); // reduced — light probe provides soft fill
 			_realSceneAdd(ambientLight);
@@ -1550,7 +1587,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		if (!waterSystem) {
 			waterSystem = createWater(cols, rows, grid);
 		}
-		scene.add(waterSystem.mesh);
+		_realSceneAdd(waterSystem.mesh);
 
 		await nextFrame();
 		if (gen !== buildGeneration) { scene.add = _realSceneAdd; return; }
@@ -1560,7 +1597,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		if (!moatSystem) {
 			moatSystem = createMoatAndWaterfalls(cols, rows);
 		}
-		scene.add(moatSystem.group);
+		_realSceneAdd(moatSystem.group);
 
 		// Rim scenery (trees, rocks, lakes, bushes outside play grid)
 		buildRimScenery(cols, rows);
@@ -1599,7 +1636,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 
 		// Trunk instances
 		const trunkGeo = new THREE.CylinderGeometry(0.04, 0.08, 1, 4);
-		const trunkMat = new THREE.MeshStandardMaterial({ color: treeColors.trunk, roughness: 0.9, flatShading: true });
+		const trunkMat = new THREE.MeshStandardMaterial({ color: treeColors.trunk, roughness: 0.75, metalness: 0.05, flatShading: true });
 		const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, totalTreeSlots);
 		trunkInst.castShadow = true;
 
@@ -1609,7 +1646,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			: [new THREE.DodecahedronGeometry(0.3, 0), new THREE.DodecahedronGeometry(0.3, 0), new THREE.DodecahedronGeometry(0.3, 0)];
 		const canopyInsts = canopyGeos.map((geo, i) => {
 			const color = treeColors.canopy[i % treeColors.canopy.length];
-			const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true });
+			const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.65, metalness: 0.08, flatShading: true });
 			const inst = new THREE.InstancedMesh(geo, mat, totalTreeSlots);
 			inst.castShadow = true;
 			return inst;
@@ -1668,7 +1705,14 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		// === Ambient systems (first build only — grid-independent, add to real scene) ===
 		if (isFirstBuild) {
 			scene.add = _realSceneAdd;
-			cloudSystem = createCloudSystem(scene);
+			// Compute mountain peaks for cloud system
+			const mtnClusters = clusters.filter(c => c.terrainType === TerrainCode.MOUNTAIN);
+			const cloudPeaks: MountainPeak[] = terrainSystem ? mtnClusters.map(c => {
+				const px = c.centerX + offsetX + 0.5;
+				const pz = c.centerY + offsetZ + 0.5;
+				return { x: px, z: pz, height: terrainSystem!.getHeightAt(px, pz) };
+			}) : [];
+			cloudSystem = createCloudSystem(scene, terrainSystem?.getHeightAt, cloudPeaks);
 			scene.add = (...args: THREE.Object3D[]) => { sceneryGrp.add(...args); return scene; };
 		}
 
@@ -1718,13 +1762,20 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			weatherSystem = createWeatherSystem(scene, mountainPositions, lakePositions, mapRadius);
 		}
 
-		// === Wildlife: birds — recreate each build to ensure visibility ===
-		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
-		{
+		// === Wildlife: birds — persist across builds (ambient, seed-independent) ===
+		if (!wildlifeSystem) {
 			const savedAdd = scene.add;
 			scene.add = _realSceneAdd;
 			wildlifeSystem = createWildlifeSystem(scene);
 			scene.add = savedAdd;
+		}
+
+		// === Sheep flocks — persist across builds ===
+		if (!sheepSystem && terrainSystem) {
+			try {
+				sheepSystem = await createSheepSystem(terrainSystem.getHeightAt);
+				_realSceneAdd(sheepSystem.group);
+			} catch { /* model load failure — skip */ }
 		}
 
 		// Add scenery sub-group to world group
@@ -2384,7 +2435,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		} else {
 			// Normal: lerp toward target
 			const timeDiff = timeOfDay - displayTime;
-			const timeLerpSpeed = flythroughActive ? 1.2 : 5;
+			const timeLerpSpeed = flythroughActive ? 0.4 : 5;
 			if (Math.abs(timeDiff) > 0.005) {
 				displayTime += timeDiff * Math.min(1, dt * timeLerpSpeed);
 			} else {
@@ -2452,7 +2503,6 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			}
 			pos.needsUpdate = true;
 		}
-		if (prevWaterSystem) prevWaterSystem.update(dt, cachedDN?.sunPosition); // keep old water animating during cross-fade
 		if (waterSystem) {
 			waterSystem.update(dt, cachedDN?.sunPosition);
 			// Player ripples when walking in water (FP mode)
@@ -2474,6 +2524,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		}
 		if (moatSystem) moatSystem.update(dt, cachedDN?.sunPosition);
 		if (wildlifeSystem) wildlifeSystem.update(dt, displayTime);
+		if (sheepSystem) sheepSystem.update(dt, displayTime);
 		if (creatureSystem) creatureSystem.update(dt, displayTime, camera);
 
 		// Cross-fade transition: morph terrain + fade objects
@@ -2538,7 +2589,6 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 					prevWorldGroup = null;
 				}
 				if (prevTerrainSystem) { prevTerrainSystem.dispose(); prevTerrainSystem = null; }
-				if (prevWaterSystem) { prevWaterSystem.dispose(); prevWaterSystem = null; }
 				terrainMorphOldHeights = null;
 				terrainMorphNewHeights = null;
 				terrainMorphOldNormals = null;
@@ -2603,37 +2653,45 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 			}
 		}
 
-		// Scenery sink/rise animation
-		if (sceneryPhase === 'sinking' && sceneryGroup) {
-			sceneryAlpha = Math.min(1.0, sceneryAlpha + dt / SCENERY_SINK_DURATION);
-			const t = sceneryAlpha;
+		// Scenery sequential fade: old fades out, then new fades in
+		if (sceneryFadePhase === 'fade-out' && oldSceneryFadeGroup) {
+			sceneryFadeAlpha = Math.min(1.0, sceneryFadeAlpha + dt / SCENERY_FADE_OUT_DURATION);
+			const t = sceneryFadeAlpha;
 			const eased = t * t * (3 - 2 * t); // smoothstep
-			sceneryGroup.position.y = -SCENERY_SINK_DEPTH * eased;
+			setGroupOpacity(oldSceneryFadeGroup, 1.0 - eased);
 
-			if (sceneryAlpha >= 1.0) {
-				// Scenery fully sunk — rebuild immediately (don't wait for terrain morph)
-				rebuildSceneryForNewGrid();
+			if (sceneryFadeAlpha >= 1.0) {
+				// Old fully faded — dispose and start fade-in
+				if (worldGroup) {
+					worldGroup.remove(oldSceneryFadeGroup);
+					disposeGroup(oldSceneryFadeGroup);
+					oldSceneryFadeGroup = null;
+				}
+				if (oldSceneryFadeCreatures) { oldSceneryFadeCreatures.dispose(); oldSceneryFadeCreatures = null; }
+				if (oldSceneryFadeScatter) { oldSceneryFadeScatter.dispose(); oldSceneryFadeScatter = null; }
+				if (oldSceneryFadeWeather) { oldSceneryFadeWeather.dispose(); oldSceneryFadeWeather = null; }
+				// Begin fade-in of new scenery
+				if (sceneryGroup) {
+					sceneryGroup.visible = true;
+					setGroupOpacity(sceneryGroup, 0);
+				}
+				sceneryFadePhase = 'fade-in';
+				sceneryFadeAlpha = 0;
 			}
 		}
-		if (sceneryPhase === 'rising' && sceneryGroup) {
-			sceneryAlpha = Math.min(1.0, sceneryAlpha + dt / SCENERY_RISE_DURATION);
-			const t = sceneryAlpha;
+		if (sceneryFadePhase === 'fade-in' && sceneryGroup) {
+			sceneryFadeAlpha = Math.min(1.0, sceneryFadeAlpha + dt / SCENERY_FADE_IN_DURATION);
+			const t = sceneryFadeAlpha;
 			const eased = t * t * (3 - 2 * t); // smoothstep
-			sceneryGroup.position.y = -SCENERY_SINK_DEPTH * (1 - eased);
+			setGroupOpacity(sceneryGroup, eased);
 
-			if (sceneryAlpha >= 1.0) {
-				sceneryGroup.position.y = 0;
-				sceneryPhase = null;
-				pendingGrid = null;
-				pendingSettlements = null;
+			if (sceneryFadeAlpha >= 1.0) {
+				sceneryFadePhase = null;
+				setGroupOpacity(sceneryGroup, 1.0);
 				// Force shadow update after new scenery is in place
 				if (sunLight) sunLight.shadow.needsUpdate = true;
 				lastShadowUpdate = performance.now();
 				lightProbeNeedsUpdate = true;
-				// Update flythrough path for new terrain if active
-				if (flythroughActive && terrainSystem && flythrough) {
-					flythrough.transitionToNewPath(grid, terrainSystem.getHeightAt);
-				}
 				// Start smooth sky transition now that scene is ready
 				if (skyFrozen) {
 					skyFrozen = false;
@@ -2659,6 +2717,14 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 
 			// Sky dome follows camera so it always surrounds the viewer
 			if (fpSky) fpSky.position.copy(camera.position);
+
+			// Shadow camera follows player — shadows visible wherever camera goes
+			if (sunLight && cachedDN) {
+				const cx = camera.position.x, cz = camera.position.z;
+				sunLight.target.position.set(cx, 0, cz);
+				sunLight.target.updateMatrixWorld();
+				sunLight.position.set(cx + cachedDN.sunPosition.x, cachedDN.sunPosition.y, cz + cachedDN.sunPosition.z);
+			}
 
 			// Sync Preetham sky with sun position from daynight system
 			if (fpSky && fpSkyUniforms && cachedDN) {
@@ -2772,6 +2838,8 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		}
 
 		// Post-processing: bloom, DOF, vignette, ACES, SMAA — always active
+		renderer.info.autoReset = false;
+		renderer.info.reset();
 		if (postFX) {
 			postFX.render(dt);
 		} else {
@@ -2870,7 +2938,6 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		if (worldGroup) { disposeGroup(worldGroup); worldGroup = null; }
 		if (prevTerrainSystem) { prevTerrainSystem.dispose(); prevTerrainSystem = null; }
 		if (pendingTerrainSystem) { pendingTerrainSystem.dispose(); pendingTerrainSystem = null; }
-		if (prevWaterSystem) { prevWaterSystem.dispose(); prevWaterSystem = null; }
 		if (waterSystem) { waterSystem.dispose(); waterSystem = null; }
 		if (moatSystem) { moatSystem.dispose(); moatSystem = null; }
 		if (cloudSystem) { cloudSystem.dispose(); cloudSystem = null; }
@@ -2878,6 +2945,7 @@ self.onmessage=function(e){const g=e.data.grid,sn=e.data.season||'summer',BC=SBC
 		if (celestialSystem) { celestialSystem.dispose(); celestialSystem = null; }
 		if (nightSkySystem) { nightSkySystem.dispose(); nightSkySystem = null; }
 		if (wildlifeSystem) { wildlifeSystem.dispose(); wildlifeSystem = null; }
+		if (sheepSystem) { sheepSystem.dispose(); sheepSystem = null; }
 		if (weatherSystem) { weatherSystem.dispose(); weatherSystem = null; }
 		if (fillLight) { scene.remove(fillLight); fillLight = null; }
 		if (lightProbe) { scene.remove(lightProbe); lightProbe = null; }

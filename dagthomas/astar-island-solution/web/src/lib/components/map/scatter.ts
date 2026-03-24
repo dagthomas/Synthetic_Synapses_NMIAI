@@ -1,9 +1,7 @@
 /**
- * Environmental model scatter — densely populates the terrain with vegetation,
- * rocks, and detail models from /static/models (poly.pizza GLBs).
- *
- * Uses InstancedMesh for massive draw-call reduction (~3000 → ~50-100).
- * Models sourced from https://poly.pizza/bundle
+ * Environmental scatter — procedural grass clumps, tiny flowers, and GLB detail models.
+ * Grass/flowers are generated geometry (ultra-low poly). Ruins use GLB models.
+ * Uses InstancedMesh for massive draw-call reduction.
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -23,28 +21,8 @@ interface ScatterDef {
 	yOffset: number;
 }
 
-// Terrain code → vegetation/detail definitions
+// Ruin terrain keeps GLB scatter
 const SCATTER_DEFS: Record<number, ScatterDef> = {
-	// Forest (4): bushes only — tree GLB models placed by addForest()
-	4: {
-		files: [
-			'Bush.glb', 'Bush with Flowers.glb'
-		],
-		density: 1,
-		scale: [0.06, 0.14],
-		yOffset: 0
-	},
-	// Plains (11): only bushes — skip all flowers/grass/clover/petals
-	11: {
-		files: [
-			'Bush.glb', 'Bush with Flowers.glb'
-		],
-		density: 1,
-		scale: [0.06, 0.14],
-		yOffset: 0
-	},
-	// Mountain (5): skip — terrain heightmap handles mountain visuals
-	// Ruin (3): dead trees and rocks only
 	3: {
 		files: [
 			'Dead Tree-MlmK5488ou.glb', 'Dead Tree-n8FhMgMldD.glb',
@@ -55,8 +33,113 @@ const SCATTER_DEFS: Record<number, ScatterDef> = {
 		scale: [0.06, 0.16],
 		yOffset: 0
 	}
-	// Removed: Empty/sandy (0), Settlement (1), Port (2) — too small to see, pure FPS waste
 };
+
+// Terrain types that get procedural grass + flowers
+const GRASS_TERRAIN = new Set([4, 11]); // forest, plains
+
+// --- Procedural grass clump geometry (3-5 blades per clump, ~10 tris total) ---
+function createGrassClumpGeometry(rng: () => number): THREE.BufferGeometry {
+	const bladeCount = 3 + Math.floor(rng() * 3); // 3-5 blades
+	const verts: number[] = [];
+	const normals: number[] = [];
+	const colors: number[] = [];
+
+	for (let b = 0; b < bladeCount; b++) {
+		// Each blade: thin triangle (base + tip)
+		const angle = rng() * Math.PI * 2;
+		const dist = rng() * 0.08;
+		const bx = Math.cos(angle) * dist;
+		const bz = Math.sin(angle) * dist;
+		const height = 0.12 + rng() * 0.18; // 0.12-0.30
+		const width = 0.015 + rng() * 0.01;
+		const lean = (rng() - 0.5) * 0.06;
+		const leanZ = (rng() - 0.5) * 0.06;
+
+		// Blade is a quad (2 triangles) — slight curve via lean
+		const tipX = bx + lean;
+		const tipZ = bz + leanZ;
+
+		// perpendicular to blade direction for width
+		const perpX = -Math.sin(angle) * width;
+		const perpZ = Math.cos(angle) * width;
+
+		// Color variation: green with slight yellow/dark tints
+		const g = 0.35 + rng() * 0.25;
+		const r = g * (0.5 + rng() * 0.3);
+		const bl = g * (0.2 + rng() * 0.15);
+		const tipR = r * 0.8, tipG = g * 1.1, tipB = bl * 0.7;
+
+		// Triangle 1: left-base, right-base, tip
+		verts.push(bx - perpX, 0, bz - perpZ);
+		verts.push(bx + perpX, 0, bz + perpZ);
+		verts.push(tipX, height, tipZ);
+
+		normals.push(0, 0.3, -0.95, 0, 0.3, -0.95, 0, 0.7, -0.7);
+		colors.push(r, g, bl, r, g, bl, tipR, tipG, tipB);
+	}
+
+	const geo = new THREE.BufferGeometry();
+	geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+	geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+	geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+	return geo;
+}
+
+// --- Procedural flower geometry (4-5 petals + center, ~6 tris) ---
+function createFlowerGeometry(rng: () => number): { geo: THREE.BufferGeometry; color: THREE.Color } {
+	const petalCount = 4 + Math.floor(rng() * 2);
+	const verts: number[] = [];
+	const norms: number[] = [];
+	const cols: number[] = [];
+
+	// Stem (single thin triangle)
+	const stemH = 0.08 + rng() * 0.12;
+	const sw = 0.005;
+	verts.push(-sw, 0, 0, sw, 0, 0, 0, stemH, 0);
+	norms.push(0, 0, 1, 0, 0, 1, 0, 0, 1);
+	const sg = 0.3 + rng() * 0.15;
+	cols.push(0.2, sg, 0.1, 0.2, sg, 0.1, 0.25, sg * 1.1, 0.12);
+
+	// Flower color palette
+	const palettes = [
+		[1.0, 0.85, 0.2],  // yellow
+		[1.0, 0.4, 0.4],   // red/pink
+		[0.9, 0.5, 0.9],   // purple
+		[1.0, 1.0, 0.95],  // white
+		[0.4, 0.6, 1.0],   // blue
+		[1.0, 0.6, 0.2],   // orange
+	];
+	const fc = palettes[Math.floor(rng() * palettes.length)];
+	const flowerColor = new THREE.Color(fc[0], fc[1], fc[2]);
+
+	// Petals (triangles radiating from center)
+	const petalLen = 0.025 + rng() * 0.015;
+	const petalW = 0.012 + rng() * 0.008;
+	for (let p = 0; p < petalCount; p++) {
+		const a = (p / petalCount) * Math.PI * 2;
+		const cx = Math.cos(a), cz = Math.sin(a);
+		const px = -cz * petalW, pz = cx * petalW;
+
+		verts.push(-px, stemH, -pz);
+		verts.push(px, stemH, pz);
+		verts.push(cx * petalLen, stemH + 0.003, cz * petalLen);
+
+		norms.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
+		cols.push(fc[0], fc[1], fc[2], fc[0], fc[1], fc[2], fc[0] * 0.9, fc[1] * 0.9, fc[2] * 0.9);
+	}
+
+	// Center dot (tiny triangle)
+	verts.push(-0.005, stemH + 0.002, 0, 0.005, stemH + 0.002, 0, 0, stemH + 0.002, 0.005);
+	norms.push(0, 1, 0, 0, 1, 0, 0, 1, 0);
+	cols.push(0.9, 0.8, 0.2, 0.9, 0.8, 0.2, 0.9, 0.8, 0.2);
+
+	const geo = new THREE.BufferGeometry();
+	geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+	geo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
+	geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+	return { geo, color: flowerColor };
+}
 
 const glbCache = new Map<string, THREE.Group | null>();
 
@@ -123,11 +206,15 @@ export async function createScatter(
 	const rng = mulberry32(54321);
 	const group = new THREE.Group();
 
-	// Collect cells per terrain type
+	// Collect cells per terrain type (GLB scatter + grass/flower terrain)
 	const cellsByType = new Map<number, { x: number; z: number }[]>();
+	const grassCells: { x: number; z: number }[] = [];
 	for (let y = 0; y < rows; y++) {
 		for (let x = 0; x < cols; x++) {
 			const code = grid[y][x];
+			if (GRASS_TERRAIN.has(code)) {
+				grassCells.push({ x: x + ox + 0.5, z: y + oz + 0.5 });
+			}
 			if (!SCATTER_DEFS[code]) continue;
 			if (!cellsByType.has(code)) cellsByType.set(code, []);
 			cellsByType.get(code)!.push({ x: x + ox + 0.5, z: y + oz + 0.5 });
@@ -135,6 +222,139 @@ export async function createScatter(
 	}
 
 	let totalPlaced = 0;
+
+	// === Procedural grass clumps ===
+	const GRASS_CLUMPS = Math.min(600, grassCells.length * 2);
+	const GRASS_VARIANTS = 4; // different clump shapes
+	const grassGeos: THREE.BufferGeometry[] = [];
+	for (let v = 0; v < GRASS_VARIANTS; v++) {
+		grassGeos.push(createGrassClumpGeometry(rng));
+	}
+	const grassMat = new THREE.MeshStandardMaterial({
+		vertexColors: true,
+		roughness: 0.9,
+		metalness: 0.0,
+		side: THREE.DoubleSide,
+		flatShading: true,
+	});
+	let grassMatWithWind = grassMat as THREE.MeshStandardMaterial;
+	if (windUniforms) {
+		grassMatWithWind = grassMat.clone();
+		applyWindSway(grassMatWithWind, windUniforms);
+	}
+
+	// Create one InstancedMesh per grass variant
+	const grassInstancesPerVariant = Math.ceil(GRASS_CLUMPS / GRASS_VARIANTS);
+	const grassInstMeshes: THREE.InstancedMesh[] = [];
+	const grassCounts: number[] = new Array(GRASS_VARIANTS).fill(0);
+
+	for (let v = 0; v < GRASS_VARIANTS; v++) {
+		const inst = new THREE.InstancedMesh(grassGeos[v], grassMatWithWind, grassInstancesPerVariant);
+		inst.castShadow = false;
+		inst.receiveShadow = true;
+		inst.frustumCulled = true;
+		grassInstMeshes.push(inst);
+	}
+
+	const _gm = new THREE.Matrix4();
+	const _gp = new THREE.Vector3();
+	const _gq = new THREE.Quaternion();
+	const _gs = new THREE.Vector3();
+	const _ge = new THREE.Euler();
+
+	for (let i = 0; i < GRASS_CLUMPS && grassCells.length > 0; i++) {
+		const cell = grassCells[Math.floor(rng() * grassCells.length)];
+		const px = cell.x + (rng() - 0.5) * 0.9;
+		const pz = cell.z + (rng() - 0.5) * 0.9;
+		const py = heightFn(px, pz);
+		if (py < -0.05) continue; // skip underwater
+
+		const variant = Math.floor(rng() * GRASS_VARIANTS);
+		const scale = 0.6 + rng() * 0.8;
+		_gp.set(px, py, pz);
+		_ge.set(0, rng() * Math.PI * 2, 0);
+		_gq.setFromEuler(_ge);
+		_gs.setScalar(scale);
+		_gm.compose(_gp, _gq, _gs);
+
+		const idx = grassCounts[variant];
+		if (idx < grassInstancesPerVariant) {
+			grassInstMeshes[variant].setMatrixAt(idx, _gm);
+			grassCounts[variant]++;
+		}
+	}
+
+	for (let v = 0; v < GRASS_VARIANTS; v++) {
+		grassInstMeshes[v].count = grassCounts[v];
+		grassInstMeshes[v].instanceMatrix.needsUpdate = true;
+		if (grassCounts[v] > 0) {
+			grassInstMeshes[v].computeBoundingSphere();
+			group.add(grassInstMeshes[v]);
+		}
+	}
+
+	// === Procedural flowers (sparse, among grass) ===
+	const FLOWER_COUNT = Math.min(150, Math.floor(grassCells.length * 0.4));
+	const FLOWER_VARIANTS = 6;
+	const flowerGeos: THREE.BufferGeometry[] = [];
+	for (let v = 0; v < FLOWER_VARIANTS; v++) {
+		flowerGeos.push(createFlowerGeometry(rng).geo);
+	}
+	const flowerMat = new THREE.MeshStandardMaterial({
+		vertexColors: true,
+		roughness: 0.7,
+		metalness: 0.0,
+		side: THREE.DoubleSide,
+		flatShading: true,
+	});
+	let flowerMatWithWind = flowerMat as THREE.MeshStandardMaterial;
+	if (windUniforms) {
+		flowerMatWithWind = flowerMat.clone();
+		applyWindSway(flowerMatWithWind, windUniforms);
+	}
+
+	const flowerInstancesPerVariant = Math.ceil(FLOWER_COUNT / FLOWER_VARIANTS);
+	const flowerInstMeshes: THREE.InstancedMesh[] = [];
+	const flowerCounts: number[] = new Array(FLOWER_VARIANTS).fill(0);
+
+	for (let v = 0; v < FLOWER_VARIANTS; v++) {
+		const inst = new THREE.InstancedMesh(flowerGeos[v], flowerMatWithWind, flowerInstancesPerVariant);
+		inst.castShadow = false;
+		inst.receiveShadow = true;
+		inst.frustumCulled = true;
+		flowerInstMeshes.push(inst);
+	}
+
+	for (let i = 0; i < FLOWER_COUNT && grassCells.length > 0; i++) {
+		const cell = grassCells[Math.floor(rng() * grassCells.length)];
+		const px = cell.x + (rng() - 0.5) * 0.9;
+		const pz = cell.z + (rng() - 0.5) * 0.9;
+		const py = heightFn(px, pz);
+		if (py < -0.05) continue;
+
+		const variant = Math.floor(rng() * FLOWER_VARIANTS);
+		const scale = 0.7 + rng() * 0.6;
+		_gp.set(px, py, pz);
+		_ge.set(0, rng() * Math.PI * 2, 0);
+		_gq.setFromEuler(_ge);
+		_gs.setScalar(scale);
+		_gm.compose(_gp, _gq, _gs);
+
+		const idx = flowerCounts[variant];
+		if (idx < flowerInstancesPerVariant) {
+			flowerInstMeshes[variant].setMatrixAt(idx, _gm);
+			flowerCounts[variant]++;
+		}
+	}
+
+	for (let v = 0; v < FLOWER_VARIANTS; v++) {
+		flowerInstMeshes[v].count = flowerCounts[v];
+		flowerInstMeshes[v].instanceMatrix.needsUpdate = true;
+		if (flowerCounts[v] > 0) {
+			flowerInstMeshes[v].computeBoundingSphere();
+			group.add(flowerInstMeshes[v]);
+		}
+	}
 
 	// Load unique files first (dedup across terrain types)
 	const allFiles = new Set<string>();
@@ -268,12 +488,18 @@ export async function createScatter(
 		},
 
 		dispose() {
-			// Only dispose InstancedMeshes we created (geometries/materials are shared from cache)
 			for (const child of group.children) {
 				if (child instanceof THREE.InstancedMesh) {
 					child.dispose();
 				}
 			}
+			// Dispose procedural geometries and materials
+			for (const geo of grassGeos) geo.dispose();
+			for (const geo of flowerGeos) geo.dispose();
+			grassMat.dispose();
+			if (grassMatWithWind !== grassMat) grassMatWithWind.dispose();
+			flowerMat.dispose();
+			if (flowerMatWithWind !== flowerMat) flowerMatWithWind.dispose();
 		}
 	};
 }

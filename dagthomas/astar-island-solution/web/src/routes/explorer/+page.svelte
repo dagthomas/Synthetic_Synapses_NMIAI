@@ -58,9 +58,27 @@
 
 	let preloadedRound: Map<string, RoundDetail> = new Map();
 
+	// Seeds to skip during flythrough (e.g., seed 1 looks bad)
+	const FLYTHROUGH_SKIP_SEEDS = new Set([1]);
+
+	function nextFlythroughSeed(current: number, seedCount: number): number {
+		let next = (current + 1) % seedCount;
+		// Skip banned seeds, with safety limit to avoid infinite loop
+		for (let i = 0; i < seedCount && FLYTHROUGH_SKIP_SEEDS.has(next); i++) {
+			next = (next + 1) % seedCount;
+		}
+		return next;
+	}
+
 	function onFlythroughChange(active: boolean) {
 		flythroughActive = active;
 		if (active) {
+			// Ensure we're not on a skipped seed
+			if (FLYTHROUGH_SKIP_SEEDS.has(selectedSeed)) {
+				const seedCount = currentDetail?.initial_states?.length ?? 5;
+				selectedSeed = nextFlythroughSeed(selectedSeed, seedCount);
+			}
+
 			const sorted = [...rounds].sort((a, b) => a.round_number - b.round_number);
 			// Always start from the lowest round
 			let roundIdx = 0;
@@ -103,6 +121,9 @@
 				} else {
 					await selectRound(nextId);
 				}
+				// Cycle seed, skipping banned ones
+				const seedCount = currentDetail?.initial_states?.length ?? 5;
+				selectedSeed = nextFlythroughSeed(selectedSeed, seedCount);
 				timeOfDay = ROUND_CYCLE_TIMES[roundIdx % ROUND_CYCLE_TIMES.length];
 				season = ROUND_CYCLE_SEASONS[roundIdx % ROUND_CYCLE_SEASONS.length];
 				// Preload the one after this

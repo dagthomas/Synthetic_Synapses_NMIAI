@@ -231,7 +231,7 @@ function blendColor(grid: number[][], gx: number, gz: number, biomeColors: Recor
 //  Exports
 // ═══════════════════════════════════════
 
-export function computeTerrainMorphData(grid: number[][], season: Season = 'summer'): { heights: Float32Array; colors: Float32Array; vertexCount: number } {
+export function computeTerrainMorphData(grid: number[][], season: Season = 'summer', roads: RoadPath[] = []): { heights: Float32Array; colors: Float32Array; vertexCount: number } {
 	const rows = grid.length, cols = grid[0].length;
 	const mtnField = buildMountainField(grid);
 	const biomeColors = getBiomeColors(season);
@@ -240,13 +240,27 @@ export function computeTerrainMorphData(grid: number[][], season: Season = 'summ
 	const vertexCount = (segX + 1) * (segZ + 1);
 	const heights = new Float32Array(vertexCount);
 	const colors = new Float32Array(vertexCount * 3);
+	const roadBlendArr = roads.length > 0 ? new Float32Array(vertexCount) : null;
 
 	for (let iz = 0; iz <= segZ; iz++) {
 		for (let ix = 0; ix <= segX; ix++) {
 			const i = iz * (segX + 1) + ix;
 			const wx = (ix / segX - 0.5) * cols, wz = (iz / segZ - 0.5) * rows;
 			const gx = wx + cols / 2 - 0.5, gz = wz + rows / 2 - 0.5;
-			const h = computeHeight(grid, mtnField, cols, rows, gx, gz);
+			let h = computeHeight(grid, mtnField, cols, rows, gx, gz);
+
+			if (roadBlendArr && roads.length > 0) {
+				const rd = roadDistance(wx, wz, roads);
+				if (rd.roadIdx >= 0) {
+					const hw = roads[rd.roadIdx].width / 2;
+					if (rd.dist < hw) {
+						const blend = 1 - rd.dist / hw;
+						const smooth = blend * blend * (3 - 2 * blend);
+						roadBlendArr[i] = smooth;
+						h -= smooth * 0.06;
+					}
+				}
+			}
 			heights[i] = h;
 
 			let [r, g, b] = blendColor(grid, gx, gz, biomeColors);
@@ -259,6 +273,18 @@ export function computeTerrainMorphData(grid: number[][], season: Season = 'summ
 				r = r * (1 - t * 0.6) + WET_SAND_COL[0] * t * 0.6;
 				g = g * (1 - t * 0.6) + WET_SAND_COL[1] * t * 0.6;
 				b = b * (1 - t * 0.6) + WET_SAND_COL[2] * t * 0.6;
+			}
+			if (roadBlendArr) {
+				const rb = roadBlendArr[i];
+				if (rb > 0.01) {
+					const cellX = Math.floor(Math.max(0, Math.min(cols - 1, gx + 0.5)));
+					const cellZ = Math.floor(Math.max(0, Math.min(rows - 1, gz + 0.5)));
+					const rc = ROAD_COLS[grid[cellZ]?.[cellX] ?? 0] ?? DEFAULT_ROAD_COL;
+					const strength = Math.min(1, rb * 1.5);
+					r = r * (1 - strength) + rc[0] * strength;
+					g = g * (1 - strength) + rc[1] * strength;
+					b = b * (1 - strength) + rc[2] * strength;
+				}
 			}
 			const cn = (simpleFbm(gx * 2.5, gz * 2.5) - 0.5) * 0.05;
 			colors[i * 3] = Math.max(0, Math.min(1, r + cn));
